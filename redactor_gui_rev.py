@@ -1,8 +1,7 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog
+from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk, ImageFilter, ImageGrab
 import os
-import platform
 
 class RedactorApp:
     def __init__(self, root):
@@ -12,9 +11,11 @@ class RedactorApp:
         self.tk_img = None
         self.start_x = self.start_y = 0
         self.rect = None
-        self.redaction_type = "blur"  # or "black"
+        self.redaction_type = "blur"
         self.filename = None
+        self.history = []  # Undo history
 
+        # Menu bar
         self.menu = tk.Menu(self.root)
         self.root.config(menu=self.menu)
 
@@ -25,6 +26,11 @@ class RedactorApp:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
         self.menu.add_cascade(label="File", menu=file_menu)
+
+        edit_menu = tk.Menu(self.menu, tearoff=False)
+        edit_menu.add_command(label="Undo Last Redaction", command=self.undo_redaction)
+        self.menu.add_cascade(label="Edit", menu=edit_menu)
+        self.edit_menu = edit_menu  # Save for enabling/disabling later
 
         redact_menu = tk.Menu(self.menu, tearoff=False)
         redact_menu.add_command(label="Use Blur", command=lambda: self.set_redaction("blur"))
@@ -37,19 +43,23 @@ class RedactorApp:
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
 
+        self.update_undo_state()
+
     def load_image(self):
         file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png;*.jpg;*.jpeg;*.bmp")])
         if file_path:
-            self.image = Image.open(file_path)
+            self.image = Image.open(file_path).convert("RGB")
             self.filename = os.path.basename(file_path)
+            self.history.clear()
             self.display_image()
 
     def paste_clipboard(self):
         try:
             img = ImageGrab.grabclipboard()
             if isinstance(img, Image.Image):
-                self.image = img
+                self.image = img.convert("RGB")
                 self.filename = "clipboard.png"
+                self.history.clear()
                 self.display_image()
             else:
                 messagebox.showerror("Error", "No image in clipboard.")
@@ -59,6 +69,7 @@ class RedactorApp:
     def display_image(self):
         self.tk_img = ImageTk.PhotoImage(self.image)
         self.canvas.config(width=self.tk_img.width(), height=self.tk_img.height())
+        self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
 
     def set_redaction(self, mode):
@@ -74,6 +85,13 @@ class RedactorApp:
         self.canvas.coords(self.rect, self.start_x, self.start_y, event.x, event.y)
 
     def on_release(self, event):
+        if not self.image:
+            return
+
+        # Save current image to history
+        self.history.append(self.image.copy())
+        self.update_undo_state()
+
         x1, y1 = min(self.start_x, event.x), min(self.start_y, event.y)
         x2, y2 = max(self.start_x, event.x), max(self.start_y, event.y)
         box = (x1, y1, x2, y2)
@@ -85,6 +103,20 @@ class RedactorApp:
 
         self.image.paste(region, box)
         self.display_image()
+
+    def undo_redaction(self):
+        if self.history:
+            self.image = self.history.pop()
+            self.display_image()
+            self.update_undo_state()
+        else:
+            messagebox.showinfo("Undo", "Nothing to undo.")
+
+    def update_undo_state(self):
+        if self.history:
+            self.edit_menu.entryconfig("Undo Last Redaction", state="normal")
+        else:
+            self.edit_menu.entryconfig("Undo Last Redaction", state="disabled")
 
     def save_image(self):
         if not self.image:
@@ -101,7 +133,7 @@ class RedactorApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.withdraw()  # Hide extra window
+    root.withdraw()
     app = RedactorApp(root)
     root.deiconify()
     root.mainloop()
