@@ -58,6 +58,14 @@ python redactor_gui.py
 
 Once launched, you'll see a simple interface that lets you open or paste an image, draw redaction areas, and save the result. Use the menu bar to switch between blur and black box modes.
 
+### 🪟 Windows Alternative
+
+If you're working on Windows and want a version tailored specifically for that platform, use **`redactor_gui_win.py`**. It offers the same blur, pixelate, and blackout tools as the cross-platform script but is packaged for Windows-only environments. Launch it with:
+
+```bash
+python redactor_gui_win.py
+```
+
 ---
 
 ## 📚 Other Scripts (In Standalone Repositories)
