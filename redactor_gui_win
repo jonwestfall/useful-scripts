@@ -1,0 +1,386 @@
+#!/usr/bin/env python3
+"""
+redactor_gui.py — Simple image redaction tool with GUI
+- Load from file or clipboard
+- Draw rectangles to Blackout, Blur, or Pixelate regions
+- Save result; Undo supported
+Dependencies: Pillow (PIL). Tkinter is included with most Python installs.
+    pip install pillow
+Tested on macOS and Windows; on Linux, clipboard image support may require xclip/xsel.
+"""
+
+import io
+import sys
+import os
+import math
+from dataclasses import dataclass
+from typing import Optional, Tuple, List
+
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, ttk
+except Exception as e:
+    print("Tkinter is required to run this app.", e)
+    sys.exit(1)
+
+from PIL import Image, ImageTk, ImageFilter, ImageGrab
+
+# ----------------------------- Utility -----------------------------
+
+@dataclass
+class DisplayState:
+    img: Image.Image                                   # Full-resolution working image
+    photo: Optional[ImageTk.PhotoImage] = None         # TK image for canvas display
+    scale_x: float = 1.0                                # canvas->image X scale
+    scale_y: float = 1.0                                # canvas->image Y scale
+    offset_x: int = 0                                   # top-left offset inside canvas (for centering)
+    offset_y: int = 0
+
+class RedactorApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Redactor — Blur / Pixelate / Blackout")
+        self.geometry("1200x850")
+        self.minsize(900, 600)
+
+        # State
+        self.state: Optional[DisplayState] = None
+        self.undo_stack: List[Image.Image] = []
+        self.drag_start: Optional[Tuple[int, int]] = None
+        self.drag_rect: Optional[int] = None  # canvas rectangle id
+
+        # UI
+        self._build_ui()
+        self.bind("<Configure>", self._on_resize)
+
+    # ------------------------ UI Construction ------------------------
+    def _build_ui(self):
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        # Toolbar frame
+        toolbar = ttk.Frame(self, padding=8)
+        toolbar.grid(row=0, column=0, sticky="ew")
+        for i in range(10):
+            toolbar.columnconfigure(i, weight=0)
+        toolbar.columnconfigure(10, weight=1)
+
+        btn_load = ttk.Button(toolbar, text="Load Image…", command=self.load_image)
+        btn_clip = ttk.Button(toolbar, text="Load from Clipboard", command=self.load_clipboard)
+        btn_save = ttk.Button(toolbar, text="Save As…", command=self.save_image)
+        btn_undo = ttk.Button(toolbar, text="Undo", command=self.undo, state="disabled")
+
+        btn_load.grid(row=0, column=0, padx=(0,6))
+        btn_clip.grid(row=0, column=1, padx=6)
+        btn_save.grid(row=0, column=2, padx=6)
+        btn_undo.grid(row=0, column=3, padx=6)
+        self.btn_undo = btn_undo
+
+        # Mode controls
+        mode_frame = ttk.LabelFrame(toolbar, text="Redaction Mode", padding=(8,6))
+        mode_frame.grid(row=0, column=4, padx=12, sticky="w")
+        self.mode_var = tk.StringVar(value="blackout")
+        ttk.Radiobutton(mode_frame, text="Blackout", value="blackout", variable=self.mode_var).grid(row=0, column=0, padx=4)
+        ttk.Radiobutton(mode_frame, text="Blur", value="blur", variable=self.mode_var).grid(row=0, column=1, padx=4)
+        ttk.Radiobutton(mode_frame, text="Pixelate", value="pixelate", variable=self.mode_var).grid(row=0, column=2, padx=4)
+
+        # Parameters
+        params = ttk.LabelFrame(toolbar, text="Parameters", padding=(8,6))
+        params.grid(row=0, column=5, padx=12, sticky="w")
+
+        ttk.Label(params, text="Blur radius:").grid(row=0, column=0, sticky="w")
+        self.blur_scale = ttk.Scale(params, from_=2, to=40, orient="horizontal")
+        self.blur_scale.set(12)
+        self.blur_scale.grid(row=0, column=1, padx=(6,12), sticky="we")
+
+        ttk.Label(params, text="Pixel size:").grid(row=0, column=2, sticky="w")
+        self.pixel_scale = ttk.Scale(params, from_=4, to=60, orient="horizontal")
+        self.pixel_scale.set(18)
+        self.pixel_scale.grid(row=0, column=3, padx=(6,0), sticky="we")
+
+        for i in range(4):
+            params.columnconfigure(i, weight=1)
+
+        # Hint
+        hint = ttk.Label(toolbar, text="Tip: Click‑drag on the image to redact. Release to apply. Right‑click or Esc to cancel selection.", foreground="#555")
+        hint.grid(row=0, column=10, sticky="e")
+
+        # Canvas
+        self.canvas = tk.Canvas(self, bg="#333", highlightthickness=0, cursor="tcross")
+        self.canvas.grid(row=1, column=0, sticky="nsew", pady=(6,0))
+        self.rowconfigure(1, weight=1)
+
+        # Bindings
+        self.canvas.bind("<ButtonPress-1>", self.on_mouse_down)
+        self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+        self.canvas.bind("<Button-3>", self.cancel_drag)  # Right-click cancel
+        self.bind("<Escape>", lambda e: self.cancel_drag(None))
+
+    # ----------------------------- Image IO -----------------------------
+
+    def load_image(self):
+        path = filedialog.askopenfilename(
+            title="Open Image",
+            filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.webp"), ("All Files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            img = Image.open(path).convert("RGBA")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open image:\n{e}")
+            return
+        self._set_image(img)
+        self.undo_stack.clear()
+        self._update_undo_state()
+
+    def load_clipboard(self):
+        try:
+            grab = ImageGrab.grabclipboard()
+        except Exception as e:
+            messagebox.showerror("Clipboard Error", f"Clipboard image not available:\n{e}")
+            return
+
+        if isinstance(grab, Image.Image):
+            img = grab.convert("RGBA")
+        elif isinstance(grab, list) and grab:
+            # If clipboard contains file paths
+            try:
+                img = Image.open(grab[0]).convert("RGBA")
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not open file from clipboard:\n{e}")
+                return
+        else:
+            messagebox.showinfo("Clipboard", "No image found in the clipboard.")
+            return
+
+        self._set_image(img)
+        self.undo_stack.clear()
+        self._update_undo_state()
+
+    def save_image(self):
+        if not self.state:
+            messagebox.showinfo("No image", "Load an image first.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Save Redacted Image",
+            defaultextension=".png",
+            filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg;*.jpeg"), ("WebP", "*.webp"), ("TIFF", "*.tif;*.tiff"), ("All Files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            # If the image has alpha and saving as JPEG, convert to RGB white background
+            img_to_save = self.state.img
+            ext = os.path.splitext(path)[1].lower()
+            if ext in [".jpg", ".jpeg"] and img_to_save.mode in ("RGBA", "LA"):
+                bg = Image.new("RGB", img_to_save.size, (255, 255, 255))
+                bg.paste(img_to_save, mask=img_to_save.getchannel("A"))
+                img_to_save = bg
+            img_to_save.save(path)
+            messagebox.showinfo("Saved", f"Image saved to:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Could not save image:\n{e}")
+
+    # ----------------------------- Undo -----------------------------
+
+    def push_undo(self):
+        if self.state:
+            self.undo_stack.append(self.state.img.copy())
+            self._update_undo_state()
+
+    def undo(self):
+        if not self.undo_stack:
+            return
+        img = self.undo_stack.pop()
+        self._set_image(img, push_undo=False)
+        self._update_undo_state()
+
+    def _update_undo_state(self):
+        self.btn_undo.config(state=("normal" if self.undo_stack else "disabled"))
+
+    # ----------------------------- Canvas Display -----------------------------
+
+    def _set_image(self, img: Image.Image, push_undo: bool = False):
+        """Set the working image and refresh display."""
+        self.state = DisplayState(img=img)
+        self._refresh_canvas_image()
+
+    def _refresh_canvas_image(self):
+        """Render self.state.img to fit the canvas while preserving aspect ratio, compute scale/offset."""
+        if not self.state:
+            return
+        c_w = max(self.canvas.winfo_width(), 200)
+        c_h = max(self.canvas.winfo_height(), 200)
+        img_w, img_h = self.state.img.size
+
+        # Fit-to-window while preserving aspect ratio (with small padding)
+        pad = 20
+        max_w = max(100, c_w - pad)
+        max_h = max(100, c_h - pad)
+
+        scale = min(max_w / img_w, max_h / img_h)
+        disp_w = max(1, int(img_w * scale))
+        disp_h = max(1, int(img_h * scale))
+
+        # Resize a preview for display only
+        preview = self.state.img.resize((disp_w, disp_h), Image.LANCZOS)
+        self.state.photo = ImageTk.PhotoImage(preview)
+
+        self.canvas.delete("all")
+        # Center it
+        off_x = (c_w - disp_w) // 2
+        off_y = (c_h - disp_h) // 2
+        self.state.offset_x = off_x
+        self.state.offset_y = off_y
+        self.state.scale_x = img_w / disp_w
+        self.state.scale_y = img_h / disp_h
+
+        self.canvas.create_image(off_x, off_y, image=self.state.photo, anchor="nw", tags="img")
+
+    def _on_resize(self, event):
+        if self.state:
+            # Re-render on resize
+            self.after(10, self._refresh_canvas_image)
+
+    # ----------------------------- Mouse Handlers -----------------------------
+
+    def on_mouse_down(self, event):
+        if not self.state:
+            return
+        if not self._point_in_image(event.x, event.y):
+            return
+        self.drag_start = (event.x, event.y)
+        # Draw a temporary rectangle
+        if self.drag_rect:
+            self.canvas.delete(self.drag_rect)
+            self.drag_rect = None
+        self.drag_rect = self.canvas.create_rectangle(event.x, event.y, event.x, event.y, outline="#00ffff", width=2, dash=(4,2))
+
+    def on_mouse_drag(self, event):
+        if not self.state or not self.drag_start or not self.drag_rect:
+            return
+        x0, y0 = self.drag_start
+        x1, y1 = event.x, event.y
+        self.canvas.coords(self.drag_rect, x0, y0, x1, y1)
+
+    def on_mouse_up(self, event):
+        if not self.state or not self.drag_start or not self.drag_rect:
+            return
+        x0, y0 = self.drag_start
+        x1, y1 = event.x, event.y
+
+        # Normalize and clamp to image bounds
+        x0, x1 = sorted([x0, x1])
+        y0, y1 = sorted([y0, y1])
+
+        # Map canvas coords to image coords
+        box = self._canvas_box_to_image_box((x0, y0, x1, y1))
+        if box is None:
+            # Outside image or too small
+            self.cancel_drag(None)
+            return
+
+        # Apply redaction
+        self.apply_redaction(box)
+
+        # Cleanup selection rectangle
+        self.cancel_drag(None)
+
+    def cancel_drag(self, event):
+        self.drag_start = None
+        if self.drag_rect:
+            self.canvas.delete(self.drag_rect)
+            self.drag_rect = None
+
+    def _point_in_image(self, cx: int, cy: int) -> bool:
+        """Is canvas point within displayed image bounds?"""
+        if not self.state:
+            return False
+        x0 = self.state.offset_x
+        y0 = self.state.offset_y
+        x1 = x0 + int(self.state.img.size[0] / self.state.scale_x)
+        y1 = y0 + int(self.state.img.size[1] / self.state.scale_y)
+        return (x0 <= cx <= x1) and (y0 <= cy <= y1)
+
+    def _canvas_box_to_image_box(self, box: Tuple[int, int, int, int]) -> Optional[Tuple[int, int, int, int]]:
+        """Convert canvas selection box to image-space box, clamped to image bounds; returns None if invalid."""
+        if not self.state:
+            return None
+        cx0, cy0, cx1, cy1 = box
+
+        # Clamp to displayed image area
+        disp_x0 = self.state.offset_x
+        disp_y0 = self.state.offset_y
+        disp_x1 = disp_x0 + int(self.state.img.size[0] / self.state.scale_x)
+        disp_y1 = disp_y0 + int(self.state.img.size[1] / self.state.scale_y)
+
+        cx0 = max(disp_x0, min(cx0, disp_x1))
+        cy0 = max(disp_y0, min(cy0, disp_y1))
+        cx1 = max(disp_x0, min(cx1, disp_x1))
+        cy1 = max(disp_y0, min(cy1, disp_y1))
+
+        # Minimum size to avoid tiny accidental clicks
+        if abs(cx1 - cx0) < 3 or abs(cy1 - cy0) < 3:
+            return None
+
+        # Map to image coords
+        ix0 = int((cx0 - self.state.offset_x) * self.state.scale_x)
+        iy0 = int((cy0 - self.state.offset_y) * self.state.scale_y)
+        ix1 = int((cx1 - self.state.offset_x) * self.state.scale_x)
+        iy1 = int((cy1 - self.state.offset_y) * self.state.scale_y)
+
+        # Clamp to image bounds
+        iw, ih = self.state.img.size
+        ix0 = max(0, min(ix0, iw - 1))
+        iy0 = max(0, min(iy0, ih - 1))
+        ix1 = max(1, min(ix1, iw))
+        iy1 = max(1, min(iy1, ih))
+
+        return (ix0, iy0, ix1, iy1)
+
+    # ----------------------------- Redaction Ops -----------------------------
+
+    def apply_redaction(self, box: Tuple[int, int, int, int]):
+        """Apply the currently selected redaction to the given image-space box."""
+        if not self.state:
+            return
+        mode = self.mode_var.get()
+        # Save undo state
+        self.push_undo()
+
+        img = self.state.img.copy()
+        region = img.crop(box)
+
+        if mode == "blackout":
+            # Draw a black rectangle: simplest is to paste a solid image
+            black = Image.new("RGBA", region.size, (0, 0, 0, 255))
+            img.paste(black, box)
+        elif mode == "blur":
+            radius = max(1, int(self.blur_scale.get()))
+            blurred = region.filter(ImageFilter.GaussianBlur(radius=radius))
+            img.paste(blurred, box)
+        elif mode == "pixelate":
+            pixel = max(2, int(self.pixel_scale.get()))
+            w, h = region.size
+            # Determine reduced size based on pixel size (approximate block size)
+            rx = max(1, w // pixel)
+            ry = max(1, h // pixel)
+            small = region.resize((rx, ry), Image.NEAREST)
+            pix = small.resize((w, h), Image.NEAREST)
+            img.paste(pix, box)
+        else:
+            messagebox.showerror("Unknown Mode", f"Unhandled mode: {mode}")
+            return
+
+        self._set_image(img)
+
+# ----------------------------- Main -----------------------------
+
+def main():
+    app = RedactorApp()
+    app.mainloop()
+
+if __name__ == "__main__":
+    main()
