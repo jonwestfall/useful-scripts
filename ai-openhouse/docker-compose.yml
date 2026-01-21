@@ -1,0 +1,70 @@
+services:
+  # ----------------------------
+  # Demo 1: Local LLM + Chat UI
+  # ----------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: openhouse-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openhouse-webui
+    depends_on:
+      - ollama
+    ports:
+      - "3000:8080"
+    environment:
+      # Point WebUI to Ollama inside the compose network
+      - OLLAMA_BASE_URL=http://ollama:11434
+      # Optional: prevents WebUI from trying to use external OpenAI by default
+      - ENABLE_OPENAI_API=false
+    volumes:
+      - openwebui_data:/app/backend/data
+    restart: unless-stopped
+
+  # ----------------------------
+  # Demo 2: Data-to-Insight App (Streamlit)
+  # ----------------------------
+  demo2:
+    build:
+      context: ./demo2_data_app
+      dockerfile: Dockerfile
+    container_name: openhouse-demo2
+    ports:
+      - "8501:8501"
+    environment:
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+    volumes:
+      # Optional: if you want to edit on the fly without rebuilding
+      # - ./demo2_data_app:/app
+      - demo2_cache:/root/.cache
+    restart: unless-stopped
+
+  # ----------------------------
+  # Demo 3: Vision Demo (Gradio + OpenCV)
+  # ----------------------------
+  demo3:
+    build:
+      context: ./demo3_vision
+      dockerfile: Dockerfile
+    container_name: openhouse-demo3
+    ports:
+      - "7860:7860"
+    environment:
+      - GRADIO_SERVER_NAME=0.0.0.0
+      - GRADIO_SERVER_PORT=7860
+    volumes:
+      - demo3_cache:/root/.cache
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  openwebui_data:
+  demo2_cache:
+  demo3_cache:
