@@ -1,12 +1,16 @@
-# 🧶 Crochet Pattern Grid Designer (v0.1)
+# 🧶 Crochet Pattern Grid Designer (v0.2)
 
 A lightweight desktop application for visually designing crochet
 colorwork patterns using a customizable grid.
 
-Built with Python and Tkinter, this tool allows you to create, edit,
-save, and export crochet charts in both PNG and PDF formats.
+Built with Python and Tkinter, this project now includes:
 
-Written by ChatGPT under the direction of Jon Westfall (jon@jonwestfall.com)
+-   **pattern.py** → The interactive grid editor\
+-   **image_to_crochet_json.py** → An image-to-grid conversion helper
+    tool
+
+Written by ChatGPT under the direction of Jon Westfall
+(jon@jonwestfall.com)
 
 ------------------------------------------------------------------------
 
@@ -16,9 +20,15 @@ Written by ChatGPT under the direction of Jon Westfall (jon@jonwestfall.com)
 
 ------------------------------------------------------------------------
 
-## ✨ Features
+# ✨ Applications Included
 
-### Grid Design
+## 1️⃣ pattern.py --- Crochet Grid Editor
+
+The main desktop application for designing crochet charts.
+
+### Features
+
+#### Grid Design
 
 -   Customizable grid size (rows × columns)
 -   Adjustable on-screen cell size
@@ -26,7 +36,7 @@ Written by ChatGPT under the direction of Jon Westfall (jon@jonwestfall.com)
 -   Click-and-drag painting
 -   Right-click quick erase
 
-### Tools
+#### Tools
 
 -   🖌 Paint
 -   🧽 Erase
@@ -34,7 +44,7 @@ Written by ChatGPT under the direction of Jon Westfall (jon@jonwestfall.com)
 -   🎯 Eyedropper (color picker)
 -   Undo / Redo support
 
-### Numbering Options
+#### Numbering Options
 
 -   Toggle row/column numbers in the editor
 -   Toggle row/column numbers in exported files
@@ -42,36 +52,69 @@ Written by ChatGPT under the direction of Jon Westfall (jon@jonwestfall.com)
     -   Bottom-left (standard crochet chart style)
     -   Bottom-right
 
-### Save & Export
+#### Save & Export
 
 -   Save and load projects as JSON
 -   Export as PNG (high resolution)
 -   Export as PDF (print-friendly)
 
-### Live Cell Readout
+#### Live Cell Readout
 
 -   Displays current row/column under the mouse
 -   Updates in real-time while painting
 
 ------------------------------------------------------------------------
 
-## 🧰 Installation
+## 2️⃣ image_to_crochet_json.py --- Image Conversion Helper
+
+Convert a simple logo or figure (e.g., black image on white background)
+into a crochet grid JSON file compatible with `pattern.py`.
+
+### What It Does
+
+-   Detects figure vs. background automatically
+-   Converts image to a specified grid size
+-   Exports JSON compatible with the editor
+-   Allows advanced control over grid behavior
+
+### Adjustable Options
+
+-   Total rows and columns
+-   Header rows (blank rows at the top)
+-   Footer rows (blank rows at the bottom)
+-   Fill only odd-numbered rows (even rows remain background)
+-   Background and figure color selection
+-   Optional inversion if auto-detection guesses incorrectly
+-   Optional threshold override (0--255)
+
+### Typical Workflow
+
+1.  Run the helper tool
+2.  Load an image (logo or high-contrast figure)
+3.  Set desired grid size and options
+4.  Export JSON
+5.  Load JSON into `pattern.py`
+6.  Refine or export as PNG/PDF
+
+------------------------------------------------------------------------
+
+# 🧰 Installation
 
 ### Requirements
 
 -   Python 3.9+
--   Pillow (for PNG export)
--   reportlab (for PDF export)
+-   Pillow (required for both tools)
+-   reportlab (PDF export in editor)
 
 Install dependencies:
 
 ``` bash
-pip install pillow reportlab pypandoc
+pip install pillow reportlab
 ```
 
 ------------------------------------------------------------------------
 
-## 🚀 Running the Application
+# 🚀 Running the Applications
 
 From the project directory:
 
@@ -79,33 +122,13 @@ From the project directory:
 python pattern.py
 ```
 
-------------------------------------------------------------------------
-
-## 🖱 How to Use
-
-### Basic Workflow
-
-1.  Set your desired grid size.
-2.  Choose a background color.
-3.  Select a paint color.
-4.  Use tools to design your pattern.
-5.  Save as JSON to edit later.
-6.  Export as PNG or PDF for printing or sharing.
-
-### Mouse Controls
-
--   **Left-click / Drag** → Uses selected tool
--   **Right-click / Drag** → Quick erase
--   Cell coordinates appear at the bottom of the editor
-
-### Undo / Redo
-
--   Click Undo / Redo buttons
--   Drag painting counts as a single undo action
+``` bash
+python image_to_crochet_json.py
+```
 
 ------------------------------------------------------------------------
 
-## 📂 File Format (JSON)
+# 📂 JSON File Format
 
 Saved JSON files include:
 
@@ -113,12 +136,13 @@ Saved JSON files include:
 -   Background color
 -   Cell color data
 -   Version number
+-   Source metadata (when generated from image helper)
 
 This makes patterns fully reloadable and editable.
 
 ------------------------------------------------------------------------
 
-## 🧵 Design Philosophy
+# 🧵 Design Philosophy
 
 This project is designed to be:
 
@@ -127,22 +151,27 @@ This project is designed to be:
 -   Simple to understand
 -   Easy to extend
 
-Future versions may include: - Keyboard shortcuts - Symbol overlays -
-Stitch-type annotations - Pattern legend generation
+Potential future enhancements:
+
+-   Keyboard shortcuts
+-   Multi-color auto-detection
+-   Pattern legends
+-   Stitch annotations
+-   Direct PNG preview inside helper tool
 
 ------------------------------------------------------------------------
 
-## 📜 License
+# 📜 License
 
 MIT License.
 
 ------------------------------------------------------------------------
 
-## 👤 Author
+# 👤 Author
 
 Created by Jon --- educator, developer, and enthusiast of structured
 systems and creative tools.
 
 ------------------------------------------------------------------------
 
-Version: 0.1
+Version: 0.2
