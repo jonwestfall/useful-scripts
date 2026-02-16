@@ -1,0 +1,13 @@
+faculty_id,rank,teaching_load_courses,service_hours_per_week,grant_funding_k,publications_last_3_years
+1,Assistant,4,6,25,6
+2,Assistant,4,5,20,5
+3,Assistant,5,7,10,3
+4,Associate,3,8,60,9
+5,Associate,3,7,55,8
+6,Associate,4,9,40,6
+7,Full,2,10,120,15
+8,Full,2,12,150,18
+9,Full,3,9,90,12
+10,Assistant,5,6,5,2
+11,Associate,4,8,45,7
+12,Full,2,11,130,17
