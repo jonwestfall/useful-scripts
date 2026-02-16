@@ -2,6 +2,8 @@
 setlocal
 
 cd /d %~dp0
+echo Restarting Docker Desktop (Needed on the DSU AI Lab PCs)
+docker desktop restart
 
 echo Starting AI Open House demos...
 docker compose up -d --build
