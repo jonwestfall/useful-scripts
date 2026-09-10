@@ -68,6 +68,25 @@ python redactor_gui_win.py
 
 ---
 
+## 🎛️ Podium (Lecture Display Controller)
+
+**[`podium/`](podium/)** turns the classroom PC into a screen you drive from your iPad.
+The PC opens one fullscreen browser tab and is never touched again; everything on the
+projector is chosen from a tablet or phone, from anywhere in the room.
+
+- Show slides, PDFs, images, video, YouTube, music, a QR code, a countdown, or your phone's camera
+- **Freeze** holds the projector while you line up the next thing in the cue — the class sees none of it — then **TAKE** cuts to it
+- Annotate live over whatever is on screen with an Apple Pencil
+- iPad and iPhone can both be connected at once and stay in sync
+- Three static pages: runs on GitHub Pages, a VPS, or a folder on disk
+
+Messages travel via Supabase Realtime, your own tiny Node relay, or a public MQTT
+broker, and are encrypted in the browser so the relay only ever moves ciphertext.
+
+See [`podium/README.md`](podium/README.md) for setup.
+
+---
+
 ## 📚 Other Scripts (In Standalone Repositories)
 
 These are additional tools I’ve built that live in their own repositories due to size, specialization, or broader utility:

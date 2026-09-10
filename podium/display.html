@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Podium — Display</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="assets/css/podium.css">
+</head>
+<body class="display">
+
+<div id="stage"></div>
+<canvas id="ink"></canvas>
+<div id="blank"></div>
+<div id="overlay"></div>
+<div id="hud" data-status="connecting">Not connected</div>
+
+<!-- Standby: shown when nothing is on screen and no controller is connected -->
+<div id="standby" class="sheet">
+  <div class="card">
+    <h1>Podium</h1>
+    <p>Waiting for a controller.</p>
+    <p class="room">Room <b id="standby-room"></b> · code <b id="fingerprint">····</b></p>
+    <div class="row" style="margin-top:20px">
+      <button id="standby-pair" class="big-button">Pair a device</button>
+      <button id="standby-settings">Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- Pairing: deliberately behind a button press on this machine -->
+<div id="pair" class="sheet" hidden>
+  <div class="card" style="text-align:center">
+    <h2>Scan with your iPad or iPhone</h2>
+    <div class="warn">Anyone who scans this can control this screen. It hides itself after 90 seconds.</div>
+    <div id="pair-qr"></div>
+    <div id="pair-url"></div>
+    <button id="pair-close" style="margin-top:18px;width:100%">Done</button>
+  </div>
+</div>
+
+<!-- Arming screen: the one click that unlocks sound, fullscreen and wake lock -->
+<div id="arm" class="sheet" hidden>
+  <div class="card" style="text-align:center">
+    <h1>Podium</h1>
+    <p>Click to go live. This grants the page fullscreen, sound and permission to keep the screen awake.</p>
+    <button id="arm-button" class="big-button">Go live</button>
+    <div class="row" style="margin-top:14px">
+      <button id="pair-button">Pair a device</button>
+    </div>
+    <p class="hint">Room <span id="room-name" class="mono"></span></p>
+  </div>
+</div>
+
+<!-- First-run settings -->
+<div id="setup" class="sheet" hidden>
+  <div class="card">
+    <h1>Set up this display</h1>
+    <p>Stored in this browser only. You will not need to do this again on this machine.</p>
+    <form id="setup-form">
+      <div class="field">
+        <label for="d-transport">Connection</label>
+        <select id="d-transport" name="transport">
+          <option value="supabase">Supabase Realtime</option>
+          <option value="mqtt">MQTT over WSS (public broker)</option>
+          <option value="ws">Self-hosted WebSocket</option>
+        </select>
+      </div>
+      <div class="field" data-for="supabase">
+        <label for="d-su">Supabase project URL</label>
+        <input id="d-su" name="supabaseUrl" type="url" placeholder="https://xxxx.supabase.co" autocomplete="off">
+      </div>
+      <div class="field" data-for="supabase">
+        <label for="d-sk">Supabase anon / publishable key</label>
+        <input id="d-sk" name="supabaseKey" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field" data-for="mqtt">
+        <label for="d-mu">Broker URL</label>
+        <input id="d-mu" name="mqttUrl" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field" data-for="ws">
+        <label for="d-wu">WebSocket URL</label>
+        <input id="d-wu" name="wsUrl" type="text" placeholder="wss://your-vps.example/podium" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="d-room">Room</label>
+        <input id="d-room" name="room" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="d-pass">Passphrase (encrypts everything; must match on every device)</label>
+        <input id="d-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <p class="error" id="setup-error"></p>
+      <button type="submit" class="big-button">Save</button>
+    </form>
+  </div>
+</div>
+
+<script src="assets/vendor/qrcode.js"></script>
+<script type="module" src="assets/js/display.js"></script>
+</body>
+</html>
