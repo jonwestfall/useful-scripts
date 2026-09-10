@@ -1,0 +1,25 @@
+# /etc/systemd/system/podium.service
+#   sudo systemctl enable --now podium
+[Unit]
+Description=Podium relay
+After=network.target
+
+[Service]
+Type=simple
+User=podium
+WorkingDirectory=/opt/podium/server
+Environment=PORT=8080
+# Serve the pages from the same box as well:
+#Environment=STATIC=../
+# Lock the relay to your own site:
+#Environment=ORIGIN=https://jonwestfall.github.io
+ExecStart=/usr/bin/node podium-server.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

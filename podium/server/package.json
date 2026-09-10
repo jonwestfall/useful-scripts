@@ -1,0 +1,13 @@
+{
+  "name": "podium-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted relay for Podium",
+  "main": "podium-server.js",
+  "scripts": {
+    "start": "node podium-server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

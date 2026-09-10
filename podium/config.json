@@ -1,0 +1,8 @@
+{
+  "_comment": "Optional defaults fetched by both pages. Anything configured on a device (or delivered by the pairing QR) overrides what is here. The Supabase anon key is designed to be public and every message is encrypted with the passphrase before it leaves the browser - but keep the passphrase out of this file if the repo is public, and let each device carry it.",
+
+  "transport": "supabase",
+  "supabaseUrl": "",
+  "supabaseKey": "",
+  "room": ""
+}

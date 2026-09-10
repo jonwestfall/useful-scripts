@@ -1,0 +1,340 @@
+/* Podium — shared styles for the display and the controller. */
+
+:root {
+  --bg: #0b0d10;
+  --panel: #14181d;
+  --panel-2: #1c2127;
+  --line: #2a3038;
+  --ink: #e8ecf1;
+  --dim: #97a2b0;
+  --accent: #6ea8fe;
+  --live: #ff4d4f;
+  --cue: #ffc94d;
+  --ok: #45d483;
+  --radius: 12px;
+  --tap: 46px;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+/* Author rules like .sheet{display:grid} outrank the UA's [hidden] rule, which
+   would leave dismissed overlays invisible but still swallowing taps. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+button, input, select, textarea { font: inherit; color: inherit; }
+
+button {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 14px;
+  min-height: var(--tap);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:hover { background: #242b33; }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .4; cursor: default; }
+button.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
+
+input[type=text], input[type=url], input[type=number], input[type=password], select, textarea {
+  background: #0e1216;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 12px;
+  width: 100%;
+  min-height: var(--tap);
+}
+textarea { min-height: 96px; resize: vertical; }
+label { display: block; font-size: 13px; color: var(--dim); margin-bottom: 5px; }
+.field { margin-bottom: 12px; }
+.hint { color: var(--dim); font-size: 13px; margin: 6px 0 0; }
+.error { color: #ff8f8f; font-size: 13px; min-height: 18px; }
+
+/* ===================== DISPLAY ====================================
+   Both pages share this stylesheet, so anything positioned or sized here is
+   scoped to body.display. An unscoped #blank once turned the controller's
+   Blank button into an invisible full-screen layer that ate every tap. */
+
+body.display { overflow: hidden; cursor: default; }
+body.display.is-live { cursor: none; }
+
+body.display #stage { position: fixed; inset: 0; background: #000; }
+
+.layer { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.layer[data-role='program'] { opacity: 1; z-index: 2; pointer-events: auto; }
+.layer[data-role='preview'] { opacity: 0; z-index: 1; }
+.layer[data-role='idle'] { opacity: 0; z-index: 0; }
+
+body.display #ink { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
+body.display #blank {
+  position: fixed; inset: 0; z-index: 6; background: #000;
+  opacity: 0; transition: opacity .18s ease; pointer-events: none;
+}
+body.display #blank.is-on { opacity: 1; }
+
+body.display #overlay {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 7;
+  padding: 3vh 5vw calc(3vh + env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(0, 0, 0, .82) 45%);
+  font-size: clamp(24px, 4.2vw, 68px); font-weight: 600; line-height: 1.2;
+  text-shadow: 0 2px 18px #000;
+  transform: translateY(110%); transition: transform .25s ease;
+}
+body.display #overlay.is-on { transform: none; }
+
+body.display #hud {
+  position: fixed; right: 14px; bottom: 12px; z-index: 9;
+  padding: 7px 13px; border-radius: 999px;
+  background: rgba(10, 14, 20, .82); border: 1px solid var(--line);
+  font-size: 13px; color: var(--dim); transition: opacity .5s ease 2.5s;
+}
+body.display #hud.is-quiet { opacity: 0; }
+body.display #hud[data-status='error'], body.display #hud[data-status='mismatch'] { color: #ffb3b3; border-color: #6b2b2b; opacity: 1; }
+body.display #hud[data-status='offline'] { color: var(--cue); opacity: 1; }
+
+body.display.is-frozen #stage::after {
+  content: ''; position: absolute; inset: 0; z-index: 8; pointer-events: none;
+  border: 3px solid var(--cue); opacity: .5;
+}
+
+/* Full-screen overlays on the display */
+.sheet {
+  position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
+  background: radial-gradient(120% 120% at 50% 0%, #131a24, #07090c);
+  padding: 24px; overflow: auto;
+}
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
+  padding: 28px; max-width: 620px; width: 100%;
+}
+.card h1 { margin: 0 0 6px; font-size: 26px; }
+.card h2 { margin: 0 0 14px; font-size: 19px; }
+.card p { color: var(--dim); margin: 0 0 18px; }
+.big-button {
+  width: 100%; min-height: 66px; font-size: 19px; font-weight: 600;
+  background: var(--accent); border-color: var(--accent); color: #06101f;
+}
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.row > * { flex: 1; }
+
+body.display #standby .card { text-align: center; }
+#standby .room { font-size: 15px; color: var(--dim); }
+#standby .room b { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+body.display #standby:not(.is-on) { display: none; }
+
+#pair-qr svg { width: min(56vh, 340px); height: auto; background: #fff; padding: 12px; border-radius: 12px; }
+#pair-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  color: var(--dim); word-break: break-all; margin-top: 12px;
+}
+.warn {
+  background: #2a1e12; border: 1px solid #6b4a22; color: #ffd9a8;
+  border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 16px;
+}
+
+/* ===================== RENDERERS ==================================
+   Renderers size themselves against their own box, not the viewport, so the
+   same markup fills a projector and shrinks honestly into the controller's
+   preview thumbnail. vw/vh here would measure the whole screen and blow the
+   content far outside a 300px preview. */
+
+.layer, #preview-stage { container-type: size; }
+.r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio { position: absolute; inset: 0; }
+.r-black { background: #000; }
+.r-image, .r-video { width: 100%; height: 100%; display: block; background: #000; }
+.r-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+
+.r-web { background: #101418; }
+.r-embed-warn {
+  position: absolute; inset: auto 0 0 0; padding: 1.4cqh 1.8cqw; color: var(--dim);
+  background: rgba(8, 11, 15, .9); font-size: clamp(7px, 1.4cqw, 14px); text-align: center;
+}
+.r-web.is-loaded .r-embed-warn { display: none; }
+.r-embed-url { font-family: ui-monospace, Menlo, monospace; font-size: clamp(6px, 1.2cqw, 12px); opacity: .7; margin-top: 4px; }
+
+.r-audio {
+  display: grid; grid-auto-flow: column; align-items: center; justify-content: center;
+  gap: 5cqw; background: linear-gradient(160deg, #182130, #0a0d12);
+}
+.r-audio-art { width: 30cqh; height: 30cqh; object-fit: cover; border-radius: 2cqh; }
+.r-audio-title { font-size: clamp(11px, 4cqw, 64px); font-weight: 700; }
+.r-audio-sub { font-size: clamp(8px, 2cqw, 30px); color: var(--dim); margin-top: 1cqh; }
+.r-bars { display: flex; gap: 0.6cqw; align-items: flex-end; height: 10cqh; margin-top: 4cqh; }
+.r-bars span { width: 0.8cqw; height: 2cqh; background: var(--accent); border-radius: 0.4cqw; }
+.r-audio.is-playing .r-bars span { animation: bar .9s ease-in-out infinite alternate; }
+@keyframes bar { from { height: 1.6cqh; } to { height: 9.6cqh; } }
+
+.r-text {
+  display: grid; place-items: center; padding: 6cqh 7cqw; background: #0a0d12;
+  text-align: center;
+}
+.r-text[data-align='left'] { text-align: left; justify-items: start; }
+.r-text-body { font-weight: 650; line-height: 1.15; }
+.r-text[data-size='m'] .r-text-body { font-size: clamp(10px, 5cqw, 76px); }
+.r-text[data-size='l'] .r-text-body { font-size: clamp(12px, 8cqw, 132px); }
+.r-text[data-size='xl'] .r-text-body { font-size: clamp(14px, 13cqw, 220px); }
+.r-text code { font-family: ui-monospace, Menlo, monospace; background: #1b222c; padding: 0 .2em; border-radius: 6px; }
+
+.r-qr { display: grid; place-items: center; gap: 3cqh; background: #fff; color: #111; align-content: center; }
+.r-qr-code svg { width: min(58cqh, 58cqw); height: auto; display: block; }
+.r-qr-caption { font-size: clamp(7px, 2.6cqw, 40px); font-weight: 600; word-break: break-all; padding: 0 6cqw; text-align: center; }
+
+.r-timer { display: grid; place-items: center; align-content: center; gap: 2cqh; background: #07090c; }
+.r-timer-label { font-size: clamp(8px, 3cqw, 46px); color: var(--dim); }
+.r-timer-value { font-size: clamp(20px, 24cqw, 380px); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+.r-timer.is-urgent .r-timer-value { color: var(--cue); }
+.r-timer.is-done .r-timer-value { color: var(--live); animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+
+.r-camera { background: #000; }
+.r-camera-hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: clamp(9px, 2.2cqw, 22px); text-align: center; padding: 0 4cqw; }
+.r-camera.has-stream .r-camera-hint { display: none; }
+
+/* ===================== CONTROLLER ================================= */
+
+body.control {
+  display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  overscroll-behavior: none;
+}
+body.control.is-frozen { background: #171006; }
+
+#app { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+.topbar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-bottom: 1px solid var(--line); font-size: 13px; color: var(--dim); flex-wrap: wrap;
+}
+.topbar .brand { font-weight: 700; color: var(--ink); letter-spacing: .04em; }
+.topbar .spacer { flex: 1; }
+#status::before { content: '●'; margin-right: 6px; color: var(--dim); }
+#status[data-status='online']::before { color: var(--ok); }
+#status[data-status='offline']::before, #status[data-status='connecting']::before { color: var(--cue); }
+#status[data-status='error']::before, #status[data-status='mismatch']::before { color: var(--live); }
+#display-state.is-bad { color: #ffb3b3; }
+.topbar button { min-height: 34px; padding: 0 10px; font-size: 13px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.workspace { display: flex; flex: 1; min-height: 0; }
+
+/* Preview rail */
+#preview-pane {
+  width: 320px; flex: none; border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; padding: 12px; gap: 10px;
+}
+#preview-stage {
+  position: relative; aspect-ratio: 16 / 9; background: #000; overflow: hidden;
+  border-radius: 10px; border: 2px solid var(--line);
+}
+#preview-stage > * { position: absolute; inset: 0; }
+#preview-pane.is-cued #preview-stage { border-color: var(--cue); }
+#preview-label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+#preview-pane.is-cued #preview-label { color: var(--cue); }
+#preview-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#take {
+  min-height: 62px; font-size: 18px; font-weight: 700; letter-spacing: .05em;
+  background: #2b1518; border-color: #57262b; color: #ff9d9d;
+}
+#take.is-armed { background: var(--live); border-color: var(--live); color: #fff; }
+
+/* Tabs + panels */
+/* min-height:0 is what lets .panels scroll instead of shoving the bottom bar
+   off the screen when the workspace stacks on a phone. */
+.main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.tabs { display: flex; gap: 6px; padding: 10px 12px 0; overflow-x: auto; }
+.tab { min-height: 40px; padding: 0 14px; border-radius: 999px; white-space: nowrap; font-size: 14px; }
+.tab.is-on { background: var(--panel-2); border-color: var(--accent); color: var(--ink); }
+.panels { flex: 1; min-height: 0; overflow: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
+.panel { display: flex; flex-direction: column; gap: 14px; }
+
+.group { margin: 6px 0 0; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+.tile {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  padding: 12px; min-height: 88px; text-align: left; border-radius: var(--radius);
+}
+.tile-icon { font-size: 20px; line-height: 1; }
+.tile-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.tile-type { font-size: 11px; color: var(--dim); }
+.tile-del {
+  position: absolute; top: 4px; right: 6px; font-size: 18px; color: var(--dim);
+  width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px;
+}
+.empty { color: var(--dim); }
+
+.stack { display: flex; flex-direction: column; gap: 10px; }
+.inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.inline > .grow { flex: 1; min-width: 140px; }
+.check { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 14px; }
+.check input { width: auto; min-height: auto; }
+
+#now-title { font-size: 19px; font-weight: 650; }
+#now-type { color: var(--dim); font-size: 13px; }
+#transport .inline button { min-width: 62px; }
+#scrub { width: 100%; }
+input[type=range] { accent-color: var(--accent); min-height: 40px; }
+.times { display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* Ink pad */
+#pad {
+  width: 100%; aspect-ratio: 16 / 9; background: #101418;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  touch-action: none; display: block;
+}
+.swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; }
+.swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
+
+#cam-local { width: 100%; max-width: 320px; border-radius: var(--radius); background: #000; }
+#cam-status { color: var(--dim); font-size: 14px; }
+
+#timer-readout { font-size: 54px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#timer-readout.is-urgent { color: var(--cue); }
+.timer-preset { min-width: 62px; }
+
+/* Bottom bar */
+.bottombar {
+  display: flex; gap: 8px; align-items: center; padding: 10px 12px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line); background: var(--panel);
+}
+.bottombar button { flex: 1; font-weight: 600; }
+.bottombar #freeze.is-on { background: var(--cue); border-color: var(--cue); color: #1a1204; }
+.bottombar #blank.is-on { background: #fff; border-color: #fff; color: #000; }
+.bottombar .vol { flex: 2; display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* A range input's intrinsic min-width would otherwise push it off a phone. */
+.bottombar .vol input { flex: 1; min-width: 0; width: 100%; }
+#mute, #bar-play { flex: none; width: 52px; padding: 0; }
+
+/* On a phone the bar has to fit one row: drop the identifiers you only need
+   when something is wrong, and let the buttons shrink. */
+@media (max-width: 640px) {
+  .topbar .brand, .topbar .room-info, #peer-count { display: none; }
+  .bottombar { gap: 6px; }
+  .bottombar button { min-width: 0; padding: 0 8px; }
+  .bottombar .vol { flex: 1; min-width: 76px; gap: 6px; }
+  #mute, #bar-play { width: 44px; }
+}
+
+@media (max-width: 900px) {
+  .workspace { flex-direction: column; }
+  #preview-pane {
+    width: auto; border-right: 0; border-bottom: 1px solid var(--line);
+    flex-direction: row; align-items: center; padding: 8px 12px;
+  }
+  #preview-stage { width: 132px; flex: none; }
+  #preview-pane .meta { flex: 1; min-width: 0; }
+  #take { min-height: 52px; width: 108px; flex: none; }
+  #swap, #clear-preview { display: none; }
+  .tiles { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
+}

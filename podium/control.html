@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Podium — Control</title>
+<meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Podium">
+<link rel="stylesheet" href="assets/css/podium.css">
+</head>
+<body class="control">
+
+<div id="app" hidden>
+  <div class="topbar">
+    <span class="brand">PODIUM</span>
+    <span id="status" data-status="connecting">Connecting…</span>
+    <span id="display-state">No display connected</span>
+    <span id="peer-count"></span>
+    <span class="spacer"></span>
+    <span class="room-info">room <b id="room-name" class="mono"></b> · <b id="fingerprint" class="mono">····</b></span>
+    <button id="open-settings" type="button">Settings</button>
+  </div>
+
+  <div class="workspace">
+    <aside id="preview-pane">
+      <div id="preview-stage"></div>
+      <div class="meta">
+        <div id="preview-label">On screen</div>
+        <div id="preview-title">Nothing</div>
+      </div>
+      <button id="take" type="button" disabled>TAKE</button>
+      <div class="row">
+        <button id="swap" type="button">Swap</button>
+        <button id="clear-preview" type="button">Clear cue</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <nav class="tabs">
+        <button class="tab is-on" data-tab="library" type="button">Library</button>
+        <button class="tab" data-tab="now" type="button">Now</button>
+        <button class="tab" data-tab="ink" type="button">Ink</button>
+        <button class="tab" data-tab="say" type="button">Say</button>
+        <button class="tab" data-tab="timer" type="button">Timer</button>
+        <button class="tab" data-tab="camera" type="button">Camera</button>
+      </nav>
+
+      <div class="panels">
+        <!-- Library -->
+        <section class="panel" data-panel="library">
+          <form id="url-form" class="inline">
+            <input id="url-input" class="grow" type="text" inputmode="url" autocomplete="off"
+                   autocapitalize="off" spellcheck="false" placeholder="Paste a link — YouTube, image, video, PDF, any page">
+            <button type="submit">Show</button>
+            <label class="check"><input id="url-save" type="checkbox"> Save</label>
+          </form>
+          <input id="lib-filter" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
+          <div id="library"></div>
+        </section>
+
+        <!-- Now playing -->
+        <section class="panel" data-panel="now" hidden>
+          <div>
+            <div id="now-title">Nothing</div>
+            <div id="now-type"></div>
+          </div>
+          <div id="transport" class="stack" hidden>
+            <div class="inline">
+              <button id="back10" type="button">−10s</button>
+              <button id="play-pause" type="button">▶</button>
+              <button id="fwd10" type="button">+10s</button>
+            </div>
+            <input id="scrub" type="range" min="0" max="0" step="1" value="0">
+            <div class="times"><span id="time-now">0:00</span><span id="time-total">--:--</span></div>
+          </div>
+          <div id="paging" class="inline" hidden>
+            <button id="prev-page" type="button">◀ Back</button>
+            <span id="page-label"></span>
+            <button id="next-page" type="button">Next ▶</button>
+          </div>
+          <div class="inline">
+            <button id="preview-mode" type="button">Always cue first</button>
+          </div>
+          <p class="hint">
+            Freeze holds the projector on whatever is showing. Anything you pick while frozen
+            waits in the cue, so you can line up the next thing in front of the class without
+            them seeing it. TAKE puts it on screen and unfreezes.
+          </p>
+        </section>
+
+        <!-- Ink -->
+        <section class="panel" data-panel="ink" hidden>
+          <canvas id="pad"></canvas>
+          <div class="inline">
+            <button class="swatch is-on" type="button" data-color="#ffd166" style="background:#ffd166"></button>
+            <button class="swatch" type="button" data-color="#ff4d4f" style="background:#ff4d4f"></button>
+            <button class="swatch" type="button" data-color="#45d483" style="background:#45d483"></button>
+            <button class="swatch" type="button" data-color="#6ea8fe" style="background:#6ea8fe"></button>
+            <button class="swatch" type="button" data-color="#ffffff" style="background:#ffffff"></button>
+            <button id="ink-undo" type="button">Undo</button>
+            <button id="ink-clear" type="button">Clear</button>
+          </div>
+          <div class="inline">
+            <label class="grow" for="ink-width">Thickness</label>
+            <input id="ink-width" class="grow" type="range" min="2" max="24" value="6">
+            <label class="check"><input id="ink-pen-only" type="checkbox"> Apple Pencil only</label>
+          </div>
+          <p class="hint">Ink draws over whatever is on screen, so you can annotate slides. Pick “Whiteboard” in the library for a blank surface.</p>
+        </section>
+
+        <!-- Say: big text, lower third, QR -->
+        <section class="panel" data-panel="say" hidden>
+          <form id="text-form" class="stack">
+            <label for="text-body">Full-screen message</label>
+            <textarea id="text-body" placeholder="Back in 5 minutes"></textarea>
+            <div class="inline">
+              <select id="text-size" class="grow">
+                <option value="m">Medium</option>
+                <option value="l" selected>Large</option>
+                <option value="xl">Huge</option>
+              </select>
+              <button type="submit">Show</button>
+            </div>
+          </form>
+          <form id="overlay-form" class="stack">
+            <label for="overlay-text">Caption along the bottom (stays over anything)</label>
+            <div class="inline">
+              <input id="overlay-text" class="grow" type="text" placeholder="Chapter 4 · Working memory">
+              <button type="submit">Show</button>
+              <button id="overlay-hide" type="button">Hide</button>
+            </div>
+          </form>
+          <form id="qr-form" class="stack">
+            <label for="qr-data">QR code for the class</label>
+            <div class="inline">
+              <input id="qr-data" class="grow" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://…">
+              <input id="qr-caption" class="grow" type="text" placeholder="Caption (optional)">
+              <button type="submit">Show</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Timer -->
+        <section class="panel" data-panel="timer" hidden>
+          <div id="timer-readout">0:00</div>
+          <div class="inline">
+            <button class="timer-preset" type="button" data-mins="1">1m</button>
+            <button class="timer-preset" type="button" data-mins="2">2m</button>
+            <button class="timer-preset" type="button" data-mins="5">5m</button>
+            <button class="timer-preset" type="button" data-mins="10">10m</button>
+            <button class="timer-preset" type="button" data-mins="15">15m</button>
+          </div>
+          <div class="inline">
+            <input id="timer-mins" class="grow" type="number" min="1" max="180" value="5">
+            <input id="timer-label" class="grow" type="text" placeholder="Label, e.g. Group work">
+            <button id="timer-start" type="button">Start</button>
+            <button id="timer-stop" type="button">Stop</button>
+          </div>
+          <p class="hint">The countdown runs on the display, so it stays accurate even if your iPad sleeps. Show it full screen by picking “Timer” in the library.</p>
+        </section>
+
+        <!-- Camera -->
+        <section class="panel" data-panel="camera" hidden>
+          <p class="hint">Turns this phone into a document camera: hold it over a book or a student's work and it goes on the projector.</p>
+          <div class="inline">
+            <button id="cam-start" type="button">Start camera</button>
+            <button id="cam-flip" type="button">Flip</button>
+          </div>
+          <div id="cam-status">Off</div>
+          <video id="cam-local" playsinline muted hidden></video>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="bottombar">
+    <button id="bar-play" type="button" hidden>▶</button>
+    <button id="freeze" type="button">Freeze</button>
+    <button id="blank" type="button">Blank</button>
+    <div class="vol">
+      <button id="mute" type="button">🔊</button>
+      <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume">
+    </div>
+  </div>
+</div>
+
+<!-- First-run settings -->
+<div id="setup" class="sheet" hidden>
+  <div class="card">
+    <h1>Connect to your display</h1>
+    <p>Easiest path: open the display on the classroom PC, press <b>Pair a device</b> there, and scan the code. Otherwise fill this in by hand — the values must match the display exactly.</p>
+    <form id="setup-form">
+      <div class="field">
+        <label for="c-transport">Connection</label>
+        <select id="c-transport" name="transport">
+          <option value="supabase">Supabase Realtime</option>
+          <option value="mqtt">MQTT over WSS (public broker)</option>
+          <option value="ws">Self-hosted WebSocket</option>
+        </select>
+      </div>
+      <div class="field" data-for="supabase">
+        <label for="c-su">Supabase project URL</label>
+        <input id="c-su" name="supabaseUrl" type="url" placeholder="https://xxxx.supabase.co" autocomplete="off">
+      </div>
+      <div class="field" data-for="supabase">
+        <label for="c-sk">Supabase anon / publishable key</label>
+        <input id="c-sk" name="supabaseKey" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field" data-for="mqtt">
+        <label for="c-mu">Broker URL</label>
+        <input id="c-mu" name="mqttUrl" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field" data-for="ws">
+        <label for="c-wu">WebSocket URL</label>
+        <input id="c-wu" name="wsUrl" type="text" placeholder="wss://your-vps.example/podium" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="c-room">Room</label>
+        <input id="c-room" name="room" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="c-pass">Passphrase</label>
+        <input id="c-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <p class="error" id="setup-error"></p>
+      <button type="submit" class="big-button">Save</button>
+    </form>
+  </div>
+</div>
+
+<script src="assets/vendor/qrcode.js"></script>
+<script type="module" src="assets/js/control.js"></script>
+</body>
+</html>
