@@ -531,6 +531,15 @@ function renderDeck(item, opts) {
       mountedId = it.deckId;
       setStatus(slides.length ? '' : 'That markdown produced no slides.');
       showSlide(it.slide, it.step);
+      // contentAspect() only has a real answer from here on - before this,
+      // ink applied to this item was necessarily drawn against contentRect()'s
+      // no-letterbox fallback (aspect unknown). The strokes themselves are
+      // still correct (they are fractions captured on the controller,
+      // unaffected by this display's own mount timing) but the CANVAS PIXELS
+      // already painted from them are not, and nothing else re-draws ink
+      // just because a deck finished mounting. Ask the host to redo it now
+      // that there is a real box to redo it against.
+      opts.onReady?.();
     } catch (err) {
       setStatus(`Marp could not render this deck.\n${err.message}`);
     }

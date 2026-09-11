@@ -397,6 +397,11 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
   position: absolute; inset: 0; width: 100%; height: 100%; background: transparent;
   touch-action: none; display: block;
 }
+/* A deck's real shape not being known yet (see deckAspectPending() in
+   control.js) blocks drawing rather than guessing - the mirror's own
+   "Loading deck..." status underneath is feedback enough for what is a
+   normally sub-second wait. */
+#pad.is-pending { pointer-events: none; opacity: .4; }
 #ink-zoom-level { min-width: 3em; text-align: center; color: var(--dim); }
 .pan-btn { width: 44px; padding: 0; }
 

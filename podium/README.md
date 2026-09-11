@@ -288,6 +288,32 @@ has a matching guard: entering fullscreen (see **One click to start** below) can
 resize the window a beat after the click itself resolves, so the display also
 recomputes its content box on `fullscreenchange`, not only on `resize`.
 
+**Drawing right after picking a deck lands where you drew it, even on the very first
+slide.** A deck's real shape (its own aspect ratio) is only known once Marp has
+actually parsed it — genuinely slow for a real lecture deck's theme and fonts,
+unlike the tiny bundled demo — and until then, nothing should guess at it:
+
+- **Picking a deck is asynchronous from the very first tap.** A tile's click handler
+  can't be awaited by the tap that fired it, so switching straight to the Ink tab
+  used to be able to race a pick that had not even sent anything to the display yet.
+  Picking now marks that a deck is on its way the instant the tap lands, before any
+  of the loading it does.
+- The **controller's pad** used to size itself off the *display's own window shape*
+  while a second, redundant parse of the deck it had just picked was still running in
+  the background — over a second, for a deck with a real theme's fonts. Picking now
+  reuses the parse it already did to stage the deck, so the pad knows the real shape
+  immediately rather than racing a second one.
+- The **display** draws ink through the same "what shape is this slide" math it uses
+  to letterbox the slide itself, which needs that deck's own parse to finish too. A
+  stroke applied in the brief window before it does used to stay wrong for the rest
+  of that item's time on screen — nothing re-drew ink just because the deck caught
+  up a moment later. The deck renderer now tells the display to redo it the instant
+  its real shape becomes known.
+
+Between picking and the real shape being known, the pad simply will not draw (it
+dims and ignores touches) rather than guess — normally invisible, since a real hand
+takes longer to reach the pad than the deck takes to load.
+
 ## Your lecture library
 
 Edit `content/manifest.json`, commit, and the tiles appear on the iPad. Files you put

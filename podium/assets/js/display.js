@@ -97,6 +97,13 @@ function mount(layer, item) {
     getCameraStatus: () => cameraStatus,
     getFrozen: () => state.frozen,
     getDeckSource,
+    // A deck's contentAspect() only has a real answer once it finishes
+    // mounting (Marp parse + fetch, genuinely slow for a real lecture deck's
+    // theme and fonts). Ink applied before then was drawn against
+    // contentRect()'s no-letterbox fallback; redoing it now that the real
+    // box is known is what makes that self-correct instead of staying
+    // wrong for the rest of the item's time on screen.
+    onReady: () => redrawInk(true),
   });
   layer.node.append(layer.renderer.el);
 }

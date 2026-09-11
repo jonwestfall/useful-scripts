@@ -32,6 +32,14 @@ const deckStore = new Map();
 const deckFetches = new Map();
 let deckView = { id: null, deck: null };
 let deckGeneration = 0;
+// The id most recently sent in a 'stage' command, until state.program's own
+// echo confirms the display actually picked it up. Closes the one race
+// deckView alone cannot: state.program is the display's word, arriving over
+// the network, so there is always a beat between sending a pick and it
+// actually taking effect here - normally sub-frame, but real on a loaded
+// machine or a laggier transport (Supabase, MQTT). Without this, the pad
+// would briefly go on sizing itself for whatever WAS on screen a moment ago.
+let pendingStage = null;
 
 // Requesting a deck's saved ink for export: the display holds the only full
 // copy, keyed by deck+slide, so exporting asks for it rather than trying to
@@ -65,6 +73,21 @@ async function stageDeck({ source, name, src }) {
   const id = src ? `src:${src}` : await deckId(source);
   deckStore.set(id, source);
   const deck = await renderDeckSource(source, id);
+  // Populate deckView with the SAME parse used to stage it, rather than
+  // leaving ensureDeckView() to redundantly re-fetch and re-render it a
+  // second time once the display's broadcast echoes state.program back.
+  // That second, independent parse is what used to leave a real window -
+  // over a second for a deck with a real theme's fonts - where the ink pad
+  // did not yet know this slide's own aspect ratio and sized itself against
+  // the display's raw window shape instead. A stroke drawn in that window
+  // is fractions of the WRONG box, baked in permanently: no later
+  // correction can fix a point already this shape's guess. Right for the
+  // common case (staging a deck from this controller's own library); the
+  // rarer paths - a second controller syncing to a deck already on screen,
+  // an uploaded deck echoed from elsewhere - still go through
+  // ensureDeckView(), which now also nudges the pad once it resolves.
+  deckGeneration++;
+  deckView = { id, deck };
   // Hand it to the display up front rather than making it ask.
   if (!src) bus?.send({ t: 'deck', id, source });
   stage({
@@ -158,6 +181,10 @@ function renderLibrary() {
 }
 
 function stage(item, where = 'auto') {
+  // Only a deck needs this: it is the only type whose pad shape depends on
+  // content that has to be parsed, so it is the only one that can be picked
+  // and drawn on before the pad actually knows what shape to be.
+  pendingStage = item.type === 'deck' ? item.deckId : null;
   // group/custom are library bookkeeping; the display has no use for them.
   const { group: _group, custom: _custom, ...clean } = item;
   send({ op: 'stage', item: clean, where });
@@ -172,6 +199,14 @@ function stage(item, where = 'auto') {
 async function pick(item, where = 'auto') {
   if (item.type === 'camera') { await startCamera(where); return; }
   if (item.type !== 'deck' || item.slideCount) { stage(item, where); return; }
+  // A click handler can't be awaited by whatever dispatched it, so the
+  // moment this returns control (at the first await below), the pad's own
+  // sizing logic could already be asked to run again - well before
+  // stageDeck() gets far enough to call stage() and set pendingStage itself.
+  // Mark intent to pick a deck right here, synchronously, so that gap does
+  // not exist: true stands for "a deck pick is in flight, real id not known
+  // yet" until stage() replaces it with the actual one.
+  pendingStage = true;
   const note = $('#deck-file-note');
   note.textContent = `Loading ${item.title || 'deck'}…`;
   try {
@@ -179,6 +214,7 @@ async function pick(item, where = 'auto') {
     await stageDeck({ source, name: item.title, src: item.src });
     note.textContent = '';
   } catch (err) {
+    if (pendingStage === true) pendingStage = null;
     note.textContent = `Could not open that deck: ${err.message}`;
   }
 }
@@ -297,6 +333,11 @@ async function ensureDeckView(item) {
     if (mine !== deckGeneration) return;
     deckView = { id: item.deckId, deck };
     renderSlides();
+    // The deck's real aspect just became known - if the Ink tab is already
+    // open (a second controller joining mid-deck, or an uploaded deck echoed
+    // from elsewhere), the pad was sized against the fallback stage shape
+    // until now and needs to catch up, the same as after a resize.
+    if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad();
   } catch (err) {
     $('#deck-notes').textContent = `Marp could not render this deck: ${err.message}`;
   }
@@ -621,7 +662,34 @@ function fitBox(viewport, frame, aspect) {
   return { w, h };
 }
 
+// A deck item whose real aspect is not known yet - deckView is still mid-
+// parse for it, a redundant second render the pad needs even though the
+// slide is already staging elsewhere - must not let the pad size itself
+// against a guess (the display's raw window shape). A stroke drawn against
+// the wrong-shaped box is fractions of the wrong box forever: once sent,
+// there is no later correction that can fix a point already measured
+// against the wrong guess. Simplest fix is to not let one happen: the pad
+// refuses pointer input until the real shape is known (see below); the live
+// mirror behind it keeps showing Marp's own "Loading deck…" status in the
+// meantime, so the pad does not look broken, just not ready yet.
+function deckAspectPending(item) {
+  // state.program is the display's echo of what it actually put on screen -
+  // until it confirms the deck we just told it to show, that echo is still
+  // describing whatever was there before, and going by it would size the pad
+  // for the WRONG item, not merely an unready one. `true` means a pick just
+  // started and does not have a real deckId to compare against yet.
+  if (pendingStage === true) return true;
+  if (pendingStage) {
+    if (item?.type === 'deck' && item.deckId === pendingStage) pendingStage = null;
+    else return true;
+  }
+  return item?.type === 'deck' && deckView.id !== item.deckId;
+}
+
 function fitFrame() {
+  const pending = deckAspectPending(state.program);
+  pad.classList.toggle('is-pending', pending);
+  if (pending) return;
   const { w, h } = fitBox(padViewport, padFrame, computeContentAspect());
   frameW = w;
   frameH = h;

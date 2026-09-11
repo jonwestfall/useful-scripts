@@ -1206,6 +1206,96 @@ ok(`the drawn circle stays round on the projector (aspect ${paintedAspect.toFixe
 await ctx.close();
 }
 
+console.log('\n-- ink drawn the instant a deck pick allows it lands correctly, and never lands wrong --');
+{
+// The actual bug report: circling a word on a slide landed nowhere near it
+// on the projector. Root cause was three independent "real aspect not known
+// yet" windows, none needing any resize or rotation to trigger:
+//   1. Clicking a deck tile calls the (necessarily async) pick(), whose
+//      first await returns control to the browser well before it gets to
+//      stageDeck()'s own stage() call - so switching to Ink and drawing
+//      right away used to race a pick that had not even sent its 'stage'
+//      command yet, let alone gotten it echoed back. pick() now marks that
+//      a deck pick is in flight the instant it starts, synchronously,
+//      before any of that.
+//   2. Once picked, the CONTROLLER's own pad used to size itself off the
+//      display's raw window shape until a SECOND, redundant Marp parse -
+//      kicked off reactively once state.program echoed back - finished,
+//      which for a deck with a real theme's fonts could take over a
+//      second. stageDeck() now reuses the parse it already did to stage
+//      the deck, instead of leaving a second one to race.
+//   3. Even with the controller's own pad correct, the DISPLAY draws ink
+//      through contentRect(), which needs the deck's own mount() to finish
+//      before it knows the slide's real aspect - before that it falls back
+//      to the full, un-letterboxed stage. A stroke applied in that window
+//      stayed wrong forever, because nothing re-drew ink once the deck
+//      caught up. renderDeck() now tells the display to redo it via
+//      onReady() the moment its real shape becomes known.
+// The fix for (1) means the pad now simply refuses pointer input for
+// whatever's left of that window (pad.is-pending, pointer-events:none)
+// rather than guessing - so drawing "the instant a click can land" is the
+// right thing to race here, not drawing at some fixed instant regardless.
+// This uses the actual "Weighing the Evidence" deck (a real theme, not the
+// tiny bundled demo) to make that window as real as it gets in a lecture.
+const ctx = await browser.newContext({ viewport: { width: 1512, height: 944 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'ink-instant-room', passphrase: 'circle the evidence' }));
+const screen = await ctx.newPage();
+trap(screen, 'ink-instant display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'ink-instant control');
+await pad.setViewportSize({ width: 834, height: 1194 });
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await pad.click('.tab[data-tab="ink"]');
+// Draw the moment the pad itself says it is safe to - not some fixed delay -
+// and require that to be prompt: a presenter should never feel like the
+// Ink tab is broken while a real deck loads.
+await pad.waitForSelector('#pad:not(.is-pending)', { timeout: 3000 });
+ok('the pad becomes drawable again promptly once the deck is actually ready', true);
+const padBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+const fx = 0.25, fy = 0.30;
+const px = padBox.x + padBox.w * fx, py = padBox.y + padBox.h * fy;
+await pad.mouse.move(px, py);
+await pad.mouse.down();
+for (let i = 1; i <= 4; i++) await pad.mouse.move(px + i * 3, py + i * 3);
+await pad.mouse.up();
+
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length > 0, null, { timeout: 20000 });
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 });
+await screen.waitForTimeout(300);
+
+const info = await screen.evaluate(({ fx, fy }) => {
+  const stage = document.querySelector('#stage');
+  const svg = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot.querySelector('svg.podium-on');
+  const viewBox = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+  const aspect = viewBox[2] / viewBox[3];
+  const w = stage.clientWidth, h = stage.clientHeight;
+  const stageAspect = w / h;
+  let rect;
+  if (stageAspect > aspect) { const cw = h * aspect; rect = { x: (w - cw) / 2, y: 0, w: cw, h }; }
+  else { const ch = w / aspect; rect = { x: 0, y: (h - ch) / 2, w, h: ch }; }
+  const cv = document.querySelector('#ink'); const c2d = cv.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const data = c2d.getImageData(0, 0, cv.width, cv.height).data;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+    const i = (y * cv.width + x) * 4;
+    if (data[i + 3] > 0) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+  }
+  return { rect, painted: { x: (minX + maxX) / 2 / dpr, y: (minY + maxY) / 2 / dpr }, expected: { x: rect.x + fx * rect.w, y: rect.y + fy * rect.h } };
+}, { fx, fy });
+const dx = Math.abs(info.painted.x - info.expected.x), dy = Math.abs(info.painted.y - info.expected.y);
+ok(`a stroke drawn the instant a real deck is picked still lands on the spot it was drawn (dx=${dx.toFixed(1)}, dy=${dy.toFixed(1)})`, dx < 15 && dy < 15);
+await ctx.close();
+}
+
 console.log('\n-- ink recovers even if a fullscreen transition never fires a resize event --');
 {
 // requestFullscreen()'s promise is documented to settle before the viewport
