@@ -20,6 +20,7 @@ const stage = $('#stage');
 const inkCanvas = $('#ink');
 const blankEl = $('#blank');
 const overlayEl = $('#overlay');
+const laserEl = $('#laser');
 const hud = $('#hud');
 const standby = $('#standby');
 const setupEl = $('#setup');
@@ -94,6 +95,7 @@ function mount(layer, item) {
     getTimer: () => state.timer,
     getStream: () => cameraStream,
     getCameraStatus: () => cameraStatus,
+    getFrozen: () => state.frozen,
     getDeckSource,
   });
   layer.node.append(layer.renderer.el);
@@ -227,6 +229,33 @@ function redrawInk(force = false) {
   inkCanvas.classList.toggle('has-ink', strokes.length > 0);
 }
 
+// --- laser pointer -----------------------------------------------------------
+//
+// Deliberately outside `state`: a live gesture, not a document. Positions
+// arrive already mapped through the controller's own content-shaped preview,
+// so the same fraction lands in the same spot here via contentRect() - the
+// letterboxed slide's own bounds, exactly like ink.
+
+let laserHideTimer = null;
+
+function showLaser(msg) {
+  if (!msg?.on) { hideLaser(); return; }
+  const rect = contentRect();
+  laserEl.style.left = `${rect.x + (Number(msg.x) || 0) * rect.w}px`;
+  laserEl.style.top = `${rect.y + (Number(msg.y) || 0) * rect.h}px`;
+  laserEl.classList.add('is-on');
+  // A lost "stop" message (a backgrounded tab dropping the pointerup, a
+  // dead connection mid-drag) should not leave a dot glowing on the
+  // projector for the rest of the lecture.
+  clearTimeout(laserHideTimer);
+  laserHideTimer = setTimeout(hideLaser, 1500);
+}
+
+function hideLaser() {
+  clearTimeout(laserHideTimer);
+  laserEl.classList.remove('is-on');
+}
+
 // --- rendering the rest of the chrome --------------------------------------
 
 function render() {
@@ -355,6 +384,7 @@ async function connect() {
       }
       if (msg.t === 'rtc') { camera.handle(msg); return; }
       if (msg.t === 'sync') { broadcast(); return; }
+      if (msg.t === 'laser') { showLaser(msg); return; }
       if (msg.t === 'ink-need') {
         // Exporting marked-up slides: hand back every surface belonging to
         // this deck, keyed by slide index, so the controller can composite

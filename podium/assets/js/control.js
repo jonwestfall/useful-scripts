@@ -211,6 +211,13 @@ function renderPreview() {
 
 // --- Marp deck panel --------------------------------------------------------
 
+// "Now" and "Next" live previews - a confidence monitor for the deck on
+// screen, declared up front since renderSlides() needs them from its first
+// call; createLiveMirror itself is defined down with the ink pad, which it
+// shares its "contain"-fit geometry with.
+const nowMirror = createLiveMirror($('#deck-now-preview'));
+const nextMirror = createLiveMirror($('#deck-next-preview'));
+
 let gridShadow = null;
 let gridDeckId = null;
 
@@ -326,8 +333,17 @@ function renderSlides() {
     notesEl.classList.toggle('is-empty', !note);
   }
 
-  const upcoming = deck?.titles?.[index + 1];
-  $('#deck-next-up').textContent = upcoming ? `${index + 2}. ${upcoming}` : 'End of deck.';
+  // "Now" mirrors exactly what the projector shows, build step included.
+  // "Next" is always shown fully built - you are looking ahead to what is
+  // coming, not rehearsing its reveal.
+  nowMirror.update(item);
+  if (index + 1 < total) {
+    nextMirror.update({ ...item, slide: index + 1, step: (item.fragments && item.fragments[index + 1]) || 0 });
+    $('#deck-next-title').textContent = deck?.titles?.[index + 1] ? `${index + 2}. ${deck.titles[index + 1]}` : `Slide ${index + 2}`;
+  } else {
+    nextMirror.update(null);
+    $('#deck-next-title').textContent = 'End of deck';
+  }
 
   const problems = [deck?.themeWarning, ...themeReport.failed].filter(Boolean);
   const themeEl = $('#deck-theme');
@@ -554,6 +570,7 @@ function renderAll() {
 
 const padViewport = $('#pad-viewport');
 const padFrame = $('#pad-frame');
+const padMirror = $('#pad-mirror');
 const pad = $('#pad');
 const padCtx = pad.getContext('2d');
 const ink = { drawing: false, strokeId: null, buffer: [], penOnly: false, color: '#ffd166', width: 6, strokes: [] };
@@ -571,8 +588,12 @@ let frameH = 0;
 const ZOOM_MAX = 4;
 const ZOOM_STEP = 1.6;
 
-function computeContentAspect() {
-  const item = state.program;
+// Any deck slide's own aspect ratio (from its viewBox, via deckView's already-
+// rendered copy), falling back to the display's own window shape for content
+// with no fixed shape of its own (a whiteboard fills whatever window it is
+// on). Takes an explicit item so it can also answer for a slide that is not
+// the one currently on screen - "Next", in the Slides tab.
+function contentAspectFor(item) {
   if (item?.type === 'deck' && deckView.id === item.deckId && deckView.deck?.aspects?.length) {
     const idx = Math.min(deckView.deck.aspects.length - 1, Math.max(0, item.slide || 0));
     return deckView.deck.aspects[idx] || 16 / 9;
@@ -580,19 +601,73 @@ function computeContentAspect() {
   return state.stageAspect || 16 / 9;
 }
 
-function fitFrame() {
-  const vp = padViewport.getBoundingClientRect();
-  if (!vp.width || !vp.height) return;
-  const aspect = computeContentAspect();
+const computeContentAspect = () => contentAspectFor(state.program);
+
+// The "contain" fit math the display itself uses to letterbox a slide: sizes
+// and centers `frame` inside `viewport` to the given aspect ratio. Shared by
+// the ink pad and by every live content mirror (see createLiveMirror), so a
+// slide always looks - and, on the pad, captures pointer input - in correct
+// proportion no matter how the container around it is shaped.
+function fitBox(viewport, frame, aspect) {
+  const vp = viewport.getBoundingClientRect();
+  if (!vp.width || !vp.height) return { w: 0, h: 0 };
   let w = vp.width;
   let h = w / aspect;
   if (h > vp.height) { h = vp.height; w = h * aspect; }
+  frame.style.width = `${w}px`;
+  frame.style.height = `${h}px`;
+  frame.style.left = `${(vp.width - w) / 2}px`;
+  frame.style.top = `${(vp.height - h) / 2}px`;
+  return { w, h };
+}
+
+function fitFrame() {
+  const { w, h } = fitBox(padViewport, padFrame, computeContentAspect());
   frameW = w;
   frameH = h;
-  padFrame.style.width = `${w}px`;
-  padFrame.style.height = `${h}px`;
-  padFrame.style.left = `${(vp.width - w) / 2}px`;
-  padFrame.style.top = `${(vp.height - h) / 2}px`;
+}
+
+// A live, read-only rendering of an item - the actual slide, whiteboard
+// color, or camera feed - shaped to its own content box. Used as the
+// background you draw on top of in the Ink tab (so you can see what you are
+// marking up) and as the "Now" / "Next" preview in the Slides tab. Distinct
+// from `previewRenderer` (the small on-screen/cued thumbnail at the top of
+// the app), which always mirrors program-or-preview rather than an arbitrary
+// item like a synthesized "next slide".
+function createLiveMirror(container) {
+  container.replaceChildren();
+  const viewport = el('div', { class: 'mirror-viewport' });
+  const frame = el('div', { class: 'mirror-frame' });
+  viewport.append(frame);
+  container.append(viewport);
+  let renderer = null;
+  let mountedKey = null;
+
+  // Regrouping by type+source (not the item's own one-shot `.key`, which is
+  // fresh on every stage) is what lets update() hand the same mounted deck a
+  // new slide/step without a full remount.
+  const identity = (item) => (item ? `${item.type}:${item.deckId || item.src || ''}` : null);
+
+  function update(item) {
+    fitBox(viewport, frame, contentAspectFor(item));
+    const key = identity(item);
+    if (key !== mountedKey) {
+      renderer?.destroy();
+      frame.replaceChildren();
+      mountedKey = key;
+      renderer = item ? createRenderer(item, { preview: true, getTimer: () => state.timer, getDeckSource }) : null;
+      if (renderer) frame.append(renderer.el);
+    } else {
+      renderer?.update(item);
+    }
+  }
+
+  function destroy() {
+    renderer?.destroy();
+    container.replaceChildren();
+  }
+
+  return { viewport, frame, update, destroy };
 }
 
 function applyPadTransform() {
@@ -650,6 +725,28 @@ function sizePad() {
   pad.height = Math.max(1, Math.round(frameH * ratio));
   padCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
   redrawPad();
+  updatePadMirror();
+}
+
+// A read-only mirror of whatever ink is currently drawing on top of, filling
+// #pad-frame exactly (which sizePad already keeps fit to the content's own
+// shape) - so annotating a slide means seeing the slide, not a blank sheet.
+let padMirrorRenderer = null;
+let padMirrorKey = null;
+let showMirror = true;
+
+function updatePadMirror() {
+  const item = state.program;
+  const key = item ? `${item.type}:${item.deckId || item.src || ''}` : null;
+  if (key !== padMirrorKey) {
+    padMirrorRenderer?.destroy();
+    padMirror.replaceChildren();
+    padMirrorKey = key;
+    padMirrorRenderer = item ? createRenderer(item, { preview: true, getTimer: () => state.timer, getDeckSource }) : null;
+    if (padMirrorRenderer) padMirror.append(padMirrorRenderer.el);
+  } else {
+    padMirrorRenderer?.update(item);
+  }
 }
 
 function redrawPad() {
@@ -736,6 +833,12 @@ pad.addEventListener('touchstart', (ev) => ev.preventDefault(), { passive: false
 $('#ink-zoom-in').addEventListener('click', () => setZoom(zoom * ZOOM_STEP));
 $('#ink-zoom-out').addEventListener('click', () => setZoom(zoom / ZOOM_STEP));
 $('#ink-zoom-reset').addEventListener('click', () => setZoom(1));
+$('#ink-toggle-mirror').addEventListener('click', (ev) => {
+  showMirror = !showMirror;
+  padMirror.classList.toggle('is-hidden', !showMirror);
+  ev.currentTarget.classList.toggle('is-on', showMirror);
+  ev.currentTarget.textContent = showMirror ? 'Showing slide' : 'Slide hidden';
+});
 const PAN_STEP = 80;
 $('#pan-up').addEventListener('click', () => pan(0, PAN_STEP));
 $('#pan-down').addEventListener('click', () => pan(0, -PAN_STEP));
@@ -873,7 +976,13 @@ async function connect() {
 function tab(name) {
   $$('.tab').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
   $$('.panel').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+  // A box measured while its panel is [hidden] gets 0x0 back from
+  // getBoundingClientRect() and fitBox() quietly declines to size anything
+  // from that, so every "contain"-fit surface needs a nudge the moment its
+  // panel actually has a size to fit into - it would otherwise sit blank
+  // until whatever periodic update happens to land next.
   if (name === 'ink') { syncInkFromState(); sizePad(); }
+  if (name === 'slides') renderSlides();
 }
 
 $$('.tab').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
@@ -899,6 +1008,64 @@ $('#scrub').addEventListener('change', (ev) => {
 $('#deck-prev').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
 $('#deck-next').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
 $('#deck-export').addEventListener('click', exportDeck);
+
+// --- laser pointer -----------------------------------------------------------
+//
+// Drag on the "Now" preview and a dot follows your finger on the projector,
+// mapped through the same content-shaped box the mirror already fits itself
+// to. Deliberately not part of `state`: it is a live gesture, not a document
+// - no undo, no persistence, no broadcast to reconcile, just raw position
+// messages the display renders directly and forgets.
+
+$('#deck-markup').addEventListener('click', () => tab('ink'));
+
+let laserActive = false;
+const laserDot = el('div', { class: 'laser-dot' });
+$('#deck-now-preview').append(laserDot);
+
+function setLaserActive(on) {
+  laserActive = on;
+  $('#deck-laser').classList.toggle('is-on', on);
+  nowMirror.frame.classList.toggle('laser-armed', on);
+  if (!on) { laserDot.classList.remove('is-on'); bus?.send({ t: 'laser', on: false }); }
+}
+$('#deck-laser').addEventListener('click', () => setLaserActive(!laserActive));
+
+function laserPoint(ev) {
+  const rect = nowMirror.frame.getBoundingClientRect();
+  return [(ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height];
+}
+
+const sendLaser = throttle((x, y) => bus?.send({ t: 'laser', x, y, on: true }), 40);
+let laserDragging = false;
+
+nowMirror.frame.addEventListener('pointerdown', (ev) => {
+  if (!laserActive) return;
+  laserDragging = true;
+  nowMirror.frame.setPointerCapture(ev.pointerId);
+  const [x, y] = laserPoint(ev);
+  laserDot.style.left = `${x * 100}%`;
+  laserDot.style.top = `${y * 100}%`;
+  laserDot.classList.add('is-on');
+  sendLaser(x, y);
+});
+nowMirror.frame.addEventListener('pointermove', (ev) => {
+  if (!laserDragging) return;
+  ev.preventDefault();
+  const [x, y] = laserPoint(ev);
+  laserDot.style.left = `${x * 100}%`;
+  laserDot.style.top = `${y * 100}%`;
+  sendLaser(x, y);
+});
+const endLaserDrag = (ev) => {
+  if (!laserDragging) return;
+  laserDragging = false;
+  laserDot.classList.remove('is-on');
+  bus?.send({ t: 'laser', on: false });
+  try { nowMirror.frame.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
+};
+nowMirror.frame.addEventListener('pointerup', endLaserDrag);
+nowMirror.frame.addEventListener('pointercancel', endLaserDrag);
 
 $('#deck-file').addEventListener('change', async (ev) => {
   const file = ev.target.files?.[0];

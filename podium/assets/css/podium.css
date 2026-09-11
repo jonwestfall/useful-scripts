@@ -95,6 +95,15 @@ body.display #overlay {
 }
 body.display #overlay.is-on { transform: none; }
 
+body.display #laser {
+  position: fixed; top: 0; left: 0; width: 34px; height: 34px; z-index: 6;
+  border-radius: 50%; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle, rgba(255,64,64,.95) 0%, rgba(255,64,64,.55) 45%, transparent 72%);
+  box-shadow: 0 0 18px 4px rgba(255,64,64,.65);
+  transform: translate(-50%, -50%);
+}
+body.display #laser.is-on { opacity: 1; }
+
 body.display #hud {
   position: fixed; right: 14px; bottom: 12px; z-index: 9;
   padding: 7px 13px; border-radius: 999px;
@@ -210,6 +219,12 @@ body.display #standby:not(.is-on) { display: none; }
 .r-camera { background: #000; }
 .r-camera-hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: clamp(9px, 2.2cqw, 22px); text-align: center; padding: 0 4cqw; }
 .r-camera.has-stream .r-camera-hint { display: none; }
+.r-camera-frozen {
+  position: absolute; top: 3cqh; left: 3cqw; padding: .4em .9em; border-radius: 999px;
+  background: rgba(20, 12, 0, .78); color: var(--cue); font-size: clamp(9px, 1.8cqw, 16px);
+  font-weight: 600; letter-spacing: .04em; text-transform: uppercase; display: none;
+}
+.r-camera.has-stream.is-frozen .r-camera-frozen { display: block; }
 
 /* ===================== CONTROLLER ================================= */
 
@@ -312,6 +327,28 @@ body.control.is-frozen { background: #171006; }
 #deck-count { font-size: 15px; color: var(--dim); white-space: nowrap; }
 #deck-theme.is-warning { color: var(--cue); }
 .deck-nav button { flex: 1; min-height: 58px; font-size: 17px; font-weight: 600; }
+
+/* Now / Next confidence monitor */
+.confidence-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.confidence-box { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.confidence-label {
+  font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+}
+.confidence-preview {
+  position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius);
+  overflow: hidden; border: 2px solid var(--line); background: #101418;
+}
+#deck-now-preview { border-color: var(--accent); }
+#deck-now-preview .mirror-frame.laser-armed { cursor: crosshair; touch-action: none; }
+#deck-markup, #deck-laser { flex: 1; font-size: 13px; min-height: 38px; padding: 0 8px; }
+#deck-laser.is-on { background: var(--live); border-color: var(--live); color: #fff; }
+.laser-dot {
+  position: absolute; width: 22px; height: 22px; border-radius: 50%;
+  background: radial-gradient(circle, #ff4d4f 0%, rgba(255,77,79,.35) 60%, transparent 75%);
+  transform: translate(-50%, -50%); pointer-events: none; opacity: 0; z-index: 5;
+}
+.laser-dot.is-on { opacity: 1; }
+#deck-next-title { margin: 0; }
 .notes-head {
   margin-top: 4px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
 }
@@ -345,14 +382,29 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
    cannot win against the inset an absolutely-positioned element would
    otherwise need, so the "contain"-style fit is computed in pixels instead. */
 #pad-frame {
-  position: absolute; transform-origin: 0 0;
+  position: absolute; transform-origin: 0 0; background: #101418;
 }
+/* The live slide/whiteboard/camera you are drawing on top of. Sits behind the
+   ink canvas (which is fully transparent outside your strokes) and can be
+   hidden without losing anything - it is a read-only mirror, never the
+   surface pointer events land on. */
+#pad-mirror {
+  position: absolute; inset: 0; pointer-events: none; overflow: hidden;
+  background: #101418;
+}
+#pad-mirror.is-hidden { display: none; }
 #pad {
-  width: 100%; height: 100%; background: #101418;
+  position: absolute; inset: 0; width: 100%; height: 100%; background: transparent;
   touch-action: none; display: block;
 }
 #ink-zoom-level { min-width: 3em; text-align: center; color: var(--dim); }
 .pan-btn { width: 44px; padding: 0; }
+
+/* Shared by the Slides tab's Now/Next preview boxes. */
+.mirror-viewport {
+  position: relative; width: 100%; height: 100%; overflow: hidden; background: #101418;
+}
+.mirror-frame { position: absolute; background: #101418; }
 .swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; }
 .swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
 

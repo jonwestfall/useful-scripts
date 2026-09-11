@@ -983,6 +983,154 @@ ok(`the controller reports success: ${JSON.stringify(statusText)}`, /saved/i.tes
 await ctx.close();
 }
 
+console.log('\n-- freezing a camera holds its current frame --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['camera'] });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'cam-freeze-room', passphrase: 'hold that frame' }));
+const screen = await ctx.newPage();
+trap(screen, 'camfreeze display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const phone = await ctx.newPage();
+trap(phone, 'camfreeze phone');
+await phone.goto(`${BASE}/control.html`);
+await phone.waitForSelector('.tile');
+await phone.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await phone.click('.tile:has(.tile-title:text-is("Phone camera"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-camera')?.classList.contains('has-stream'), null, { timeout: 15000 });
+ok('the camera is live and playing', !(await screen.evaluate(() => document.querySelector('.r-video').paused)));
+
+await phone.click('#freeze');
+await screen.waitForFunction(() => document.body.classList.contains('is-frozen'));
+await screen.waitForFunction(() => document.querySelector('.r-video').paused, null, { timeout: 5000 });
+ok('freezing pauses the live feed on its current frame', true);
+ok('and shows a Frozen badge on the projector', await screen.evaluate(() => getComputedStyle(document.querySelector('.r-camera-frozen')).display !== 'none'));
+
+await phone.click('#freeze');
+await screen.waitForFunction(() => !document.body.classList.contains('is-frozen'));
+await screen.waitForFunction(() => !document.querySelector('.r-video').paused, null, { timeout: 5000 });
+ok('unfreezing resumes the live view', true);
+await ctx.close();
+}
+
+console.log('\n-- the Ink tab shows what you are drawing on, and can hide it --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'ink-mirror-room', passphrase: 'see what you draw on' }));
+const screen = await ctx.newPage();
+trap(screen, 'inkmirror display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'inkmirror control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 20000 });
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(500);
+ok('the ink pad mirrors the actual slide behind the canvas', await pad.evaluate(() => document.querySelector('#pad-mirror').querySelector('.r-deck') !== null));
+
+await pad.click('#ink-toggle-mirror');
+ok('a toggle can hide that mirror', await pad.evaluate(() => document.querySelector('#pad-mirror').classList.contains('is-hidden')));
+await pad.click('#ink-toggle-mirror');
+ok('and show it again', !(await pad.evaluate(() => document.querySelector('#pad-mirror').classList.contains('is-hidden'))));
+await ctx.close();
+}
+
+console.log('\n-- Slides tab: a Now/Next confidence monitor, Markup, and a laser pointer --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'confidence-room', passphrase: 'now and next' }));
+const screen = await ctx.newPage();
+trap(screen, 'confidence display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'confidence control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 20000 });
+// A box measured while its panel was [hidden] gets 0x0 back from
+// getBoundingClientRect(), which fitBox() quietly declines to size anything
+// from - switching tabs cold, with no extra wait, is what catches a mirror
+// left permanently zero-sized rather than merely "not mounted yet".
+await pad.click('.tab[data-tab="slides"]');
+
+ok('the Now box mirrors the live deck', await pad.evaluate(() => document.querySelector('#deck-now-preview').querySelector('.r-deck') !== null));
+ok('and its frame is actually sized, not left blank from a hidden-panel measurement',
+   await pad.$eval('#deck-now-preview .mirror-frame', (n) => n.getBoundingClientRect().width > 20));
+ok('the Next box previews the deck too', await pad.evaluate(() => document.querySelector('#deck-next-preview').querySelector('.r-deck') !== null));
+ok('and its frame is sized too', await pad.$eval('#deck-next-preview .mirror-frame', (n) => n.getBoundingClientRect().width > 20));
+ok('Next names the upcoming slide', (await pad.textContent('#deck-next-title')).startsWith('2.'));
+
+await pad.click('#deck-next'); await pad.click('#deck-next'); await pad.click('#deck-next');
+await pad.waitForTimeout(400);
+ok('Next reads "End of deck" once there is nothing left to look ahead to', (await pad.textContent('#deck-next-title')) === 'End of deck');
+
+await pad.click('#deck-markup');
+ok('Markup jumps straight to the Ink tab', await pad.evaluate(() => document.querySelector('.tab[data-tab="ink"]').classList.contains('is-on')));
+
+await pad.click('.tab[data-tab="slides"]');
+await pad.waitForTimeout(300);
+await pad.click('#deck-laser');
+ok('Laser arms', await pad.evaluate(() => document.querySelector('#deck-laser').classList.contains('is-on')));
+const box = await pad.$eval('#deck-now-preview .mirror-frame', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(box.x + box.w * 0.5, box.y + box.h * 0.5);
+await pad.mouse.down();
+await screen.waitForFunction(() => document.querySelector('#laser').classList.contains('is-on'), null, { timeout: 5000 });
+const stage = await screen.evaluate(() => ({ w: document.querySelector('#stage').clientWidth, h: document.querySelector('#stage').clientHeight }));
+const dot1 = await screen.evaluate(() => { const l = document.querySelector('#laser'); return { x: parseFloat(l.style.left), y: parseFloat(l.style.top) }; });
+ok('a laser dot appears on the projector, at the content center', Math.abs(dot1.x - stage.w / 2) < 40 && Math.abs(dot1.y - stage.h / 2) < 40);
+
+await pad.mouse.move(box.x + box.w * 0.85, box.y + box.h * 0.15);
+await screen.waitForTimeout(150);
+const dot2 = await screen.evaluate(() => { const l = document.querySelector('#laser'); return { x: parseFloat(l.style.left), y: parseFloat(l.style.top) }; });
+ok('the dot tracks the drag', dot2.x > dot1.x && dot2.y < dot1.y);
+
+await pad.mouse.up();
+await screen.waitForFunction(() => !document.querySelector('#laser').classList.contains('is-on'), null, { timeout: 3000 });
+ok('releasing hides the dot - nothing is left behind, nothing was saved', true);
+await ctx.close();
+}
+
+console.log('\n-- waiting music actually plays --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'music-room', passphrase: 'between classes' }));
+const screen = await ctx.newPage();
+trap(screen, 'music display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'music control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Waiting music"))');
+await screen.waitForFunction(() => {
+  const a = document.querySelector('.layer[data-role="program"] audio');
+  return a && !a.paused && a.currentTime > 0.3;
+}, null, { timeout: 8000 });
+ok('picking "Waiting music" from the library actually plays sound', true);
+await ctx.close();
+}
+
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
 } finally {
   await browser?.close().catch(() => {});

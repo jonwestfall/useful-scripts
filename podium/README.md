@@ -191,6 +191,23 @@ in raw HTML — `<p class="build">…</p>`, `<div class="build">…</div>` — a
 builds those, in order, instead of auto-numbering `<li>`s. `example-builds.md` in
 the library demonstrates both.
 
+### The Slides tab: Now, Next, Markup, Laser
+
+Alongside the notes and the Previous/Next buttons, the Slides tab shows a small
+**confidence monitor**: a live "Now" box (exactly what the projector shows, build
+step included) and a "Next" box (the slide coming up, always shown fully built —
+you are looking ahead, not rehearsing its reveal). "End of deck" replaces Next on
+the last slide.
+
+Two things live on the Now box:
+
+- **✎ Markup** jumps to the Ink tab, already lined up on the slide you are looking
+  at — no separate step to pick the right surface.
+- **🔴 Laser** turns the Now box itself into a pointer. Drag on it and a red dot
+  follows your finger on the real screen, mapped onto the slide's own bounds the
+  same way ink is; lift your finger and it is gone. Nothing about it is saved or
+  undoable — it is a live gesture, not a mark on the slide.
+
 ### Themes
 
 Put your CSS in `marp-themes/` and list the filename in `marp-themes/themes.json`.
@@ -244,9 +261,12 @@ to that browser as you go, so it survives an accidental reload mid-lecture.
 The pad on the Ink tab is shaped to match the content exactly — a deck slide's own
 aspect ratio, or the display's window shape for a full-bleed whiteboard — so the
 whole pad **is** the drawable area, edge to edge. There is no dead margin around it
-to draw into by mistake, whatever shape the classroom PC's window happens to be.
-**Zoom** and the pan arrows next to it are a pure magnifier for a steadier line; they
-never change where a stroke actually lands.
+to draw into by mistake, whatever shape the classroom PC's window happens to be. It
+also shows a live mirror of what is actually on screen *behind* your strokes, so you
+can see what you are marking up rather than drawing blind on a black square —
+**Showing slide** / **Slide hidden** at the bottom of the pad toggles it off if it is
+ever distracting. **Zoom** and the pan arrows next to it are a pure magnifier for a
+steadier line; they never change where a stroke actually lands.
 
 **Export marked-up slides** (Slides tab, while a deck is on screen) rasterizes every
 slide with its own ink baked in and downloads a `.zip` — `slide-01.png`,
@@ -271,6 +291,35 @@ controller — it works out what it is — and tick **Save** to keep it.
 
 Large videos do not belong in a git repo. Host them on the VPS, or use an unlisted
 YouTube link.
+
+The manifest ships with two groups: **Working examples** actually play, right now,
+with files already in this repo — including a synthesized "Waiting music" loop, so
+you can see what a real entry looks like before writing your own. **Template — point
+these at your files** shows the format for content that has to be yours (a PDF, a
+photo, a video); those `src` paths do not exist yet, and picking one shows an error
+until you replace it or delete the entry — that is expected, not a bug.
+
+### Audio and waiting music
+
+Two ways to get a sound file onto the projector, same pattern as everything else:
+
+- **Paste its URL** into the Library tab, if it is already hosted somewhere (your
+  course site, Dropbox, anywhere reachable). No manifest edit, no upload — the
+  fastest path for something you only need once.
+- **Drop it in `content/audio/`** and add one line to `content/manifest.json` for a
+  permanent tile, the same way a deck goes in `content/decks/`:
+
+  ```json
+  { "group": "Between classes", "title": "Waiting music",
+    "type": "audio", "src": "content/audio/your-file.mp3", "loop": true }
+  ```
+
+mp3, wav, ogg, m4a and flac all work. There is no third path — a file picked
+straight from your iPad's Files app cannot be shipped to the classroom PC the way a
+markdown deck can: decks are a few kilobytes and travel fine as text over the same
+encrypted channel as everything else, but even a short mp3 is megabytes, past what a
+public MQTT broker or most transports will pass through as a single message. Audio
+needs to be reachable by URL for the display to fetch it directly.
 
 ## What to expect in a real room
 
@@ -298,7 +347,11 @@ TURN server. On a normal campus network this connects; on a guest network with c
 isolation it will not — both ends now time out after 15 seconds rather than sitting
 on "Connecting…" forever, and say plainly that the two devices could not reach each
 other. Either the **Phone camera** tile in the library or the Camera tab's own button
-starts it; both ask for the camera and open the connection the same way.
+starts it; both ask for the camera and open the connection the same way. **Freeze**
+pauses the live feed on its current frame — there is no timeline to hold otherwise,
+so this is what "freeze" means for a camera — and a small **Frozen** badge says so on
+the projector; unfreezing (or taking a cue) simply resumes showing whatever is live
+by then.
 
 **You cannot mirror the iPad's screen.** iOS Safari has no screen-capture API, so no
 web app can do this. The camera feed and the content library are the way around it —
@@ -387,12 +440,16 @@ node podium/test/e2e.mjs                    # needs: npm i playwright
 The end-to-end test starts the relay, drives a display and two controllers in real
 browsers, and checks the things that would embarrass you in front of a class: freeze
 really holds even while paging through the deck already on screen (and never touches
-playing audio), TAKE does not reload the cued item, ink lands inside a letterboxed
-slide's own bounds and never on unrelated content, a build's bullets arrive one at a
-time, the phone-camera tile actually opens the connection (Chromium's synthetic
-camera, no real hardware or permission prompt needed), export produces a real,
-valid-PNG-containing zip, a countdown ticks on the display, and a controller with the
-wrong passphrase cannot touch the screen.
+playing audio, and pauses a live camera on its current frame rather than pretending
+it can hold a still one), TAKE does not reload the cued item, ink lands inside a
+letterboxed slide's own bounds and never on unrelated content, the Ink tab actually
+shows what you are drawing on, a build's bullets arrive one at a time, the Now/Next
+confidence boxes stay correctly sized even switching tabs cold, a dragged laser
+pointer tracks and vanishes on release, the phone-camera tile actually opens the
+connection (Chromium's synthetic camera, no real hardware or permission prompt
+needed), export produces a real, valid-PNG-containing zip, waiting music actually
+plays, a countdown ticks on the display, and a controller with the wrong passphrase
+cannot touch the screen.
 
 ## Layout
 

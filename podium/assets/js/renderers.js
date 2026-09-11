@@ -403,7 +403,8 @@ function renderCamera(item, opts) {
   const video = el('video', { class: 'r-video', autoplay: true, playsinline: true, muted: true });
   video.muted = true;
   const hint = el('div', { class: 'r-camera-hint' }, CAMERA_HINTS.idle);
-  const node = el('div', { class: 'r-fill r-camera' }, video, hint);
+  const frozenBadge = el('div', { class: 'r-camera-frozen' }, 'Frozen');
+  const node = el('div', { class: 'r-fill r-camera' }, video, hint, frozenBadge);
   const attach = () => {
     const stream = opts.getStream?.();
     if (stream && video.srcObject !== stream) {
@@ -414,11 +415,23 @@ function renderCamera(item, opts) {
     node.classList.toggle('has-stream', hasStream);
     if (!hasStream) hint.textContent = CAMERA_HINTS[opts.getCameraStatus?.() || 'idle'] ?? CAMERA_HINTS.idle;
   };
+  // A camera feed is live video with no timeline of its own, so freezing it
+  // has to mean something different than it does for a deck: pausing the
+  // <video> element holds its current frame on screen (the underlying stream
+  // keeps arriving invisibly) while unfreezing simply resumes rendering
+  // whatever is live by then - there is no "seek back to where it paused".
+  const syncFreeze = () => {
+    if (!video.srcObject) return;
+    const frozen = !!opts.getFrozen?.();
+    node.classList.toggle('is-frozen', frozen);
+    if (frozen && !video.paused) video.pause();
+    else if (!frozen && video.paused) video.play().catch(() => {});
+  };
   attach();
   return {
     el: node,
-    update() { attach(); },
-    reconcile() { attach(); },
+    update() { attach(); syncFreeze(); },
+    reconcile() { attach(); syncFreeze(); },
     telemetry: noTelemetry,
     destroy() { video.srcObject = null; node.remove(); },
   };

@@ -94,14 +94,34 @@
               </div>
               <div id="deck-count" class="mono"></div>
             </div>
+
+            <div class="confidence-row">
+              <div class="confidence-box">
+                <div class="confidence-label">Now</div>
+                <div id="deck-now-preview" class="confidence-preview"></div>
+                <div class="inline">
+                  <button id="deck-markup" type="button">✎ Markup</button>
+                  <button id="deck-laser" type="button">🔴 Laser</button>
+                </div>
+              </div>
+              <div class="confidence-box">
+                <div class="confidence-label">Next</div>
+                <div id="deck-next-preview" class="confidence-preview"></div>
+                <div id="deck-next-title" class="hint"></div>
+              </div>
+            </div>
+            <p class="hint">
+              <b>Markup</b> jumps to the Ink tab, already lined up on this slide.
+              <b>Laser</b> turns the Now box into a pointer: drag on it and a dot follows your
+              finger on the projector, gone the moment you lift it - nothing is saved.
+            </p>
+
             <div class="inline deck-nav">
               <button id="deck-prev" type="button">◀ Previous</button>
               <button id="deck-next" type="button">Next ▶</button>
             </div>
             <div class="notes-head">Presenter notes</div>
             <div id="deck-notes" class="notes"></div>
-            <div class="notes-head">Coming up</div>
-            <div id="deck-next-up" class="hint"></div>
             <div class="notes-head">Jump to a slide</div>
             <div id="deck-grid"></div>
             <div class="notes-head">Export</div>
@@ -146,6 +166,7 @@
         <section class="panel" data-panel="ink" hidden>
           <div id="pad-viewport">
             <div id="pad-frame">
+              <div id="pad-mirror"></div>
               <canvas id="pad"></canvas>
             </div>
           </div>
@@ -154,6 +175,7 @@
             <span id="ink-zoom-level" class="mono">1×</span>
             <button id="ink-zoom-in" type="button" title="Zoom in">+</button>
             <button id="ink-zoom-reset" type="button">Reset zoom</button>
+            <button id="ink-toggle-mirror" type="button" class="is-on">Showing slide</button>
           </div>
           <div class="inline">
             <span class="hint" style="margin:0">Pan (once zoomed):</span>
