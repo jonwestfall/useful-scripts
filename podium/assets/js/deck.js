@@ -33,6 +33,16 @@ const HTML_ALLOWLIST = {
 let enginePromise = null;
 export const themeReport = { loaded: [], failed: [] };
 
+// Shared with every place a deck gets rendered (the live display, the
+// controller's cue preview, its slide thumbnails) so a build behaves the same
+// wherever it shows up: hidden until its step, then a gentle fade in place -
+// PowerPoint's "appear" animation, not a jump that reflows the rest of the
+// bullets.
+export const FRAGMENT_CSS = `
+  .podium-fragment { opacity: 0; transition: opacity .35s ease; }
+  .podium-fragment.is-shown { opacity: 1; }
+`;
+
 async function loadEngine() {
   const { Marp, browser } = await import(/* @vite-ignore */ MARP_URL);
 
@@ -97,13 +107,42 @@ export async function deckId(source) {
 
 const cache = new Map();
 
-function outline(html) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  return Array.from(doc.querySelectorAll('svg[data-marpit-svg] section')).map((section, i) => {
+function outline(root) {
+  return Array.from(root.querySelectorAll('svg[data-marpit-svg] section')).map((section, i) => {
     const heading = section.querySelector('h1, h2, h3, h4');
     const text = (heading?.textContent || section.textContent || '').trim().replace(/\s+/g, ' ');
     return text.slice(0, 70) || `Slide ${i + 1}`;
   });
+}
+
+// Marp itself has no concept of a PowerPoint-style "build" (each `---` is one
+// static slide) - this is Podium's own convention layered on top. Opt a slide
+// in with `<!-- _class: build -->`; every bullet on it (and any element you
+// mark yourself with `<span class="build">…</span>` or similar raw HTML,
+// wherever it is) then arrives one at a time as Next is pressed, instead of
+// the whole slide appearing at once.
+//
+// Marks each fragment with a numbered data attribute (read by the deck
+// renderer to decide what is visible at a given step) and returns how many
+// fragments each slide has, so the protocol layer can drive Next/Previous
+// through the build before it moves to the next slide.
+function markFragments(root) {
+  const fragments = [];
+  const sections = root.querySelectorAll('svg[data-marpit-svg] section');
+  sections.forEach((section) => {
+    const explicit = Array.from(section.querySelectorAll('.build, [data-build]'));
+    // Auto-build: opting a slide in without hand-marking anything treats each
+    // top-level bullet as one step, which is what most decks actually want.
+    const candidates = explicit.length
+      ? explicit
+      : (section.classList.contains('build') ? Array.from(section.querySelectorAll('li')) : []);
+    candidates.forEach((node, i) => {
+      node.classList.add('podium-fragment');
+      node.dataset.podiumFragment = String(i + 1);
+    });
+    fragments.push(candidates.length);
+  });
+  return fragments;
 }
 
 /**
@@ -116,7 +155,21 @@ export async function render(source, id) {
 
   const marp = await createMarp();
   const { html, css, comments } = marp.render(source);
-  const titles = outline(html);
+
+  // Parse once, mutate in place to mark fragments, then re-serialize. Marp's
+  // html is one wrapping <div class="marpit"> holding every slide's <svg>.
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const root = doc.querySelector('.marpit') || doc.body;
+  const fragments = markFragments(root);
+  const titles = outline(root);
+  // The aspect ratio baked into each slide's own SVG viewBox - read once here
+  // so the controller can shape its ink pad to match a slide exactly without
+  // touching the DOM itself.
+  const aspects = Array.from(root.querySelectorAll('svg[data-marpit-svg]')).map((svg) => {
+    const box = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+    return box.length === 4 && box[2] > 0 && box[3] > 0 ? box[2] / box[3] : 16 / 9;
+  });
+  const finalHtml = root.outerHTML;
 
   // A deck naming a theme that was never installed falls back to the default
   // silently, which is a maddening thing to discover from the back of a lecture
@@ -128,7 +181,7 @@ export async function render(source, id) {
 
   const result = {
     id: key,
-    html,
+    html: finalHtml,
     css,
     theme: wanted && marp.themeSet.has(wanted) ? wanted : 'default',
     themeWarning,
@@ -137,6 +190,8 @@ export async function render(source, id) {
     // here, so what is left is genuinely presenter notes.
     notes: comments.map((list) => (list || []).join('\n\n').trim()),
     titles,
+    fragments,
+    aspects,
     count: titles.length,
   };
   cache.set(key, result);

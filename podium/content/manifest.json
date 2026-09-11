@@ -15,6 +15,12 @@
     },
     {
       "group": "Week 1",
+      "title": "Progressive builds (example)",
+      "type": "deck",
+      "src": "content/decks/example-builds.md"
+    },
+    {
+      "group": "Week 1",
       "title": "Opening slide",
       "type": "text",
       "body": "**PSY 3010**\nWorking Memory",

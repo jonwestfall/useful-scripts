@@ -295,6 +295,7 @@ body.control.is-frozen { background: #171006; }
 .stack { display: flex; flex-direction: column; gap: 10px; }
 .inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .inline > .grow { flex: 1; min-width: 140px; }
+.spacer { flex: 1; min-width: 0; }
 .check { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 14px; }
 .check input { width: auto; min-height: auto; }
 
@@ -328,12 +329,30 @@ body.control.is-frozen { background: #171006; }
 input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .times { display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
 
-/* Ink pad */
+/* Ink pad.
+   #pad-viewport is the fixed window the user sees; #pad-frame is shaped (via
+   aspect-ratio, set from JS) to match the actual content - a deck slide's own
+   ratio, or the display's window shape for full-bleed content - so the WHOLE
+   pad is drawable surface, edge to edge, with no dead margin to draw into by
+   mistake. Zoom scales #pad-frame with a CSS transform only; the canvas's own
+   pixel grid never changes, so pointer capture (which reads the canvas's
+   on-screen, already-transformed box) stays correct at any zoom level. */
+#pad-viewport {
+  width: 100%; aspect-ratio: 16 / 9; overflow: hidden; position: relative;
+  background: #06090c; border: 1px solid var(--line); border-radius: var(--radius);
+}
+/* Sized and positioned from JS (fitFrame in control.js): CSS aspect-ratio
+   cannot win against the inset an absolutely-positioned element would
+   otherwise need, so the "contain"-style fit is computed in pixels instead. */
+#pad-frame {
+  position: absolute; transform-origin: 0 0;
+}
 #pad {
-  width: 100%; aspect-ratio: 16 / 9; background: #101418;
-  border: 1px solid var(--line); border-radius: var(--radius);
+  width: 100%; height: 100%; background: #101418;
   touch-action: none; display: block;
 }
+#ink-zoom-level { min-width: 3em; text-align: center; color: var(--dim); }
+.pan-btn { width: 44px; padding: 0; }
 .swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; }
 .swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
 
@@ -377,6 +396,6 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
   #preview-stage { width: 132px; flex: none; }
   #preview-pane .meta { flex: 1; min-width: 0; }
   #take { min-height: 52px; width: 108px; flex: none; }
-  #swap, #clear-preview { display: none; }
+  #swap, #clear-preview, #preview-pane .hint { display: none; }
   .tiles { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
 }

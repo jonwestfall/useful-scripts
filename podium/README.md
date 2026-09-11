@@ -30,6 +30,21 @@ and simply swaps which one is visible, so a video keeps its playhead and a page 
 its scroll position. This is how a video switcher works, and it is the difference
 between cueing something and re-opening it in front of thirty people.
 
+**TAKE / Swap / Clear cue**, precisely:
+
+- **TAKE** puts the cued item on screen and unfreezes.
+- **Swap** trades on-screen and cued without unfreezing, so you can peek at what is
+  cued — or keep paging through it — without committing to it yet.
+- **Clear cue** discards the cued item and leaves the screen exactly as it is.
+
+Freeze also protects **paging within the deck that is already on screen**, not just
+new picks. Press Next while frozen and nothing on the projector moves — Podium quietly
+clones the on-screen slide into the cue and advances *that*, so you can flip ahead
+through the same deck the class is looking at without them seeing a single slide
+change. TAKE commits wherever you ended up; Clear cue abandons the detour. Background
+audio and video are the one exception: **play / pause / seek always control what is
+actually audible**, frozen or not — freeze only ever holds back what the room *sees*.
+
 **Blank** is the separate panic button: instant black, program still loaded
 underneath, one tap to bring it back.
 
@@ -152,6 +167,30 @@ space, `B` to blank, `F` to freeze.
 Because the whole deck is rendered once into a shadow root, changing slide is
 instant, and a deck cued behind a freeze keeps its place when you take it.
 
+### Progressive builds
+
+Marp itself has no concept of a PowerPoint-style build — every `---` is one static
+slide, shown all at once. Podium layers a convention on top: add one directive right
+after the `---` that starts a slide,
+
+```markdown
+---
+<!-- _class: build -->
+## Three things to remember
+
+* This bullet appears first.
+* This one waits for the next click of Next.
+* So does this one.
+```
+
+and every bullet on that slide arrives one Next at a time instead of all together.
+Previous steps back through them the same way, and jumping to the slide from a
+thumbnail (or from the export below) always shows it fully built, not bullet by
+bullet. For anything that is not a plain bullet list, wrap exactly what should build
+in raw HTML — `<p class="build">…</p>`, `<div class="build">…</div>` — and Podium
+builds those, in order, instead of auto-numbering `<li>`s. `example-builds.md` in
+the library demonstrates both.
+
 ### Themes
 
 Put your CSS in `marp-themes/` and list the filename in `marp-themes/themes.json`.
@@ -193,6 +232,29 @@ wondering why the colours are wrong.
 - KaTeX's glyph fonts are the one thing still fetched from a CDN. Math renders
   without them, just in a fallback face.
 
+## Annotating with ink
+
+Ink is scoped to whatever is actually on screen — a whiteboard, or one specific slide
+of a deck — not to the whole session. Draw on slide 4, flip to slide 5, and slide 4's
+strokes are waiting for you when you flip back; **Clear** only wipes the one surface
+you are currently looking at. Switching to unrelated content (a timer, a message)
+shows a blank sheet rather than carrying old drawings onto it. The display saves ink
+to that browser as you go, so it survives an accidental reload mid-lecture.
+
+The pad on the Ink tab is shaped to match the content exactly — a deck slide's own
+aspect ratio, or the display's window shape for a full-bleed whiteboard — so the
+whole pad **is** the drawable area, edge to edge. There is no dead margin around it
+to draw into by mistake, whatever shape the classroom PC's window happens to be.
+**Zoom** and the pan arrows next to it are a pure magnifier for a steadier line; they
+never change where a stroke actually lands.
+
+**Export marked-up slides** (Slides tab, while a deck is on screen) rasterizes every
+slide with its own ink baked in and downloads a `.zip` — `slide-01.png`,
+`slide-02.png`, … plus a `slides.txt` listing titles and which slides carry
+annotations. It is best-effort: a slide that depends on a font or image the browser
+refuses to bake into a canvas is skipped individually (noted in `slides.txt`) rather
+than failing the whole export.
+
 ## Your lecture library
 
 Edit `content/manifest.json`, commit, and the tiles appear on the iPad. Files you put
@@ -233,7 +295,10 @@ that case, put the deck in `content/` and drive it properly.
 
 **The camera needs the two devices to reach each other.** WebRTC with STUN and no
 TURN server. On a normal campus network this connects; on a guest network with client
-isolation it will not, and the controller says so instead of hanging.
+isolation it will not — both ends now time out after 15 seconds rather than sitting
+on "Connecting…" forever, and say plainly that the two devices could not reach each
+other. Either the **Phone camera** tile in the library or the Camera tab's own button
+starts it; both ask for the camera and open the connection the same way.
 
 **You cannot mirror the iPad's screen.** iOS Safari has no screen-capture API, so no
 web app can do this. The camera feed and the content library are the way around it —
@@ -321,8 +386,13 @@ node podium/test/e2e.mjs                    # needs: npm i playwright
 
 The end-to-end test starts the relay, drives a display and two controllers in real
 browsers, and checks the things that would embarrass you in front of a class: freeze
-really holds, TAKE does not reload the cued item, ink arrives, a countdown ticks on
-the display, and a controller with the wrong passphrase cannot touch the screen.
+really holds even while paging through the deck already on screen (and never touches
+playing audio), TAKE does not reload the cued item, ink lands inside a letterboxed
+slide's own bounds and never on unrelated content, a build's bullets arrive one at a
+time, the phone-camera tile actually opens the connection (Chromium's synthetic
+camera, no real hardware or permission prompt needed), export produces a real,
+valid-PNG-containing zip, a countdown ticks on the display, and a controller with the
+wrong passphrase cannot touch the screen.
 
 ## Layout
 
@@ -339,7 +409,8 @@ podium/
       bus.js                      encryption, identity, presence, reconnect
       crypto.js  config.js  rtc.js  util.js
       transport/                  supabase.js · mqtt.js · ws.js
-      deck.js                     Marp: themes, rendering, presenter notes
+      deck.js                     Marp: themes, rendering, presenter notes, builds
+      zip.js                      minimal ZIP writer, for exporting marked-up slides
     vendor/qrcode.js              QR generator (MIT, Kazuhiko Arase)
     vendor/marp.esm.js            Marp renderer, bundled for browsers
   marp-themes/                    your Marp CSS + themes.json

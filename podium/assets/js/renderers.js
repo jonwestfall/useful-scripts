@@ -13,7 +13,7 @@
 //   destroy()
 
 import { el, miniMarkdown, fmtTime } from './util.js';
-import { render as renderDeckSource, applyPolyfill } from './deck.js';
+import { render as renderDeckSource, applyPolyfill, FRAGMENT_CSS } from './deck.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -52,13 +52,20 @@ function renderBlack() {
 function renderImage(item) {
   const img = el('img', { class: 'r-image', src: item.src, alt: item.title || '', decoding: 'async' });
   const node = el('div', { class: 'r-fill' }, img);
-  const apply = (it) => { img.style.objectFit = it.fit === 'cover' ? 'cover' : 'contain'; };
+  let fit = item.fit;
+  const apply = (it) => { fit = it.fit; img.style.objectFit = it.fit === 'cover' ? 'cover' : 'contain'; };
   apply(item);
   return {
     el: node,
     update(it) { if (it.src !== img.getAttribute('src')) img.src = it.src; apply(it); },
     reconcile() {},
     telemetry: noTelemetry,
+    // Where ink can land: a "contain"-fit image letterboxes inside its box
+    // exactly like a video does, so annotating it needs the same math.
+    contentAspect() {
+      if (fit === 'cover') return null;
+      return img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : null;
+    },
     destroy() { node.remove(); },
   };
 }
@@ -117,6 +124,7 @@ function mediaRenderer(item, opts, media, node) {
 
 function renderVideo(item, opts) {
   const video = el('video', { class: 'r-video', playsinline: true });
+  let fit = item.fit;
   video.style.objectFit = item.fit === 'cover' ? 'cover' : 'contain';
   if (item.poster) video.poster = item.poster;
   const node = el('div', { class: 'r-fill' }, video);
@@ -124,7 +132,12 @@ function renderVideo(item, opts) {
   const parentUpdate = base.update;
   base.update = (it) => {
     parentUpdate(it);
+    fit = it.fit;
     video.style.objectFit = it.fit === 'cover' ? 'cover' : 'contain';
+  };
+  base.contentAspect = () => {
+    if (fit === 'cover') return null;
+    return video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : null;
   };
   return base;
 }
@@ -377,12 +390,19 @@ function renderWhiteboard(item) {
   return { el: node, update: apply, reconcile() {}, telemetry: noTelemetry, destroy() { node.remove(); } };
 }
 
+const CAMERA_HINTS = {
+  idle: 'Waiting for the camera on your phone… On the iPad, open the Camera tab and tap Start camera.',
+  connecting: 'Connecting to the phone’s camera…',
+  live: '',
+  failed: 'Could not connect to the phone’s camera. If this is a guest Wi-Fi network, it may be blocking the two devices from reaching each other directly.',
+};
+
 // The stream is supplied by the WebRTC layer, which may connect after the
 // renderer mounts, so re-check on every reconcile.
 function renderCamera(item, opts) {
   const video = el('video', { class: 'r-video', autoplay: true, playsinline: true, muted: true });
   video.muted = true;
-  const hint = el('div', { class: 'r-camera-hint' }, 'Waiting for the camera on your phone…');
+  const hint = el('div', { class: 'r-camera-hint' }, CAMERA_HINTS.idle);
   const node = el('div', { class: 'r-fill r-camera' }, video, hint);
   const attach = () => {
     const stream = opts.getStream?.();
@@ -390,7 +410,9 @@ function renderCamera(item, opts) {
       video.srcObject = stream;
       video.play().catch(() => {});
     }
-    node.classList.toggle('has-stream', !!stream);
+    const hasStream = !!stream;
+    node.classList.toggle('has-stream', hasStream);
+    if (!hasStream) hint.textContent = CAMERA_HINTS[opts.getCameraStatus?.() || 'idle'] ?? CAMERA_HINTS.idle;
   };
   attach();
   return {
@@ -414,6 +436,7 @@ function renderDeck(item, opts) {
     #wrap, #wrap .marpit { position: absolute; inset: 0; }
     #wrap svg[data-marpit-svg] { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
     #wrap svg[data-marpit-svg].podium-on { display: block; }
+    ${FRAGMENT_CSS}
     #status {
       position: absolute; inset: 0; display: grid; place-items: center; padding: 4%;
       font: 16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -428,16 +451,28 @@ function renderDeck(item, opts) {
   let mountedId = null;
   let polyfill = null;
   let generation = 0;
+  let current = { slide: 0, step: 0 };
 
   const setStatus = (text) => {
     statusEl.textContent = text || '';
     statusEl.hidden = !text;
   };
 
-  function showSlide(index) {
+  // A build's fragments are just elements marked with a 1-based step number;
+  // showing "step" reveals everything up to and including that number.
+  function applyStep(svg, step) {
+    if (!svg) return;
+    svg.querySelectorAll('.podium-fragment').forEach((node) => {
+      node.classList.toggle('is-shown', Number(node.dataset.podiumFragment) <= step);
+    });
+  }
+
+  function showSlide(slide, step) {
     if (!slides.length) return;
-    const clamped = Math.min(slides.length - 1, Math.max(0, index || 0));
+    const clamped = Math.min(slides.length - 1, Math.max(0, slide || 0));
+    current = { slide: clamped, step: step || 0 };
     slides.forEach((svg, i) => svg.classList.toggle('podium-on', i === clamped));
+    applyStep(slides[clamped], current.step);
   }
 
   async function mount(it) {
@@ -464,7 +499,7 @@ function renderDeck(item, opts) {
       if (mine !== generation) return;
       mountedId = it.deckId;
       setStatus(slides.length ? '' : 'That markdown produced no slides.');
-      showSlide(it.slide);
+      showSlide(it.slide, it.step);
     } catch (err) {
       setStatus(`Marp could not render this deck.\n${err.message}`);
     }
@@ -476,10 +511,18 @@ function renderDeck(item, opts) {
     el: host,
     update(it) {
       if (it.deckId !== mountedId) { mount(it); return; }
-      showSlide(it.slide);
+      if ((it.slide || 0) !== current.slide || (it.step || 0) !== current.step) showSlide(it.slide, it.step);
     },
     reconcile() {},
     telemetry: noTelemetry,
+    // The aspect ratio baked into the visible slide's own viewBox, so ink can
+    // be confined to exactly the slide instead of the whole (often
+    // letterboxed) screen.
+    contentAspect() {
+      const svg = slides[current.slide];
+      const box = svg && (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+      return box && box.length === 4 && box[2] > 0 && box[3] > 0 ? box[2] / box[3] : null;
+    },
     destroy() {
       generation++;
       polyfill?.cleanup?.();

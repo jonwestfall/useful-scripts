@@ -11,7 +11,7 @@
 //
 // It generates its own audio fixture, so there is nothing to download.
 
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
@@ -93,7 +93,15 @@ const fails = [];
 const errors = [];
 const ok = (label, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + label); if (!cond) fails.push(label); };
 
-const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
+const browser = await chromium.launch({
+  args: [
+    '--autoplay-policy=no-user-gesture-required',
+    // A synthetic camera and mic, auto-granted with no permission prompt, so
+    // the phone-camera flow can be driven end-to-end headlessly.
+    '--use-fake-device-for-media-stream',
+    '--use-fake-ui-for-media-stream',
+  ],
+});
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), CFG);
 
@@ -566,6 +574,413 @@ await Promise.all([screen.waitForNavigation({ timeout: 20000 }), screen.click('#
 await screen.waitForSelector('#setup:not([hidden])', { timeout: 15000 });
 ok('the display clears the same way', await screen.evaluate(() => !localStorage.getItem('podium.config.v2')));
 await fresh.close();
+}
+
+console.log('\n-- freeze protects what is on screen, never the audio --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'freeze-room', passphrase: 'hold still' }));
+
+const screen = await ctx.newPage();
+trap(screen, 'freeze display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'freeze control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const shownSlide = () => screen.evaluate(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const svgs = [...(host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || [])];
+  return svgs.findIndex((s) => s.classList.contains('podium-on'));
+});
+
+await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg].podium-on').length === 1, null, { timeout: 20000 });
+ok('a deck is on screen to freeze', (await shownSlide()) === 0);
+
+await pad.click('#freeze');
+await screen.waitForFunction(() => document.body.classList.contains('is-frozen'));
+await pad.click('.tab[data-tab="slides"]');
+await pad.click('#deck-next');
+await pad.waitForFunction(() => document.querySelector('#preview-label')?.textContent === 'Cued', null, { timeout: 10000 });
+await screen.waitForTimeout(600);
+ok('Next while frozen does NOT advance the projector', (await shownSlide()) === 0);
+ok('it quietly cues a browsable copy instead, armed to take', await pad.$eval('#take', (b) => !b.disabled));
+
+await pad.click('#deck-next');
+await pad.waitForTimeout(300);
+await screen.waitForTimeout(300);
+ok('further paging while frozen keeps advancing only the cue', (await shownSlide()) === 0);
+
+await pad.click('#take');
+await screen.waitForFunction((want) => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const svgs = [...(host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || [])];
+  return svgs.findIndex((s) => s.classList.contains('podium-on')) === want;
+}, 2, { timeout: 10000 });
+ok('TAKE is what actually moves the projector, landing where you browsed to', true);
+ok('and it unfreezes', !(await screen.evaluate(() => document.body.classList.contains('is-frozen'))));
+
+// Now background audio: freeze must never redirect play/pause/seek to a cue.
+await pad.click('.tab[data-tab="library"]');
+await pad.fill('#url-input', `${BASE}/test/fixtures/tone.wav`);
+await pad.click('#url-form button[type=submit]');
+await screen.waitForFunction(() => {
+  const a = document.querySelector('.layer[data-role="program"] audio');
+  return a && !a.paused && a.currentTime > 0.3;
+}, null, { timeout: 8000 });
+await pad.click('#freeze');
+await screen.waitForFunction(() => document.body.classList.contains('is-frozen'));
+ok('music keeps playing once frozen', !(await screen.evaluate(() => document.querySelector('.layer[data-role="program"] audio').paused)));
+
+await pad.click('.tab[data-tab="now"]');
+await pad.click('#play-pause');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] audio').paused, null, { timeout: 5000 });
+ok('pause while frozen reaches the actual playing audio, not a hidden cue', await pad.evaluate(() => !document.querySelector('#take').classList.contains('is-armed')));
+await pad.click('#play-pause');
+await screen.waitForFunction(() => !document.querySelector('.layer[data-role="program"] audio').paused, null, { timeout: 5000 });
+ok('and resumes it the same way', true);
+await pad.evaluate(() => { const s = document.querySelector('#scrub'); s.value = '18'; s.dispatchEvent(new Event('change', { bubbles: true })); });
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] audio').currentTime > 17.5, null, { timeout: 5000 });
+ok('seeking while frozen also reaches the real audio directly', true);
+await ctx.close();
+}
+
+console.log('\n-- ink is shaped to the content, not the whole (possibly letterboxed) screen --');
+{
+// A deliberately odd, very wide viewport: a 16:9 deck slide will be
+// pillarboxed with real dead space left and right of it.
+const ctx = await browser.newContext({ viewport: { width: 1500, height: 500 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'ink-room', passphrase: 'stay in bounds' }));
+const screen = await ctx.newPage();
+trap(screen, 'ink display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'ink control');
+await pad.setViewportSize({ width: 900, height: 700 });
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 20000 });
+
+const contentBox = await screen.evaluate(() => {
+  const stage = document.querySelector('#stage');
+  const svg = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot.querySelector('svg.podium-on');
+  const box = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+  const aspect = box[2] / box[3];
+  const w = stage.clientWidth, h = stage.clientHeight;
+  const stageAspect = w / h;
+  if (stageAspect > aspect) { const cw = h * aspect; return { x: (w - cw) / 2, y: 0, w: cw, h }; }
+  const ch = w / aspect; return { x: 0, y: (h - ch) / 2, w, h: ch };
+});
+ok(`the 16:9 slide is genuinely pillarboxed in this window (dead margin ${Math.round(contentBox.x)}px each side)`, contentBox.x > 50);
+
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(300);
+const padBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+// Draw right near the pad's own left edge - if the pad is correctly shaped to
+// the slide (not the raw window), this must land inside the slide's content
+// box on the display, never out in the pillarbox margin.
+const drawFrac = [0.03, 0.5];
+await pad.mouse.move(padBox.x + padBox.w * drawFrac[0], padBox.y + padBox.h * drawFrac[1]);
+await pad.mouse.down();
+await pad.mouse.move(padBox.x + padBox.w * 0.15, padBox.y + padBox.h * 0.55);
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+
+const paintedNearEdge = await screen.evaluate((box) => {
+  const c = document.querySelector('#ink');
+  const ctx = c.getContext('2d');
+  const ratio = window.devicePixelRatio || 1;
+  // A strip just inside the computed content box's left edge.
+  const x0 = Math.max(0, Math.round((box.x + 2) * ratio));
+  const x1 = Math.round((box.x + box.w * 0.2) * ratio);
+  const y0 = Math.round(box.y * ratio);
+  const y1 = Math.round((box.y + box.h) * ratio);
+  const data = ctx.getImageData(x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0)).data;
+  for (let i = 3; i < data.length; i += 4) if (data[i] > 0) return true;
+  return false;
+}, contentBox);
+ok('the stroke actually lands inside the slide’s own bounds', paintedNearEdge);
+
+const paintedInMargin = await screen.evaluate((box) => {
+  if (box.x < 4) return false; // no real margin to check in this layout
+  const c = document.querySelector('#ink');
+  const ctx = c.getContext('2d');
+  const ratio = window.devicePixelRatio || 1;
+  const data = ctx.getImageData(0, 0, Math.round(box.x * ratio), c.height).data;
+  for (let i = 3; i < data.length; i += 4) if (data[i] > 0) return true;
+  return false;
+}, contentBox);
+ok('and never spills into the pillarbox margin outside it', !paintedInMargin);
+
+// Switching to unrelated content shows a blank surface, not the deck's ink.
+await pad.click('.tab[data-tab="say"]');
+await pad.fill('#text-body', 'Back in 5');
+await pad.click('#text-form button[type=submit]');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-text'), null, { timeout: 5000 });
+await screen.waitForTimeout(400);
+ok('switching to a text message clears the ink layer visually', !(await screen.evaluate(() => document.querySelector('#ink').classList.contains('has-ink'))));
+
+// And returning to the same slide restores it.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck'), null, { timeout: 10000 });
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+ok('returning to that slide restores its own ink', true);
+
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(200);
+await pad.click('#ink-clear');
+await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+ok('Clear wipes only the surface currently on screen', true);
+await ctx.close();
+}
+
+console.log('\n-- the phone-camera tile in the library actually starts the camera --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['camera'] });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'camera-room', passphrase: 'say cheese' }));
+const screen = await ctx.newPage();
+trap(screen, 'camera display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const phone = await ctx.newPage();
+trap(phone, 'camera phone');
+await phone.goto(`${BASE}/control.html`);
+await phone.waitForSelector('.tile');
+await phone.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// The natural thing to tap is the library tile, not the separate Camera tab -
+// this used to only stage the type without ever requesting the camera.
+await phone.click('.tile:has(.tile-title:text-is("Phone camera"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-camera')?.classList.contains('has-stream'), null, { timeout: 15000 });
+ok('tapping the library tile alone starts the camera and gets it on screen', true);
+await phone.waitForFunction(() => document.querySelector('#cam-status').textContent === 'Live on the display', null, { timeout: 10000 });
+ok('the controller reflects a live connection too', true);
+await ctx.close();
+}
+
+console.log('\n-- progressive builds: bullets arrive one at a time --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'build-room', passphrase: 'one at a time' }));
+const screen = await ctx.newPage();
+trap(screen, 'build display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'build control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const shown = () => screen.evaluate(() => {
+  const svg = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot.querySelector('svg.podium-on');
+  const frags = [...svg.querySelectorAll('.podium-fragment')];
+  return { total: frags.length, shown: frags.filter((f) => f.classList.contains('is-shown')).length };
+});
+
+await pad.click('.tile:has(.tile-title:text-is("Progressive builds (example)"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 20000 });
+await pad.click('.tab[data-tab="slides"]');
+
+await pad.click('#deck-next'); // slide 0 -> slide 1, the first "_class: build" slide
+await screen.waitForTimeout(400);
+let s = await shown();
+ok(`landing on a build slide starts with nothing revealed (${s.shown}/${s.total})`, s.total === 3 && s.shown === 0);
+
+await pad.click('#deck-next');
+await screen.waitForTimeout(300);
+ok('Next reveals one bullet instead of moving slides', (await shown()).shown === 1);
+await pad.click('#deck-next');
+await screen.waitForTimeout(300);
+ok('and the next one', (await shown()).shown === 2);
+await pad.click('#deck-next');
+await screen.waitForTimeout(300);
+ok('and the last', (await shown()).shown === 3);
+
+const beforeAdvance = await screen.evaluate(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const svgs = [...host.shadowRoot.querySelectorAll('svg[data-marpit-svg]')];
+  return svgs.findIndex((x) => x.classList.contains('podium-on'));
+});
+await pad.click('#deck-next');
+await screen.waitForFunction((prev) => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const svgs = [...host.shadowRoot.querySelectorAll('svg[data-marpit-svg]')];
+  return svgs.findIndex((x) => x.classList.contains('podium-on')) === prev + 1;
+}, beforeAdvance, { timeout: 5000 });
+ok('only once every bullet is shown does Next finally advance the slide', true);
+
+// The next slide uses hand-marked class="build" paragraphs instead of <li>.
+s = await shown();
+ok(`a hand-marked build slide also starts unrevealed (${s.shown}/${s.total})`, s.total === 2 && s.shown === 0);
+
+// Jumping via a thumbnail should land fully built, not bullet-by-bullet.
+await pad.evaluate(() => document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')[1].click());
+await screen.waitForTimeout(400);
+s = await shown();
+ok('jumping to a build slide via its thumbnail shows it fully revealed', s.total === 3 && s.shown === 3);
+
+// And the thumbnail grid itself always shows slides fully built.
+const gridFullyShown = await pad.evaluate(() => {
+  const cells = [...document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')];
+  const cell = cells[1];
+  const frags = [...cell.querySelectorAll('.podium-fragment')];
+  return frags.length > 0 && frags.every((f) => getComputedStyle(f).opacity === '1');
+});
+ok('thumbnails always render a build slide finished, for a clear picture to jump to', gridFullyShown);
+await ctx.close();
+}
+
+console.log('\n-- zoom on the ink pad is a view convenience, not a coordinate change --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'zoom-room', passphrase: 'steady hand' }));
+const screen = await ctx.newPage();
+trap(screen, 'zoom display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'zoom control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-whiteboard'), null, { timeout: 10000 });
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(300);
+
+const pixelAt = async (fx, fy) => screen.evaluate(({ fx, fy }) => {
+  const stage = document.querySelector('#stage');
+  const c = document.querySelector('#ink');
+  const ratio = window.devicePixelRatio || 1;
+  const x = Math.round(stage.clientWidth * fx * ratio);
+  const y = Math.round(stage.clientHeight * fy * ratio);
+  const d = c.getContext('2d').getImageData(Math.max(0, x - 6), Math.max(0, y - 6), 12, 12).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true;
+  return false;
+}, { fx, fy });
+
+// A short dab at the pad's exact center, at zoom 1x. (A bare click() is
+// down+up with no intervening pointermove, so the stroke would only ever get
+// one point - and a one-point stroke draws nothing - hence the tiny drag.)
+const dab = async (fx, fy) => {
+  const b = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+  await pad.mouse.move(b.x + b.w * fx, b.y + b.h * fy);
+  await pad.mouse.down();
+  await pad.mouse.move(b.x + b.w * fx + 2, b.y + b.h * fy + 2);
+  await pad.mouse.up();
+};
+await dab(0.5, 0.5);
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+ok('a dot at the pad center lands at the stage center', await pixelAt(0.5, 0.5));
+await pad.click('#ink-undo');
+await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+
+await pad.click('#ink-zoom-in');
+await pad.click('#ink-zoom-in');
+await pad.waitForTimeout(200);
+const zoomedTransform = await pad.$eval('#pad-frame', (n) => n.style.transform);
+ok(`zooming in actually scales the pad (${zoomedTransform})`, /scale\(([2-9]|\d\d)/.test(zoomedTransform) || /scale\(2\.\d/.test(zoomedTransform));
+ok('pan buttons become available once zoomed', await pad.$eval('#pan-left', (b) => !b.disabled));
+
+// The SAME center point, now dabbed on the zoomed (larger, post-transform)
+// pad box, must still land at the stage center - zoom changes what you see,
+// never where the mark actually goes.
+await dab(0.5, 0.5);
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+ok('the same relative point still lands in the same place once zoomed', await pixelAt(0.5, 0.5));
+
+await pad.click('#ink-zoom-reset');
+await pad.waitForTimeout(200);
+ok('reset zoom returns to 1x and disables panning again', await pad.$eval('#pan-left', (b) => b.disabled));
+await ctx.close();
+}
+
+console.log('\n-- exporting marked-up slides to a zip --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'export-room', passphrase: 'zip it up' }));
+const screen = await ctx.newPage();
+trap(screen, 'export display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'export control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 20000 });
+
+// Annotate slide 1 before exporting.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(300);
+const box = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(box.x + box.w * 0.2, box.y + box.h * 0.3);
+await pad.mouse.down();
+await pad.mouse.move(box.x + box.w * 0.6, box.y + box.h * 0.6);
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+// Give the debounced save/broadcast a moment, then confirm the display has
+// actually filed the stroke under this slide's own surface before exporting.
+await screen.waitForTimeout(300);
+
+await pad.click('.tab[data-tab="slides"]');
+await pad.waitForFunction(() => !document.querySelector('#deck-export').disabled, null, { timeout: 10000 });
+
+const downloadDir = path.join(HERE, 'fixtures', 'downloads');
+fs.mkdirSync(downloadDir, { recursive: true });
+const [download] = await Promise.all([
+  pad.waitForEvent('download', { timeout: 20000 }),
+  pad.click('#deck-export'),
+]);
+const zipPath = path.join(downloadDir, 'export.zip');
+await download.saveAs(zipPath);
+ok(`the export produced a real file (${fs.statSync(zipPath).size} bytes)`, fs.statSync(zipPath).size > 1000);
+
+const listing = execFileSync('python3', ['-c', `
+import zipfile, sys, struct
+z = zipfile.ZipFile(sys.argv[1])
+names = z.namelist()
+assert z.testzip() is None, "corrupt zip"
+pngs = sorted(n for n in names if n.endswith('.png'))
+assert len(pngs) == 4, f"expected 4 slide images, got {pngs}"
+for n in pngs:
+    data = z.read(n)
+    assert data[:8] == b'\\x89PNG\\r\\n\\x1a\\n', f"{n} is not a PNG"
+    w, h = struct.unpack('>II', data[16:24])
+    assert w > 200 and h > 200, f"{n} is suspiciously small: {w}x{h}"
+manifest = z.read('slides.txt').decode()
+assert 'annotated' in manifest.lower(), manifest
+print('OK', len(pngs), 'pngs', len(manifest), 'byte manifest')
+`, zipPath]).toString().trim();
+ok(`the zip contains four valid, correctly sized slide PNGs (${listing})`, listing.startsWith('OK'));
+
+const statusText = await pad.textContent('#deck-export-status');
+ok(`the controller reports success: ${JSON.stringify(statusText)}`, /saved/i.test(statusText));
+await ctx.close();
 }
 
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));

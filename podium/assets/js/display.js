@@ -9,7 +9,7 @@
 import { $, el, throttle, wireDangerButton } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, applyCommand } from './protocol.js';
+import { initialState, applyCommand, inkSurfaceKey } from './protocol.js';
 import { createRenderer } from './renderers.js';
 import { createCameraReceiver } from './rtc.js';
 
@@ -30,6 +30,8 @@ let bus = null;
 let state = initialState();
 let cameraStream = null;
 let wakeLock = null;
+
+restoreInk();
 
 // Marp decks the display has the markdown for. A deck loaded from the server is
 // fetched here directly; one uploaded from an iPad arrives over the bus and is
@@ -83,12 +85,15 @@ function freeLayer(layer) {
   layer.node.replaceChildren();
 }
 
+let cameraStatus = 'idle';
+
 function mount(layer, item) {
   freeLayer(layer);
   layer.key = item.key;
   layer.renderer = createRenderer(item, {
     getTimer: () => state.timer,
     getStream: () => cameraStream,
+    getCameraStatus: () => cameraStatus,
     getDeckSource,
   });
   layer.node.append(layer.renderer.el);
@@ -137,8 +142,35 @@ function syncLayers() {
 }
 
 // --- ink overlay ------------------------------------------------------------
+//
+// Strokes are stored as fractions (0..1) of the CONTENT area, not the raw
+// browser window: a 16:9 deck slide inside a wider or taller window is
+// letterboxed, and without this an iPad's flat rectangle of a pad would not
+// correspond to where the slide actually sits, letting you "draw" into the
+// dead space around it. contentRect() below is the one place that math
+// happens; the pad on the controller mirrors the same content aspect so its
+// whole drawing surface really is the slide, edge to edge.
 
-const ink = { ctx: inkCanvas.getContext('2d'), drawnStrokes: 0, drawnTail: 0 };
+const ink = { ctx: inkCanvas.getContext('2d'), drawnKey: null, drawnStrokes: 0, drawnTail: 0 };
+
+// Where the current item's meaningful content sits within the stage, in CSS
+// pixels. Letterboxed for anything with a fixed aspect ratio (a deck slide, an
+// image or video shown with "contain"); the full stage for everything else,
+// which is exactly how those render.
+function contentRect() {
+  const w = stage.clientWidth;
+  const h = stage.clientHeight;
+  const programLayer = layers.find((l) => l.node.dataset.role === 'program');
+  const aspect = programLayer?.renderer?.contentAspect?.() ?? null;
+  if (!aspect || !w || !h) return { x: 0, y: 0, w, h };
+  const stageAspect = w / h;
+  if (stageAspect > aspect) {
+    const cw = h * aspect;
+    return { x: (w - cw) / 2, y: 0, w: cw, h };
+  }
+  const ch = w / aspect;
+  return { x: 0, y: (h - ch) / 2, w, h: ch };
+}
 
 function sizeInk() {
   const ratio = window.devicePixelRatio || 1;
@@ -148,7 +180,7 @@ function sizeInk() {
   redrawInk(true);
 }
 
-function strokePath(ctx, stroke, w, h, from = 0) {
+function strokePath(ctx, stroke, rect, from = 0) {
   if (stroke.pts.length < 2) return;
   ctx.beginPath();
   ctx.strokeStyle = stroke.color;
@@ -156,33 +188,40 @@ function strokePath(ctx, stroke, w, h, from = 0) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   const start = Math.max(0, from - 1);
-  ctx.moveTo(stroke.pts[start][0] * w, stroke.pts[start][1] * h);
+  ctx.moveTo(rect.x + stroke.pts[start][0] * rect.w, rect.y + stroke.pts[start][1] * rect.h);
   for (let i = start + 1; i < stroke.pts.length; i++) {
-    ctx.lineTo(stroke.pts[i][0] * w, stroke.pts[i][1] * h);
+    ctx.lineTo(rect.x + stroke.pts[i][0] * rect.w, rect.y + stroke.pts[i][1] * rect.h);
   }
   ctx.stroke();
 }
 
+function currentInkStrokes() {
+  return state.ink.bySurface[inkSurfaceKey(state.program)]?.strokes || [];
+}
+
 function redrawInk(force = false) {
   const { ctx } = ink;
-  const w = stage.clientWidth;
-  const h = stage.clientHeight;
-  const strokes = state.ink.strokes;
+  const rect = contentRect();
+  const strokes = currentInkStrokes();
   const last = strokes[strokes.length - 1];
+  const key = `${inkSurfaceKey(state.program)}|${rect.x.toFixed(1)}|${rect.y.toFixed(1)}|${rect.w.toFixed(1)}|${rect.h.toFixed(1)}`;
 
   // Appending to the stroke in progress is the common case; only redraw the
-  // whole board when strokes were removed or the canvas was resized.
+  // whole board when strokes were removed, the surface changed, or the
+  // content moved (resize, or a letterboxed item changing shape).
   const appended = !force
+    && key === ink.drawnKey
     && strokes.length >= ink.drawnStrokes
     && ink.drawnStrokes > 0
     && strokes.length === ink.drawnStrokes;
 
   if (appended && last) {
-    strokePath(ctx, last, w, h, ink.drawnTail);
+    strokePath(ctx, last, rect, ink.drawnTail);
   } else {
-    ctx.clearRect(0, 0, w, h);
-    for (const stroke of strokes) strokePath(ctx, stroke, w, h);
+    ctx.clearRect(0, 0, stage.clientWidth, stage.clientHeight);
+    for (const stroke of strokes) strokePath(ctx, stroke, rect);
   }
+  ink.drawnKey = key;
   ink.drawnStrokes = strokes.length;
   ink.drawnTail = last ? last.pts.length : 0;
   inkCanvas.classList.toggle('has-ink', strokes.length > 0);
@@ -209,11 +248,25 @@ function updateStandby() {
 
 // --- state plumbing ---------------------------------------------------------
 
-// Ink strokes stay on the display. Controllers draw their own pad locally, so
-// shipping the full stroke list back to them every heartbeat would be waste.
+// The full stroke history lives here; shipping every surface to every
+// controller on every heartbeat would be waste. What IS worth sending is the
+// surface currently on screen - full geometry, not just a count - so a second
+// controller mirrors what is actually being drawn, and so a controller that
+// flips back to an already-annotated slide sees the same ink the projector
+// does, rather than only what it personally drew this session.
 function wireState() {
   const { ink: inkState, ...rest } = state;
-  return { ...rest, ink: { color: inkState.color, width: inkState.width, count: inkState.strokes.length } };
+  const key = inkSurfaceKey(state.program);
+  return {
+    ...rest,
+    ink: {
+      color: inkState.color,
+      width: inkState.width,
+      surface: key,
+      strokes: inkState.bySurface[key]?.strokes || [],
+    },
+    stageAspect: stage.clientWidth && stage.clientHeight ? stage.clientWidth / stage.clientHeight : 16 / 9,
+  };
 }
 
 function telemetry() {
@@ -227,10 +280,36 @@ function broadcast() {
 
 const broadcastSoon = throttle(broadcast, 60);
 
+// Ink is worth surviving an accidental reload of the display mid-lecture.
+// Scoped to the room so different rooms sharing a browser do not clobber each
+// other, and saved on a trailing debounce so a fast stroke does not hammer
+// localStorage on every point.
+const INK_SAVE_MS = 1500;
+let inkSaveTimer = null;
+
+function inkStorageKey() {
+  return `podium.ink.${cfg.room}`;
+}
+
+function saveInkSoon() {
+  clearTimeout(inkSaveTimer);
+  inkSaveTimer = setTimeout(() => {
+    try { localStorage.setItem(inkStorageKey(), JSON.stringify(state.ink.bySurface)); } catch { /* quota or private mode */ }
+  }, INK_SAVE_MS);
+}
+
+function restoreInk() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(inkStorageKey()) || 'null');
+    if (saved && typeof saved === 'object') state.ink.bySurface = saved;
+  } catch { /* corrupt or absent - start with a blank slate */ }
+}
+
 function commit() {
   state.rev++;
   render();
   broadcastSoon();
+  saveInkSoon();
 }
 
 // --- connection -------------------------------------------------------------
@@ -276,6 +355,21 @@ async function connect() {
       }
       if (msg.t === 'rtc') { camera.handle(msg); return; }
       if (msg.t === 'sync') { broadcast(); return; }
+      if (msg.t === 'ink-need') {
+        // Exporting marked-up slides: hand back every surface belonging to
+        // this deck, keyed by slide index, so the controller can composite
+        // ink onto its own rendering of each slide without a round trip per
+        // slide.
+        const prefix = `deck:${msg.deckId}:`;
+        const bySlide = {};
+        for (const [key, surface] of Object.entries(state.ink.bySurface)) {
+          if (!key.startsWith(prefix)) continue;
+          const slide = Number(key.slice(prefix.length));
+          if (Number.isInteger(slide) && surface.strokes.length) bySlide[slide] = surface.strokes;
+        }
+        bus.send({ t: 'ink-data', deckId: msg.deckId, bySlide });
+        return;
+      }
       if (msg.t === 'cmd') {
         if (applyCommand(state, msg)) commit();
       }
@@ -285,7 +379,7 @@ async function connect() {
   camera = createCameraReceiver({
     bus,
     onStream: (stream) => { cameraStream = stream; syncLayers(); },
-    onState: () => syncLayers(),
+    onState: (status) => { cameraStatus = status; syncLayers(); },
   });
 
   $('#fingerprint').textContent = bus.fingerprint;
@@ -410,7 +504,7 @@ $('#pair-close').addEventListener('click', hidePairing);
 $('#standby-pair').addEventListener('click', showPairing);
 $('#standby-settings').addEventListener('click', showSetup);
 
-window.addEventListener('resize', sizeInk);
+window.addEventListener('resize', () => { sizeInk(); broadcastSoon(); });
 window.addEventListener('beforeunload', () => bus?.close());
 
 // The display normally runs in kiosk mode with no browser chrome, and the

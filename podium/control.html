@@ -43,9 +43,15 @@
       </div>
       <button id="take" type="button" disabled>TAKE</button>
       <div class="row">
-        <button id="swap" type="button">Swap</button>
-        <button id="clear-preview" type="button">Clear cue</button>
+        <button id="swap" type="button" disabled>Swap</button>
+        <button id="clear-preview" type="button" disabled>Clear cue</button>
       </div>
+      <p class="hint">
+        <b>Take</b> puts the cued item on screen and unfreezes.
+        <b>Swap</b> trades places without unfreezing, so you can peek at what
+        is cued without committing to it. <b>Clear cue</b> discards the cued
+        item and leaves the screen exactly as it is.
+      </p>
     </aside>
 
     <main class="main">
@@ -98,6 +104,11 @@
             <div id="deck-next-up" class="hint"></div>
             <div class="notes-head">Jump to a slide</div>
             <div id="deck-grid"></div>
+            <div class="notes-head">Export</div>
+            <div class="inline">
+              <button id="deck-export" type="button" disabled>Export marked-up slides (.zip)</button>
+            </div>
+            <p class="hint" id="deck-export-status"></p>
           </div>
         </section>
 
@@ -133,7 +144,24 @@
 
         <!-- Ink -->
         <section class="panel" data-panel="ink" hidden>
-          <canvas id="pad"></canvas>
+          <div id="pad-viewport">
+            <div id="pad-frame">
+              <canvas id="pad"></canvas>
+            </div>
+          </div>
+          <div class="inline">
+            <button id="ink-zoom-out" type="button" title="Zoom out">−</button>
+            <span id="ink-zoom-level" class="mono">1×</span>
+            <button id="ink-zoom-in" type="button" title="Zoom in">+</button>
+            <button id="ink-zoom-reset" type="button">Reset zoom</button>
+          </div>
+          <div class="inline">
+            <span class="hint" style="margin:0">Pan (once zoomed):</span>
+            <button id="pan-left" class="pan-btn" type="button" disabled title="Pan left">◀</button>
+            <button id="pan-up" class="pan-btn" type="button" disabled title="Pan up">▲</button>
+            <button id="pan-down" class="pan-btn" type="button" disabled title="Pan down">▼</button>
+            <button id="pan-right" class="pan-btn" type="button" disabled title="Pan right">▶</button>
+          </div>
           <div class="inline">
             <button class="swatch is-on" type="button" data-color="#ffd166" style="background:#ffd166"></button>
             <button class="swatch" type="button" data-color="#ff4d4f" style="background:#ff4d4f"></button>
@@ -148,7 +176,13 @@
             <input id="ink-width" class="grow" type="range" min="2" max="24" value="6">
             <label class="check"><input id="ink-pen-only" type="checkbox"> Apple Pencil only</label>
           </div>
-          <p class="hint">Ink draws over whatever is on screen, so you can annotate slides. Pick “Whiteboard” in the library for a blank surface.</p>
+          <p class="hint">
+            Ink draws over whatever is on screen and is shaped to match it, so the pad above
+            <i>is</i> the slide, edge to edge. Pick “Whiteboard” in the library for a blank
+            surface. Each slide of a deck keeps its own drawing - flip away and back and it is
+            still there; <b>Clear</b> only erases what you are looking at right now. Zoom in
+            and use the arrows to pan for more precise lines.
+          </p>
         </section>
 
         <!-- Say: big text, lower third, QR -->
