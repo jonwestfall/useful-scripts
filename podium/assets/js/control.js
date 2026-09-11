@@ -2,8 +2,8 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle } from './util.js';
-import { loadConfig, saveConfig, isConfigured, DEFAULTS } from './config.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton } from './util.js';
+import { loadConfig, saveConfig, isConfigured, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, timerRemaining } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
@@ -704,6 +704,7 @@ setInterval(() => { renderNow(); renderTimer(); renderConnection(); }, 250);
 function showSetup() {
   $('#setup').hidden = false;
   $('#app').hidden = true;
+  $('#setup-close').hidden = !isConfigured(cfg);
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {
     const field = form.elements[key];
@@ -730,6 +731,16 @@ function showSetup() {
 }
 
 $('#open-settings').addEventListener('click', showSetup);
+
+// Reloading is the honest "cancel": it throws away half-finished edits and
+// puts the page back into whatever state the saved settings describe.
+$('#setup-close').addEventListener('click', reloadClean);
+
+wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
+  const removed = await resetDevice();
+  $('#reset-note').textContent = removed.length ? `Cleared ${removed.join(', ')}.` : 'Nothing was stored on this device.';
+  reloadClean();
+});
 
 if (!isConfigured(cfg)) {
   showSetup();

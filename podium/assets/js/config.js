@@ -10,6 +10,11 @@ import { uid } from './util.js';
 
 const LS_KEY = 'podium.config.v2';
 
+// Everything Podium stores is namespaced. That matters on GitHub Pages, where
+// every project on your site shares one origin: a blanket localStorage.clear()
+// would take your other apps' data with it.
+export const STORAGE_PREFIX = 'podium.';
+
 export const DEFAULTS = {
   transport: 'supabase',                          // 'supabase' | 'mqtt' | 'ws'
   room: '',
@@ -99,4 +104,73 @@ export function pairingUrl(cfg, base = new URL('control.html', location.href)) {
   const url = new URL(base);
   url.hash = params.toString();
   return url.toString();
+}
+
+
+/**
+ * Wipe this device back to a stock, never-configured Podium and reload.
+ *
+ * Deliberately surgical rather than a blanket clear: only keys, caches,
+ * databases and workers that belong to Podium, and only cookies scoped to this
+ * folder. Returns a list of what it actually removed, for the UI to report.
+ */
+export async function resetDevice() {
+  const removed = [];
+
+  for (const [name, store] of [['localStorage', 'localStorage'], ['sessionStorage', 'sessionStorage']]) {
+    try {
+      const target = window[store];
+      const keys = Object.keys(target).filter((k) => k.startsWith(STORAGE_PREFIX));
+      keys.forEach((k) => target.removeItem(k));
+      if (keys.length) removed.push(`${keys.length} setting${keys.length > 1 ? 's' : ''} from ${name}`);
+    } catch { /* private browsing blocks the accessor itself */ }
+  }
+
+  // Podium sets no cookies, but a stale one scoped to this folder would ride
+  // along on every request. Expire only this path, never the whole site.
+  try {
+    const dir = location.pathname.replace(/[^/]*$/, '');
+    const names = document.cookie.split(';').map((c) => c.split('=')[0].trim()).filter(Boolean);
+    for (const name of names) {
+      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=${dir}`;
+    }
+    if (names.length) removed.push(`${names.length} cookie${names.length > 1 ? 's' : ''}`);
+  } catch { /* nothing readable here */ }
+
+  // A service worker from an earlier experiment would keep serving old files.
+  try {
+    const dir = new URL('.', location.href).href;
+    const regs = (await navigator.serviceWorker?.getRegistrations?.()) || [];
+    const mine = regs.filter((r) => r.scope.startsWith(dir));
+    await Promise.all(mine.map((r) => r.unregister()));
+    if (mine.length) removed.push(`${mine.length} service worker${mine.length > 1 ? 's' : ''}`);
+  } catch { /* unsupported or blocked */ }
+
+  try {
+    const names = (await caches?.keys?.()) || [];
+    const mine = names.filter((n) => n.startsWith(STORAGE_PREFIX) || n.startsWith('podium'));
+    await Promise.all(mine.map((n) => caches.delete(n)));
+    if (mine.length) removed.push(`${mine.length} cache${mine.length > 1 ? 's' : ''}`);
+  } catch { /* unsupported */ }
+
+  try {
+    const dbs = (await indexedDB?.databases?.()) || [];
+    const mine = dbs.filter((d) => d.name?.startsWith('podium'));
+    await Promise.all(mine.map((d) => new Promise((done) => {
+      const req = indexedDB.deleteDatabase(d.name);
+      req.onsuccess = req.onerror = req.onblocked = () => done();
+    })));
+    if (mine.length) removed.push(`${mine.length} database${mine.length > 1 ? 's' : ''}`);
+  } catch { /* Safari < 14 has no databases() */ }
+
+  // Re-fetch this page past the HTTP cache so the reload cannot serve a stale
+  // copy of the very file you are trying to reset.
+  try { await fetch(location.pathname, { cache: 'reload' }); } catch { /* offline */ }
+
+  return removed;
+}
+
+/** Navigate to the bare page, with no pairing hash or query left over. */
+export function reloadClean() {
+  location.replace(location.pathname);
 }

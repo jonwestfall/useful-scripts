@@ -239,6 +239,35 @@ isolation it will not, and the controller says so instead of hanging.
 web app can do this. The camera feed and the content library are the way around it —
 and with a cue you rarely want mirroring anyway.
 
+## Starting a device over
+
+Settings are saved per device, which is what makes the classroom PC a one-time
+setup — but it also means a device can be carrying a room you have forgotten
+about. **Clear settings & reload** at the bottom of the Settings sheet, on both
+pages, puts that device back to a stock, never-configured Podium: the room, the
+passphrase, saved links and decks, any service worker or cache Podium left
+behind. It takes two taps, and it only affects the device you press it on.
+
+It is deliberately surgical rather than a blanket wipe. On GitHub Pages every
+project on your site shares one origin, so clearing everything would take your
+other apps' saved data with it. Podium removes only its own `podium.*` keys and
+only cookies scoped to this folder.
+
+If a page seems to be running old code rather than old settings, that is the
+browser's HTTP cache, not Podium's storage — a hard reload (Ctrl/Cmd+Shift+R)
+is the fix.
+
+### Getting at Settings on the classroom PC
+
+The display normally runs fullscreen with no browser chrome, and the standby
+screen disappears as soon as a controller connects. Three keys get you back in:
+
+| Key | What it does |
+| :-- | :-- |
+| `P` | Show or hide the pairing QR |
+| `S` | Open Settings |
+| `Esc` | Close the pairing QR |
+
 ## When the controller says the display isn't there
 
 The top bar reports two separate things, and it is worth reading them as two:
@@ -260,6 +289,8 @@ seconds with the likely causes. In order of how often they are the answer:
    fix is to press **Pair a device** on the display and scan again.
 3. **Different transports.** A display on Supabase and a controller on MQTT both
    report a healthy relay and never exchange a byte.
+4. **A device carrying stale settings from an earlier experiment.** *Clear settings
+   & reload* on that device and pair it again.
 
 If the codes match and you still see nothing, the controller will say
 **Wrong passphrase somewhere** — that means encrypted traffic is arriving that it

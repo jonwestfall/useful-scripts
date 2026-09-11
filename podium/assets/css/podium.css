@@ -46,6 +46,8 @@ button:hover { background: #242b33; }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: .4; cursor: default; }
 button.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
+button.is-danger { background: var(--live); border-color: var(--live); color: #fff; font-weight: 600; }
+button.danger-outline { border-color: #6b2b2b; color: #ff9d9d; }
 
 input[type=text], input[type=url], input[type=number], input[type=password], select, textarea {
   background: #0e1216;
@@ -108,12 +110,20 @@ body.display.is-frozen #stage::after {
   border: 3px solid var(--cue); opacity: .5;
 }
 
-/* Full-screen overlays on the display */
+/* Full-screen overlays on the display.
+   These all share a stacking context, so they need an explicit ladder: with a
+   single z-index the last one in the document wins, which put the pairing QR
+   *underneath* the arming screen and made "Pair a device" look like it did
+   nothing. Order here is the order you want to see them in. */
 .sheet {
   position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
   background: radial-gradient(120% 120% at 50% 0%, #131a24, #07090c);
   padding: 24px; overflow: auto;
 }
+#standby { z-index: 20; }
+#arm { z-index: 21; }
+#pair { z-index: 22; }
+#setup { z-index: 23; }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
   padding: 28px; max-width: 620px; width: 100%;

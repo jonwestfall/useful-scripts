@@ -266,8 +266,17 @@
         <input id="c-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
       </div>
       <p class="error" id="setup-error"></p>
-      <button type="submit" class="big-button">Save</button>
+      <div class="row">
+        <button type="submit" class="big-button">Save</button>
+        <button type="button" id="setup-close" hidden>Close</button>
+      </div>
     </form>
+    <hr style="border:0;border-top:1px solid var(--line);margin:22px 0 16px">
+    <button id="reset-device" class="danger-outline" style="width:100%">Clear settings &amp; reload</button>
+    <p class="hint" id="reset-note">
+      Forgets the room, passphrase and any decks or links you saved on this device,
+      then reloads as if this iPad had never seen Podium. Affects this device only.
+    </p>
   </div>
 </div>
 

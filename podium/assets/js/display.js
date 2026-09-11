@@ -6,8 +6,8 @@
 // preview so that TAKE swaps which one is visible instead of rebuilding it -
 // a cued video keeps its playhead and a cued page keeps its scroll position.
 
-import { $, el, throttle } from './util.js';
-import { loadConfig, saveConfig, isConfigured, pairingUrl, DEFAULTS } from './config.js';
+import { $, el, throttle, wireDangerButton } from './util.js';
+import { loadConfig, saveConfig, isConfigured, pairingUrl, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand } from './protocol.js';
 import { createRenderer } from './renderers.js';
@@ -333,6 +333,7 @@ let setupWired = false;
 function showSetup() {
   setupEl.hidden = false;
   armEl.hidden = true;
+  $('#setup-close').hidden = !isConfigured(cfg);
   const form = $('#setup-form');
   if (setupWired) return;
   setupWired = true;
@@ -393,6 +394,17 @@ function hidePairing() {
 // --- wiring -----------------------------------------------------------------
 
 $('#arm-button').addEventListener('click', goLive);
+$('#arm-settings').addEventListener('click', showSetup);
+
+// Reloading is the honest "cancel": it throws away half-finished edits and
+// puts the page back into whatever state the saved settings describe.
+$('#setup-close').addEventListener('click', reloadClean);
+
+wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
+  const removed = await resetDevice();
+  $('#reset-note').textContent = removed.length ? `Cleared ${removed.join(', ')}.` : 'Nothing was stored on this device.';
+  reloadClean();
+});
 $('#pair-button').addEventListener('click', showPairing);
 $('#pair-close').addEventListener('click', hidePairing);
 $('#standby-pair').addEventListener('click', showPairing);
@@ -401,9 +413,13 @@ $('#standby-settings').addEventListener('click', showSetup);
 window.addEventListener('resize', sizeInk);
 window.addEventListener('beforeunload', () => bus?.close());
 
+// The display normally runs in kiosk mode with no browser chrome, and the
+// standby screen (the usual route to Settings) is hidden whenever a controller
+// is connected. These keys are the way back in mid-lecture.
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'p' || ev.key === 'P') { $('#pair').hidden ? showPairing() : hidePairing(); }
-  if (ev.key === 'Escape') hidePairing();
+  if (ev.key === 's' || ev.key === 'S') { hidePairing(); showSetup(); }
+  if (ev.key === 'Escape') { hidePairing(); }
 });
 
 $('#room-name').textContent = cfg.room;

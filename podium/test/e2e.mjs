@@ -488,6 +488,86 @@ ok('a passphrase mismatch is named on the controller, not just the display', tru
 await c3.close(); await c4.close();
 }
 
+console.log('\n-- pairing overlay and clearing a device --');
+{
+// These run in their own context so wiping storage cannot disturb the pages above.
+const fresh = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+// Seed once: addInitScript re-runs on every navigation, and re-seeding after a
+// reset would hide whether the reset actually did anything.
+await fresh.addInitScript((cfg) => {
+  if (localStorage.getItem('seed.done')) return;
+  localStorage.setItem('seed.done', '1');
+  localStorage.setItem('podium.config.v2', cfg);
+  localStorage.setItem('podium.library.v1', JSON.stringify([{ type: 'image', src: 'x.png', title: 'Saved thing' }]));
+  // Stand-in for another project sharing the same GitHub Pages origin.
+  localStorage.setItem('someotherapp.state', 'do-not-touch');
+}, JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'reset-room', passphrase: 'chalk dust' }));
+
+const screen = await fresh.newPage();
+trap(screen, 'reset display');
+await screen.goto(`${BASE}/display.html`);
+await screen.waitForSelector('#arm:not([hidden])');
+
+// The pairing sheet and the arming sheet used to share one z-index, so the QR
+// opened *underneath* the arming screen and the button looked broken.
+await screen.click('#pair-button');
+await screen.waitForSelector('#pair:not([hidden])');
+const onTop = await screen.evaluate(() => {
+  const qr = document.querySelector('#pair-qr svg');
+  if (!qr) return { drawn: false };
+  const r = qr.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return { drawn: r.width > 100, onTop: !!hit?.closest('#pair') };
+});
+ok('the pairing QR is drawn when opened from the arming screen', onTop.drawn);
+ok('and sits on top of the arming screen rather than under it', onTop.onTop);
+await screen.click('#pair-close');
+
+await screen.click('#arm-button');
+await screen.waitForSelector('#standby.is-on');
+await screen.click('#standby-pair');
+await screen.waitForSelector('#pair:not([hidden])');
+ok('pairing still works from the standby screen', await screen.evaluate(() => {
+  const r = document.querySelector('#pair-qr svg').getBoundingClientRect();
+  return !!document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('#pair');
+}));
+await screen.click('#pair-close');
+
+const pad = await fresh.newPage();
+trap(pad, 'reset control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('#app:not([hidden])');
+await pad.click('#open-settings');
+await pad.waitForSelector('#setup:not([hidden])');
+ok('Close is offered while the device is configured', !(await pad.isHidden('#setup-close')));
+
+await pad.click('#reset-device');
+ok('one tap only arms the reset', (await pad.textContent('#reset-device')).includes('Tap again'));
+ok('and nothing is cleared yet', await pad.evaluate(() => !!localStorage.getItem('podium.config.v2')));
+
+await Promise.all([pad.waitForNavigation({ timeout: 20000 }), pad.click('#reset-device')]);
+await pad.waitForSelector('#setup:not([hidden])', { timeout: 15000 });
+ok('the second tap clears settings and reloads into first-run',
+   await pad.evaluate(() => !localStorage.getItem('podium.config.v2')));
+ok('saved library items are cleared too', await pad.evaluate(() => !localStorage.getItem('podium.library.v1')));
+ok('another app sharing the origin is left alone',
+   await pad.evaluate(() => localStorage.getItem('someotherapp.state') === 'do-not-touch'));
+ok('Close is hidden once there is nothing to go back to', await pad.isHidden('#setup-close'));
+const freshRoom = await pad.inputValue('#c-room');
+ok(`a new random room is generated rather than the old one (${freshRoom})`,
+   freshRoom !== 'reset-room' && freshRoom.startsWith('room-'));
+
+// S is the way into Settings on a kiosk display with no browser chrome.
+await screen.keyboard.press('s');
+await screen.waitForSelector('#setup:not([hidden])', { timeout: 5000 });
+ok('pressing S on the display opens Settings', true);
+await screen.click('#reset-device');
+await Promise.all([screen.waitForNavigation({ timeout: 20000 }), screen.click('#reset-device')]);
+await screen.waitForSelector('#setup:not([hidden])', { timeout: 15000 });
+ok('the display clears the same way', await screen.evaluate(() => !localStorage.getItem('podium.config.v2')));
+await fresh.close();
+}
+
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
 } finally {
   await browser?.close().catch(() => {});

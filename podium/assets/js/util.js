@@ -83,3 +83,42 @@ export function guessItemFromUrl(raw) {
   if (/\.pdf$/.test(lower)) return { type: 'pdf', src: url, page: 1, title: 'PDF' };
   return { type: 'web', src: url, title: url.replace(/^https?:\/\//, '').slice(0, 40) };
 }
+
+/**
+ * Turn a button into a two-step destructive action. A plain confirm() dialog is
+ * awkward on a fullscreen kiosk display and on an iPad home-screen app, and a
+ * single tap is too easy to hit by accident five minutes before class.
+ */
+export function wireDangerButton(button, label, action, { armedLabel = 'Tap again to erase', window: ms = 5000 } = {}) {
+  let armed = false;
+  let timer = null;
+
+  const disarm = () => {
+    armed = false;
+    clearTimeout(timer);
+    button.textContent = label;
+    button.classList.remove('is-danger');
+  };
+
+  button.textContent = label;
+  button.addEventListener('click', async () => {
+    if (!armed) {
+      armed = true;
+      button.textContent = armedLabel;
+      button.classList.add('is-danger');
+      timer = setTimeout(disarm, ms);
+      return;
+    }
+    clearTimeout(timer);
+    button.disabled = true;
+    button.textContent = 'Clearing…';
+    try {
+      await action();
+    } catch {
+      button.disabled = false;
+      disarm();
+    }
+  });
+
+  return { disarm };
+}
