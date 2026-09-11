@@ -88,7 +88,25 @@ function mediaRenderer(item, opts, media, node) {
   // Nothing here starts itself. reconcile() is the only thing that presses
   // play, so an item cued into the hidden layer stays parked on its first
   // frame instead of running out of sync behind whatever is on screen.
-  const play = () => media.play().catch(() => { /* blocked until the display is armed */ });
+  //
+  // A blocked play() (the Go Live unlock did not fully satisfy this engine's
+  // autoplay policy) is made self-healing rather than silently staying
+  // paused forever: the very next tap or keypress anywhere on the page
+  // retries it once. This is what made "exit fullscreen" look like a fix in
+  // practice - any interaction unlocks it - so it happens on ALL of them
+  // instead of that one undocumented gesture.
+  let retryArmed = false;
+  const armRetry = () => {
+    if (retryArmed) return;
+    retryArmed = true;
+    // Calls the wrapped play() below, not media.play() directly, so a retry
+    // that is ALSO blocked re-arms itself for the next interaction instead
+    // of giving up after one try.
+    const retry = () => { retryArmed = false; play(); };
+    document.addEventListener('pointerdown', retry, { once: true, capture: true });
+    document.addEventListener('keydown', retry, { once: true, capture: true });
+  };
+  const play = () => media.play().catch(() => armRetry());
 
   return {
     el: node,

@@ -1131,6 +1131,213 @@ ok('picking "Waiting music" from the library actually plays sound', true);
 await ctx.close();
 }
 
+console.log('\n-- ink survives a layout change mid-stroke instead of warping --');
+{
+// A pad frame that resizes WHILE a stroke is still in progress is what
+// warped ink on a real iPad: an iPad rotation crosses the controller's
+// @media(max-width:900px) breakpoint (the preview rail moves from beside the
+// pad to above it), reshaping #pad-viewport mid-gesture. Points captured
+// before vs after that reshape are fractions of two DIFFERENT boxes, so
+// redrawing them all under one final size warps the stroke. Start narrow
+// (portrait, stacked layout) and rotate to wide (landscape, side-by-side)
+// with the pointer still down.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'ink-rotate-room', passphrase: 'rotate me' }));
+const screen = await ctx.newPage();
+trap(screen, 'ink-rotate display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'ink-rotate control');
+await pad.goto(`${BASE}/control.html`);
+await pad.setViewportSize({ width: 820, height: 1180 });
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 20000 });
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(400);
+
+const frameBox = () => pad.evaluate(() => { const f = document.querySelector('#pad-frame'); return { w: f.style.width, h: f.style.height, left: f.style.left, top: f.style.top }; });
+const padBox = () => pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+const before = await frameBox();
+
+let pb = await padBox();
+await pad.mouse.move(pb.x + pb.w * 0.2, pb.y + pb.h * 0.2);
+await pad.mouse.down();
+await pad.mouse.move(pb.x + pb.w * 0.3, pb.y + pb.h * 0.3);
+await pad.setViewportSize({ width: 1180, height: 820 });
+await pad.waitForTimeout(150);
+ok('the pad frame does not resize while a stroke is still in progress', JSON.stringify(await frameBox()) === JSON.stringify(before));
+
+await pad.mouse.move(pb.x + pb.w * 0.4, pb.y + pb.h * 0.4);
+await pad.mouse.up();
+await pad.waitForTimeout(300);
+ok('and catches up to the new size once the stroke ends', JSON.stringify(await frameBox()) !== JSON.stringify(before));
+
+// A fresh circle drawn entirely AFTER the rotation settled should stay
+// round on the projector - equal PHYSICAL pixel radii on both axes, since
+// the pad's own box is 16:9 and equal fractions of w/h would draw an
+// ellipse by construction regardless of any bug.
+await pad.click('#ink-clear');
+await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+pb = await padBox();
+const cx = pb.x + pb.w * 0.5, cy = pb.y + pb.h * 0.5, r = Math.min(pb.w, pb.h) * 0.3;
+await pad.mouse.move(cx + r, cy);
+await pad.mouse.down();
+for (let i = 0; i <= 24; i++) { const a = (i / 24) * 2 * Math.PI; await pad.mouse.move(cx + r * Math.cos(a), cy + r * Math.sin(a)); }
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+const painted = await screen.evaluate(() => {
+  const cv = document.querySelector('#ink'); const c2d = cv.getContext('2d');
+  const data = c2d.getImageData(0, 0, cv.width, cv.height).data;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let y = 0; y < cv.height; y += 2) for (let x = 0; x < cv.width; x += 2) {
+    const i = (y * cv.width + x) * 4;
+    if (data[i + 3] > 0) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+  }
+  return { w: maxX - minX, h: maxY - minY };
+});
+const paintedAspect = painted.w / painted.h;
+ok(`the drawn circle stays round on the projector (aspect ${paintedAspect.toFixed(2)} vs drawn 1.00)`, Math.abs(paintedAspect - 1) < 0.25);
+await ctx.close();
+}
+
+console.log('\n-- ink recovers even if a fullscreen transition never fires a resize event --');
+{
+// requestFullscreen()'s promise is documented to settle before the viewport
+// has actually finished resizing in some browsers, and goLive() sizes the
+// ink canvas right after that promise resolves. If the eventual layout
+// change never generates its own 'resize' event (or generates it too late),
+// the ink canvas is stuck at the pre-transition size until something else
+// happens to redraw it. fullscreenchange is a second, independent trigger
+// for the same recompute - this proves it works on its own, with 'resize'
+// deliberately disabled so nothing else can be doing the job instead.
+const ctx = await browser.newContext({ viewport: { width: 900, height: 700 } });
+await ctx.addInitScript(() => {
+  const realAdd = window.addEventListener.bind(window);
+  window.addEventListener = (type, ...rest) => { if (type === 'resize') return; return realAdd(type, ...rest); };
+});
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'fs-race-room', passphrase: 'no resize for you' }));
+const screen = await ctx.newPage();
+trap(screen, 'fs-race display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+
+await screen.setViewportSize({ width: 1600, height: 900 });
+await screen.waitForTimeout(150);
+const stale = await screen.evaluate(() => { const i = document.querySelector('#ink'); return { w: i.width, h: i.height }; });
+ok('sanity check: with resize disabled, the ink canvas really is stuck at the old size', stale.w === 900 && stale.h === 700);
+
+await screen.evaluate(() => document.dispatchEvent(new Event('fullscreenchange')));
+await screen.waitForTimeout(150);
+const after = await screen.evaluate(() => {
+  const stage = document.querySelector('#stage');
+  const ink = document.querySelector('#ink');
+  return { stageW: stage.clientWidth, stageH: stage.clientHeight, inkW: ink.width, inkH: ink.height, ratio: window.devicePixelRatio || 1 };
+});
+ok('fullscreenchange alone catches the ink canvas up to the current stage size',
+  Math.abs(after.inkW - Math.round(after.stageW * after.ratio)) < 4 && Math.abs(after.inkH - Math.round(after.stageH * after.ratio)) < 4);
+await ctx.close();
+}
+
+console.log('\n-- Waiting Music under a strict (Safari-like) autoplay policy --');
+{
+// The main suite launches Chromium with --autoplay-policy=no-user-gesture-
+// required, which is realistic for Chromium's own default but would let a
+// broken unlock pass silently - it disables the very policy the fix targets.
+// This block runs its own context with an in-page monkeypatch of
+// HTMLMediaElement.play() instead, simulating Safari's stricter rule (every
+// play() call rejected until a real gesture has occurred) regardless of the
+// browser-level launch flag, so it actually exercises the Go Live fix: a
+// real <audio> element's play() called synchronously inside the click,
+// which is the one thing every engine honors - resuming an AudioContext
+// alone does not satisfy this gate.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'audio-strict-room', passphrase: 'strict policy' }));
+await ctx.addInitScript(() => {
+  let unlocked = false;
+  document.addEventListener('pointerdown', () => { unlocked = true; }, { capture: true });
+  document.addEventListener('keydown', () => { unlocked = true; }, { capture: true });
+  const nativePlay = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () {
+    if (unlocked || this.muted) return nativePlay.call(this);
+    return Promise.reject(new DOMException('simulated autoplay block', 'NotAllowedError'));
+  };
+});
+const screen = await ctx.newPage();
+trap(screen, 'audio-strict display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'audio-strict control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Waiting music"))');
+await screen.waitForFunction(() => {
+  const a = document.querySelector('.layer[data-role="program"] audio');
+  return a && !a.paused && a.currentTime > 0.2;
+}, null, { timeout: 5000 });
+ok('under a strict simulated autoplay policy, the Go Live click alone unlocks Waiting Music', true);
+await ctx.close();
+}
+
+console.log('\n-- audio self-heals on the next gesture if even the Go Live unlock fails --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'audio-selfheal-room', passphrase: 'self heal' }));
+// A policy so strict even the Go Live silent-clip unlock fails - only
+// lifted by a flag flipped manually well after Go Live, simulating "the
+// unlock genuinely did not satisfy this engine."
+await ctx.addInitScript(() => {
+  window.__blockAll = true;
+  const nativePlay = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () {
+    if (!window.__blockAll) return nativePlay.call(this);
+    return Promise.reject(new DOMException('simulated autoplay block', 'NotAllowedError'));
+  };
+});
+const screen = await ctx.newPage();
+trap(screen, 'audio-selfheal display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'audio-selfheal control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Waiting music"))');
+await screen.waitForTimeout(1000);
+const blocked = await screen.evaluate(() => {
+  const a = document.querySelector('.layer[data-role="program"] audio');
+  return a ? { paused: a.paused, currentTime: a.currentTime } : null;
+});
+ok(`with everything blocked, Waiting Music sits paused rather than erroring (${JSON.stringify(blocked)})`, blocked && blocked.paused === true);
+
+// Lift the simulated block and fire one unrelated interaction elsewhere on
+// the display page - a keypress, nothing to do with audio.
+await screen.evaluate(() => { window.__blockAll = false; });
+await screen.keyboard.press('Escape');
+await screen.waitForFunction(() => {
+  const a = document.querySelector('.layer[data-role="program"] audio');
+  return a && !a.paused && a.currentTime > 0.1;
+}, null, { timeout: 3000 });
+ok('one unrelated keypress afterward is enough to self-heal it - no need to find the "exit fullscreen" trick', true);
+await ctx.close();
+}
+
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
 } finally {
   await browser?.close().catch(() => {});

@@ -779,7 +779,17 @@ function syncInkFromState() {
     ink.strokes = (state.ink?.strokes || []).map((s) => ({ ...s, pts: s.pts.map((p) => [p[0], p[1]]) }));
     if (!$('[data-panel="ink"]').hidden) redrawPad();
   }
-  if (!$('[data-panel="ink"]').hidden) sizePad();
+  // Resizing mid-stroke is what caused strokes to come out warped: a state
+  // echo arrives roughly every 60ms while drawing (your own points, echoed
+  // back), and if the deck's aspect had only just become known - e.g. Marp
+  // was still loading when the gesture started - the frame would resize
+  // partway through it. Points already captured are fractions of whatever
+  // box existed at that instant, so a resize between two points of the SAME
+  // stroke leaves them meaning different things once redrawn under one
+  // uniform size. Deferring the resize until the stroke ends (see
+  // endStroke()) keeps every point in a gesture measured against one
+  // constant box.
+  if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad();
 }
 
 const flushInk = throttle(() => {
@@ -825,6 +835,9 @@ const endStroke = (ev) => {
   send({ op: 'ink', action: 'points', id: ink.strokeId, pts: ink.buffer.splice(0) });
   ink.strokeId = null;
   try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
+  // Catch up on any resize that was deliberately deferred while that stroke
+  // was in progress, now that there is a safe moment to apply it.
+  if (!$('[data-panel="ink"]').hidden) sizePad();
 };
 pad.addEventListener('pointerup', endStroke);
 pad.addEventListener('pointercancel', endStroke);
@@ -1169,7 +1182,7 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'f' || ev.key === 'F') { ev.preventDefault(); send({ op: 'freeze' }); }
 });
 
-window.addEventListener('resize', () => { if (!$('[data-panel="ink"]').hidden) sizePad(); });
+window.addEventListener('resize', () => { if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad(); });
 window.addEventListener('beforeunload', () => bus?.close());
 setInterval(() => { renderNow(); renderTimer(); renderConnection(); }, 250);
 

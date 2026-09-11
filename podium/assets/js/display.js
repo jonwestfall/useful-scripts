@@ -438,14 +438,33 @@ document.addEventListener('visibilitychange', () => {
 // gesture: sound, fullscreen and the wake lock. The display is already on the
 // bus by this point, so a controller can see it - and see that it is waiting
 // for this click - rather than the room looking empty.
+// A one-sample silent WAV, inlined so the unlock below needs no network
+// round trip. Its only job is to be something real for the browser to play.
+const SILENT_CLIP = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
+
 async function goLive() {
   armEl.hidden = true;
   document.body.classList.add('is-live');
   state.armed = true;
+
+  // Two separate autoplay gates exist, and they do not unlock each other:
+  // resuming an AudioContext (below) only covers the Web Audio API: it does
+  // nothing for a plain <audio>/<video> element's own autoplay policy, which
+  // is the one that actually governs Waiting Music and every video/YouTube
+  // item. Safari in particular enforces that gate strictly and separately.
+  // The one thing every engine reliably honors is an actual media element's
+  // play() called synchronously inside the click - so that happens first,
+  // before anything else gets a chance to spend this gesture.
+  try {
+    const unlock = new Audio(SILENT_CLIP);
+    unlock.muted = true;
+    await unlock.play();
+    unlock.pause();
+  } catch { /* best effort - the per-clip retry-on-next-gesture below covers the rest */ }
+
+  try { await new (window.AudioContext || window.webkitAudioContext)().resume(); } catch { /* noop */ }
   try { await document.documentElement.requestFullscreen({ navigationUI: 'hide' }); } catch { /* user can press F11 */ }
   await requestWakeLock();
-  // Resuming an AudioContext inside the click is what buys us autoplay later.
-  try { await new (window.AudioContext || window.webkitAudioContext)().resume(); } catch { /* noop */ }
   sizeInk();
   commit();
 }
@@ -534,7 +553,16 @@ $('#pair-close').addEventListener('click', hidePairing);
 $('#standby-pair').addEventListener('click', showPairing);
 $('#standby-settings').addEventListener('click', showSetup);
 
+// Entering fullscreen (see goLive()) is the other real trigger for a stale
+// content box: requestFullscreen()'s promise is documented to settle before
+// the viewport has actually finished resizing in some browsers, so the
+// sizeInk() call right after it can run against the OLD dimensions - and if
+// no further resize happens before ink gets drawn, that stale box (and the
+// misaligned ink it produces) never self-corrects. 'resize' alone isn't a
+// reliable enough signal for this specific transition, so fullscreenchange
+// is a second, redundant trigger for the same recompute.
 window.addEventListener('resize', () => { sizeInk(); broadcastSoon(); });
+document.addEventListener('fullscreenchange', () => { sizeInk(); broadcastSoon(); });
 window.addEventListener('beforeunload', () => bus?.close());
 
 // The display normally runs in kiosk mode with no browser chrome, and the

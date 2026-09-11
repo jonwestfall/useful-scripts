@@ -275,6 +275,19 @@ annotations. It is best-effort: a slide that depends on a font or image the brow
 refuses to bake into a canvas is skipped individually (noted in `slides.txt`) rather
 than failing the whole export.
 
+**Rotating the iPad mid-stroke does not warp the line.** Every point in a stroke is a
+fraction (0–1) of the pad's own box at the instant it was captured. If that box
+changed shape *during* the gesture — an iPad rotation crosses the controller's
+narrow/wide layout breakpoint, moving the preview rail from above the pad to beside
+it — points from before and after the change would be fractions of two different
+boxes, and redrawing them all at one final size would stretch the stroke. The pad
+defers resizing itself until the stroke actually ends, then catches up; the same
+timing gap explained a slide-projector mismatch reported early on, since the fraction
+math itself was always correct once box and content stayed in step. The display side
+has a matching guard: entering fullscreen (see **One click to start** below) can
+resize the window a beat after the click itself resolves, so the display also
+recomputes its content box on `fullscreenchange`, not only on `resize`.
+
 ## Your lecture library
 
 Edit `content/manifest.json`, commit, and the tiles appear on the iPad. Files you put
@@ -328,6 +341,18 @@ so the display opens on a **Go live** button. That single click also takes it
 fullscreen and requests a wake lock so the screen never sleeps mid-lecture. The
 display joins the room as soon as the page loads, though — so your iPad can see it
 sitting there waiting for that click, rather than the room looking empty.
+
+Autoplay is actually two separate locks, and unlocking one does not unlock the
+other: the Web Audio API (used to keep timing steady) has its own gate, and every
+plain `<audio>`/`<video>` element — Waiting Music, videos, YouTube — has a second,
+independent one that Safari enforces strictly. The Go Live click plays and
+immediately pauses a real (silent) audio element synchronously inside the click to
+satisfy that second gate, since resuming an AudioContext alone does nothing for it.
+If some engine still refuses even that — an unusual browser policy, or the click
+landing before the page finished wiring up — Podium does not just give up: the very
+next tap or key press anywhere on the display retries the blocked clip once, so a
+stuck Waiting Music tile clears itself rather than requiring you to find the "leave
+and re-enter fullscreen" workaround.
 
 **Some sites refuse to be embedded.** `X-Frame-Options` and CSP mean many news sites,
 most LMSes and Google Docs will show a blank frame — the display says so rather than
