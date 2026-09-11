@@ -35,11 +35,12 @@ underneath, one tap to bring it back.
 
 ## What it can put on screen
 
-Images · video files · audio (with a now-playing card) · YouTube (play, pause, seek and
-volume, all driven from the iPad) · any embeddable web page · HTML slide decks
-including reveal.js · PDFs with page-turn buttons · big text cards · a QR code for the
-class to scan · a countdown timer · a whiteboard · your phone's camera as a document
-camera.
+**Marp decks in Markdown**, with presenter notes on your iPad and your own themes —
+see below. Plus: images · video files · audio (with a now-playing card) · YouTube
+(play, pause, seek and volume, all driven from the iPad) · any embeddable web page ·
+HTML slide decks including reveal.js · PDFs with page-turn buttons · big text cards ·
+a QR code for the class to scan · a countdown timer · a whiteboard · your phone's
+camera as a document camera.
 
 Two more that sit on top of anything: **ink**, so you can annotate live over a slide
 with an Apple Pencil, and a **caption** along the bottom of the screen.
@@ -108,6 +109,89 @@ front of the room.
 
 On the iPad, Share → **Add to Home Screen** gives you a fullscreen controller with no
 Safari chrome. Repeat the pairing for your iPhone; both stay in sync.
+
+## Marp decks
+
+Markdown decks are a first-class content type. The deck is rendered by the real
+[`@marp-team/marp-core`](https://github.com/marp-team/marp-core), so front matter,
+`_class` directives, layout helpers, tables, code and `$math$` all behave the way
+they do when you export a PDF.
+
+**Two ways to get a deck on screen:**
+
+- **From the server.** Drop the `.md` in `content/decks/`, add it to
+  `content/manifest.json` with `"type": "deck"`, and it appears as a tile. Both the
+  display and your iPad fetch it directly, so nothing large crosses the air.
+- **From your iPad.** *Open a Marp deck…* on the Library tab takes a file from
+  Files, iCloud Drive, or anywhere the picker can reach. The markdown is encrypted
+  and sent to the display, which caches it for the rest of the lecture. Uploads are
+  capped at 120 KB of markdown — past that, put it in `content/decks/` instead.
+  Images should be links, not base64 blobs.
+
+```json
+{ "group": "Week 1", "title": "Day 6 — Weighing the Evidence",
+  "type": "deck", "src": "content/decks/day06-evidence-weighting.md" }
+```
+
+**Presenter notes** are any HTML comment that is not a Marp directive:
+
+```markdown
+## The slide the class sees
+
+<!--
+This lands on your iPad and nowhere else.
+`<!-- _class: lead -->` is a directive, so it is not treated as a note.
+-->
+```
+
+The **Slides** tab shows the notes for the slide that is up, what is coming next,
+big Previous/Next buttons, and a thumbnail of every slide — tap one to jump
+straight there. An external keyboard or a presentation clicker works too: arrows,
+space, `B` to blank, `F` to freeze.
+
+Because the whole deck is rendered once into a shadow root, changing slide is
+instant, and a deck cued behind a freeze keeps its place when you take it.
+
+### Themes
+
+Put your CSS in `marp-themes/` and list the filename in `marp-themes/themes.json`.
+A deck selects it by the name in the file's own `/* @theme name */` header, not by
+its filename:
+
+```css
+/* @theme psy415-dsu */
+@import "gaia";
+section { ... }
+```
+
+```yaml
+---
+marp: true
+theme: psy415-dsu
+---
+```
+
+Marp's built-in themes (`default`, `gaia`, `uncover`) are always available and can
+be `@import`-ed from your own. A deck that names a theme you have not installed
+falls back to the default — the Slides tab says so rather than leaving you
+wondering why the colours are wrong.
+
+`psy415-dsu.css` ships as a working example.
+
+### What is and is not supported
+
+- **Math** renders through KaTeX. `math: mathjax` is not bundled and will error.
+- **Code highlighting** covers about forty languages (R, Python, Stata, SQL, and
+  the usual suspects). Anything else renders as plain code. The list is in
+  `vendor-build/build-marp.mjs`.
+- **Raw HTML is allowed as layout** — `<div class="columns">` and friends work —
+  but tags and attributes are filtered, so a deck from elsewhere cannot run a
+  script on the classroom PC.
+- The Marp renderer is **vendored** at `assets/vendor/marp.esm.js` (~1 MB, fetched
+  once, only when you first open a deck) rather than pulled from a CDN, so decks
+  keep working when the network does not. See `vendor-build/` to rebuild it.
+- KaTeX's glyph fonts are the one thing still fetched from a CDN. Math renders
+  without them, just in a fallback face.
 
 ## Your lecture library
 
@@ -224,8 +308,13 @@ podium/
       bus.js                      encryption, identity, presence, reconnect
       crypto.js  config.js  rtc.js  util.js
       transport/                  supabase.js · mqtt.js · ws.js
+      deck.js                     Marp: themes, rendering, presenter notes
     vendor/qrcode.js              QR generator (MIT, Kazuhiko Arase)
+    vendor/marp.esm.js            Marp renderer, bundled for browsers
+  marp-themes/                    your Marp CSS + themes.json
   content/manifest.json           your library
+  content/decks/                  markdown decks
   server/                         the self-hosted relay
+  vendor-build/                   rebuilds the Marp bundle
   test/
 ```

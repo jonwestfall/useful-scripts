@@ -3,6 +3,18 @@
   "items": [
     {
       "group": "Week 1",
+      "title": "Day 6 \u2014 Weighing the Evidence",
+      "type": "deck",
+      "src": "content/decks/day06-evidence-weighting.md"
+    },
+    {
+      "group": "Week 1",
+      "title": "Podium deck features (example)",
+      "type": "deck",
+      "src": "content/decks/example-notes.md"
+    },
+    {
+      "group": "Week 1",
       "title": "Opening slide",
       "type": "text",
       "body": "**PSY 3010**\nWorking Memory",

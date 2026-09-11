@@ -8,6 +8,7 @@ import { createBus } from './bus.js';
 import { initialState, timerRemaining } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
+import { render as renderDeckSource, deckId, frontMatterTitle, themeReport } from './deck.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -21,6 +22,47 @@ let previewKey = null;
 let scrubbing = false;
 
 const send = (cmd) => bus?.send({ t: 'cmd', ...cmd });
+
+// Decks this controller holds the markdown for. An uploaded deck lives only
+// here and on whichever display asked for it; a deck with a src is fetched
+// from the server by both ends independently.
+const MAX_DECK_BYTES = 120 * 1024;
+const deckStore = new Map();
+const deckFetches = new Map();
+let deckView = { id: null, deck: null };
+let deckGeneration = 0;
+
+function getDeckSource(item) {
+  if (!item?.deckId) return null;
+  if (deckStore.has(item.deckId)) return deckStore.get(item.deckId);
+  if (!item.src) return null;
+  if (!deckFetches.has(item.deckId)) {
+    deckFetches.set(item.deckId, fetch(item.src, { cache: 'no-cache' })
+      .then((res) => {
+        if (!res.ok) throw new Error(`${item.src} — HTTP ${res.status}`);
+        return res.text();
+      })
+      .then((text) => { deckStore.set(item.deckId, text); return text; }));
+  }
+  return deckFetches.get(item.deckId);
+}
+
+async function stageDeck({ source, name, src }) {
+  const id = src ? `src:${src}` : await deckId(source);
+  deckStore.set(id, source);
+  const deck = await renderDeckSource(source, id);
+  // Hand it to the display up front rather than making it ask.
+  if (!src) bus?.send({ t: 'deck', id, source });
+  stage({
+    type: 'deck',
+    title: frontMatterTitle(source, name || 'Deck'),
+    deckId: id,
+    src,
+    slide: 0,
+    slideCount: deck.count,
+  });
+  return deck;
+}
 
 // --- library ----------------------------------------------------------------
 
@@ -76,7 +118,7 @@ function renderLibrary() {
       const tile = el('button', {
         class: 'tile',
         type: 'button',
-        onclick: () => stage(item),
+        onclick: () => pick(item),
       },
         el('span', { class: 'tile-icon' }, TYPES[item.type]?.icon || '?'),
         el('span', { class: 'tile-title' }, item.title || TYPES[item.type]?.label || item.type),
@@ -105,6 +147,21 @@ function stage(item, where = 'auto') {
   send({ op: 'stage', item: clean, where });
 }
 
+// A deck picked from the library needs fetching and counting before it can be
+// staged, so library clicks go through here.
+async function pick(item, where = 'auto') {
+  if (item.type !== 'deck' || item.slideCount) { stage(item, where); return; }
+  const note = $('#deck-file-note');
+  note.textContent = `Loading ${item.title || 'deck'}…`;
+  try {
+    const source = await getDeckSource({ deckId: `src:${item.src}`, src: item.src });
+    await stageDeck({ source, name: item.title, src: item.src });
+    note.textContent = '';
+  } catch (err) {
+    note.textContent = `Could not open that deck: ${err.message}`;
+  }
+}
+
 // --- preview pane -----------------------------------------------------------
 
 function renderPreview() {
@@ -118,7 +175,7 @@ function renderPreview() {
     holder.replaceChildren();
     previewKey = key;
     if (item) {
-      previewRenderer = createRenderer(item, { preview: true, getTimer: () => state.timer });
+      previewRenderer = createRenderer(item, { preview: true, getTimer: () => state.timer, getDeckSource });
       holder.append(previewRenderer.el);
     }
   } else if (previewRenderer && item) {
@@ -129,6 +186,123 @@ function renderPreview() {
   $('#preview-label').textContent = state.preview ? 'Cued' : 'On screen';
   $('#preview-title').textContent = itemTitle(item);
   $('#preview-pane').classList.toggle('is-cued', !!state.preview);
+}
+
+// --- Marp deck panel --------------------------------------------------------
+
+let gridShadow = null;
+let gridDeckId = null;
+
+function ensureGridShadow() {
+  gridShadow ??= $('#deck-grid').attachShadow({ mode: 'open' });
+  return gridShadow;
+}
+
+function buildGrid(deck) {
+  const shadow = ensureGridShadow();
+  shadow.innerHTML = `<style>
+    :host { display: block; }
+    #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+    .cell {
+      position: relative; aspect-ratio: 16 / 9; overflow: hidden; cursor: pointer;
+      background: #fff; border: 2px solid #2a3038; border-radius: 8px; padding: 0;
+    }
+    .cell.on { border-color: #6ea8fe; }
+    /* Marpit scopes its slide CSS to div.marpit > svg > foreignObject > section,
+       so each thumbnail keeps that wrapper or the slide loses all its sizing. */
+    .cell .marpit { position: absolute; inset: 0; }
+    .cell svg { display: block; width: 100%; height: 100%; }
+    .num {
+      position: absolute; right: 3px; bottom: 3px; padding: 0 5px; border-radius: 4px;
+      background: rgba(0,0,0,.65); color: #fff; font: 600 11px/1.6 system-ui, sans-serif;
+    }
+  </style><style>${deck.css}</style><div id="grid"></div>`;
+
+  const holder = document.createElement('div');
+  holder.innerHTML = deck.html;
+  const grid = shadow.getElementById('grid');
+  Array.from(holder.querySelectorAll('svg[data-marpit-svg]')).forEach((svg, i) => {
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'cell';
+    cell.dataset.index = String(i);
+    cell.title = deck.titles[i] || `Slide ${i + 1}`;
+    const marpit = document.createElement('div');
+    marpit.className = 'marpit';
+    marpit.append(svg);
+    cell.append(marpit);
+    const num = document.createElement('span');
+    num.className = 'num';
+    num.textContent = String(i + 1);
+    cell.append(num);
+    cell.addEventListener('click', () => send({ op: 'nav', dir: 'goto', value: i }));
+    grid.append(cell);
+  });
+  gridDeckId = deck.id;
+}
+
+function highlightGrid(index) {
+  if (!gridShadow) return;
+  gridShadow.querySelectorAll('.cell').forEach((cell) => {
+    cell.classList.toggle('on', Number(cell.dataset.index) === index);
+  });
+}
+
+async function ensureDeckView(item) {
+  if (!item || item.type !== 'deck') { deckView = { id: null, deck: null }; return; }
+  if (deckView.id === item.deckId) return;
+  const mine = ++deckGeneration;
+  let source;
+  try {
+    source = await getDeckSource(item);
+  } catch {
+    source = null;
+  }
+  if (source == null || mine !== deckGeneration) return;
+  try {
+    const deck = await renderDeckSource(source, item.deckId);
+    if (mine !== deckGeneration) return;
+    deckView = { id: item.deckId, deck };
+    renderSlides();
+  } catch (err) {
+    $('#deck-notes').textContent = `Marp could not render this deck: ${err.message}`;
+  }
+}
+
+function renderSlides() {
+  const item = state.program?.type === 'deck' ? state.program : null;
+  $('#deck-none').hidden = !!item;
+  $('#deck-live').hidden = !item;
+  if (!item) return;
+
+  $('#deck-title').textContent = itemTitle(item);
+  const deck = deckView.id === item.deckId ? deckView.deck : null;
+  const total = deck?.count || item.slideCount || 1;
+  const index = Math.min(total - 1, Math.max(0, item.slide || 0));
+  $('#deck-count').textContent = `Slide ${index + 1} / ${total}`;
+  $('#deck-prev').disabled = index === 0;
+  $('#deck-next').disabled = index >= total - 1;
+
+  const notesEl = $('#deck-notes');
+  if (!deck) {
+    notesEl.textContent = 'Loading deck…';
+    notesEl.classList.add('is-empty');
+  } else {
+    const note = deck.notes[index] || '';
+    notesEl.textContent = note || 'No notes on this slide.';
+    notesEl.classList.toggle('is-empty', !note);
+  }
+
+  const upcoming = deck?.titles?.[index + 1];
+  $('#deck-next-up').textContent = upcoming ? `${index + 2}. ${upcoming}` : 'End of deck.';
+
+  const problems = [deck?.themeWarning, ...themeReport.failed].filter(Boolean);
+  const themeEl = $('#deck-theme');
+  themeEl.textContent = problems.length ? problems[0] : (deck ? `theme: ${deck.theme}` : 'Rendering…');
+  themeEl.classList.toggle('is-warning', problems.length > 0);
+
+  if (deck && gridDeckId !== deck.id) buildGrid(deck);
+  highlightGrid(index);
 }
 
 // --- transport / now playing ------------------------------------------------
@@ -143,7 +317,7 @@ function renderNow() {
   const item = state.program;
   const type = item?.type;
   const isMedia = ['video', 'audio', 'youtube'].includes(type);
-  const isPaged = ['pdf', 'slides', 'web'].includes(type);
+  const isPaged = ['pdf', 'slides', 'web', 'deck'].includes(type);
 
   $('#now-title').textContent = itemTitle(item);
   $('#now-type').textContent = TYPES[type]?.label || type || '';
@@ -153,7 +327,9 @@ function renderNow() {
   // that is visible from every tab.
   $('#bar-play').hidden = !isMedia;
   $('#bar-play').textContent = telemetry.playing ? '⏸' : '▶';
-  $('#page-label').textContent = type === 'pdf' ? `Page ${item.page || 1}` : 'Slide';
+  $('#page-label').textContent = type === 'pdf'
+    ? `Page ${item.page || 1}`
+    : (type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}` : 'Slide');
 
   if (isMedia) {
     const t = currentTime();
@@ -191,6 +367,8 @@ function renderAll() {
   renderPreview();
   renderNow();
   renderTimer();
+  renderSlides();
+  ensureDeckView(state.program);
 }
 
 // --- ink pad ----------------------------------------------------------------
@@ -351,6 +529,11 @@ async function connect() {
         renderConnection();
         return;
       }
+      if (msg.t === 'deck-need') {
+        const source = deckStore.get(msg.id);
+        if (source != null) bus.send({ t: 'deck', id: msg.id, source });
+        return;
+      }
       if (msg.t === 'rtc') cameraSender?.handle(msg);
     },
   });
@@ -401,6 +584,31 @@ $('#scrub').addEventListener('change', (ev) => {
   scrubbing = false;
   send({ op: 'media', action: 'seek', value: Number(ev.target.value) });
 });
+$('#deck-prev').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
+$('#deck-next').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
+
+$('#deck-file').addEventListener('change', async (ev) => {
+  const file = ev.target.files?.[0];
+  const note = $('#deck-file-note');
+  ev.target.value = '';
+  if (!file) return;
+  note.textContent = `Reading ${file.name}…`;
+  try {
+    const source = await file.text();
+    const bytes = new TextEncoder().encode(source).length;
+    if (bytes > MAX_DECK_BYTES) {
+      note.textContent = `That deck is ${Math.round(bytes / 1024)} KB — too big to send over the air. `
+        + 'Put it in podium/content/decks/ and add it to content/manifest.json instead.';
+      return;
+    }
+    const deck = await stageDeck({ source, name: file.name.replace(/\.(md|markdown|txt)$/i, '') });
+    note.textContent = `${file.name} — ${deck.count} slides`;
+    tab('slides');
+  } catch (err) {
+    note.textContent = `Could not open that file: ${err.message}`;
+  }
+});
+
 $('#prev-page').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
 $('#next-page').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
 
@@ -474,6 +682,17 @@ $('#cam-start').addEventListener('click', async () => {
 $('#cam-flip').addEventListener('click', async () => {
   facing = facing === 'environment' ? 'user' : 'environment';
   if (cameraSender?.active) await cameraSender.start({ facingMode: facing });
+});
+
+// A Magic Keyboard or a clicker paired to the iPad should just work.
+document.addEventListener('keydown', (ev) => {
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target.tagName)) return;
+  const paged = ['pdf', 'slides', 'web', 'deck'].includes(state.program?.type);
+  if (!paged) return;
+  if (ev.key === 'ArrowRight' || ev.key === 'PageDown' || ev.key === ' ') { ev.preventDefault(); send({ op: 'nav', dir: 'next' }); }
+  if (ev.key === 'ArrowLeft' || ev.key === 'PageUp') { ev.preventDefault(); send({ op: 'nav', dir: 'prev' }); }
+  if (ev.key === 'b' || ev.key === 'B') { ev.preventDefault(); send({ op: 'blank' }); }
+  if (ev.key === 'f' || ev.key === 'F') { ev.preventDefault(); send({ op: 'freeze' }); }
 });
 
 window.addEventListener('resize', () => { if (!$('[data-panel="ink"]').hidden) sizePad(); });

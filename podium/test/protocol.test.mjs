@@ -54,6 +54,21 @@ chk('blank on', s.blank === true);
 applyCommand(s, {op:'stage', item:{type:'image', src:'b.png'}});
 chk('staging to program clears blank', s.blank === false);
 
+applyCommand(s, {op:'stage', item:{type:'deck', deckId:'abc', slideCount:13, title:'Day 6'}});
+chk('deck starts on slide 0', s.program.slide === 0 && s.program.slideCount === 13);
+applyCommand(s, {op:'nav', dir:'next'});
+applyCommand(s, {op:'nav', dir:'next'});
+chk('deck advances', s.program.slide === 2);
+applyCommand(s, {op:'nav', dir:'prev'});
+chk('deck goes back', s.program.slide === 1);
+applyCommand(s, {op:'nav', dir:'goto', value:12});
+chk('deck jumps to a slide', s.program.slide === 12);
+applyCommand(s, {op:'nav', dir:'next'});
+chk('deck parks on the last slide instead of running past the end', s.program.slide === 12);
+applyCommand(s, {op:'nav', dir:'goto', value:0});
+applyCommand(s, {op:'nav', dir:'prev'});
+chk('deck parks on the first slide going backwards', s.program.slide === 0);
+
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

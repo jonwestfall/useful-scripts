@@ -13,6 +13,7 @@
 //   destroy()
 
 import { el, miniMarkdown, fmtTime } from './util.js';
+import { render as renderDeckSource, applyPolyfill } from './deck.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -22,6 +23,7 @@ export const TYPES = {
   youtube:    { label: 'YouTube',    icon: '▶' },
   web:        { label: 'Web page',   icon: '\u{1F310}' },
   slides:     { label: 'Slides',     icon: '\u{1F4D1}' },
+  deck:       { label: 'Marp deck',  icon: '\u{1F4D6}' },
   pdf:        { label: 'PDF',        icon: '\u{1F4C4}' },
   text:       { label: 'Big text',   icon: 'T' },
   qr:         { label: 'QR code',    icon: '⌗' },
@@ -400,6 +402,92 @@ function renderCamera(item, opts) {
   };
 }
 
+// A Marp deck. The whole deck is rendered once into a shadow root - which keeps
+// the theme's `section {...}` rules from leaking into Podium's own UI - and
+// changing slide is then just a matter of which <svg> is visible. No reload, so
+// stepping through slides is instant and a cued deck keeps its place.
+function renderDeck(item, opts) {
+  const host = el('div', { class: 'r-deck' });
+  const shadow = host.attachShadow({ mode: 'open' });
+  shadow.innerHTML = `<style>
+    :host { display: block; position: absolute; inset: 0; background: #fff; }
+    #wrap, #wrap .marpit { position: absolute; inset: 0; }
+    #wrap svg[data-marpit-svg] { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+    #wrap svg[data-marpit-svg].podium-on { display: block; }
+    #status {
+      position: absolute; inset: 0; display: grid; place-items: center; padding: 4%;
+      font: 16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #556; background: #fff; text-align: center; white-space: pre-wrap;
+    }
+    #status[hidden] { display: none; }
+  </style><div id="status">Loading deck…</div><div id="wrap"></div>`;
+
+  const statusEl = shadow.getElementById('status');
+  const wrap = shadow.getElementById('wrap');
+  let slides = [];
+  let mountedId = null;
+  let polyfill = null;
+  let generation = 0;
+
+  const setStatus = (text) => {
+    statusEl.textContent = text || '';
+    statusEl.hidden = !text;
+  };
+
+  function showSlide(index) {
+    if (!slides.length) return;
+    const clamped = Math.min(slides.length - 1, Math.max(0, index || 0));
+    slides.forEach((svg, i) => svg.classList.toggle('podium-on', i === clamped));
+  }
+
+  async function mount(it) {
+    const mine = ++generation;
+    let source;
+    try {
+      source = await opts.getDeckSource?.(it);
+    } catch (err) {
+      setStatus(`Could not load the deck.\n${err.message}`);
+      return;
+    }
+    if (mine !== generation) return;
+    if (source == null) { setStatus('Waiting for the deck…'); return; }
+
+    try {
+      const deck = await renderDeckSource(source, it.deckId);
+      if (mine !== generation) return;
+      wrap.innerHTML = `<style>${deck.css}</style>${deck.html}`;
+      slides = Array.from(wrap.querySelectorAll('svg[data-marpit-svg]'));
+      // Marp needs its DOM polyfill for inline-SVG slides; without it Safari
+      // (so, every iPad) lays foreignObject content out wrongly.
+      polyfill?.cleanup?.();
+      polyfill = await applyPolyfill(shadow);
+      if (mine !== generation) return;
+      mountedId = it.deckId;
+      setStatus(slides.length ? '' : 'That markdown produced no slides.');
+      showSlide(it.slide);
+    } catch (err) {
+      setStatus(`Marp could not render this deck.\n${err.message}`);
+    }
+  }
+
+  mount(item);
+
+  return {
+    el: host,
+    update(it) {
+      if (it.deckId !== mountedId) { mount(it); return; }
+      showSlide(it.slide);
+    },
+    reconcile() {},
+    telemetry: noTelemetry,
+    destroy() {
+      generation++;
+      polyfill?.cleanup?.();
+      host.remove();
+    },
+  };
+}
+
 const FACTORIES = {
   black: renderBlack,
   image: renderImage,
@@ -408,6 +496,7 @@ const FACTORIES = {
   youtube: renderYouTube,
   web: renderWeb,
   slides: renderWeb,
+  deck: renderDeck,
   pdf: renderPdf,
   text: renderText,
   qr: renderQr,

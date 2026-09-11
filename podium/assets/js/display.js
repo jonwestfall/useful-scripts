@@ -31,6 +31,43 @@ let state = initialState();
 let cameraStream = null;
 let wakeLock = null;
 
+// Marp decks the display has the markdown for. A deck loaded from the server is
+// fetched here directly; one uploaded from an iPad arrives over the bus and is
+// kept so that stepping through slides needs no further traffic.
+const deckStore = new Map();
+const deckFetches = new Map();
+const deckWanted = new Set();
+
+function getDeckSource(item) {
+  if (!item?.deckId) return null;
+  if (deckStore.has(item.deckId)) return deckStore.get(item.deckId);
+
+  if (item.src) {
+    if (!deckFetches.has(item.deckId)) {
+      deckFetches.set(item.deckId, fetch(item.src, { cache: 'no-cache' })
+        .then((res) => {
+          if (!res.ok) throw new Error(`${item.src} — HTTP ${res.status}`);
+          return res.text();
+        })
+        .then((text) => { deckStore.set(item.deckId, text); return text; }));
+    }
+    return deckFetches.get(item.deckId);
+  }
+
+  // Uploaded from a controller: ask whoever has it to send it over.
+  deckWanted.add(item.deckId);
+  bus?.send({ t: 'deck-need', id: item.deckId });
+  return null;
+}
+
+// A controller can be mid-reload when we ask, so keep asking for a while.
+setInterval(() => {
+  for (const id of deckWanted) {
+    if (deckStore.has(id)) { deckWanted.delete(id); continue; }
+    bus?.send({ t: 'deck-need', id });
+  }
+}, 3000);
+
 // --- two interchangeable content layers ------------------------------------
 
 const layers = [0, 1].map(() => {
@@ -52,6 +89,7 @@ function mount(layer, item) {
   layer.renderer = createRenderer(item, {
     getTimer: () => state.timer,
     getStream: () => cameraStream,
+    getDeckSource,
   });
   layer.node.append(layer.renderer.el);
 }
@@ -229,6 +267,13 @@ async function connect() {
     onPeers: () => { render(); },
     onMessage: (msg) => {
       if (msg.t === 'hello') { broadcast(); render(); return; }
+      if (msg.t === 'deck') {
+        if (!msg.id || typeof msg.source !== 'string') return;
+        deckStore.set(msg.id, msg.source);
+        deckWanted.delete(msg.id);
+        syncLayers();
+        return;
+      }
       if (msg.t === 'rtc') { camera.handle(msg); return; }
       if (msg.t === 'sync') { broadcast(); return; }
       if (msg.t === 'cmd') {

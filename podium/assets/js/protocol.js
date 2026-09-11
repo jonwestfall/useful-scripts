@@ -54,6 +54,10 @@ function normalizeItem(item) {
   }
   if (copy.type === 'pdf') copy.page = Math.max(1, Number(copy.page) || 1);
   if (copy.type === 'slides') copy.slide = Math.max(0, Number(copy.slide) || 0);
+  if (copy.type === 'deck') {
+    copy.slide = Math.max(0, Number(copy.slide) || 0);
+    copy.slideCount = Math.max(1, Number(copy.slideCount) || 1);
+  }
   return copy;
 }
 
@@ -135,7 +139,13 @@ export function applyCommand(state, cmd) {
       const item = state[where];
       if (!item) return false;
       const step = cmd.dir === 'prev' ? -1 : 1;
-      if (item.type === 'pdf') {
+      if (item.type === 'deck') {
+        // Slides are 0-based and clamped, so holding Next at the end of a deck
+        // parks on the last slide instead of running off into a blank screen.
+        const last = Math.max(0, (item.slideCount || 1) - 1);
+        const target = cmd.dir === 'goto' ? Number(cmd.value) || 0 : (item.slide || 0) + step;
+        item.slide = Math.min(last, Math.max(0, target));
+      } else if (item.type === 'pdf') {
         item.page = cmd.dir === 'goto' ? Math.max(1, Number(cmd.value) || 1) : Math.max(1, (item.page || 1) + step);
       } else if (item.type === 'slides' || item.type === 'web') {
         item.slide = cmd.dir === 'goto' ? Math.max(0, Number(cmd.value) || 0) : Math.max(0, (item.slide || 0) + step);

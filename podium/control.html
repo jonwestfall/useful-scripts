@@ -51,6 +51,7 @@
     <main class="main">
       <nav class="tabs">
         <button class="tab is-on" data-tab="library" type="button">Library</button>
+        <button class="tab" data-tab="slides" type="button">Slides</button>
         <button class="tab" data-tab="now" type="button">Now</button>
         <button class="tab" data-tab="ink" type="button">Ink</button>
         <button class="tab" data-tab="say" type="button">Say</button>
@@ -67,8 +68,37 @@
             <button type="submit">Show</button>
             <label class="check"><input id="url-save" type="checkbox"> Save</label>
           </form>
+          <div class="inline">
+            <label class="filebtn" for="deck-file">Open a Marp deck…</label>
+            <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
+            <span id="deck-file-note" class="hint"></span>
+          </div>
           <input id="lib-filter" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
           <div id="library"></div>
+        </section>
+
+        <!-- Marp deck: notes and slide navigation -->
+        <section class="panel" data-panel="slides" hidden>
+          <div id="deck-none" class="hint">No deck on screen. Open one from the Library tab, or upload a <code>.md</code> file.</div>
+          <div id="deck-live" hidden>
+            <div class="deck-head">
+              <div>
+                <div id="deck-title"></div>
+                <div id="deck-theme" class="hint"></div>
+              </div>
+              <div id="deck-count" class="mono"></div>
+            </div>
+            <div class="inline deck-nav">
+              <button id="deck-prev" type="button">◀ Previous</button>
+              <button id="deck-next" type="button">Next ▶</button>
+            </div>
+            <div class="notes-head">Presenter notes</div>
+            <div id="deck-notes" class="notes"></div>
+            <div class="notes-head">Coming up</div>
+            <div id="deck-next-up" class="hint"></div>
+            <div class="notes-head">Jump to a slide</div>
+            <div id="deck-grid"></div>
+          </div>
         </section>
 
         <!-- Now playing -->

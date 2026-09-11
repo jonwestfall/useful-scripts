@@ -97,9 +97,18 @@ const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gestur
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), CFG);
 
+// Themes may pull webfonts from the internet (gaia imports one, KaTeX fetches
+// its glyph fonts). A sandbox with no outbound network fails those requests and
+// the slides still render, so they are noise rather than a result.
+const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_PROXY_CONNECTION_FAILED/;
+
 const trap = (page, tag) => {
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`${tag} console: ${m.text()}`); });
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    if (OFFLINE_NOISE.test(m.text())) return;
+    errors.push(`${tag} console: ${m.text()}`);
+  });
 };
 
 try {
@@ -311,6 +320,115 @@ ok(`the clip it replaced was torn down (was at ${programBefore}s)`, await displa
 await control.click('#mute');
 await display.waitForFunction(()=>document.querySelector('.layer[data-role="program"] audio').muted,null,{timeout:5000});
 ok('mute reaches the display', true);
+}
+
+console.log('\n-- marp decks --');
+{
+await control.click('.tab[data-tab="library"]');
+if (await control.$eval('#freeze', (b) => b.classList.contains('is-on'))) await control.click('#freeze');
+await display.waitForFunction(() => !document.body.classList.contains('is-frozen'), null, { timeout: 5000 });
+
+// What the projector is actually showing, read out of the deck's shadow root.
+const onScreen = () => display.evaluate(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  if (!host?.shadowRoot) return null;
+  const svgs = [...host.shadowRoot.querySelectorAll('svg[data-marpit-svg]')];
+  const index = svgs.findIndex((s) => s.classList.contains('podium-on'));
+  const section = index >= 0 ? svgs[index].querySelector('section') : null;
+  return {
+    index,
+    total: svgs.length,
+    heading: section?.querySelector('h1, h2, h3')?.textContent?.trim() || null,
+  };
+});
+const waitForSlide = (i) => display.waitForFunction((want) => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const svgs = [...(host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || [])];
+  return svgs.findIndex((s) => s.classList.contains('podium-on')) === want;
+}, i, { timeout: 25000 });
+
+await control.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await waitForSlide(0);
+let shown = await onScreen();
+ok(`a deck from the server renders on the projector (${shown.total} slides)`, shown.total === 4);
+
+await control.click('.tab[data-tab="slides"]');
+await control.waitForFunction(() => !document.querySelector('#deck-live').hidden, null, { timeout: 20000 });
+await control.waitForFunction(() => document.querySelector('#deck-notes').textContent.includes('presenter note'), null, { timeout: 20000 });
+ok('presenter notes reach the controller', true);
+ok('and never reach the projector', !(await display.evaluate(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  return host.shadowRoot.textContent.includes('It shows up on your iPad');
+})));
+ok('the slide counter is right', (await control.textContent('#deck-count')) === 'Slide 1 / 4');
+
+await control.click('#deck-next');
+await waitForSlide(1);
+await control.waitForFunction(() => document.querySelector('#deck-notes').textContent.includes('Second slide note'), null, { timeout: 10000 });
+ok('Next advances the projector and the notes together', true);
+
+const cells = await control.evaluate(() => document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell').length);
+ok(`the navigator built ${cells} thumbnails`, cells === 4);
+await control.evaluate(() => document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')[3].click());
+await waitForSlide(3);
+ok('tapping a thumbnail jumps the projector', true);
+await control.waitForFunction(() => document.querySelector('#deck-next').disabled, null, { timeout: 8000 });
+ok('Next greys out on the last slide', true);
+// The arrow keys bypass the disabled button, so they prove the clamp is real
+// and exercise the keyboard/clicker path at the same time.
+await control.click('#deck-grid');
+await control.keyboard.press('ArrowRight');
+await display.waitForTimeout(700);
+ok('a keyboard Next on the last slide stays put instead of going blank', (await onScreen()).index === 3);
+await control.keyboard.press('ArrowLeft');
+await waitForSlide(2);
+ok('the arrow keys drive the deck', true);
+
+const look = await display.evaluate(() => {
+  const sr = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot;
+  const sec = sr.querySelector('svg.podium-on section');
+  return {
+    themed: getComputedStyle(sec).backgroundImage.includes('gradient'),
+    katex: [...sr.querySelectorAll('style')].some((s) => s.textContent.includes('KaTeX')),
+    math: !!sr.querySelectorAll('svg')[2].querySelector('.katex'),
+  };
+});
+ok('the custom marp-themes/ CSS is applied on the projector', look.themed);
+ok('math renders through KaTeX', look.katex && look.math);
+
+// Upload: the markdown only exists on the controller and has to cross the bus.
+await control.click('.tab[data-tab="library"]');
+await control.setInputFiles('#deck-file', path.join(ROOT, 'content/decks/day06-evidence-weighting.md'));
+await control.waitForFunction(() => document.querySelector('#deck-file-note').textContent.includes('slides'), null, { timeout: 30000 });
+await display.waitForFunction(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  return host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 13;
+}, null, { timeout: 30000 });
+shown = await onScreen();
+ok(`an uploaded deck reaches the projector over the bus ("${shown.heading}")`, shown.total === 13);
+
+// Cue a deck behind a freeze, exactly as you would mid-lecture.
+await control.click('#freeze');
+await display.waitForFunction(() => document.body.classList.contains('is-frozen'));
+// Uploading jumps you to the Slides tab, so come back for the library.
+await control.click('.tab[data-tab="library"]');
+await control.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await control.waitForFunction(() => document.querySelector('#preview-label').textContent === 'Cued', null, { timeout: 25000 });
+ok('the projector holds the deck on screen while another is cued', (await onScreen()).total === 13);
+await control.click('#take');
+await display.waitForFunction(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  return host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4;
+}, null, { timeout: 25000 });
+ok('TAKE swaps to the cued deck', true);
+
+// A deck asking for a theme nobody installed should say so, not fail silently.
+const badTheme = path.join(HERE, 'fixtures', 'missing-theme.md');
+fs.writeFileSync(badTheme, '---\nmarp: true\ntheme: not-a-real-theme\n---\n\n# Slide one\n\n---\n\n# Slide two\n');
+await control.setInputFiles('#deck-file', badTheme);
+await control.click('.tab[data-tab="slides"]');
+await control.waitForFunction(() => document.querySelector('#deck-theme').textContent.includes('not installed'), null, { timeout: 25000 });
+ok('a deck naming a missing theme is called out rather than silently defaulted', true);
 }
 
 console.log('\n-- telling the three kinds of silence apart --');

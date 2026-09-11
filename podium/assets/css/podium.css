@@ -288,6 +288,29 @@ body.control.is-frozen { background: #171006; }
 .check { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 14px; }
 .check input { width: auto; min-height: auto; }
 
+/* Marp deck panel */
+.filebtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: var(--tap); padding: 0 16px; margin: 0;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius);
+  cursor: pointer; font-size: 15px; color: var(--ink);
+}
+.filebtn:active { transform: translateY(1px); }
+.deck-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+#deck-title { font-size: 19px; font-weight: 650; }
+#deck-count { font-size: 15px; color: var(--dim); white-space: nowrap; }
+#deck-theme.is-warning { color: var(--cue); }
+.deck-nav button { flex: 1; min-height: 58px; font-size: 17px; font-weight: 600; }
+.notes-head {
+  margin-top: 4px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+}
+.notes {
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; font-size: 17px; line-height: 1.55; white-space: pre-wrap;
+  min-height: 76px; color: var(--ink);
+}
+.notes.is-empty { color: var(--dim); font-style: italic; }
+
 #now-title { font-size: 19px; font-weight: 650; }
 #now-type { color: var(--dim); font-size: 13px; }
 #transport .inline button { min-width: 62px; }
