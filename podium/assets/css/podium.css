@@ -228,6 +228,15 @@ body.control.is-frozen { background: #171006; }
 
 .workspace { display: flex; flex: 1; min-height: 0; }
 
+#link-help {
+  background: #2a1e12; border-bottom: 1px solid #6b4a22; color: #ffd9a8;
+  padding: 10px 14px; font-size: 13px; line-height: 1.5;
+}
+#link-help ul { margin: 6px 0 0; padding-left: 18px; }
+#link-help li { margin-bottom: 3px; }
+#link-help code { font-family: ui-monospace, Menlo, monospace; }
+#link-help.is-mismatch { background: #2a1216; border-bottom-color: #6b2b2b; color: #ffc4c4; }
+
 /* Preview rail */
 #preview-pane {
   width: 320px; flex: none; border-right: 1px solid var(--line);

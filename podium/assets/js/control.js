@@ -291,27 +291,49 @@ function setCameraState(status) {
 
 // --- connection -------------------------------------------------------------
 
+let relayStatus = 'connecting';
+let waitingSince = Date.now();
+
 function setStatus(status, detail) {
+  relayStatus = status;
   const bar = $('#status');
   bar.dataset.status = status;
+  // "Connected" here means the relay, not the display - the two are separate
+  // problems and conflating them is what makes a silent room baffling.
   bar.textContent = {
     connecting: 'Connecting…',
-    online: 'Connected',
+    online: 'Relay OK',
     offline: 'Reconnecting…',
-    error: `Problem${detail ? `: ${detail}` : ''}`,
-    mismatch: 'Passphrase mismatch with another device',
+    error: `Relay problem${detail ? `: ${detail}` : ''}`,
+    mismatch: 'Wrong passphrase somewhere',
   }[status] || status;
+  renderConnection();
 }
 
-function renderPeers() {
-  const hasDisplay = bus?.hasPeer('display');
-  const others = (bus?.peers() || []).filter((p) => p.role === 'control');
-  const rtt = (bus?.peers() || []).find((p) => p.role === 'display')?.rtt;
-  $('#display-state').textContent = hasDisplay
-    ? `Display connected${rtt ? ` · ${rtt} ms` : ''}`
-    : 'No display connected';
-  $('#display-state').classList.toggle('is-bad', !hasDisplay);
+function renderConnection() {
+  const peers = bus?.peers() || [];
+  const display = peers.find((p) => p.role === 'display');
+  const others = peers.filter((p) => p.role === 'control');
+
+  let label;
+  if (!display) label = 'No display connected';
+  else if (state.armed === false) label = 'Display open — click “Go live” on it';
+  else label = `Display connected${display.rtt ? ` · ${display.rtt} ms` : ''}`;
+
+  $('#display-state').textContent = label;
+  $('#display-state').classList.toggle('is-bad', !display);
   $('#peer-count').textContent = others.length ? `+${others.length} other controller${others.length > 1 ? 's' : ''}` : '';
+
+  if (display) waitingSince = Date.now();
+
+  // Give it a few seconds before crying wolf: a display that is simply slow to
+  // join should not throw a banner at you mid-lecture.
+  const stranded = relayStatus === 'online' && !display && Date.now() - waitingSince > 6000;
+  const help = $('#link-help');
+  help.hidden = !(stranded || relayStatus === 'mismatch');
+  help.classList.toggle('is-mismatch', relayStatus === 'mismatch');
+  $('#help-room').textContent = cfg.room;
+  $('#help-code').textContent = bus?.fingerprint || '····';
 }
 
 async function connect() {
@@ -319,13 +341,14 @@ async function connect() {
     cfg,
     role: 'control',
     onStatus: setStatus,
-    onPeers: renderPeers,
+    onPeers: renderConnection,
     onMessage: (msg) => {
       if (msg.t === 'state') {
         state = { ...state, ...msg.state };
         telemetry = msg.telemetry || telemetry;
         telemetryAt = Date.now();
         renderAll();
+        renderConnection();
         return;
       }
       if (msg.t === 'rtc') cameraSender?.handle(msg);
@@ -346,7 +369,8 @@ async function connect() {
   $('#fingerprint').textContent = bus.fingerprint;
   $('#room-name').textContent = cfg.room;
   bus.send({ t: 'sync' });
-  renderPeers();
+  waitingSince = Date.now();
+  renderConnection();
 }
 
 // --- wiring -----------------------------------------------------------------
@@ -454,7 +478,7 @@ $('#cam-flip').addEventListener('click', async () => {
 
 window.addEventListener('resize', () => { if (!$('[data-panel="ink"]').hidden) sizePad(); });
 window.addEventListener('beforeunload', () => bus?.close());
-setInterval(() => { renderNow(); renderTimer(); }, 250);
+setInterval(() => { renderNow(); renderTimer(); renderConnection(); }, 250);
 
 // --- setup ------------------------------------------------------------------
 

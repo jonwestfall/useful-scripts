@@ -15,6 +15,7 @@ export const BLACK = { type: 'black', title: 'Black' };
 export function initialState() {
   return {
     rev: 0,
+    armed: false,          // has someone clicked "Go live" on the display yet
     program: { ...BLACK },
     preview: null,
     frozen: false,          // hold the program layer; new picks land in preview

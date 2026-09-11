@@ -165,7 +165,8 @@ function render() {
 function updateStandby() {
   const noController = !bus || !bus.hasPeer('control');
   const idle = state.program?.type === 'black' && !state.preview;
-  standby.classList.toggle('is-on', noController && idle);
+  // The arming sheet owns the screen until it is dismissed.
+  standby.classList.toggle('is-on', noController && idle && armEl.hidden);
 }
 
 // --- state plumbing ---------------------------------------------------------
@@ -198,6 +199,15 @@ function commit() {
 
 function setHud(status, detail) {
   hud.dataset.status = status;
+  // The arming sheet covers the HUD, so mirror the state onto it: you should
+  // be able to see the display is on the bus before you commit the room to it.
+  $('#arm-status').textContent = {
+    connecting: 'Connecting to the relay…',
+    online: 'Connected and waiting for a controller.',
+    offline: 'Lost the relay — retrying.',
+    error: `Cannot reach the relay${detail ? `: ${detail}` : ''}`,
+    mismatch: 'Something nearby is using a different passphrase.',
+  }[status] || status;
   hud.textContent = {
     connecting: 'Connecting…',
     online: `Ready · room ${cfg.room}`,
@@ -234,6 +244,7 @@ async function connect() {
   });
 
   $('#fingerprint').textContent = bus.fingerprint;
+  $('#arm-code').textContent = bus.fingerprint;
   setInterval(broadcast, HEARTBEAT_MS);
   setInterval(() => {
     if (telemetry().playing) broadcast();
@@ -254,16 +265,20 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && !wakeLock) requestWakeLock();
 });
 
+// Arming is only about the things a browser will not give a page without a
+// gesture: sound, fullscreen and the wake lock. The display is already on the
+// bus by this point, so a controller can see it - and see that it is waiting
+// for this click - rather than the room looking empty.
 async function goLive() {
   armEl.hidden = true;
   document.body.classList.add('is-live');
+  state.armed = true;
   try { await document.documentElement.requestFullscreen({ navigationUI: 'hide' }); } catch { /* user can press F11 */ }
   await requestWakeLock();
   // Resuming an AudioContext inside the click is what buys us autoplay later.
   try { await new (window.AudioContext || window.webkitAudioContext)().resume(); } catch { /* noop */ }
   sizeInk();
-  await connect();
-  render();
+  commit();
 }
 
 // --- setup screen -----------------------------------------------------------
@@ -349,7 +364,12 @@ document.addEventListener('keydown', (ev) => {
 $('#room-name').textContent = cfg.room;
 $('#standby-room').textContent = cfg.room;
 
-if (!isConfigured(cfg)) showSetup();
-else armEl.hidden = false;
+if (!isConfigured(cfg)) {
+  showSetup();
+} else {
+  armEl.hidden = false;
+  sizeInk();
+  await connect();
+}
 
 render();

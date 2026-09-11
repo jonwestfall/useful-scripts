@@ -313,6 +313,63 @@ await display.waitForFunction(()=>document.querySelector('.layer[data-role="prog
 ok('mute reaches the display', true);
 }
 
+console.log('\n-- telling the three kinds of silence apart --');
+{
+const mk = (room, pass) => JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room, passphrase: pass });
+
+// A display that is loaded but not armed must be visible to a controller,
+// otherwise "nothing happens" covers two very different problems.
+const c1 = await browser.newContext();
+await c1.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), mk('diag-unarmed', 'pw'));
+const unarmed = await c1.newPage();
+trap(unarmed, 'unarmed display');
+await unarmed.goto(`${BASE}/display.html`);
+await unarmed.waitForSelector('#arm:not([hidden])');
+await unarmed.waitForFunction(() => document.querySelector('#arm-status').textContent.startsWith('Connected'), null, { timeout: 10000 });
+ok('an unarmed display still joins the room', true);
+
+const watcher = await c1.newPage();
+trap(watcher, 'watcher');
+await watcher.goto(`${BASE}/control.html`);
+await watcher.waitForSelector('#app:not([hidden])');
+await watcher.waitForFunction(() => document.querySelector('#display-state').textContent.includes('Go live'), null, { timeout: 10000 });
+ok('a controller can tell "not armed yet" from "not there"', true);
+await watcher.waitForTimeout(7000);
+ok('and does not raise the alarm banner for it', await watcher.isHidden('#link-help'));
+await unarmed.click('#arm-button');
+await watcher.waitForFunction(() => document.querySelector('#display-state').textContent.startsWith('Display connected'), null, { timeout: 10000 });
+ok('arming flips it to connected', true);
+await c1.close();
+
+// An empty room should say so, with the room and code to compare against.
+const c2 = await browser.newContext();
+await c2.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), mk('diag-empty', 'pw'));
+const lonely = await c2.newPage();
+trap(lonely, 'lonely');
+await lonely.goto(`${BASE}/control.html`);
+await lonely.waitForSelector('#app:not([hidden])');
+await lonely.waitForSelector('#link-help:not([hidden])', { timeout: 15000 });
+const helpText = (await lonely.textContent('#link-help')).replace(/\s+/g, ' ');
+ok('an empty room raises a banner naming the likely causes', helpText.includes('Go live') && helpText.includes('room'));
+await c2.close();
+
+// Same room, wrong passphrase: the controller should name that specifically.
+const c3 = await browser.newContext();
+await c3.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), mk('diag-mismatch', 'right'));
+const rightDisplay = await c3.newPage();
+await rightDisplay.goto(`${BASE}/display.html`);
+await rightDisplay.click('#arm-button');
+await rightDisplay.waitForSelector('#hud[data-status="online"]');
+const c4 = await browser.newContext();
+await c4.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), mk('diag-mismatch', 'WRONG'));
+const wrongControl = await c4.newPage();
+await wrongControl.goto(`${BASE}/control.html`);
+await wrongControl.waitForSelector('#app:not([hidden])');
+await wrongControl.waitForSelector('#link-help.is-mismatch:not([hidden])', { timeout: 25000 });
+ok('a passphrase mismatch is named on the controller, not just the display', true);
+await c3.close(); await c4.close();
+}
+
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
 } finally {
   await browser?.close().catch(() => {});

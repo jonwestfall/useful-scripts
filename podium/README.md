@@ -67,9 +67,9 @@ point the pages at `wss://podium.example.com`. `podium.service` is a systemd uni
 set `STATIC=../` in it if you also want the box to serve the pages themselves.
 
 **A free public MQTT broker.** Zero signup, good for trying it out in five minutes.
-The default is `wss://broker.emqx.io:8084/mqtt`. It is a public broker, which is fine
-here only because of the encryption below — but prefer one of the other two for
-anything you do every week.
+The default is `wss://broker.emqx.io:8084/mqtt`. Podium speaks MQTT 3.1.1, which every
+broker supports. It is a public broker, which is fine here only because of the
+encryption below — but prefer one of the other two for anything you do every week.
 
 ### 2. Publish the pages
 
@@ -130,7 +130,9 @@ YouTube link.
 
 **One click to start.** Browsers block sound until someone interacts with the page,
 so the display opens on a **Go live** button. That single click also takes it
-fullscreen and requests a wake lock so the screen never sleeps mid-lecture.
+fullscreen and requests a wake lock so the screen never sleeps mid-lecture. The
+display joins the room as soon as the page loads, though — so your iPad can see it
+sitting there waiting for that click, rather than the room looking empty.
 
 **Some sites refuse to be embedded.** `X-Frame-Options` and CSP mean many news sites,
 most LMSes and Google Docs will show a blank frame — the display says so rather than
@@ -152,6 +154,32 @@ isolation it will not, and the controller says so instead of hanging.
 **You cannot mirror the iPad's screen.** iOS Safari has no screen-capture API, so no
 web app can do this. The camera feed and the content library are the way around it —
 and with a cue you rarely want mirroring anyway.
+
+## When the controller says the display isn't there
+
+The top bar reports two separate things, and it is worth reading them as two:
+
+- **Relay OK** — this device reached Supabase / the broker / your server. It says
+  nothing about the display.
+- **Display connected** — a display in the same room, speaking the same passphrase,
+  is publishing. This is the one that matters.
+
+If you see *Relay OK* and *No display connected*, a banner appears after a few
+seconds with the likely causes. In order of how often they are the answer:
+
+1. **The display is open but nobody clicked Go live.** The controller now says
+   "Display open — click Go live on it" rather than pretending it is absent, and the
+   display's own screen says whether it has reached the relay.
+2. **The room or passphrase differs.** Both ends show the same four-character code
+   when they match — on the display's standby screen and arming screen, and in the
+   controller's top bar. Different codes mean they will never hear each other. The
+   fix is to press **Pair a device** on the display and scan again.
+3. **Different transports.** A display on Supabase and a controller on MQTT both
+   report a healthy relay and never exchange a byte.
+
+If the codes match and you still see nothing, the controller will say
+**Wrong passphrase somewhere** — that means encrypted traffic is arriving that it
+cannot read, which is a mismatch rather than an absence.
 
 ## Security
 

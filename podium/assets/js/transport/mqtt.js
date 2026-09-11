@@ -15,7 +15,10 @@ export async function connect({ cfg, onMessage, onStatus, clientId }) {
     keepalive: 30,
     reconnectPeriod: 2000,
     connectTimeout: 8000,
-    protocolVersion: 5,
+    // 3.1.1, not 5. Nothing here uses an MQTT 5 feature, and a broker that
+    // does not speak 5 refuses the connection outright rather than falling
+    // back - which looks exactly like a silent configuration problem.
+    protocolVersion: 4,
   });
 
   let ready = false;
