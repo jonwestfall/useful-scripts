@@ -13,6 +13,7 @@
 // see test/plan.test.mjs.
 
 import { uid } from './util.js';
+import { MAX_TIMERS } from './protocol.js';
 
 export const PLAN_VERSION = 1;
 
@@ -65,10 +66,14 @@ export const PLAN_TYPES = {
   },
   timer: {
     label: 'Countdown', icon: '⏱',
-    blurb: 'A countdown on the projector. Start it from the Timer tab once it is on screen.',
+    blurb: 'One of this lecture\u2019s countdowns, on the projector. Start it from the Timer tab once it is up.',
     fields: [
-      { key: 'label', label: 'Label', kind: 'text', placeholder: 'Group work' },
-      { key: 'mins', label: 'Minutes', kind: 'number', def: 5, min: 1, max: 180 },
+      // Which clock, not how long: the length lives on the timer itself (see
+      // Timers, under the running order), so two items can show the same
+      // countdown and a split screen can show two different ones at once.
+      { key: 'timerId', label: 'Which countdown', kind: 'timer-pick',
+        hint: 'Defined under Timers. A lecture can have up to four, each running independently.' },
+      { key: 'label', label: 'Label, if that countdown has none', kind: 'text', placeholder: 'Group work' },
     ],
   },
   qr: {
@@ -173,11 +178,18 @@ export function itemForStage(item) {
   return rest;
 }
 
-export function itemLabel(item) {
+// `plan` is optional: on the controller there is no plan object to hand in,
+// and a countdown there falls back to the label it carries.
+export function itemLabel(item, plan = null) {
   if (item.title) return item.title;
   const spec = PLAN_TYPES[item.type];
   if (item.type === 'text' && item.body) return item.body.replace(/[*`#]/g, '').split('\n')[0].slice(0, 40);
-  if (item.type === 'timer') return `${item.mins || 5} min${item.label ? ` — ${item.label}` : ''}`;
+  if (item.type === 'timer') {
+    const timer = plan?.timers?.find((t) => t.id === item.timerId) || plan?.timers?.[0] || null;
+    const name = timer?.label || item.label || '';
+    if (timer) return `${timer.mins} min${name ? ` — ${name}` : ''}`;
+    return name || 'Countdown';
+  }
   if (item.type === 'qr' && item.caption) return item.caption;
   if (typeof item.src === 'string' && item.src && !isAssetRef(item.src)) return item.src.split('/').pop();
   return spec?.label || item.type;
@@ -270,6 +282,19 @@ export function readPlan(raw) {
     assets[id] = { name: str(asset.name, 120), mime: str(asset.mime, 100), data: value };
   }
 
+  // Before the items, because a countdown item names one of these.
+  const timers = [];
+  for (const raw3 of Array.isArray(data.timers) ? data.timers : []) {
+    // A preset with no length is not a preset - clamping it up to one minute
+    // would put a button on the tablet that nobody meant to be there.
+    const asked = Number(raw3?.mins);
+    if (!Number.isFinite(asked) || asked < 1) continue;
+    // No more than the display can hold, so a plan cannot promise a clock that
+    // will never exist.
+    if (timers.length >= MAX_TIMERS) break;
+    timers.push({ id: str(raw3.id, 40) || uid(6), label: str(raw3.label, 60), mins: Math.min(180, Math.round(asked)) });
+  }
+
   const items = [];
   for (const raw2 of Array.isArray(data.items) ? data.items : []) {
     const spec = PLAN_TYPES[raw2?.type];
@@ -281,7 +306,15 @@ export function readPlan(raw) {
       else if (field.kind === 'check') item[field.key] = !!value;
       else if (field.kind === 'select') item[field.key] = field.options.some(([v]) => v === value) ? value : field.def;
       else if (field.kind === 'textarea') item[field.key] = str(value, 4000);
+      else if (field.kind === 'timer-pick') item[field.key] = str(value, 40);
       else item[field.key] = str(value, 100000);
+    }
+    // A countdown pointing at a timer this plan does not define would come up
+    // as somebody else's clock; fall it back to the first, which is what an
+    // item with no id means anyway.
+    if (item.type === 'timer' && item.timerId && !timers.some((t) => t.id === item.timerId)) {
+      warnings.push(`"${itemLabel(item)}" pointed at a countdown this plan does not define; it will show the first one.`);
+      item.timerId = '';
     }
     if (typeof item.src === 'string' && !safeSrc(item.src)) {
       warnings.push(`"${itemLabel(item)}" pointed at ${item.src.split(':')[0]}: — only http, https and paths on your own server are allowed.`);
@@ -298,15 +331,6 @@ export function readPlan(raw) {
       }
     }
     items.push(item);
-  }
-
-  const timers = [];
-  for (const raw3 of Array.isArray(data.timers) ? data.timers : []) {
-    // A preset with no length is not a preset - clamping it up to one minute
-    // would put a button on the tablet that nobody meant to be there.
-    const asked = Number(raw3?.mins);
-    if (!Number.isFinite(asked) || asked < 1) continue;
-    timers.push({ id: str(raw3.id, 40) || uid(6), label: str(raw3.label, 60), mins: Math.min(180, Math.round(asked)) });
   }
 
   const plan = {

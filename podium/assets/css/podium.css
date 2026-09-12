@@ -137,13 +137,32 @@ body.display #overlay {
 }
 body.display #overlay.is-on { transform: none; }
 
+/* The laser's colour is one custom property, set from a data-color attribute,
+   so the dot on the projector and the dot on the controller's own preview are
+   the same three colours from the same place. Red is what everyone expects;
+   green survives a dark slide or a photograph, where red disappears into it;
+   blue reads on a bright one. */
+.laser-red { --laser: 255, 64, 64; }
+.laser-green { --laser: 60, 235, 120; }
+.laser-blue { --laser: 90, 165, 255; }
+
+/* The white-hot core and the dark rim are not decoration: a coloured blob is
+   only as visible as the contrast between its hue and whatever is behind it,
+   and a slide can be any colour - including, as it happens, the exact green of
+   the green pointer. A near-white centre and a thin dark ring read against any
+   of them, so picking the "wrong" colour for a slide costs you brightness
+   rather than the dot itself. */
 body.display #laser {
   position: fixed; top: 0; left: 0; width: 34px; height: 34px; z-index: 6;
   border-radius: 50%; pointer-events: none; opacity: 0;
-  background: radial-gradient(circle, rgba(255,64,64,.95) 0%, rgba(255,64,64,.55) 45%, transparent 72%);
-  box-shadow: 0 0 18px 4px rgba(255,64,64,.65);
+  --laser: 255, 64, 64;
+  background: radial-gradient(circle,
+    #fff 0%, rgba(var(--laser), .97) 26%, rgba(var(--laser), .55) 52%, transparent 74%);
+  box-shadow: 0 0 18px 5px rgba(var(--laser), .6), 0 0 0 1.5px rgba(0, 0, 0, .38);
   transform: translate(-50%, -50%);
 }
+body.display #laser[data-color='green'] { --laser: 60, 235, 120; }
+body.display #laser[data-color='blue'] { --laser: 90, 165, 255; }
 body.display #laser.is-on { opacity: 1; }
 
 body.display #hud {
@@ -442,10 +461,30 @@ body.control.is-frozen { background: #171006; }
 #deck-laser.is-on { background: var(--live); border-color: var(--live); color: #fff; }
 .laser-dot {
   position: absolute; width: 22px; height: 22px; border-radius: 50%;
-  background: radial-gradient(circle, #ff4d4f 0%, rgba(255,77,79,.35) 60%, transparent 75%);
+  --laser: 255, 77, 79;
+  background: radial-gradient(circle,
+    #fff 0%, rgba(var(--laser), .97) 26%, rgba(var(--laser), .4) 58%, transparent 75%);
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, .38);
   transform: translate(-50%, -50%); pointer-events: none; opacity: 0; z-index: 5;
 }
+.laser-dot[data-color='green'] { --laser: 60, 235, 120; }
+.laser-dot[data-color='blue'] { --laser: 90, 165, 255; }
 .laser-dot.is-on { opacity: 1; }
+
+/* Picking one. Small round swatches next to the Laser button - three of them
+   is a row, not a menu, and a menu for three colours would be a tap too many
+   in the middle of a sentence. */
+.laser-picker { display: flex; gap: 4px; }
+.laser-swatch {
+  width: 30px; min-height: 30px; padding: 0; border-radius: 50%;
+  border: 2px solid var(--line); background: rgb(var(--laser));
+}
+.laser-swatch:hover { background: rgb(var(--laser)); }
+.laser-swatch.is-on { border-color: var(--ink); background: rgb(var(--laser)); }
+#deck-laser[data-color='green'] { background: #1d3a28; border-color: #3ceb78; color: #bdf5d3; }
+#deck-laser[data-color='blue'] { background: #16263d; border-color: #5aa5ff; color: #cfe3ff; }
+#deck-laser.is-on[data-color='green'] { background: #3ceb78; border-color: #3ceb78; color: #06240f; }
+#deck-laser.is-on[data-color='blue'] { background: #5aa5ff; border-color: #5aa5ff; color: #061527; }
 #deck-next-title { margin: 0; }
 .notes-head {
   margin-top: 4px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
@@ -513,6 +552,19 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 
 #cam-local { width: 100%; max-width: 320px; border-radius: var(--radius); background: #000; }
 #cam-status { color: var(--dim); font-size: 14px; }
+
+/* The set of countdowns, each showing its own clock: you can see all four at
+   a glance, and the controls below drive whichever is selected. */
+#timer-chips { gap: 6px; }
+.timer-chip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  min-height: 40px; padding: 5px 11px; font-size: 13px;
+}
+.timer-chip.is-on { border-color: var(--accent); background: #16202c; color: var(--ink); }
+.timer-chip-name { font-weight: 600; }
+.timer-chip-time { font-size: 11.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.timer-chip.is-running .timer-chip-time { color: var(--ok); }
+.timer-chip.is-urgent .timer-chip-time { color: var(--cue); }
 
 #timer-readout { font-size: 54px; font-weight: 700; font-variant-numeric: tabular-nums; }
 #timer-readout.is-urgent { color: var(--cue); }
@@ -597,7 +649,7 @@ body.plan .linkish:hover { text-decoration: underline; }
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
   width: 100%; text-align: left; padding: 9px 11px; min-height: 0; margin-bottom: 6px;
 }
-.plan-row.is-on { border-color: var(--accent); background: #16202c; }
+.plan-row.is-on { border-color: var(--accent); background: #16202c; color: var(--ink); }
 .plan-row-title { font-weight: 600; font-size: 14px; }
 .plan-row-meta { font-size: 11.5px; color: var(--dim); }
 

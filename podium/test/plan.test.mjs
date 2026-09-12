@@ -15,7 +15,7 @@ chk('a new plan is empty but complete', plan.podium === 'plan' && plan.v === PLA
   && plan.items.length === 0 && plan.timers.length === 0 && plan.layout === 'single');
 
 chk('every plannable type can be instantiated', Object.keys(PLAN_TYPES).every((t) => newItem(t).type === t));
-chk('a new item arrives with its type’s defaults filled in', newItem('text').size === 'l' && newItem('timer').mins === 5);
+chk('a new item arrives with its type’s defaults filled in', newItem('text').size === 'l' && newItem('text').align === 'center');
 chk('an unknown type is refused rather than half-built', (() => {
   try { newItem('hologram'); return false; } catch { return true; }
 })());
@@ -23,7 +23,11 @@ chk('an unknown type is refused rather than half-built', (() => {
 // --- labels: a row in the running order should never read as blank -----------
 chk('a titled item uses its title', itemLabel({ type: 'image', title: 'Stroop' }) === 'Stroop');
 chk('an untitled text sign shows its first line', itemLabel({ type: 'text', body: '**Group work**\nnext line' }) === 'Group work');
-chk('an untitled timer shows its length', itemLabel({ type: 'timer', mins: 8, label: 'Discuss' }) === '8 min — Discuss');
+chk('an untitled countdown shows the length of the timer it points at',
+  itemLabel({ type: 'timer', timerId: 'tb' }, { timers: [{ id: 'ta', label: 'A', mins: 3 }, { id: 'tb', label: 'Discuss', mins: 8 }] }) === '8 min — Discuss');
+chk('and falls back to its own label where there is no plan to look in (the controller)',
+  itemLabel({ type: 'timer', label: 'Discuss' }) === 'Discuss');
+chk('a countdown with nothing at all still reads as one', itemLabel({ type: 'timer' }) === 'Countdown');
 chk('an untitled path item shows the file name', itemLabel({ type: 'pdf', src: 'content/handouts/ch4.pdf' }) === 'ch4.pdf');
 chk('an asset-backed item falls back to its type rather than printing base64',
   itemLabel({ type: 'image', src: assetRef('abc') }) === 'Photo');
@@ -75,7 +79,7 @@ const messy = readPlan(JSON.stringify({
     { type: 'text', body: 'fine', size: 'nonsense' },
     { type: 'hologram', title: 'from the future' },
     { type: 'image', src: assetRef('missing') },
-    { type: 'timer', mins: 9999 },
+    { type: 'pdf', src: 'x.pdf', page: 999999 },
   ],
   timers: [{ label: 'ok', mins: 10 }, { label: 'bad', mins: 0 }],
   assets: { missing: { name: 'x', mime: 'image/png' } },
@@ -83,7 +87,7 @@ const messy = readPlan(JSON.stringify({
 chk('the good rows load', messy.plan.items.length === 3);
 chk('an out-of-range select falls back to its default instead of reaching the projector',
   messy.plan.items[0].size === 'l');
-chk('an absurd number is clamped, not passed through', messy.plan.items[2].mins === 180);
+chk('an absurd number is clamped, not passed through', messy.plan.items[2].page === 9999);
 chk('an unknown type is dropped and named', messy.warnings.some((w) => /hologram/.test(w)));
 chk('an item pointing at a file the plan does not carry is called out, not left to fail on the projector',
   messy.warnings.some((w) => /does not contain/.test(w)) && messy.plan.items[1].src === '');
@@ -122,6 +126,28 @@ chk('the rejection names the scheme rather than silently blanking the item',
 chk('https is kept', schemes.plan.items[2].src === 'https://example.edu/demo');
 chk('a relative path on your own server is kept', schemes.plan.items[3].src === 'content/handouts/ch4.pdf');
 chk('and the plan\u2019s own asset references are kept', schemes.plan.items[4].src === assetRef('ok'));
+
+// Countdown items name one of the lecture's timers, so a plan that points at a
+// timer it does not define would put somebody else's clock on the wall.
+const clocks = readPlan(JSON.stringify({
+  podium: 'plan', v: 1,
+  timers: [{ id: 'grp', label: 'Group work', mins: 8 }],
+  items: [
+    { type: 'timer', timerId: 'grp' },
+    { type: 'timer', timerId: 'nope' },
+    { type: 'timer' },
+  ],
+}));
+chk('a countdown pointing at a timer the plan defines keeps it', clocks.plan.items[0].timerId === 'grp');
+chk('one pointing at a timer that does not exist falls back to the first, and says so',
+  clocks.plan.items[1].timerId === '' && clocks.warnings.some((w) => /does not define/.test(w)));
+chk('and one naming none is left alone - that already means the first',
+  clocks.plan.items[2].timerId === '');
+chk('a lecture cannot define more timers than the display can hold',
+  readPlan(JSON.stringify({
+    podium: 'plan', v: 1,
+    timers: [1, 2, 3, 4, 5, 6].map((n) => ({ id: `t${n}`, label: `T${n}`, mins: n })),
+  })).plan.timers.length === 4);
 
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

@@ -152,7 +152,12 @@
                 <div id="deck-now-preview" class="confidence-preview"></div>
                 <div class="inline">
                   <button id="deck-markup" type="button">✎ Markup</button>
-                  <button id="deck-laser" type="button">🔴 Laser</button>
+                  <button id="deck-laser" type="button" data-color="red">Laser</button>
+                  <div class="laser-picker" role="group" aria-label="Laser colour">
+                    <button class="laser-swatch laser-red is-on" type="button" data-color="red" title="Red" aria-label="Red laser"></button>
+                    <button class="laser-swatch laser-green" type="button" data-color="green" title="Green — reads on a dark slide or a photo" aria-label="Green laser"></button>
+                    <button class="laser-swatch laser-blue" type="button" data-color="blue" title="Blue — reads on a bright slide" aria-label="Blue laser"></button>
+                  </div>
                 </div>
               </div>
               <div class="confidence-box">
@@ -292,6 +297,10 @@
 
         <!-- Timer -->
         <section class="panel" data-panel="timer" hidden>
+          <!-- Up to four independent countdowns. The chips are the set, each
+               showing its own clock so you can see all of them at once; the
+               controls below act on whichever is selected. -->
+          <div class="inline" id="timer-chips"></div>
           <div id="timer-readout">0:00</div>
           <!-- Replaced by a loaded lecture plan's own saved timers; these are
                the fallback when no plan is loaded. See renderTimerPresets(). -->
@@ -308,7 +317,16 @@
             <button id="timer-start" type="button">Start</button>
             <button id="timer-stop" type="button">Stop</button>
           </div>
-          <p class="hint">The countdown runs on the display, so it stays accurate even if your iPad sleeps. Show it full screen by picking “Timer” in the library.</p>
+          <div class="inline">
+            <button id="timer-show" type="button">Put this one on screen</button>
+            <button id="timer-add" type="button">Add a timer</button>
+            <button id="timer-remove" type="button" hidden>Remove this timer</button>
+          </div>
+          <p class="hint">
+            Countdowns run on the display, so they stay accurate even if your iPad sleeps.
+            Each one is independent: split the screen and you can have two on the projector at once —
+            put this one on screen, switch panels, then put another one on the next.
+          </p>
         </section>
 
         <!-- Camera -->

@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 5;
+export const BUILD = 6;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -36,6 +36,34 @@ export const LAYOUTS = {
   4: 4,      // A/B/C/D tiled 2x2
 };
 
+export const MAX_TIMERS = 4;
+
+let timerSeq = 1;
+
+export function newTimer(id, label = '', seconds = 0) {
+  const ms = Math.max(0, Math.round((Number(seconds) || 0) * 1000));
+  return {
+    id: id || `t${++timerSeq}`,
+    label: String(label || '').slice(0, 80),
+    running: false,
+    endsAt: 0,
+    remainingMs: ms,
+    mode: 'countdown',
+  };
+}
+
+/**
+ * The timer an item (or a command) is talking about.
+ *
+ * Falls back to the first rather than to nothing: an item that predates
+ * multiple timers, or one created by tapping "Timer" in the library, carries no
+ * id at all, and "the countdown" is what the presenter means by it.
+ */
+export function timerById(state, id) {
+  if (!state?.timers?.length) return null;
+  return (id && state.timers.find((t) => t.id === id)) || state.timers[0];
+}
+
 export function initialState() {
   return {
     rev: 0,
@@ -48,7 +76,13 @@ export function initialState() {
     volume: 0.8,
     muted: false,
     overlay: { text: '', visible: false },
-    timer: { running: false, endsAt: 0, remainingMs: 0, label: '', mode: 'countdown' },
+    // More than one countdown, because a class often has more than one clock
+    // running: eight minutes of group work inside a ninety-minute session, a
+    // five-minute break with its own end. Each is independent, and a `timer`
+    // item names which one it shows (see timerById), so two panels can show two
+    // different clocks at once. The first always exists - "the timer" with no
+    // further thought is the common case and must not need setting up.
+    timers: [newTimer('t1')],
     // Ink is scoped per "surface" (see inkSurfaceKey) rather than one global
     // sheet: a whiteboard keeps its own drawing, each deck slide keeps its own,
     // and switching to something else (a timer, a message) shows a blank
@@ -151,6 +185,9 @@ export function inkSurfaceKey(item) {
     case 'web': return `web:${item.src}`;
     case 'whiteboard': return `whiteboard:${item.bg || 'default'}`;
     case 'image': return `image:${item.src}`;
+    // Two panels can hold two different countdowns; drawing on one must not
+    // put the same marks on the other.
+    case 'timer': return `timer:${item.timerId || ''}`;
     default: return `${item.type}:${item.src || item.deckId || item.key || ''}`;
   }
 }
@@ -330,7 +367,48 @@ export function applyCommand(state, cmd) {
       return true;
 
     case 'timer': {
-      const t = state.timer;
+      // Set-level actions first: they are about which timers exist, not about
+      // any one of them.
+      if (cmd.action === 'add') {
+        if (state.timers.length >= MAX_TIMERS) return false;
+        // The caller may name it, so a controller knows the id of the timer it
+        // just created without waiting for the state to come back.
+        const id = cmd.id ? String(cmd.id).slice(0, 40) : null;
+        if (id && state.timers.some((t) => t.id === id)) return false;
+        state.timers.push(newTimer(id, cmd.label, cmd.seconds));
+        return true;
+      }
+      if (cmd.action === 'remove') {
+        // The first one is the one every timer item falls back to, so there is
+        // always at least one.
+        if (state.timers.length <= 1) return false;
+        const index = state.timers.findIndex((t) => t.id === cmd.id);
+        if (index < 1) return false;
+        state.timers.splice(index, 1);
+        return true;
+      }
+      if (cmd.action === 'define') {
+        // Replaces the whole set - what loading a lecture plan does. Ids come
+        // from the caller so a plan's countdown items can name one.
+        const wanted = Array.isArray(cmd.timers) ? cmd.timers.slice(0, MAX_TIMERS) : [];
+        if (!wanted.length) return false;
+        const built = [];
+        const seen = new Set();
+        for (const [i, t] of wanted.entries()) {
+          const id = String(t?.id || `t${i + 1}`).slice(0, 40);
+          // Two clocks sharing an id would leave the second unreachable -
+          // timerById would hand back the first for both.
+          if (seen.has(id)) continue;
+          seen.add(id);
+          built.push(newTimer(id, t?.label, t?.seconds));
+        }
+        if (!built.length) return false;
+        state.timers = built;
+        return true;
+      }
+
+      const t = timerById(state, cmd.id);
+      if (!t) return false;
       if (cmd.label !== undefined) t.label = String(cmd.label).slice(0, 80);
       if (cmd.mode) t.mode = cmd.mode;
       if (cmd.action === 'start') {

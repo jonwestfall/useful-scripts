@@ -1,6 +1,6 @@
 // Run with:  node podium/test/protocol.test.mjs
 // Pure state-machine tests - no DOM, no network.
-import { initialState, applyCommand, timerRemaining, inkSurfaceKey } from '../assets/js/protocol.js';
+import { initialState, applyCommand, timerRemaining, timerById, inkSurfaceKey, MAX_TIMERS } from '../assets/js/protocol.js';
 const s = initialState();
 let ok = true;
 const chk = (label, cond) => { if (!cond) { ok = false; console.log('FAIL', label); } else console.log('ok  ', label); };
@@ -33,12 +33,46 @@ applyCommand(s, {op:'nav', dir:'prev'});
 chk('pdf paging back', s.program.page === 2);
 
 applyCommand(s, {op:'timer', action:'start', seconds:300, label:'Group work'});
-chk('timer runs', s.timer.running && timerRemaining(s.timer) > 299000);
+chk('timer runs', s.timers[0].running && timerRemaining(s.timers[0]) > 299000);
 applyCommand(s, {op:'timer', action:'pause'});
-const held = timerRemaining(s.timer);
-chk('paused timer holds', !s.timer.running && held > 0 && timerRemaining(s.timer) === held);
+const held = timerRemaining(s.timers[0]);
+chk('paused timer holds', !s.timers[0].running && held > 0 && timerRemaining(s.timers[0]) === held);
 applyCommand(s, {op:'timer', action:'resume'});
-chk('resume restarts', s.timer.running);
+chk('resume restarts', s.timers[0].running);
+
+// More than one clock. A command with no id means "the countdown", which is
+// what every timer item made before this still means.
+chk('a command with no id drives the first', timerById(s, undefined) === s.timers[0]);
+chk('so does one naming a timer that is gone', timerById(s, 'vanished') === s.timers[0]);
+applyCommand(s, {op:'timer', action:'add', id:'brk', label:'Break', seconds:600});
+chk('a second timer can be added, named by the caller', s.timers.length === 2 && s.timers[1].id === 'brk');
+chk('and it does not start itself', !s.timers[1].running && timerRemaining(s.timers[1]) === 600000);
+applyCommand(s, {op:'timer', action:'start', id:'brk', seconds:60});
+chk('the two run independently', s.timers[0].running && s.timers[1].running
+  && timerRemaining(s.timers[1]) < timerRemaining(s.timers[0]));
+applyCommand(s, {op:'timer', action:'stop', id:'brk'});
+chk('stopping one leaves the other alone', !s.timers[1].running && s.timers[0].running);
+chk('a duplicate id is refused rather than shadowing the first',
+  applyCommand(s, {op:'timer', action:'add', id:'brk'}) === false && s.timers.length === 2);
+while (s.timers.length < MAX_TIMERS) applyCommand(s, {op:'timer', action:'add'});
+chk(`the set is capped at ${MAX_TIMERS}`, applyCommand(s, {op:'timer', action:'add'}) === false && s.timers.length === MAX_TIMERS);
+applyCommand(s, {op:'timer', action:'remove', id:'brk'});
+chk('one can be removed', s.timers.length === MAX_TIMERS - 1 && !s.timers.some((t) => t.id === 'brk'));
+chk('but never the first - everything with no id falls back to it',
+  applyCommand(s, {op:'timer', action:'remove', id:s.timers[0].id}) === false && s.timers.length === MAX_TIMERS - 1);
+chk('two panels showing two countdowns are two ink surfaces',
+  inkSurfaceKey({type:'timer', timerId:'a'}) !== inkSurfaceKey({type:'timer', timerId:'b'}));
+applyCommand(s, {op:'timer', action:'define', timers:[{id:'grp', label:'Group work', seconds:480}, {id:'brk2', label:'Break', seconds:300}]});
+chk('loading a lecture plan replaces the whole set, keeping the ids it names',
+  s.timers.length === 2 && s.timers[0].id === 'grp' && s.timers[1].label === 'Break'
+  && timerRemaining(s.timers[0]) === 480000 && !s.timers[0].running);
+applyCommand(s, {op:'timer', action:'define', timers:[{id:'same', label:'One', seconds:60}, {id:'same', label:'Two', seconds:120}]});
+chk('two clocks cannot share an id - the second would be unreachable',
+  s.timers.length === 1 && s.timers[0].label === 'One');
+applyCommand(s, {op:'timer', action:'define', timers:[{id:'grp', label:'Group work', seconds:480}, {id:'brk2', label:'Break', seconds:300}]});
+chk('an empty define is refused rather than leaving no clock at all',
+  applyCommand(s, {op:'timer', action:'define', timers:[]}) === false && s.timers.length === 2);
+applyCommand(s, {op:'timer', action:'start', id:'grp'});
 
 // --- ink: per-surface, not one global sheet ---------------------------------
 applyCommand(s, {op:'stage', item:{type:'whiteboard', bg:'#12261f'}});
