@@ -94,6 +94,23 @@ export function isConfigured(cfg) {
   return !!cfg.mqttUrl;
 }
 
+// A one-line, readable statement of what this device is about to dial, for
+// the connection readouts. Worth showing even when everything works: half of
+// "it won't connect" turns out to be two devices pointed at different relays,
+// or a URL that was saved with a typo months ago and never looked at again.
+export function relayTarget(cfg) {
+  const names = { supabase: 'Supabase Realtime', mqtt: 'MQTT over WSS', ws: 'Self-hosted WebSocket' };
+  const raw = cfg.transport === 'supabase' ? cfg.supabaseUrl
+    : cfg.transport === 'ws' ? cfg.wsUrl
+    : cfg.mqttUrl;
+  let where = raw || '(not set)';
+  try {
+    const u = new URL(raw);
+    where = `${u.protocol}//${u.host}${u.pathname === '/' ? '' : u.pathname}`;
+  } catch { /* show it verbatim - a URL too broken to parse is the finding */ }
+  return `${names[cfg.transport] || cfg.transport} · ${where} · room ${cfg.room || '(not set)'}`;
+}
+
 // Everything a second device needs, packed into a controller URL. Encoded into
 // the QR the display shows while it is waiting to be paired.
 export function pairingUrl(cfg, base = new URL('control.html', location.href)) {

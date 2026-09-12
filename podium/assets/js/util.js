@@ -142,3 +142,42 @@ export async function servedBuild() {
     return null;
   }
 }
+
+/**
+ * A rolling record of what the relay did, rendered into every `.relay-log` on
+ * the page.
+ *
+ * "Lost the relay - retrying" on its own is unactionable: it names no URL, no
+ * close code and no attempt count, and it overwrites the first attempt - which
+ * is the informative one - with the twentieth. Both pages need this, and a
+ * diagnostic that exists twice is a diagnostic that rots in one of the copies.
+ */
+export function createRelayLog(limit = 8) {
+  const entries = [];
+
+  const render = () => {
+    const text = entries
+      .map((e) => `${e.at} · ${e.status}${e.detail ? ` — ${e.detail}` : ''}${e.n > 1 ? ` (×${e.n})` : ''}`)
+      .join('\n');
+    $$('.relay-log').forEach((box) => { box.textContent = text; box.hidden = !text; });
+  };
+
+  return {
+    entries,
+    render,
+    push(status, detail = '') {
+      const at = new Date().toLocaleTimeString();
+      const last = entries[entries.length - 1];
+      // A retry loop repeats the same line forever; collapse it into a count so
+      // the first attempt, and anything that happened before it, stays visible.
+      if (last && last.status === status && last.detail === detail) {
+        last.n++;
+        last.at = at;
+      } else {
+        entries.push({ at, status, detail, n: 1 });
+        if (entries.length > limit) entries.shift();
+      }
+      render();
+    },
+  };
+}

@@ -8,8 +8,8 @@
 // scroll position. A layout can split the screen into up to four panels
 // (see LAYOUTS in protocol.js); B/C/D are simpler; set directly, no preview.
 
-import { $, el, throttle, wireDangerButton, servedBuild } from './util.js';
-import { loadConfig, saveConfig, isConfigured, pairingUrl, resetDevice, reloadClean, DEFAULTS } from './config.js';
+import { $, $$, el, throttle, wireDangerButton, servedBuild, createRelayLog } from './util.js';
+import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, inkSurfaceKey, LAYOUTS, focusedItem, BUILD } from './protocol.js';
 import { createRenderer } from './renderers.js';
@@ -308,11 +308,15 @@ watchPixelRatio();
 // copy it is running is one the server has already replaced.
 $('#build-number').textContent = String(BUILD);
 servedBuild().then((served) => {
-  const note = $('#build-check');
   if (served === null || served === BUILD) return;
-  note.textContent = ` — but the server is serving build ${served}, so this page came from a cache. Reload it.`;
+  $('#build-check').textContent = ` — but the server is serving build ${served}, so this page came from a cache. Reload it.`;
   $('#build-note').classList.add('is-stale');
-  setHud('error', `Running build ${BUILD}; server has ${served} — reload this page`);
+  // Deliberately NOT setHud('error'): the HUD is the RELAY's channel, and a
+  // stale page reported there reads as "Cannot reach the relay: Running build
+  // 3..." - which is a lie about the network, told at exactly the moment
+  // someone is trying to debug the network. Version news gets its own line.
+  $('#arm-build').textContent = `This page is build ${BUILD} but the server has ${served} — reload it.`;
+  $('#arm-build').hidden = false;
 });
 
 function strokePath(ctx, stroke, rect, from = 0) {
@@ -513,14 +517,27 @@ function commit() {
 
 // --- connection -------------------------------------------------------------
 
+// The relay is the one part of Podium that fails for reasons outside Podium,
+// and the old readout - "Lost the relay - retrying." and nothing else - is
+// unactionable: it does not say which URL, what the browser objected to, or
+// how many times it has tried. Everything the transport reports is kept here
+// and shown on the arming screen and in Settings, so whoever is standing at
+// the machine can read the answer off the screen rather than opening a console
+// on a lectern PC that may not let them open one.
+const relayLog = createRelayLog();
+
 function setHud(status, detail) {
   hud.dataset.status = status;
+  relayLog.push(status, detail || '');
   // The arming sheet covers the HUD, so mirror the state onto it: you should
   // be able to see the display is on the bus before you commit the room to it.
+  // Detail is carried through on every failing state, not just 'error' - an
+  // 'offline' that never managed to open a socket in the first place is where
+  // the useful text lives.
   $('#arm-status').textContent = {
-    connecting: 'Connecting to the relay…',
+    connecting: `Connecting to the relay…${detail ? ` (${detail})` : ''}`,
     online: 'Connected and waiting for a controller.',
-    offline: 'Lost the relay — retrying.',
+    offline: `Lost the relay — retrying.${detail ? ` ${detail}` : ''}`,
     error: `Cannot reach the relay${detail ? `: ${detail}` : ''}`,
     mismatch: 'Something nearby is using a different passphrase.',
   }[status] || status;
@@ -746,13 +763,24 @@ document.addEventListener('keydown', (ev) => {
 
 $('#room-name').textContent = cfg.room;
 $('#standby-room').textContent = cfg.room;
+$$('.relay-target').forEach((n) => { n.textContent = relayTarget(cfg); });
 
 if (!isConfigured(cfg)) {
   showSetup();
 } else {
   armEl.hidden = false;
   sizeInk();
-  await connect();
+  // Everything that fails BEFORE a socket exists rejects out of createBus:
+  // no Web Crypto (a page served over plain http), a transport adapter whose
+  // CDN is blocked, a relay URL that is not a URL or is the wrong scheme.
+  // This module uses top-level await, so an unhandled rejection here aborts
+  // the REST of the module - render() below never ran, and the screen just
+  // sat there looking hung instead of saying what was wrong.
+  try {
+    await connect();
+  } catch (err) {
+    setHud('error', err?.message || String(err));
+  }
 }
 
 render();

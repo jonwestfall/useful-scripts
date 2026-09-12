@@ -52,6 +52,9 @@
     </div>
     <p class="hint">Room <span id="room-name" class="mono"></span> · code <span id="arm-code" class="mono">····</span></p>
     <p class="hint" id="arm-status">Connecting…</p>
+    <p class="hint mono relay-target"></p>
+    <p class="hint stale-note" id="arm-build" hidden></p>
+    <pre class="relay-log" hidden></pre>
   </div>
 </div>
 
@@ -105,6 +108,11 @@
       Forgets the room, passphrase and everything else Podium saved in this browser,
       then reloads as if this machine had never seen it. Affects this device only.
     </p>
+    <p class="hint">
+      <b>Relay</b> <span class="mono relay-target"></span>
+      — what this display dials, and what happened when it last tried:
+    </p>
+    <pre class="relay-log" hidden></pre>
     <p class="hint" id="build-note">
       <b>Build <span id="build-number">–</span></b>
       <span id="build-check"></span>

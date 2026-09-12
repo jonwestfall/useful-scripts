@@ -54,6 +54,13 @@
     <button id="update-reload" type="button">Reload now</button>
   </div>
 
+  <div id="relay-help" hidden>
+    <b>The relay is not answering.</b>
+    <span id="relay-help-why"></span>
+    <p>Dialling <span class="mono relay-target"></span></p>
+    <pre class="relay-log" hidden></pre>
+  </div>
+
   <div id="link-help" hidden>
     <b>No display has answered.</b>
     <ul>
@@ -358,6 +365,11 @@
         <button type="button" id="setup-close" hidden>Close</button>
       </div>
     </form>
+    <p class="hint">
+      <b>Relay</b> <span class="mono relay-target"></span>
+      — what this device dials, and what happened when it last tried:
+    </p>
+    <pre class="relay-log" hidden></pre>
     <hr style="border:0;border-top:1px solid var(--line);margin:22px 0 16px">
     <button id="reset-device" class="danger-outline" style="width:100%">Clear settings &amp; reload</button>
     <p class="hint" id="reset-note">

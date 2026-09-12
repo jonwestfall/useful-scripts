@@ -2,8 +2,8 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild } from './util.js';
-import { loadConfig, saveConfig, isConfigured, resetDevice, reloadClean, DEFAULTS } from './config.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog } from './util.js';
+import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, timerRemaining, LAYOUTS, focusedItem, BUILD } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
@@ -997,9 +997,11 @@ async function startCamera(where = 'auto') {
 
 let relayStatus = 'connecting';
 let waitingSince = Date.now();
+const relayLog = createRelayLog();
 
 function setStatus(status, detail) {
   relayStatus = status;
+  relayLog.push(status, detail || '');
   const bar = $('#status');
   bar.dataset.status = status;
   // "Connected" here means the relay, not the display - the two are separate
@@ -1011,6 +1013,12 @@ function setStatus(status, detail) {
     error: `Relay problem${detail ? `: ${detail}` : ''}`,
     mismatch: 'Wrong passphrase somewhere',
   }[status] || status;
+  // The status bar has room for two words. The panel below it has room for the
+  // URL and the close code, which is what you actually need at the moment the
+  // relay will not come up.
+  const trouble = status === 'error' || status === 'offline';
+  $('#relay-help').hidden = !trouble;
+  $('#relay-help-why').textContent = detail || 'No detail was reported.';
   renderConnection();
 }
 
@@ -1371,7 +1379,17 @@ if (!isConfigured(cfg)) {
   showSetup();
 } else {
   $('#app').hidden = false;
-  await connect();
+  $$('.relay-target').forEach((n) => { n.textContent = relayTarget(cfg); });
+  // A createBus that rejects - no Web Crypto over plain http, a blocked CDN for
+  // the transport adapter, a relay URL that is not a URL - used to take the
+  // rest of this module with it (top-level await), so the library never loaded
+  // and the controller came up as a blank frame with no explanation. Say what
+  // happened and carry on: everything below still works offline.
+  try {
+    await connect();
+  } catch (err) {
+    setStatus('error', err?.message || String(err));
+  }
   await loadLibrary();
   tab('library');
   renderAll();

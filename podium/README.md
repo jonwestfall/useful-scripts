@@ -520,6 +520,61 @@ If the codes match and you still see nothing, the controller will say
 **Wrong passphrase somewhere** — that means encrypted traffic is arriving that it
 cannot read, which is a mismatch rather than an absence.
 
+### When nothing connects at all: reading the relay readout
+
+A relay that will not come up is a different problem from a display that has not
+joined, and it used to be reported in four words — *Lost the relay — retrying* —
+which name no URL, no error and no attempt count. There is nothing to act on in
+that sentence, and the retry loop overwrites the first attempt (the informative
+one) with the twentieth.
+
+Both pages now state, in plain text, **what they are dialling** and **what
+happened when they last tried**:
+
+- The display's arming screen, and its Settings, show the transport, the URL and
+  the room: `Self-hosted WebSocket · wss://vps.example/podium · room phi101`.
+  Worth reading even when things work — a good share of "it won't connect" is two
+  devices pointed at different relays, or a URL saved with a typo months ago.
+- Below it, a short timestamped log of every transition, with repeats collapsed
+  into a count. The controller shows the same thing in a red banner and in its own
+  Settings.
+
+What the messages distinguish, because each sends you somewhere different:
+
+- **`could not open wss://… (code 1006)`** — the socket never opened. The browser
+  will not tell a page which of these it was, so the message lists them: the relay
+  is not running, the port is closed to this network, or — the one that catches
+  people with a relay on their own machine — **its TLS certificate is not trusted
+  by this browser**, which refuses the handshake silently. Open the same host as
+  `https://` in a tab once, accept the certificate, and reload.
+- **`dropped (code 1006), attempt 4`** — it *was* connected and lost it. That is
+  Wi-Fi or the relay restarting, and it recovers on its own.
+- **`never connected to wss://broker…`** — the broker refused. Public brokers move
+  their WebSocket port and path around, and a wrong one looks exactly like a dead
+  network. `wss://broker.emqx.io:8084/mqtt` is the shape that works.
+- **`"my-vps.example/podium" is not a URL`**, **`must start with wss://`**, and
+  **`a browser can only speak MQTT over a WebSocket`** — caught before any socket
+  is attempted. `mqtt://host:1883` from a broker's own documentation is the single
+  most common way this ends up silently dead; a browser cannot dial it.
+- **`This page is served over https://, so the browser blocks a plain ws:// relay`**
+  — mixed content, refused at a layer the page cannot see into.
+- **`Could not load the MQTT client from cdn.jsdelivr.net`** — the transport's
+  client library is fetched from a CDN, and a locked-down campus network blocking
+  it is not something the app can route around. The self-hosted WebSocket
+  transport needs no CDN at all, which is the fix.
+
+Two of those categories used to be worse than unhelpful. They reject *before* any
+socket exists, and both pages use top-level `await`: an unhandled rejection there
+aborts the rest of the module, so the display never rendered and the controller
+never loaded its library. A one-line configuration mistake presented as a hung
+page. Both now catch it, say what happened, and come up anyway — the controller is
+fully usable offline, so fixing the URL in Settings is all that is left to do.
+
+A stale build also no longer reports itself on the relay's channel, where it read
+as `Cannot reach the relay: Running build 3…` — a claim about the network, made at
+exactly the moment someone is trying to debug the network. Version news has its own
+line.
+
 ### Builds, and telling when a device is running an old one
 
 The display and the controller are separate devices, each loading its own copy of
@@ -587,8 +642,10 @@ confidence boxes stay correctly sized even switching tabs cold, a dragged laser
 pointer tracks and vanishes on release, the phone-camera tile actually opens the
 connection (Chromium's synthetic camera, no real hardware or permission prompt
 needed), export produces a real, valid-PNG-containing zip, waiting music actually
-plays, a countdown ticks on the display, and a controller with the wrong passphrase
-cannot touch the screen.
+plays, a countdown ticks on the display, a dead relay explains which URL it could
+not open (and neither page dies at its top-level `await` when the failure happens
+before a socket exists), and a controller with the wrong passphrase cannot touch the
+screen. 175 checks.
 
 ## Layout
 

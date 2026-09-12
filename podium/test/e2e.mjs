@@ -1902,6 +1902,142 @@ const settle = (pad, re) => pad.waitForFunction((src) => new RegExp(src).test(do
 }
 }
 
+console.log('\n-- a relay that will not come up says which relay, and why --');
+{
+// "Lost the relay - retrying." was the whole of what a failing connection told
+// you: not which URL, not what the browser objected to, not how long it had
+// been trying. Two of the three ways this fails could not even get that far -
+// they rejected out of createBus, and because both pages use top-level await,
+// an unhandled rejection there ABORTS THE REST OF THE MODULE. The display then
+// never called render() and the controller never loaded its library: a page
+// that looks hung, for what is really a one-line configuration problem.
+const dead = await freePort();           // nothing is listening on it, by construction
+const relayCfg = (extra) => JSON.stringify({
+  transport: 'ws', room: 'no-relay', passphrase: 'x', ...extra,
+});
+
+// A page is only "alive" if the module ran past its top-level await: on the
+// display that means render() built the program layer, on the controller that
+// means the library finished loading.
+async function openScreen(cfg, route) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  if (route) await route(ctx);
+  await ctx.addInitScript((c) => localStorage.setItem('podium.config.v2', c), cfg);
+  const page = await ctx.newPage();
+  const crashes = [];
+  page.on('pageerror', (e) => crashes.push(e.message));
+  await page.goto(`${BASE}/display.html`);
+  return { page, crashes, close: () => ctx.close() };
+}
+const said = (page, re) => page.waitForFunction(
+  (src) => new RegExp(src).test(document.querySelector('#arm-status')?.textContent || ''),
+  re.source, { timeout: 20000 }).catch(() => {});
+const alive = (page) => page.$$eval('.layer[data-role="program"]', (n) => n.length > 0);
+
+{
+  // The socket that never opens. Every cause - closed port, no relay running,
+  // a TLS certificate this browser does not trust - arrives as close code 1006
+  // with an empty reason, so the message has to enumerate them.
+  const { page, crashes, close } = await openScreen(relayCfg({ wsUrl: `ws://127.0.0.1:${dead}/podium` }));
+  await said(page, /could not open/);
+  const status = (await page.textContent('#arm-status')).trim();
+  ok(`a dead relay names the URL it could not open ("${status.slice(0, 90)}…")`,
+    /could not open/.test(status) && status.includes(`127.0.0.1:${dead}`));
+  ok('and the close code, so a refusal is distinguishable from a timeout', /code 1006/.test(status));
+  const log = await page.$eval('.relay-log', (n) => ({ hidden: n.hidden, text: n.textContent }));
+  ok('and keeps a timestamped log of the attempts instead of only the last one',
+    !log.hidden && /\d·|\d:\d/.test(log.text) && /error/.test(log.text));
+  const target = await page.$eval('.relay-target', (n) => n.textContent);
+  ok(`and states outright what it is dialling ("${target}")`,
+    /Self-hosted WebSocket/.test(target) && target.includes(String(dead)) && /room no-relay/.test(target));
+  ok('no unhandled rejection', crashes.length === 0);
+  await close();
+}
+
+{
+  // A relay URL that is not a URL. This one throws before any socket exists.
+  const { page, crashes, close } = await openScreen(relayCfg({ wsUrl: 'my-vps.example/podium' }));
+  await said(page, /not a URL/);
+  const status = (await page.textContent('#arm-status')).trim();
+  ok(`a URL with no scheme is named as such, not reported as a network fault ("${status.slice(0, 90)}…")`,
+    /is not a URL/.test(status) && /wss:\/\//.test(status));
+  ok('and the rest of the page still came up rather than dying at the top-level await', await alive(page));
+  ok('no unhandled rejection', crashes.length === 0);
+  await close();
+}
+
+{
+  // The transport adapter's own CDN blocked - the first thing a locked-down
+  // campus network does. Nothing here is the app's fault and nothing here used
+  // to be reported at all: the import rejected and took the module with it.
+  const { page, crashes, close } = await openScreen(
+    relayCfg({ transport: 'mqtt', mqttUrl: 'wss://broker.example:8084/mqtt' }),
+    (ctx) => ctx.route('https://cdn.jsdelivr.net/**', (route) => route.abort()),
+  );
+  await said(page, /Could not load/);
+  const status = (await page.textContent('#arm-status')).trim();
+  ok(`a blocked CDN says what could not be fetched, and which transport needs none ("${status.slice(0, 90)}…")`,
+    /Could not load the MQTT client from cdn\.jsdelivr\.net/.test(status) && /Self-hosted WebSocket needs no CDN/.test(status));
+  ok('and the page is still alive to be reconfigured', await alive(page));
+  ok('no unhandled rejection', crashes.length === 0);
+  await close();
+}
+
+{
+  // mqtt:// is the classic: it is the scheme every broker's own docs use, and
+  // a browser cannot speak it. Caught before the client library is even loaded.
+  const { page, close } = await openScreen(relayCfg({ transport: 'mqtt', mqttUrl: 'mqtt://broker.example:1883' }));
+  await said(page, /WebSocket/);
+  const status = (await page.textContent('#arm-status')).trim();
+  ok(`a broker URL a browser cannot dial explains why, and shows the shape that works ("${status.slice(0, 90)}…")`,
+    /only speak MQTT over a WebSocket/.test(status) && /wss:\/\/broker\.emqx\.io:8084\/mqtt/.test(status));
+  await close();
+}
+
+{
+  // The controller side of the same cliff: a throwing connect() used to leave
+  // the library unloaded, so the presenter got an empty frame and no reason.
+  const ctx = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  const crashes = [];
+  await ctx.addInitScript((c) => localStorage.setItem('podium.config.v2', c), relayCfg({ wsUrl: 'my-vps.example/podium' }));
+  const pad = await ctx.newPage();
+  pad.on('pageerror', (e) => crashes.push(e.message));
+  await pad.goto(`${BASE}/control.html`);
+  await pad.waitForSelector('#relay-help:not([hidden])', { timeout: 20000 }).catch(() => {});
+  const why = (await pad.textContent('#relay-help-why')).trim();
+  ok(`the controller explains the relay failure in a banner ("${why.slice(0, 80)}…")`, /is not a URL/.test(why));
+  await pad.waitForSelector('.tile', { timeout: 20000 }).catch(() => {});
+  ok('and its library still loaded, so it is usable as soon as the URL is fixed',
+    (await pad.$$('.tile')).length > 0);
+  ok('no unhandled rejection', crashes.length === 0);
+  await ctx.close();
+}
+
+{
+  // And the regression that made all of this harder to read: a stale build was
+  // announced on the RELAY's channel, so a page running old code claimed
+  // "Cannot reach the relay" while the relay was perfectly fine.
+  const { page, close } = await openScreen(
+    JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'stale-not-offline', passphrase: 'x' }),
+    (ctx) => ctx.route('**/assets/js/protocol.js', async (route) => {
+      const res = await route.fetch();
+      if (route.request().resourceType() === 'script') {
+        await route.fulfill({ response: res, body: (await res.text()).replace(/export const BUILD = \d+;/, 'export const BUILD = 1;') });
+        return;
+      }
+      await route.fulfill({ response: res });
+    }),
+  );
+  await page.waitForSelector('#hud[data-status="online"]', { timeout: 15000 }).catch(() => {});
+  await page.waitForSelector('#arm-build:not([hidden])', { timeout: 15000 }).catch(() => {});
+  const build = (await page.textContent('#arm-build')).trim();
+  const status = (await page.textContent('#arm-status')).trim();
+  ok(`a stale page says it is stale, on its own line ("${build}")`, /build 1 but the server has \d+/.test(build));
+  ok(`and does not blame the relay for it ("${status}")`, !/Cannot reach|Lost the relay/.test(status));
+  await close();
+}
+}
+
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
 } finally {
   await browser?.close().catch(() => {});
