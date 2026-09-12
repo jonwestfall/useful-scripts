@@ -1404,6 +1404,50 @@ const landed = await screen.evaluate(({ fx, fy }) => {
 ok(`the canvas re-sizes itself for the new density (${landed.canvasW}px backing store)`, landed.canvasW === 1512);
 ok(`and the stroke still lands where it was drawn (dx=${landed.dx.toFixed(1)}, dy=${landed.dy.toFixed(1)}), not at double the distance`,
   landed.dx < 20 && landed.dy < 20);
+
+// The same fault in a split layout is where it gets really loud: panel A is
+// exactly half the stage in each direction, so painting it at 2x covers the
+// whole screen - annotations correctly placed WITHIN panel A, but sprayed
+// across all four of them.
+await pad.click('#ink-clear');
+await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+// Put the canvas back out of step with the screen the way the move left it,
+// so the split layout is genuinely being asked to survive the mismatch and
+// not quietly handed a canvas that happens to match again.
+await screen.evaluate(() => {
+  const cv = document.querySelector('#ink');
+  cv.width = Math.round(document.querySelector('#stage').clientWidth * 2);
+  cv.height = Math.round(document.querySelector('#stage').clientHeight * 2);
+  cv.getContext('2d').setTransform(2, 0, 0, 2, 0, 0);
+});
+await pad.click('.layout-btn[data-layout="4"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-4'), null, { timeout: 5000 });
+await pad.waitForTimeout(500);
+const pb2 = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(pb2.x + pb2.w * 0.15, pb2.y + pb2.h * 0.15);
+await pad.mouse.down();
+for (let i = 1; i <= 10; i++) await pad.mouse.move(pb2.x + pb2.w * (0.15 + 0.7 * i / 10), pb2.y + pb2.h * (0.15 + 0.65 * i / 10));
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 6000 });
+await screen.waitForTimeout(400);
+const quad = await screen.evaluate(() => {
+  const slotA = document.querySelector('[data-panel="a"]').getBoundingClientRect();
+  const cv = document.querySelector('#ink'); const c2d = cv.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const data = c2d.getImageData(0, 0, cv.width, cv.height).data;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+    const i = (y * cv.width + x) * 4;
+    if (data[i + 3] > 0) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+  }
+  if (minX === Infinity) return { ok: false, why: 'nothing painted' };
+  const box = { x: minX / dpr, y: minY / dpr, r: maxX / dpr, b: maxY / dpr };
+  return {
+    ok: box.x >= slotA.left - 2 && box.r <= slotA.right + 2 && box.y >= slotA.top - 2 && box.b <= slotA.bottom + 2,
+    why: `ink ${box.x.toFixed(0)},${box.y.toFixed(0)}..${box.r.toFixed(0)},${box.b.toFixed(0)} vs panel A ${slotA.left.toFixed(0)},${slotA.top.toFixed(0)}..${slotA.right.toFixed(0)},${slotA.bottom.toFixed(0)}`,
+  };
+});
+ok(`a density change in a split layout still keeps panel A's ink inside panel A (${quad.why})`, quad.ok);
 await ctx.close();
 }
 
@@ -1581,21 +1625,28 @@ for (let i = 1; i <= 10; i++) {
 }
 await pad.mouse.up();
 await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+// EVERY painted pixel has to be inside panel A, not merely the first one
+// found: ink sprayed across all four panels still starts inside A if A is
+// the top-left one, so checking where the stroke begins says nothing about
+// whether it stayed there.
 const inkInsideA = await screen.evaluate(() => {
   const slotA = document.querySelector('[data-panel="a"]').getBoundingClientRect();
   const cv = document.querySelector('#ink'); const ctx2d = cv.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
   const data = ctx2d.getImageData(0, 0, cv.width, cv.height).data;
-  for (let y = 0; y < cv.height; y += 2) for (let x = 0; x < cv.width; x += 2) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
     const i = (y * cv.width + x) * 4;
-    if (data[i + 3] > 0) {
-      const cssX = x / dpr, cssY = y / dpr;
-      return cssX >= slotA.left && cssX <= slotA.right && cssY >= slotA.top && cssY <= slotA.bottom;
-    }
+    if (data[i + 3] > 0) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
   }
-  return false;
+  if (minX === Infinity) return { ok: false, why: 'nothing painted' };
+  const box = { x: minX / dpr, y: minY / dpr, r: maxX / dpr, b: maxY / dpr };
+  return {
+    ok: box.x >= slotA.left - 2 && box.r <= slotA.right + 2 && box.y >= slotA.top - 2 && box.b <= slotA.bottom + 2,
+    why: `ink ${box.x.toFixed(0)},${box.y.toFixed(0)}..${box.r.toFixed(0)},${box.b.toFixed(0)} vs panel A ${slotA.left.toFixed(0)},${slotA.top.toFixed(0)}..${slotA.right.toFixed(0)},${slotA.bottom.toFixed(0)}`,
+  };
 });
-ok("ink drawn while focused on A lands inside A's own on-screen region, not the whole stage", inkInsideA);
+ok(`every bit of the stroke stays inside panel A, not spread over the whole stage (${inkInsideA.why})`, inkInsideA.ok);
 
 await pad.click('.layout-btn[data-layout="single"]');
 await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 5000 });
