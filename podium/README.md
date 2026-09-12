@@ -12,7 +12,13 @@ disk. There is no build step and no framework.
 |---|---|---|
 | `display.html` | the classroom PC | one fullscreen tab; renders what it is told |
 | `control.html` | iPad, iPhone | the remote; several can be connected at once |
-| `index.html` | anywhere | a landing page linking to the two above |
+| `plan.html` | your office machine | build a lecture at your desk; carry it over as a file |
+| `index.html` | anywhere | a landing page linking to the three above |
+
+**New to this, or not especially technical?** [QUICKSTART.md](QUICKSTART.md) explains
+the whole thing in plain English and walks through putting it online free on GitHub
+Pages in about twenty minutes — no terminal, no server, no card. This file is the
+full reference; that one is the road in.
 
 ## The idea worth knowing about: freeze is a cue
 
