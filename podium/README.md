@@ -314,6 +314,16 @@ Between picking and the real shape being known, the pad simply will not draw (it
 dims and ignores touches) rather than guess — normally invisible, since a real hand
 takes longer to reach the pad than the deck takes to load.
 
+**The ink layer covers the screen, on any pixel density.** A `<canvas>` is a
+*replaced* element, like an `<img>` — so an absolutely positioned one with no stated
+width takes its **intrinsic** width (its `width` attribute, read as CSS pixels)
+rather than stretching to `left:0; right:0`. That attribute holds the backing store,
+which is sized in *device* pixels, so on a 2× screen the element gets laid out at
+twice the window, anchored top-left, and you see the top-left quarter of it: ink at
+double size, drifting further off the further from the corner you draw. `#ink` states
+`width:100%; height:100%` explicitly for that reason — those are not redundant next
+to `inset: 0`, and leaving them off is a real bug rather than a tidiness question.
+
 **Moving the display window between screens does not throw the ink off.** A laptop
 screen and a projector rarely share a pixel density, and the ink layer is a canvas
 sized in *device* pixels — so a window dragged from a 2× laptop display onto a 1×

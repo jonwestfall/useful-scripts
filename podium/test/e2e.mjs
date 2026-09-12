@@ -1722,6 +1722,92 @@ ok(`a split and straight back leaves the ink exactly where it was (${beforeRound
 await ctx.close();
 }
 
+console.log('\n-- the ink layer covers the screen exactly, on a 2x display --');
+{
+// A <canvas> is a REPLACED element, so an absolutely positioned one with
+// width:auto takes its intrinsic width - its width attribute, read as CSS
+// pixels - rather than stretching to left:0/right:0. That attribute is the
+// backing store, sized in DEVICE pixels, so on a 2x screen the element gets
+// laid out at twice the viewport, anchored top-left, and the window shows
+// the top-left quarter of it. Ink at double size, drifting further off the
+// further from the corner you draw.
+//
+// Every earlier ink check missed this for one reason: they read pixels out
+// of the backing store, which is completely unaffected by the canvas being
+// DISPLAYED at the wrong size. So this one measures through the canvas's
+// real on-screen box - where the eye actually sees the mark - and asserts
+// the invariant that was silently untrue: the ink layer covers the stage,
+// no more and no less.
+const ctx = await browser.newContext({ viewport: { width: 1512, height: 944 }, deviceScaleFactor: 2 });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'retina-room', passphrase: 'two times' }));
+const screen = await ctx.newPage();
+trap(screen, 'retina display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'retina control');
+await pad.setViewportSize({ width: 1024, height: 1366 });
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const cover = await screen.evaluate(() => {
+  const c = document.querySelector('#ink').getBoundingClientRect();
+  const s = document.querySelector('#stage').getBoundingClientRect();
+  return { canvas: { w: Math.round(c.width), h: Math.round(c.height) }, stage: { w: Math.round(s.width), h: Math.round(s.height) }, dpr: window.devicePixelRatio };
+});
+ok(`the ink layer is laid out over exactly the stage, not its device-pixel size (canvas ${cover.canvas.w}x${cover.canvas.h}, stage ${cover.stage.w}x${cover.stage.h}, dpr ${cover.dpr})`,
+  cover.canvas.w === cover.stage.w && cover.canvas.h === cover.stage.h);
+
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length > 0, null, { timeout: 20000 });
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad:not(.is-pending)', { timeout: 5000 });
+await pad.waitForTimeout(500);
+
+// A loop around the title, the way you would actually circle something.
+const pb = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+const corners = [[0.12, 0.30], [0.88, 0.30], [0.88, 0.72], [0.12, 0.72], [0.12, 0.30]];
+await pad.mouse.move(pb.x + pb.w * corners[0][0], pb.y + pb.h * corners[0][1]);
+await pad.mouse.down();
+for (let i = 1; i < corners.length; i++) {
+  for (let s = 1; s <= 6; s++) {
+    const a = corners[i - 1], z = corners[i];
+    await pad.mouse.move(pb.x + pb.w * (a[0] + (z[0] - a[0]) * s / 6), pb.y + pb.h * (a[1] + (z[1] - a[1]) * s / 6));
+  }
+}
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 6000 });
+await screen.waitForTimeout(400);
+
+const landed = await screen.evaluate(() => {
+  const svg = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot.querySelector('svg.podium-on');
+  const art = svg.querySelector('foreignObject').getBoundingClientRect();
+  const cv = document.querySelector('#ink'); const c2d = cv.getContext('2d');
+  const data = c2d.getImageData(0, 0, cv.width, cv.height).data;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+    const i = (y * cv.width + x) * 4;
+    if (data[i + 3] > 0) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+  }
+  if (minX === Infinity) return null;
+  // Through the canvas's on-screen box, NOT its backing store - the whole
+  // point of this check.
+  const box = cv.getBoundingClientRect();
+  const sx = (px) => box.x + (px / cv.width) * box.width;
+  const sy = (py) => box.y + (py / cv.height) * box.height;
+  return {
+    w: sx(maxX) - sx(minX), expectedW: art.width * 0.76,
+    h: sy(maxY) - sy(minY), expectedH: art.height * 0.42,
+  };
+});
+ok(`and a loop drawn round the title comes out the size of the title, not double it (${landed.w.toFixed(0)}x${landed.h.toFixed(0)} vs ${landed.expectedW.toFixed(0)}x${landed.expectedH.toFixed(0)})`,
+  Math.abs(landed.w - landed.expectedW) < 30 && Math.abs(landed.h - landed.expectedH) < 30);
+await ctx.close();
+}
+
 console.log('\n-- version readouts, and a stale device that says so instead of looking like a bug --');
 {
 // The two ends are separate devices loading their own copy of the app from
