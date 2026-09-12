@@ -65,11 +65,40 @@ function getDeckSource(item) {
   return null;
 }
 
+// Photos that arrived inside a lecture plan (see planfile.js). Exactly the
+// deck arrangement: the controller holds the bytes, this screen asks for the
+// ones it does not have, and an item refers to one by `asset:<id>` rather than
+// carrying it. That indirection is not incidental - the item lives in `state`,
+// which is broadcast to every controller twice a second, and it is the key ink
+// surfaces are addressed by. A data URL inline would make both enormous.
+const assetStore = new Map();
+const assetWanted = new Set();
+
+// A 1x1 transparent GIF: what the projector shows for the moment between an
+// item going up and its photo arriving, rather than a broken-image icon.
+const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+// Called only where an item is handed to a RENDERER, never on the way into
+// `state`: resolving it any earlier would make this screen's ink surface keys
+// and layer keys disagree with every controller's.
+function resolveAssets(item) {
+  if (!item || typeof item.src !== 'string' || !item.src.startsWith('asset:')) return item;
+  const id = item.src.slice(6);
+  if (assetStore.has(id)) return { ...item, src: assetStore.get(id) };
+  assetWanted.add(id);
+  bus?.send({ t: 'asset-need', id });
+  return { ...item, src: BLANK_PIXEL };
+}
+
 // A controller can be mid-reload when we ask, so keep asking for a while.
 setInterval(() => {
   for (const id of deckWanted) {
     if (deckStore.has(id)) { deckWanted.delete(id); continue; }
     bus?.send({ t: 'deck-need', id });
+  }
+  for (const id of assetWanted) {
+    if (assetStore.has(id)) { assetWanted.delete(id); continue; }
+    bus?.send({ t: 'asset-need', id });
   }
 }, 3000);
 
@@ -121,7 +150,7 @@ let cameraStatus = 'idle';
 function mount(layer, item) {
   freeLayer(layer);
   layer.key = item.key;
-  layer.renderer = createRenderer(item, {
+  layer.renderer = createRenderer(resolveAssets(item), {
     getTimer: () => state.timer,
     getStream: () => cameraStream,
     getCameraStatus: () => cameraStatus,
@@ -160,7 +189,7 @@ function syncLayers() {
       claimed.add(want.layer);
       mount(want.layer, want.item);
     } else {
-      want.layer.renderer.update(want.item);
+      want.layer.renderer.update(resolveAssets(want.item));
     }
     want.layer.node.dataset.role = want.role;
   }
@@ -173,9 +202,9 @@ function syncLayers() {
     if (want.role === 'preview') {
       // A cued clip is silent and parked, so it does not drift out of sync
       // with the moment you eventually take it.
-      want.layer.renderer.reconcile({ ...want.item, playing: false }, { volume: 0, muted: true });
+      want.layer.renderer.reconcile({ ...resolveAssets(want.item), playing: false }, { volume: 0, muted: true });
     } else {
-      want.layer.renderer.reconcile(want.item, audio);
+      want.layer.renderer.reconcile(resolveAssets(want.item), audio);
     }
   }
 
@@ -186,11 +215,11 @@ function syncLayers() {
     layer.slot.classList.toggle('is-on', !!item);
     if (!item) { if (layer.key) freeLayer(layer); return; }
     if (layer.key !== item.key) mount(layer, item);
-    else layer.renderer.update(item);
+    else layer.renderer.update(resolveAssets(item));
     // The room's sound stays with panel A even when it is not the focused
     // one - two panels both playing audio at once would just be noise, and
     // there is no "cue" step here to decide which one meant to be heard.
-    layer.renderer.reconcile(item, { volume: 0, muted: true });
+    layer.renderer.reconcile(resolveAssets(item), { volume: 0, muted: true });
   });
 
   stage.className = `layout-${state.layout}`;
@@ -567,6 +596,17 @@ async function connect() {
         deckStore.set(msg.id, msg.source);
         deckWanted.delete(msg.id);
         syncLayers();
+        return;
+      }
+      if (msg.t === 'asset') {
+        if (!msg.id || typeof msg.data !== 'string') return;
+        assetStore.set(msg.id, msg.data);
+        assetWanted.delete(msg.id);
+        syncLayers();
+        // Same reason a deck redraws ink when it finishes mounting: until the
+        // photo arrived, contentAspect() was answering for a 1x1 placeholder,
+        // so any ink already on screen was painted against the wrong box.
+        redrawInk(true);
         return;
       }
       if (msg.t === 'rtc') { camera.handle(msg); return; }

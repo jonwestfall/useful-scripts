@@ -15,6 +15,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -26,6 +27,55 @@ async function loadPlaywright() {
   }
   console.error('playwright not found. Run: npm i playwright && npx playwright install chromium');
   process.exit(2);
+}
+
+// A real PNG, written with nothing but the standard library, big enough that
+// the resize ladder a lecture plan puts photos through has something to do.
+function writeImageFixture() {
+  const file = path.join(HERE, 'fixtures', 'photo.png');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (fs.existsSync(file)) return file;
+  const w = 1400, h = 900;
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  let o = 0;
+  for (let y = 0; y < h; y++) {
+    raw[o++] = 0;                       // filter byte: none
+    for (let x = 0; x < w; x++) {
+      raw[o++] = Math.round(x * 255 / w);
+      raw[o++] = Math.round(y * 255 / h);
+      raw[o++] = 128;
+    }
+  }
+  let table = null;
+  const crc32 = (buf) => {
+    if (!table) {
+      table = new Int32Array(256);
+      for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        table[n] = c;
+      }
+    }
+    let c = -1;
+    for (const b of buf) c = table[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ -1) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; ihdr[9] = 2;             // 8-bit, truecolour
+  fs.writeFileSync(file, Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]));
+  return file;
 }
 
 // A 30-second tone, written with nothing but the standard library.
@@ -2036,6 +2086,202 @@ const alive = (page) => page.$$eval('.layer[data-role="program"]', (n) => n.leng
   ok(`and does not blame the relay for it ("${status}")`, !/Cannot reach|Lost the relay/.test(status));
   await close();
 }
+}
+
+console.log('\n-- planning in the office, teaching from the plan --');
+{
+// The Saved library lives in localStorage, which never leaves the device that
+// wrote it - so a lecture built on a desktop would be invisible on the tablet
+// you actually teach from. A plan is therefore a file you carry, and it has to
+// be self-contained: the checks that matter are that an uploaded photo and an
+// uploaded deck, neither of which exists anywhere on the server, still reach
+// the projector after the plan has been through a file and a second device.
+const photoFile = writeImageFixture();
+const deckFile = path.join(HERE, '..', 'content', 'decks', 'day06-evidence-weighting.md');
+const planFile = path.join(HERE, 'fixtures', 'e2e-plan.podium.json');
+const roomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'planning', passphrase: 'office' });
+
+// --- the office ---
+const office = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+const desk = await office.newPage();
+trap(desk, 'plan');
+await desk.goto(`${BASE}/plan.html`);
+await desk.waitForSelector('#type-picker .type-btn');
+ok('the planning page offers every type the projector can show',
+  (await desk.$$('#type-picker .type-btn')).length === (await desk.evaluate(async () => Object.keys((await import('./assets/js/planfile.js')).PLAN_TYPES).length)));
+
+await desk.fill('#plan-title', 'Day 6 — Evidence');
+await desk.click('#type-picker .type-btn:has-text("Text sign")');
+await desk.fill('#item-fields textarea', 'Welcome');
+await desk.fill('#item-fields input[type=text]', 'Title card');
+const previewText = await desk.textContent('#item-preview');
+ok(`the preview is the projector's own renderer, not a mock-up ("${previewText.trim()}")`, /Welcome/.test(previewText));
+
+await desk.click('#type-picker .type-btn:has-text("Photo")');
+await desk.setInputFiles('#item-fields input[type=file]', photoFile);
+await desk.waitForFunction(() => /after resizing/.test(document.body.textContent), null, { timeout: 20000 });
+// The page autosaves on a debounce, so wait for the write before reading it back.
+const settled = () => desk.waitForFunction(() => /^Saved/.test(document.querySelector('#save-state').textContent), null, { timeout: 15000 });
+await settled();
+const shrunk = await desk.evaluate(async () => {
+  const rows = await (await import('./assets/js/store.js')).allPlans();
+  const plan = rows.find((r) => r.title === 'Day 6 — Evidence') || rows[0];
+  const asset = Object.values(plan.assets)[0];
+  return { bytes: asset.data.length, jpeg: asset.data.startsWith('data:image/jpeg') };
+});
+const cap = await desk.evaluate(async () => (await import('./assets/js/planfile.js')).MAX_ASSET_CHARS);
+ok(`a 1400x900 photo is re-encoded small enough to survive one hop over the relay (${(shrunk.bytes / 1024).toFixed(0)} KB, cap ${(cap / 1024).toFixed(0)} KB)`,
+  shrunk.jpeg && shrunk.bytes <= cap);
+
+await desk.click('#type-picker .type-btn:has-text("Marp deck")');
+await desk.setInputFiles('#item-fields input[type=file]', deckFile);
+await desk.waitForFunction(() => /Slide 1 of/.test(document.querySelector('#deck-where')?.textContent || ''), null, { timeout: 20000 });
+ok(`an uploaded deck names itself from its front matter ("${await desk.textContent('#order .order-row:nth-child(3) .order-title')}")`,
+  /Weighing the Evidence/.test(await desk.textContent('#order .order-row:nth-child(3) .order-title')));
+ok(`and its slides can be stepped through here, before class ("${await desk.textContent('#deck-where')}")`,
+  /Slide 1 of 13/.test(await desk.textContent('#deck-where')));
+await desk.click('#deck-next');
+await desk.waitForFunction(() => /Slide 2 of/.test(document.querySelector('#deck-where')?.textContent || ''), null, { timeout: 10000 }).catch(() => {});
+ok('the stepper moves', /Slide 2 of 13/.test(await desk.textContent('#deck-where')));
+
+// Reordering, which is the whole point of a running order.
+await desk.click('#order .order-row:nth-child(3) [title="Move up"]');
+ok('an item can be moved up the running order',
+  /Weighing the Evidence/.test(await desk.textContent('#order .order-row:nth-child(2) .order-title')));
+await desk.click('#order .order-row:nth-child(2) [title="Move down"]');
+ok('and back down', /Weighing the Evidence/.test(await desk.textContent('#order .order-row:nth-child(3) .order-title')));
+
+await desk.fill('#item-fields textarea:last-of-type', 'ask about the confound');
+await desk.fill('#timer-new-label', 'Group work');
+await desk.fill('#timer-new-mins', '8');
+await desk.click('#timer-add');
+await desk.waitForFunction(() => /Saved/.test(document.querySelector('#save-state').textContent), null, { timeout: 10000 });
+ok('the page autosaves rather than making you find a Save button', true);
+
+await settled();
+const planJson = await desk.evaluate(async () => {
+  const file = await import('./assets/js/planfile.js');
+  const store = await import('./assets/js/store.js');
+  const rows = await store.allPlans();
+  return file.planToJson(rows.find((r) => r.title === 'Day 6 — Evidence') || rows[0]);
+});
+fs.writeFileSync(planFile, planJson);
+ok(`the plan writes as one self-contained file (${(planJson.length / 1024).toFixed(0)} KB, photo and slides inside it)`,
+  planJson.includes('data:image/jpeg') && planJson.includes('Weighing the Evidence'));
+
+// It really is reloadable from disk on this machine too.
+const desk2 = await office.newPage();
+trap(desk2, 'plan reopen');
+await desk2.goto(`${BASE}/plan.html`);
+await desk2.waitForSelector('#order .order-row');
+ok('reopening the planning page finds the lecture where you left it',
+  (await desk2.$$('#order .order-row')).length === 3 && (await desk2.inputValue('#plan-title')) === 'Day 6 — Evidence');
+await office.close();
+
+// --- the classroom ---
+const room = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await room.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const screen = await room.newPage();
+trap(screen, 'planning display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+
+const tablet = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+await tablet.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const pad = await tablet.newPage();
+trap(pad, 'planning control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.setInputFiles('#plan-file', planFile);
+// The Library always has a group heading ("Quick"), so wait for the PLAN's.
+await pad.waitForFunction(() => document.querySelector('#library h3.group')?.textContent === 'Day 6 — Evidence', null, { timeout: 20000 });
+const groupNames = await pad.$$eval('#library h3.group', (n) => n.map((x) => x.textContent));
+ok(`the plan's own group leads the Library ("${groupNames[0]}")`, groupNames[0] === 'Day 6 — Evidence');
+ok('in the order you put them in, numbered',
+  (await pad.$$eval('#library .tile-order', (n) => n.map((x) => x.textContent))).slice(0, 3).join() === '1,2,3');
+ok(`the note you wrote in the office rides along ("${await pad.textContent('#library .tile-note')}")`,
+  /confound/.test(await pad.textContent('#library .tile-note')));
+ok(`and the plan is named in the top bar ("${await pad.textContent('#plan-name')}")`,
+  /Day 6/.test(await pad.textContent('#plan-name')));
+
+// The photo: it exists nowhere on the server, so the projector can only be
+// showing it if the controller handed it over the encrypted bus.
+await pad.click('#library .tile:nth-child(2)');
+await pad.waitForTimeout(1200);
+const onWall = await screen.evaluate(() => {
+  const img = document.querySelector('.layer[data-role="program"] img');
+  return img ? { kind: img.src.slice(0, 16), w: img.naturalWidth, h: img.naturalHeight } : null;
+});
+ok(`a photo that was never on the server reaches the projector (${onWall?.kind}…, ${onWall?.w}x${onWall?.h})`,
+  !!onWall && onWall.kind.startsWith('data:image/') && onWall.w > 100 && onWall.h > 100);
+
+// ...while the item that refers to it stays small. That item lives in `state`,
+// which is rebroadcast twice a second and is what ink surfaces are keyed by, so
+// a data URL inline would bloat every heartbeat and every stored stroke. Ink
+// keys are the visible proof: draw on the photo and read the key back off the
+// display, where ink is saved.
+await pad.click('.tab[data-tab="ink"]');
+const padBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(padBox.x + padBox.w * 0.4, padBox.y + padBox.h * 0.4);
+await pad.mouse.down();
+await pad.mouse.move(padBox.x + padBox.w * 0.6, padBox.y + padBox.h * 0.6, { steps: 8 });
+await pad.mouse.up();
+await pad.waitForTimeout(2200);   // the display saves ink on a trailing debounce
+const inkKeys = await screen.evaluate(() => {
+  const raw = localStorage.getItem(`podium.ink.${JSON.parse(localStorage.getItem('podium.config.v2')).room}`);
+  return Object.keys(JSON.parse(raw || '{}'));
+});
+const photoKey = inkKeys.find((k) => k.startsWith('image:'));
+ok(`ink on that photo is keyed by the reference, not the bytes ("${photoKey}")`,
+  !!photoKey && photoKey.startsWith('image:asset:') && photoKey.length < 60);
+await pad.click('.tab[data-tab="library"]');
+
+// The deck: same story, markdown rather than pixels.
+await pad.click('#library .tile:nth-child(3)');
+await pad.waitForTimeout(2500);
+const deckOnWall = await screen.evaluate(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  if (!host) return null;
+  return {
+    slides: host.shadowRoot.querySelectorAll('svg[data-marpit-svg]').length,
+    showing: !!host.shadowRoot.querySelector('svg.podium-on'),
+    status: host.shadowRoot.getElementById('status')?.textContent || '',
+  };
+});
+ok(`a deck carried inside the plan renders on the projector (${deckOnWall?.slides} slides)`,
+  deckOnWall?.slides === 13 && deckOnWall.showing && deckOnWall.status === '');
+
+await pad.click('.tab[data-tab="timer"]');
+ok(`the plan's saved timers replace the stock presets ("${(await pad.$$eval('#timer-presets .timer-preset', (n) => n.map((x) => x.textContent))).join(', ')}")`,
+  (await pad.$$eval('#timer-presets .timer-preset', (n) => n.map((x) => x.textContent))).join() === 'Group work · 8m');
+
+// A tablet gets locked and reopened mid-lecture. Losing the running order at
+// that moment would be the worst possible time for it.
+await pad.reload();
+await pad.waitForSelector('#library h3.group', { timeout: 20000 });
+ok('the plan survives a reload of the tablet',
+  (await pad.$$eval('#library h3.group', (n) => n.map((x) => x.textContent)))[0] === 'Day 6 — Evidence');
+
+await pad.click('.tab[data-tab="library"]');
+await pad.click('#plan-clear');
+await pad.waitForFunction(() => document.querySelector('#library h3.group')?.textContent === 'Quick', { timeout: 10000 }).catch(() => {});
+ok('removing the plan puts the Library back to this device\u2019s own items',
+  (await pad.$$eval('#library h3.group', (n) => n.map((x) => x.textContent)))[0] === 'Quick');
+await pad.click('.tab[data-tab="timer"]');
+ok('and the stock timer presets come back',
+  (await pad.$$eval('#timer-presets .timer-preset', (n) => n.map((x) => x.textContent))).join() === '1m,2m,5m,10m,15m');
+
+// A file that is not a plan must say so rather than half-loading.
+fs.writeFileSync(path.join(HERE, 'fixtures', 'not-a-plan.json'), '{"hello":"world"}');
+await pad.click('.tab[data-tab="library"]');
+await pad.setInputFiles('#plan-file', path.join(HERE, 'fixtures', 'not-a-plan.json'));
+await pad.waitForFunction(() => /did not load/.test(document.querySelector('#plan-note').textContent), null, { timeout: 10000 }).catch(() => {});
+ok(`a file that is not a plan is refused by name ("${await pad.textContent('#plan-note')}")`,
+  /not a Podium lecture plan/.test(await pad.textContent('#plan-note')));
+
+await tablet.close();
+await room.close();
 }
 
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
