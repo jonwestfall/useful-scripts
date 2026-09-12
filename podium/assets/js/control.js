@@ -5,7 +5,7 @@
 import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, timerRemaining, LAYOUTS, focusedItem, BUILD } from './protocol.js';
+import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, BUILD } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport } from './deck.js';
@@ -264,7 +264,7 @@ function renderPlanBar() {
  * the projector. The alternative, resolving lazily on the first tap, puts a
  * fetch and a hash in front of the one action that has to be instant.
  */
-async function adoptPlan(plan, { persist = true, applyLayout = true } = {}) {
+async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
   assetStore.clear();
   assetsSent.clear();
   for (const [id, asset] of Object.entries(plan.assets || {})) assetStore.set(id, asset.data);
@@ -284,10 +284,21 @@ async function adoptPlan(plan, { persist = true, applyLayout = true } = {}) {
   }
   renderPlanBar();
   renderTimerPresets();
-  // A plan that lays the screen out says so - but only when you deliberately
-  // load it. Doing it on every page restore would yank the projector around
-  // every time the tablet woke up mid-lecture.
-  if (applyLayout && plan.layout && plan.layout !== 'single') send({ op: 'layout', mode: plan.layout });
+  // A plan that lays the screen out, or names this lecture's countdowns, says
+  // so - but only when you deliberately load it. Doing either on every page
+  // restore would yank the projector around, and reset a running clock, every
+  // time the tablet woke up mid-lecture.
+  if (!applyToDisplay) return;
+  if (plan.layout && plan.layout !== 'single') send({ op: 'layout', mode: plan.layout });
+  if (plan.timers.length) {
+    // Ids carried through from the plan, so its countdown items name the same
+    // clocks the display just created.
+    send({
+      op: 'timer',
+      action: 'define',
+      timers: plan.timers.slice(0, MAX_TIMERS).map((t) => ({ id: t.id, label: t.label, seconds: t.mins * 60 })),
+    });
+  }
 }
 
 // Sends a fully-formed item wherever it belongs right now. Panel A (focus 0)
@@ -362,7 +373,7 @@ function renderPreview() {
     holder.replaceChildren();
     previewKey = key;
     if (item) {
-      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: () => state.timer, getDeckSource });
+      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getDeckSource });
       holder.append(previewRenderer.el);
     }
   } else if (previewRenderer && item) {
@@ -712,11 +723,70 @@ function renderNow() {
   document.body.classList.toggle('is-frozen', state.frozen);
 }
 
-function renderTimer() {
-  const ms = timerRemaining(state.timer);
+// Which of the countdowns the controls below the chips are driving. Held as an
+// id rather than an index so a timer being removed elsewhere cannot silently
+// re-point it at a different one; timerById falls back to the first.
+let currentTimerId = null;
+let timerChipsKey = '';
+
+const currentTimer = () => timerById(state, currentTimerId);
+
+function renderTimers() {
+  const timers = state.timers || [];
+  const active = currentTimer();
+  // Deliberately NOT written back into currentTimerId. Adding a timer names it
+  // here and selects it a beat before the display's echo carries it back, and
+  // a render landing in that gap would "correct" the selection to the first
+  // timer - so the next tap on Start would pause THAT one instead of starting
+  // the one you just made. The selection is what you asked for; the fallback
+  // is only for what is drawn.
+  const shownId = timers.some((t) => t.id === currentTimerId) ? currentTimerId : timers[0]?.id;
+
+  // The chips are rebuilt only when the SET changes. This runs four times a
+  // second; replacing the buttons that often would eat taps that land between
+  // a render and the tap finishing.
+  const row = $('#timer-chips');
+  const key = `${timers.map((t) => `${t.id}\u0000${t.label}`).join('|')}#${shownId}`;
+  if (key !== timerChipsKey) {
+    timerChipsKey = key;
+    row.replaceChildren(...timers.map((timer, i) => el('button', {
+      class: `timer-chip${timer.id === shownId ? ' is-on' : ''}`,
+      type: 'button',
+      dataset: { id: timer.id },
+      onclick: () => { currentTimerId = timer.id; syncTimerFields(); renderTimers(); },
+    },
+      el('span', { class: 'timer-chip-name' }, timer.label || `Timer ${i + 1}`),
+      el('span', { class: 'timer-chip-time' }, '0:00'))));
+  }
+
+  // ...while the times themselves are text updates, every tick.
+  timers.forEach((timer, i) => {
+    const chip = row.children[i];
+    if (!chip) return;
+    const left = timerRemaining(timer);
+    chip.querySelector('.timer-chip-time').textContent = fmtTime(Math.ceil(left / 1000));
+    chip.classList.toggle('is-running', timer.running);
+    chip.classList.toggle('is-urgent', timer.running && left > 0 && left <= 30000);
+  });
+
+  const ms = active ? timerRemaining(active) : 0;
   $('#timer-readout').textContent = fmtTime(Math.ceil(ms / 1000));
-  $('#timer-readout').classList.toggle('is-urgent', state.timer.running && ms <= 30000);
-  $('#timer-start').textContent = state.timer.running ? 'Pause' : (state.timer.remainingMs > 0 ? 'Resume' : 'Start');
+  $('#timer-readout').classList.toggle('is-urgent', !!active?.running && ms <= 30000);
+  $('#timer-start').textContent = active?.running ? 'Pause' : ((active?.remainingMs || 0) > 0 ? 'Resume' : 'Start');
+  $('#timer-add').disabled = timers.length >= MAX_TIMERS;
+  // The first is what every timer item falls back to, so it is the one that
+  // cannot go away.
+  $('#timer-remove').hidden = timers.length <= 1 || timers[0]?.id === shownId;
+}
+
+// Only on selection, never on a tick: copying a running clock into the minutes
+// box four times a second would fight whatever you were typing there.
+function syncTimerFields() {
+  const timer = currentTimer();
+  if (!timer) return;
+  $('#timer-label').value = timer.label || '';
+  const seconds = Math.round(timerRemaining(timer) / 1000);
+  if (seconds > 0) $('#timer-mins').value = String(Math.max(1, Math.round(seconds / 60)));
 }
 
 const PANEL_LABELS = ['A', 'B', 'C', 'D'];
@@ -743,7 +813,7 @@ function renderLayoutBar() {
 function renderAll() {
   renderPreview();
   renderNow();
-  renderTimer();
+  renderTimers();
   renderSlides();
   renderLayoutBar();
   ensureDeckView(focusedItem(state));
@@ -876,7 +946,7 @@ function createLiveMirror(container) {
       renderer?.destroy();
       frame.replaceChildren();
       mountedKey = key;
-      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: () => state.timer, getDeckSource }) : null;
+      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getDeckSource }) : null;
       if (renderer) frame.append(renderer.el);
     } else {
       renderer?.update(resolveAssets(item));
@@ -963,7 +1033,7 @@ function updatePadMirror() {
     padMirrorRenderer?.destroy();
     padMirror.replaceChildren();
     padMirrorKey = key;
-    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: () => state.timer, getDeckSource }) : null;
+    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getDeckSource }) : null;
     if (padMirrorRenderer) padMirror.append(padMirrorRenderer.el);
   } else {
     padMirrorRenderer?.update(resolveAssets(item));
@@ -1287,6 +1357,28 @@ let laserActive = false;
 const laserDot = el('div', { class: 'laser-dot' });
 $('#deck-now-preview').append(laserDot);
 
+// Red vanishes into a dark slide or a photograph and green vanishes into a
+// green one, so the colour is the presenter's to pick and worth remembering:
+// whoever needs green today needs it for the whole course. Per device, like
+// every other preference here - it says nothing about the room.
+const LASER_COLORS = ['red', 'green', 'blue'];
+const LASER_KEY = 'podium.laser.v1';
+let laserColor = 'red';
+try {
+  const saved = localStorage.getItem(LASER_KEY);
+  if (LASER_COLORS.includes(saved)) laserColor = saved;
+} catch { /* private browsing: red it is */ }
+
+function setLaserColor(color) {
+  laserColor = LASER_COLORS.includes(color) ? color : 'red';
+  try { localStorage.setItem(LASER_KEY, laserColor); } catch { /* nothing to do */ }
+  laserDot.dataset.color = laserColor;
+  // The button wears the colour too, so you can tell at a glance what the
+  // class is about to see without pressing it first.
+  $('#deck-laser').dataset.color = laserColor;
+  $$('.laser-swatch').forEach((b) => b.classList.toggle('is-on', b.dataset.color === laserColor));
+}
+
 function setLaserActive(on) {
   laserActive = on;
   $('#deck-laser').classList.toggle('is-on', on);
@@ -1294,20 +1386,29 @@ function setLaserActive(on) {
   if (!on) { laserDot.classList.remove('is-on'); bus?.send({ t: 'laser', on: false }); }
 }
 $('#deck-laser').addEventListener('click', () => setLaserActive(!laserActive));
+$$('.laser-swatch').forEach((b) => b.addEventListener('click', () => {
+  setLaserColor(b.dataset.color);
+  // Picking a colour mid-drag would otherwise leave the old one on the wall
+  // until the next move; nudge the display so it changes immediately.
+  if (laserDragging) sendLaser(...lastLaserPoint);
+}));
+setLaserColor(laserColor);
 
 function laserPoint(ev) {
   const rect = nowMirror.frame.getBoundingClientRect();
   return [(ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height];
 }
 
-const sendLaser = throttle((x, y) => bus?.send({ t: 'laser', x, y, on: true }), 40);
+const sendLaser = throttle((x, y) => bus?.send({ t: 'laser', x, y, on: true, color: laserColor }), 40);
 let laserDragging = false;
+let lastLaserPoint = [0.5, 0.5];
 
 nowMirror.frame.addEventListener('pointerdown', (ev) => {
   if (!laserActive) return;
   laserDragging = true;
   nowMirror.frame.setPointerCapture(ev.pointerId);
   const [x, y] = laserPoint(ev);
+  lastLaserPoint = [x, y];
   laserDot.style.left = `${x * 100}%`;
   laserDot.style.top = `${y * 100}%`;
   laserDot.classList.add('is-on');
@@ -1317,6 +1418,7 @@ nowMirror.frame.addEventListener('pointermove', (ev) => {
   if (!laserDragging) return;
   ev.preventDefault();
   const [x, y] = laserPoint(ev);
+  lastLaserPoint = [x, y];
   laserDot.style.left = `${x * 100}%`;
   laserDot.style.top = `${y * 100}%`;
   sendLaser(x, y);
@@ -1385,11 +1487,36 @@ $('#overlay-form').addEventListener('submit', (ev) => {
 $('#overlay-hide').addEventListener('click', () => send({ op: 'overlay', visible: false }));
 
 $('#timer-start').addEventListener('click', () => {
-  if (state.timer.running) send({ op: 'timer', action: 'pause' });
-  else if (state.timer.remainingMs > 0) send({ op: 'timer', action: 'resume' });
-  else send({ op: 'timer', action: 'start', seconds: Number($('#timer-mins').value) * 60, label: $('#timer-label').value });
+  const timer = currentTimer();
+  const id = timer?.id;
+  if (timer?.running) send({ op: 'timer', action: 'pause', id });
+  else if ((timer?.remainingMs || 0) > 0) send({ op: 'timer', action: 'resume', id });
+  else send({ op: 'timer', action: 'start', id, seconds: Number($('#timer-mins').value) * 60, label: $('#timer-label').value });
 });
-$('#timer-stop').addEventListener('click', () => send({ op: 'timer', action: 'stop' }));
+$('#timer-stop').addEventListener('click', () => send({ op: 'timer', action: 'stop', id: currentTimer()?.id }));
+
+$('#timer-show').addEventListener('click', () => {
+  const timer = currentTimer();
+  // Carries the id, so this panel keeps showing THIS clock even once another
+  // is selected here - which is the whole point of having more than one.
+  stage({ type: 'timer', title: timer?.label || 'Timer', timerId: timer?.id, label: timer?.label || '' });
+});
+
+$('#timer-add').addEventListener('click', () => {
+  if ((state.timers?.length || 0) >= MAX_TIMERS) return;
+  // Named here rather than on the display, so this controller can select the
+  // new timer immediately instead of waiting a round trip to learn its id.
+  const id = `t${uid(6)}`;
+  currentTimerId = id;
+  send({ op: 'timer', action: 'add', id, label: $('#timer-label').value, seconds: Number($('#timer-mins').value) * 60 });
+});
+
+$('#timer-remove').addEventListener('click', () => {
+  const id = currentTimer()?.id;
+  if (!id || state.timers?.[0]?.id === id) return;
+  send({ op: 'timer', action: 'remove', id });
+  currentTimerId = state.timers?.[0]?.id || null;
+});
 // Delegated: a loaded plan replaces these buttons with its own saved timers,
 // so binding the ones in the markup would leave the plan's dead.
 $('#timer-presets').addEventListener('click', (ev) => {
@@ -1397,8 +1524,9 @@ $('#timer-presets').addEventListener('click', (ev) => {
   if (!b) return;
   $('#timer-mins').value = b.dataset.mins;
   if (b.dataset.label) $('#timer-label').value = b.dataset.label;
-  send({ op: 'timer', action: 'start', seconds: Number(b.dataset.mins) * 60, label: b.dataset.label || $('#timer-label').value });
-  stage({ type: 'timer', title: 'Timer' });
+  const timer = currentTimer();
+  send({ op: 'timer', action: 'start', id: timer?.id, seconds: Number(b.dataset.mins) * 60, label: b.dataset.label || $('#timer-label').value });
+  stage({ type: 'timer', title: b.dataset.label || 'Timer', timerId: timer?.id, label: b.dataset.label || '' });
 });
 
 $('#ink-undo').addEventListener('click', () => {
@@ -1440,7 +1568,7 @@ document.addEventListener('keydown', (ev) => {
 
 window.addEventListener('resize', () => { if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad(); });
 window.addEventListener('beforeunload', () => bus?.close());
-setInterval(() => { renderNow(); renderTimer(); renderConnection(); }, 250);
+setInterval(() => { renderNow(); renderTimers(); renderConnection(); }, 250);
 
 // Is this tab itself the stale one? Reloading a page that a cache is still
 // answering for can leave you reloading forever without moving, so the
@@ -1554,7 +1682,7 @@ if (!isConfigured(cfg)) {
   // Restored without applying its layout - see adoptPlan.
   try {
     const saved = await loadCurrentPlan();
-    if (saved) await adoptPlan(saved, { persist: false, applyLayout: false });
+    if (saved) await adoptPlan(saved, { persist: false, applyToDisplay: false });
   } catch { /* no IndexedDB (Safari private browsing): the Library still works */ }
   renderPlanBar();
   renderTimerPresets();

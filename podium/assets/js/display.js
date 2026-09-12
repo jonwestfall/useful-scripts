@@ -11,7 +11,7 @@
 import { $, $$, el, throttle, wireDangerButton, servedBuild, createRelayLog } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, applyCommand, inkSurfaceKey, LAYOUTS, focusedItem, BUILD } from './protocol.js';
+import { initialState, applyCommand, inkSurfaceKey, LAYOUTS, focusedItem, timerById, BUILD } from './protocol.js';
 import { createRenderer } from './renderers.js';
 import { createCameraReceiver } from './rtc.js';
 
@@ -151,7 +151,7 @@ function mount(layer, item) {
   freeLayer(layer);
   layer.key = item.key;
   layer.renderer = createRenderer(resolveAssets(item), {
-    getTimer: () => state.timer,
+    getTimer: (id) => timerById(state, id),
     getStream: () => cameraStream,
     getCameraStatus: () => cameraStatus,
     getFrozen: () => state.frozen,
@@ -435,10 +435,17 @@ function redrawInk(force = false) {
 
 let laserHideTimer = null;
 
+// Green reads better than red on a dark slide and on a photograph, blue on a
+// bright one; red is the one everybody expects. Whitelisted rather than taking
+// the controller's word for a colour, because this value goes into a CSS
+// attribute selector and there is no reason for it to be open-ended.
+const LASER_COLORS = ['red', 'green', 'blue'];
+
 function showLaser(msg) {
   if (!msg?.on) { hideLaser(); return; }
   const { slot, renderer } = focusedPanel();
   const rect = contentRectFor(slot, renderer);
+  laserEl.dataset.color = LASER_COLORS.includes(msg.color) ? msg.color : 'red';
   laserEl.style.left = `${rect.x + (Number(msg.x) || 0) * rect.w}px`;
   laserEl.style.top = `${rect.y + (Number(msg.y) || 0) * rect.h}px`;
   laserEl.classList.add('is-on');

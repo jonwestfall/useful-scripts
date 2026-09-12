@@ -19,7 +19,7 @@ import {
 } from './store.js';
 import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle } from './deck.js';
-import { BUILD } from './protocol.js';
+import { BUILD, MAX_TIMERS } from './protocol.js';
 
 let plan = null;
 let selectedId = null;
@@ -128,7 +128,7 @@ function renderOrder() {
       el('span', { class: 'order-n' }, String(index + 1)),
       el('button', { class: 'order-open', type: 'button', onclick: () => select(item.id) },
         el('span', { class: 'order-icon' }, PLAN_TYPES[item.type]?.icon || '?'),
-        el('span', { class: 'order-title' }, itemLabel(item)),
+        el('span', { class: 'order-title' }, itemLabel(item, plan)),
         el('span', { class: 'order-type' }, PLAN_TYPES[item.type]?.label || item.type),
         item.note ? el('span', { class: 'order-note' }, item.note) : null),
       el('div', { class: 'order-tools' },
@@ -221,6 +221,13 @@ function renderTypePicker() {
     class: 'type-btn', type: 'button', title: spec.blurb,
     onclick: () => {
       const item = newItem(type);
+      // A countdown names one of the lecture's timers, so adding the first one
+      // has to bring a timer with it or the item is inert and the reason is
+      // two screens away.
+      if (type === 'timer') {
+        if (!plan.timers.length) plan.timers.push({ id: uid(6), label: 'Countdown', mins: 5 });
+        item.timerId = plan.timers[0].id;
+      }
       const at = plan.items.findIndex((i) => i.id === selectedId);
       // Inserted after whatever is selected: you build a lecture by working
       // down it, and appending to the end means dragging it back every time.
@@ -238,9 +245,15 @@ function renderTimers() {
     el('span', { class: 'grow' }, `${timer.label || 'Countdown'} · ${timer.mins}m`),
     el('button', {
       type: 'button', 'aria-label': `Remove ${timer.label || 'countdown'}`,
-      onclick: () => { plan.timers = plan.timers.filter((t) => t.id !== timer.id); touch(); renderTimers(); },
+      onclick: () => {
+        plan.timers = plan.timers.filter((t) => t.id !== timer.id);
+        touch();
+        renderTimers();
+        renderOrder();
+        renderEditor();
+      },
     }, '×'))));
-  if (!plan.timers.length) $('#timers').append(el('li', { class: 'empty' }, 'None saved — the iPad will show 1/2/5/10/15.'));
+  if (!plan.timers.length) $('#timers').append(el('li', { class: 'empty' }, 'None yet — the iPad will show one unnamed countdown and the 1/2/5/10/15 buttons.'));
 }
 
 // --- the editor --------------------------------------------------------------
@@ -265,7 +278,7 @@ function renderEditor() {
   $('#item-blurb').textContent = spec.blurb;
 
   fields.append(field('Title on the iPad', el('input', {
-    type: 'text', value: item.title || '', placeholder: itemLabel(item),
+    type: 'text', value: item.title || '', placeholder: itemLabel(item, plan),
     oninput: (ev) => { item.title = ev.target.value; afterEdit({ label: true }); },
   }), 'Optional. Left blank, the iPad labels it from its contents.'));
 
@@ -318,6 +331,17 @@ function fieldFor(item, spec) {
     });
     return field(spec.label, el('div', { class: 'inline' }, swatch,
       el('button', { type: 'button', onclick: () => { set('', { remount: true }); swatch.value = '#ffffff'; } }, 'Default')), spec.hint);
+  }
+  if (spec.kind === 'timer-pick') {
+    if (!plan.timers.length) {
+      return field(spec.label, el('p', { class: 'hint stale-note' },
+        'This lecture has no countdowns yet. Add one under Timers, below the running order.'));
+    }
+    return field(spec.label, el('select', { onchange: (ev) => set(ev.target.value, { remount: true, label: true }) },
+      ...plan.timers.map((timer, i) => el('option', {
+        value: timer.id,
+        selected: (item.timerId || plan.timers[0].id) === timer.id,
+      }, `${timer.label || `Timer ${i + 1}`} · ${timer.mins}m`))), spec.hint);
   }
   if (spec.kind === 'upload') return uploadField(item, spec);
   if (spec.kind === 'image') return imageField(item, spec);
@@ -461,7 +485,7 @@ function forPreview(item) {
   if (item.type === 'deck') {
     return { ...staged, deckId: item.asset ? `asset:${item.asset}` : `src:${item.src}`, slide: preview.slide, step: preview.step };
   }
-  if (item.type === 'timer') return { ...staged, label: item.label || '' };
+  if (item.type === 'timer') return { ...staged, timerId: item.timerId || plan.timers[0]?.id || '', label: item.label || '' };
   const id = assetIdOf(staged.src);
   if (id) return { ...staged, src: plan.assets[id]?.data || '' };
   return staged;
@@ -485,7 +509,12 @@ function renderPreview({ remount = false } = {}) {
       getDeckSource: previewDeckSource,
       // A plausible countdown, so the preview shows the size of the digits
       // rather than a permanent 0:00.
-      getTimer: () => ({ running: false, remainingMs: (item.mins || 5) * 60000, endsAt: 0, label: item.label || '' }),
+      // A plausible countdown, so the preview shows the size of the digits
+      // rather than a permanent 0:00. Reads the timer the item points at.
+      getTimer: (id) => {
+        const timer = plan.timers.find((t) => t.id === (id || item.timerId)) || plan.timers[0] || null;
+        return { running: false, remainingMs: (timer?.mins || 5) * 60000, endsAt: 0, label: timer?.label || item.label || '' };
+      },
     });
     $('#item-preview').append(preview.renderer.el);
   } else {
@@ -542,10 +571,14 @@ $('#plan-layout').addEventListener('click', (ev) => {
 $('#timer-add').addEventListener('click', () => {
   const mins = Number($('#timer-new-mins').value);
   if (!Number.isFinite(mins) || mins < 1) return;
+  if (plan.timers.length >= MAX_TIMERS) { warn(`A lecture can have ${MAX_TIMERS} countdowns; the display holds no more.`); return; }
   plan.timers.push({ id: uid(6), label: $('#timer-new-label').value.trim(), mins: Math.min(180, Math.round(mins)) });
   $('#timer-new-label').value = '';
   touch();
   renderTimers();
+  // Countdown items name these, so their labels and the picker both move.
+  renderOrder();
+  renderEditor();
 });
 
 // --- files in and out --------------------------------------------------------

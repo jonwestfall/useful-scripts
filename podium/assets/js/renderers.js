@@ -383,7 +383,9 @@ function renderTimer(item, opts) {
   const label = el('div', { class: 'r-timer-label' }, item.label || '');
   const node = el('div', { class: 'r-timer' }, label, value);
   const tick = () => {
-    const timer = opts.getTimer?.() || null;
+    // Which clock this one shows. No id means "the countdown", which is what
+    // an item made before there was more than one still means.
+    const timer = opts.getTimer?.(item.timerId) || null;
     const ms = timer ? (timer.running ? Math.max(0, timer.endsAt - Date.now()) : timer.remainingMs) : 0;
     value.textContent = fmtTime(Math.ceil(ms / 1000));
     label.textContent = timer?.label || item.label || '';

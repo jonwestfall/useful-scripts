@@ -54,7 +54,7 @@ underneath, one tap to bring it back.
 see below. Plus: images · video files · audio (with a now-playing card) · YouTube
 (play, pause, seek and volume, all driven from the iPad) · any embeddable web page ·
 HTML slide decks including reveal.js · PDFs with page-turn buttons · big text cards ·
-a QR code for the class to scan · a countdown timer · a whiteboard · your phone's
+a QR code for the class to scan · countdown timers · a whiteboard · your phone's
 camera as a document camera.
 
 Two more that sit on top of anything: **ink**, so you can annotate live over a slide
@@ -203,10 +203,17 @@ Two things live on the Now box:
 
 - **✎ Markup** jumps to the Ink tab, already lined up on the slide you are looking
   at — no separate step to pick the right surface.
-- **🔴 Laser** turns the Now box itself into a pointer. Drag on it and a red dot
-  follows your finger on the real screen, mapped onto the slide's own bounds the
-  same way ink is; lift your finger and it is gone. Nothing about it is saved or
-  undoable — it is a live gesture, not a mark on the slide.
+- **Laser** turns the Now box itself into a pointer. Drag on it and a dot follows
+  your finger on the real screen, mapped onto the slide's own bounds the same way
+  ink is; lift your finger and it is gone. Nothing about it is saved or undoable —
+  it is a live gesture, not a mark on the slide.
+
+  Three colours sit next to the button. **Red** is what everyone expects and what
+  you get by default; **green** is the one that survives a dark slide or a
+  photograph, where red sinks into the picture; **blue** reads on a bright one. The
+  button itself wears the colour, so you can see what the class is about to see
+  without pressing it first, and the choice is remembered on that device — whoever
+  needs green today needs it for the rest of the term.
 
 ### Themes
 
@@ -369,6 +376,33 @@ just be noise, and there is no cue step on those to decide which one meant to be
 heard. **Export marked-up slides** (Slides tab) only ever exports whichever deck the
 focused panel is currently showing.
 
+## Countdowns
+
+A class runs more than one clock. Eight minutes of group work sit inside a
+ninety-minute session; a five-minute break has its own end; the quiz has a limit
+that is not either of those. So the Timer tab holds **up to four independent
+countdowns**.
+
+The chips along the top are the set, each showing its own clock, so you can see all
+of them at a glance without switching anything. Tapping one selects it; everything
+below — the big readout, the presets, Start/Pause/Stop — drives that one. **Add a
+timer** makes another (up to four); **Remove this timer** takes one away. The first
+one cannot be removed, because it is what anything that does not name a clock falls
+back to — including the plain **Timer** tile in the Library, and any countdown made
+before there was more than one.
+
+**Put this one on screen** projects the selected countdown. It carries that clock's
+identity, not just its label, which is what lets a split screen show two different
+countdowns at once: put one up, switch panels, select the other, put that up. They
+tick independently, and each keeps its own ink surface, so marking up one does not
+scrawl on the other.
+
+Countdowns run on the *display*, not the iPad, so they stay accurate even if the
+tablet sleeps or you close the controller and reopen it.
+
+A lecture plan defines the set: its saved timers become the four clocks, with their
+names and lengths, and a plan's countdown items say which one they show. See below.
+
 ## Planning a lecture in your office
 
 `plan.html` is the third page, and the only one you use when there is no class in
@@ -434,8 +468,12 @@ Two consequences worth knowing:
 - **A plan sets the starting screen layout**, so a lecture that wants slides beside a
   countdown opens that way. Applied when you deliberately load the plan, never when
   the tablet merely wakes up and restores it.
-- **Timers you save replace the iPad's 1/2/5/10/15 buttons**, labelled: *Group work ·
-  8m*.
+- **Timers you save become the lecture's countdowns** — up to four, named and
+  pre-loaded, replacing the iPad's 1/2/5/10/15 buttons with labelled ones (*Group
+  work · 8m*). A **Countdown** item in the running order then says *which* of them
+  to project, rather than carrying a length of its own; that is what lets a split
+  screen show two of your clocks side by side. Adding the first countdown creates a
+  timer to go with it, so the item is never inert.
 - **Opening a plan file** on this page loads it for editing, which is how you move a
   lecture between machines or start next week from last week's.
 
@@ -728,7 +766,8 @@ it can hold a still one), TAKE does not reload the cued item, ink lands inside a
 letterboxed slide's own bounds and never on unrelated content, the Ink tab actually
 shows what you are drawing on, a build's bullets arrive one at a time, the Now/Next
 confidence boxes stay correctly sized even switching tabs cold, a dragged laser
-pointer tracks and vanishes on release, the phone-camera tile actually opens the
+pointer tracks, vanishes on release and really is the colour you picked, two
+countdowns run independently and can be projected side by side, the phone-camera tile actually opens the
 connection (Chromium's synthetic camera, no real hardware or permission prompt
 needed), export produces a real, valid-PNG-containing zip, waiting music actually
 plays, a countdown ticks on the display, a dead relay explains which URL it could
@@ -736,7 +775,7 @@ not open (and neither page dies at its top-level `await` when the failure happen
 before a socket exists), a lecture planned in the office reaches the projector intact
 — photo and slides that exist nowhere on the server included — after a round trip
 through a plan file and a second device, and a controller with the wrong passphrase
-cannot touch the screen. 198 checks.
+cannot touch the screen. 210 checks.
 
 ## Layout
 

@@ -2284,6 +2284,129 @@ await tablet.close();
 await room.close();
 }
 
+console.log('\n-- more than one clock, and a laser you can pick the colour of --');
+{
+const roomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'clocks', passphrase: 'tick' });
+const room = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await room.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const screen = await room.newPage();
+trap(screen, 'clocks display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+
+const tablet = await browser.newContext({ viewport: { width: 1100, height: 860 } });
+await tablet.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const pad = await tablet.newPage();
+trap(pad, 'clocks control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+
+// --- timers ---------------------------------------------------------------
+// A class runs more than one clock: eight minutes of group work inside the
+// session, a five-minute break with its own end. They have to be independent,
+// and you have to be able to see both.
+const chips = () => pad.$$eval('.timer-chip', (n) => n.map((x) => x.textContent.trim()));
+await pad.click('.tab[data-tab="timer"]');
+ok(`a room starts with one unnamed countdown, so "the timer" needs no setting up ("${(await chips())[0]}")`,
+  (await chips()).length === 1);
+
+await pad.fill('#timer-label', 'Group work');
+await pad.fill('#timer-mins', '8');
+await pad.click('#timer-start');
+await pad.fill('#timer-label', 'Break');
+await pad.fill('#timer-mins', '2');
+await pad.click('#timer-add');
+await pad.waitForFunction(() => document.querySelectorAll('.timer-chip').length === 2, null, { timeout: 10000 });
+await pad.click('#timer-start');
+await pad.waitForTimeout(1400);
+const both = await chips();
+ok(`both clocks are on screen at once, each with its own name and time ("${both.join('", "')}")`,
+  both.length === 2 && /Group work7:5/.test(both[0]) && /Break1:5/.test(both[1]));
+ok('and they run independently, not as one clock shown twice',
+  both[0] !== both[1]);
+
+// Two panels, two different countdowns - which is the point of having more
+// than one, and is why a timer item carries the id of the clock it shows.
+await pad.click('#timer-show');
+await pad.click('.layout-btn[data-layout="2h"]');
+await pad.waitForTimeout(300);
+await pad.click('.panel-btn:nth-child(2)');
+await pad.click('.timer-chip:nth-child(1)');
+await pad.click('#timer-show');
+await pad.waitForTimeout(900);
+const onWall = await screen.$$eval('.r-timer', (nodes) => nodes.map((n) => ({
+  label: n.querySelector('.r-timer-label').textContent,
+  value: n.querySelector('.r-timer-value').textContent,
+})));
+ok(`the projector shows two different countdowns side by side (${onWall.map((t) => `${t.label} ${t.value}`).join(' | ')})`,
+  onWall.length === 2 && onWall[0].label === 'Break' && onWall[1].label === 'Group work'
+  && onWall[0].value !== onWall[1].value);
+
+await pad.click('.timer-chip:nth-child(1)');
+ok('the first countdown offers no Remove - it is what everything with no id falls back to',
+  await pad.$eval('#timer-remove', (n) => n.hidden));
+await pad.click('.timer-chip:nth-child(2)');
+ok('...while a later one does', await pad.$eval('#timer-remove', (n) => !n.hidden));
+await pad.click('#timer-remove');
+await pad.waitForFunction(() => document.querySelectorAll('.timer-chip').length === 1, null, { timeout: 10000 }).catch(() => {});
+ok('a countdown can be removed once you are done with it', (await chips()).length === 1);
+
+// --- laser colour ---------------------------------------------------------
+// Red disappears into a dark slide or a photograph, which is most of a
+// psychology deck.
+await pad.click('.layout-btn[data-layout="single"]');
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await pad.waitForTimeout(2500);
+await pad.click('.tab[data-tab="slides"]');
+await pad.waitForSelector('#deck-live:not([hidden])');
+ok('three colours to choose from', (await pad.$$('.laser-swatch')).length === 3);
+
+await pad.click('.laser-swatch[data-color="green"]');
+await pad.click('#deck-laser');
+const frame = await pad.$eval('#deck-now-preview .mirror-frame', (n) => {
+  const r = n.getBoundingClientRect();
+  return { x: r.x, y: r.y, w: r.width, h: r.height };
+});
+await pad.mouse.move(frame.x + frame.w * 0.5, frame.y + frame.h * 0.5);
+await pad.mouse.down();
+await pad.mouse.move(frame.x + frame.w * 0.6, frame.y + frame.h * 0.55, { steps: 4 });
+await pad.waitForTimeout(400);
+const dot = await screen.evaluate(() => {
+  const n = document.querySelector('#laser');
+  return { on: n.classList.contains('is-on'), color: n.dataset.color, paint: getComputedStyle(n).backgroundImage };
+});
+ok(`the projector's dot really is the colour you picked (${dot.color})`,
+  dot.on && dot.color === 'green' && /rgba?\(60, ?235, ?120/.test(dot.paint));
+ok('and the dot on the controller matches it, so you are aiming with the same thing',
+  (await pad.$eval('.laser-dot', (n) => n.dataset.color)) === 'green');
+await pad.mouse.up();
+
+await pad.click('.laser-swatch[data-color="blue"]');
+await pad.reload();
+await pad.waitForSelector('.tile');
+ok('the choice is remembered - whoever needs green today needs it all term',
+  (await pad.$eval('.laser-swatch.is-on', (n) => n.dataset.color)) === 'blue');
+
+// Switching back mid-lecture has to actually reach the projector, not leave
+// the last colour stuck on the wall.
+await pad.click('.tab[data-tab="slides"]');
+await pad.waitForSelector('#deck-live:not([hidden])');
+await pad.click('.laser-swatch[data-color="red"]');
+await pad.click('#deck-laser');
+await pad.mouse.move(frame.x + frame.w * 0.4, frame.y + frame.h * 0.4);
+await pad.mouse.down();
+await pad.mouse.move(frame.x + frame.w * 0.45, frame.y + frame.h * 0.45, { steps: 4 });
+await pad.waitForTimeout(400);
+const back = await screen.$eval('#laser', (n) => n.dataset.color);
+await pad.mouse.up();
+ok(`changing colour again reaches the projector rather than sticking ("${back}")`, back === 'red');
+
+await tablet.close();
+await room.close();
+}
+
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
 } finally {
   await browser?.close().catch(() => {});
