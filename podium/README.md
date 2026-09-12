@@ -282,6 +282,45 @@ annotations. It is best-effort: a slide that depends on a font or image the brow
 refuses to bake into a canvas is skipped individually (noted in `slides.txt`) rather
 than failing the whole export.
 
+### What ink costs to move, and why that mattered
+
+A stroke is a list of points, and a point used to cross the wire at full float
+precision — `0.5488135039273248`, eighteen characters to place a dot on a projector.
+They are now rounded to four decimals: one ten-thousandth of the screen, 0.19px on a
+1920px projector, well under the width of the thinnest pen, and **60% smaller**.
+
+That was not a micro-optimisation. The state heartbeat used to carry every stroke on
+the current surface, in full, every two seconds — and every 400ms while anything was
+playing. A hundred strokes of sixty points is 243 KB of JSON, and two separate
+ceilings sat above that:
+
+- **Encryption overflowed the call stack** somewhere past 100 KB, because base64
+  encoding spread every byte of the message as a function argument. Past the limit,
+  `send()` threw and the message simply never went — with nothing on screen to say
+  why. That ceiling sat under *every* large message, so an uploaded deck (capped at
+  120 KB) and a lecture plan's photo (160 KB) were already at or over it.
+- **The relay closes a socket** that sends more than 256 KB, with code 1009. The
+  transport then reconnects, the next heartbeat closes it again, and a whiteboard
+  with a term's annotation on it took the projector off the air in a loop.
+
+Both are fixed, and the heartbeat now carries a *summary* of the current surface —
+how many strokes, and how many points in the finished ones — rather than the strokes
+themselves. A controller whose own copy does not match asks for the surface and gets
+it in slices small enough for any transport. It rarely needs to: it applies its own
+strokes as it draws them, and it now follows its peers' strokes straight off the bus,
+so a second iPad draws **live** rather than up to two seconds behind. It asks only
+when it has genuinely fallen behind — joining mid-lecture, opening a surface it has
+never seen, or a dropped message.
+
+The summary deliberately ignores the last stroke's point count. While someone is
+drawing, that count is legitimately different on every device, because batches are in
+flight; counting it would mean re-fetching the whole surface on every frame of every
+gesture.
+
+One stroke is also capped now, at 3000 points. The stroke *count* was always bounded;
+the points inside one were not, so a pen left down — or a pointer that never lifted
+because a tab was backgrounded mid-gesture — could grow a single stroke without limit.
+
 **Rotating the iPad mid-stroke does not warp the line.** Every point in a stroke is a
 fraction (0–1) of the pad's own box at the instant it was captured. If that box
 changed shape *during* the gesture — an iPad rotation crosses the controller's
@@ -759,7 +798,9 @@ node podium/test/e2e.mjs                    # needs: npm i playwright
 ```
 
 The end-to-end test starts the relay, drives a display and two controllers in real
-browsers, and checks the things that would embarrass you in front of a class: freeze
+browsers, and checks the things that would embarrass you in front of a class:
+a board with three hundred strokes on it keeps the projector on the relay rather than
+being closed off it, freeze
 really holds even while paging through the deck already on screen (and never touches
 playing audio, and pauses a live camera on its current frame rather than pretending
 it can hold a still one), TAKE does not reload the cued item, ink lands inside a

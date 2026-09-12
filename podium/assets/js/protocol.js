@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 6;
+export const BUILD = 7;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -194,6 +194,100 @@ export function inkSurfaceKey(item) {
 
 const MAX_SURFACES = 300;   // a whole semester of slide-by-slide ink, capped
 const MAX_STROKES_PER_SURFACE = 500;
+
+// One stroke, capped. The stroke count was already bounded; the points inside
+// each one were not, so a pen left down - or a pointer that never lifted
+// because a tab was backgrounded mid-gesture - could grow a single stroke
+// without limit. 3000 points is a very long deliberate line.
+const MAX_POINTS_PER_STROKE = 3000;
+
+/**
+ * Ink points are fractions of the content box, and they used to cross the wire
+ * at full float precision: 0.5488135039273248, eighteen characters to describe
+ * a position on a projector.
+ *
+ * Four decimal places is one ten-thousandth of the screen - 0.19px on a 1920px
+ * projector, well under a pixel and far under the width of the thinnest pen -
+ * and it takes 60% off every stroke that is stored, broadcast, or saved. That
+ * is not a micro-optimisation here: see inkDigest below for what the size of
+ * this data was doing to the connection.
+ */
+const INK_PRECISION = 1e4;
+
+function roundPoints(pts) {
+  const out = [];
+  for (const pt of Array.isArray(pts) ? pts : []) {
+    const x = Number(pt?.[0]);
+    const y = Number(pt?.[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    out.push([Math.round(x * INK_PRECISION) / INK_PRECISION, Math.round(y * INK_PRECISION) / INK_PRECISION]);
+  }
+  return out;
+}
+
+/**
+ * A cheap summary of a surface's ink, for the state heartbeat.
+ *
+ * The heartbeat used to carry every stroke on the current surface, in full,
+ * every two seconds - and every 400ms while anything was playing. A hundred
+ * strokes of sixty points is 243 KB of JSON, which seals to about 330 KB, and
+ * every relay caps a message well below that: the self-hosted one closes the
+ * socket with 1009, the transport reconnects, the next heartbeat closes it
+ * again. A well-annotated whiteboard took the projector off the air.
+ *
+ * So the heartbeat carries this instead, and a controller whose own copy does
+ * not match asks for the surface (see 'ink-pull' in display.js). `p` excludes
+ * the final stroke deliberately: while someone is drawing, that stroke's point
+ * count is legitimately different on every device, because batches are in
+ * flight. Counting it would mean re-pulling the whole surface on every frame
+ * of every gesture.
+ */
+export function inkDigest(strokes) {
+  const list = Array.isArray(strokes) ? strokes : [];
+  let points = 0;
+  for (let i = 0; i < list.length - 1; i++) points += list[i].pts?.length || 0;
+  return { n: list.length, p: points };
+}
+
+export function inkDigestsAgree(a, b) {
+  return !!a && !!b && a.n === b.n && a.p === b.p;
+}
+
+/**
+ * Apply one ink action to a plain array of strokes, in place.
+ *
+ * Lives here rather than inside applyCommand's switch because both ends need
+ * it: the display owns the authoritative surfaces, and a controller now follows
+ * the ink commands its peers put on the bus so a second device draws live
+ * rather than a heartbeat later. Two copies of this would drift.
+ *
+ * Returns true if anything changed.
+ */
+export function applyInkAction(strokes, cmd, fallback = {}) {
+  if (cmd.action === 'begin' || cmd.action === 'points') {
+    let stroke = cmd.action === 'points' ? strokes.find((s) => s.id === cmd.id) : null;
+    if (stroke) {
+      stroke.pts.push(...roundPoints(cmd.pts));
+    } else {
+      // 'begin', or a 'points' whose 'begin' was dropped - which should not
+      // lose the rest of the stroke.
+      stroke = {
+        id: cmd.id,
+        color: cmd.color || fallback.color,
+        width: cmd.width || fallback.width,
+        pts: roundPoints(cmd.pts),
+      };
+      strokes.push(stroke);
+    }
+    // Capped on the stroke actually touched, not the last one in the list: a
+    // late batch can land on a stroke that is no longer the newest.
+    if (stroke.pts.length > MAX_POINTS_PER_STROKE) stroke.pts.length = MAX_POINTS_PER_STROKE;
+    return true;
+  }
+  if (cmd.action === 'undo') { strokes.pop(); return true; }
+  if (cmd.action === 'clear') { strokes.length = 0; return true; }
+  return false;
+}
 
 function touchSurface(ink, key) {
   let surface = ink.bySurface[key];
@@ -441,20 +535,9 @@ export function applyCommand(state, cmd) {
       // at", and freeze is orthogonal to that. In a split layout that means
       // whichever panel has focus (A never means the preview here either).
       const surface = touchSurface(ink, inkSurfaceKey(focusedItem(state)));
-      if (cmd.action === 'begin') {
-        surface.strokes.push({ id: cmd.id, color: cmd.color || ink.color, width: cmd.width || ink.width, pts: cmd.pts || [] });
-      } else if (cmd.action === 'points') {
-        const stroke = surface.strokes.find((s) => s.id === cmd.id);
-        if (stroke) stroke.pts.push(...(cmd.pts || []));
-        // A dropped 'begin' should not lose the rest of the stroke.
-        else surface.strokes.push({ id: cmd.id, color: cmd.color || ink.color, width: cmd.width || ink.width, pts: cmd.pts || [] });
-      } else if (cmd.action === 'undo') {
-        surface.strokes.pop();
-      } else if (cmd.action === 'clear') {
-        // Clears only the current surface - the chalkboard you are looking at,
-        // or this one slide - never every board you have ever drawn on.
-        surface.strokes = [];
-      }
+      // Note 'clear' empties the CURRENT surface only - the chalkboard you are
+      // looking at, or this one slide - never every board you have ever drawn on.
+      applyInkAction(surface.strokes, cmd, { color: ink.color, width: ink.width });
       // Cap memory over a long lecture; the oldest strokes fall off first.
       if (surface.strokes.length > MAX_STROKES_PER_SURFACE) {
         surface.strokes.splice(0, surface.strokes.length - MAX_STROKES_PER_SURFACE);

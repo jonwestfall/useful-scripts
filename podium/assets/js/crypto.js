@@ -27,8 +27,24 @@ export async function deriveKey(passphrase, room) {
   );
 }
 
+// String.fromCharCode(...bytes) spreads every single byte as a function
+// argument, and that overflows the call stack somewhere above 100 KB - 124 KB
+// in one V8 build, less on a device with a smaller stack. seal() is on the path
+// of every message the app sends, including the three big ones: an uploaded
+// deck (120 KB), a lecture plan's photo (160 KB) and a surface's worth of ink.
+// Past the limit it threw inside send(), so the message simply never went,
+// with nothing on screen to say why. Chunked, it has no ceiling.
+const CHARCODE_CHUNK = 0x8000;
+
 const b64 = {
-  encode: (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))),
+  encode: (buf) => {
+    const bytes = new Uint8Array(buf);
+    let out = '';
+    for (let i = 0; i < bytes.length; i += CHARCODE_CHUNK) {
+      out += String.fromCharCode(...bytes.subarray(i, i + CHARCODE_CHUNK));
+    }
+    return btoa(out);
+  },
   decode: (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0)),
 };
 

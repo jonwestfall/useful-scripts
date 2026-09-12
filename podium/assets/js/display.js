@@ -11,7 +11,7 @@
 import { $, $$, el, throttle, wireDangerButton, servedBuild, createRelayLog } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, applyCommand, inkSurfaceKey, LAYOUTS, focusedItem, timerById, BUILD } from './protocol.js';
+import { initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD } from './protocol.js';
 import { createRenderer } from './renderers.js';
 import { createCameraReceiver } from './rtc.js';
 
@@ -500,7 +500,12 @@ function wireState() {
       color: inkState.color,
       width: inkState.width,
       surface: key,
-      strokes: inkState.bySurface[key]?.strokes || [],
+      // A summary, not the strokes. This object goes out every two seconds -
+      // and every 400ms while anything is playing - and the strokes of a
+      // well-annotated whiteboard are hundreds of kilobytes, which is past
+      // what any relay will carry. See inkDigest in protocol.js; a controller
+      // that does not match asks for the surface with 'ink-pull' below.
+      digest: inkDigest(inkState.bySurface[key]?.strokes),
     },
     stageAspect: stage.clientWidth && stage.clientHeight ? stage.clientWidth / stage.clientHeight : 16 / 9,
     // So a controller can tell you when this screen is running older code
@@ -549,6 +554,29 @@ function commit() {
   render();
   broadcastSoon();
   saveInkSoon();
+}
+
+// Ink is the one payload that can be far larger than a relay message will
+// carry, so anything that ships a whole surface ships it in slices. 90 KB of
+// JSON seals to roughly 125 KB, comfortably inside the smallest cap any of the
+// three transports imposes, and a single stroke cannot exceed it (points per
+// stroke are capped in protocol.js).
+const INK_CHUNK_BYTES = 90 * 1024;
+
+function chunkStrokes(strokes) {
+  const slices = [];
+  let batch = [];
+  let bytes = 0;
+  for (const stroke of strokes) {
+    const size = JSON.stringify(stroke).length;
+    if (batch.length && bytes + size > INK_CHUNK_BYTES) { slices.push(batch); batch = []; bytes = 0; }
+    batch.push(stroke);
+    bytes += size;
+  }
+  // Always at least one slice, so an empty surface still gets an answer and
+  // the asker is never left waiting on a reply that is never coming.
+  slices.push(batch);
+  return slices;
 }
 
 // --- connection -------------------------------------------------------------
@@ -619,19 +647,40 @@ async function connect() {
       if (msg.t === 'rtc') { camera.handle(msg); return; }
       if (msg.t === 'sync') { broadcast(); return; }
       if (msg.t === 'laser') { showLaser(msg); return; }
+      if (msg.t === 'ink-pull') {
+        // A controller whose digest does not match this screen's: hand it the
+        // surface it asked for. Addressed to that one controller rather than
+        // broadcast - the others have no use for it and it is the largest
+        // thing on the wire.
+        const strokes = state.ink.bySurface[msg.surface]?.strokes || [];
+        const slices = chunkStrokes(strokes);
+        slices.forEach((part, i) => bus.send({
+          t: 'ink-surface', to: msg.from, surface: msg.surface,
+          seq: i, last: i === slices.length - 1, strokes: part,
+        }));
+        return;
+      }
       if (msg.t === 'ink-need') {
         // Exporting marked-up slides: hand back every surface belonging to
         // this deck, keyed by slide index, so the controller can composite
         // ink onto its own rendering of each slide without a round trip per
-        // slide.
+        // slide. A whole deck's ink is the biggest payload in the app, so it
+        // goes slide by slide, in slices, rather than as one message no relay
+        // would accept.
         const prefix = `deck:${msg.deckId}:`;
-        const bySlide = {};
+        const parts = [];
         for (const [key, surface] of Object.entries(state.ink.bySurface)) {
           if (!key.startsWith(prefix)) continue;
           const slide = Number(key.slice(prefix.length));
-          if (Number.isInteger(slide) && surface.strokes.length) bySlide[slide] = surface.strokes;
+          if (!Number.isInteger(slide) || !surface.strokes.length) continue;
+          for (const slice of chunkStrokes(surface.strokes)) parts.push([slide, slice]);
         }
-        bus.send({ t: 'ink-data', deckId: msg.deckId, bySlide });
+        if (!parts.length) parts.push(null);
+        parts.forEach((part, i) => bus.send({
+          t: 'ink-data', to: msg.from, deckId: msg.deckId,
+          seq: i, last: i === parts.length - 1,
+          bySlide: part ? { [part[0]]: part[1] } : {},
+        }));
         return;
       }
       if (msg.t === 'cmd') {

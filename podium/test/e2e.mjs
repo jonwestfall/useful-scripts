@@ -2407,6 +2407,154 @@ await tablet.close();
 await room.close();
 }
 
+console.log('\n-- a well-annotated board does not take the projector off the air --');
+{
+// The heartbeat used to carry every stroke on the current surface, in full,
+// every two seconds - and every 400ms while anything was playing. Two separate
+// ceilings sat above that: seal() overflowed the call stack somewhere past
+// 100 KB (String.fromCharCode spreads every byte as an argument), and the relay
+// closes a socket that sends more than 256 KB. A term's annotation on one
+// whiteboard hit both.
+const ROOM = 'heavy-ink';
+const roomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: ROOM, passphrase: 'ink' });
+
+// 300 strokes of 60 points, seeded where a real term's ink ends up: the
+// display's own saved surfaces. ~287 KB of JSON.
+const seeded = (() => {
+  const strokes = [];
+  for (let n = 0; n < 300; n++) {
+    const y = 0.04 + 0.92 * ((n % 30) / 30);
+    const pts = [];
+    for (let i = 0; i < 60; i++) {
+      pts.push([Math.round((0.04 + 0.92 * i / 60) * 1e4) / 1e4, Math.round((y + 0.01 * Math.sin(i / 5)) * 1e4) / 1e4]);
+    }
+    strokes.push({ id: `s${n}`, color: '#ffd166', width: 6, pts });
+  }
+  return { 'whiteboard:#f7f5ef': { strokes, touched: Date.now() } };
+})();
+const seededKb = Math.round(JSON.stringify(seeded).length / 1024);
+
+const room = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+await room.addInitScript(([cfg, key, ink]) => {
+  localStorage.setItem('podium.config.v2', cfg);
+  localStorage.setItem(key, ink);
+}, [roomCfg, `podium.ink.${ROOM}`, JSON.stringify(seeded)]);
+const screen = await room.newPage();
+trap(screen, 'heavy display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+
+const tablet = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+await tablet.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const pad = await tablet.newPage();
+trap(pad, 'heavy control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+
+// Several heartbeats' worth. Under the old code the display threw inside
+// seal() on each one and the controller never received a usable state.
+await pad.waitForTimeout(5000);
+ok(`the display survives heartbeats on a ${seededKb} KB surface instead of being closed off the relay`,
+  (await screen.$eval('#hud', (n) => n.dataset.status)) === 'online');
+ok('and the controller’s relay stays up too',
+  (await pad.$eval('#status', (n) => n.dataset.status)) === 'online');
+
+// The strokes are no longer in the heartbeat, so the pad can only have them by
+// asking for the surface and stitching the slices back together.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForFunction(() => {
+  const cv = document.querySelector('#pad');
+  if (!cv) return false;
+  const px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+  for (let i = 3; i < px.length; i += 4) if (px[i] > 10) return true;
+  return false;
+}, null, { timeout: 20000 }).catch(() => {});
+const painted = await pad.evaluate(() => {
+  const cv = document.querySelector('#pad');
+  const px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+  let n = 0;
+  for (let i = 3; i < px.length; i += 4) if (px[i] > 10) n++;
+  return n;
+});
+ok(`a controller pulls that surface in slices and draws all of it (${painted} px)`, painted > 20000);
+ok('and the display still holds every stroke', (await screen.evaluate((key) => {
+  const all = JSON.parse(localStorage.getItem(key) || '{}');
+  return all[Object.keys(all)[0]]?.strokes.length;
+}, `podium.ink.${ROOM}`)) === 300);
+
+// The other ceiling, tested where it lives. 120 KB is an uploaded deck, 160 KB
+// a lecture plan's photo - both were already at or past the limit.
+const sealed = await pad.evaluate(async () => {
+  const crypto = await import('./assets/js/crypto.js');
+  const key = await crypto.deriveKey('passphrase', 'room');
+  const out = {};
+  for (const kb of [64, 160, 512]) {
+    const message = { t: 'big', blob: 'y'.repeat(kb * 1024) };
+    try {
+      const opened = await crypto.open(key, await crypto.seal(key, message));
+      out[kb] = opened?.blob?.length === message.blob.length ? 'ok' : 'corrupted';
+    } catch (err) {
+      out[kb] = err.message;
+    }
+  }
+  return out;
+});
+ok(`encryption round-trips a payload of any size (${Object.entries(sealed).map(([k, v]) => `${k}KB ${v}`).join(', ')})`,
+  sealed[64] === 'ok' && sealed[160] === 'ok' && sealed[512] === 'ok');
+
+// A second controller used to learn about the first one's strokes only when
+// the next heartbeat carried them - up to two seconds later. It now follows
+// the ink commands off the bus, and asks for a surface only when its own
+// summary says it has fallen behind.
+{
+  const second = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+  await second.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+  const phone = await second.newPage();
+  trap(phone, 'heavy second control');
+  await phone.goto(`${BASE}/control.html`);
+  await phone.waitForSelector('.tile');
+  // A surface neither device has drawn on, so "it appeared" can only mean it
+  // travelled: the chalkboard is a different whiteboard background, and so a
+  // different ink surface, from the seeded one.
+  await pad.click('.tab[data-tab="library"]');
+  await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
+  await pad.waitForTimeout(700);
+  await pad.click('.tab[data-tab="ink"]');
+  await phone.click('.tab[data-tab="ink"]');
+  await pad.waitForTimeout(400);
+
+  const inked = (page) => page.evaluate(() => {
+    const cv = document.querySelector('#pad');
+    const px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 10) n++;
+    return n;
+  });
+  ok('a fresh surface starts blank on both controllers', (await inked(pad)) === 0 && (await inked(phone)) === 0);
+
+  const box = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+  await pad.mouse.move(box.x + box.w * 0.2, box.y + box.h * 0.3);
+  await pad.mouse.down();
+  await pad.mouse.move(box.x + box.w * 0.8, box.y + box.h * 0.7, { steps: 12 });
+  await pad.mouse.up();
+  await phone.waitForFunction(() => {
+    const cv = document.querySelector('#pad');
+    const px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 10) return true;
+    return false;
+  }, null, { timeout: 500 }).catch(() => {});
+  ok(`the other controller has it within half a second, not at the next heartbeat (${await inked(phone)} px)`,
+    (await inked(phone)) > 100);
+
+  await second.close();
+}
+
+await tablet.close();
+await room.close();
+}
+
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
 } finally {
   await browser?.close().catch(() => {});

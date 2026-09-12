@@ -5,7 +5,8 @@
 import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, BUILD } from './protocol.js';
+import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
+  inkDigest, inkDigestsAgree, applyInkAction, BUILD } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport } from './deck.js';
@@ -72,13 +73,28 @@ function resolveAssets(item) {
 
 // Requesting a deck's saved ink for export: the display holds the only full
 // copy, keyed by deck+slide, so exporting asks for it rather than trying to
-// have reconstructed it locally from the lightweight "current slide only"
-// stream that keeps the pad in sync during a normal lecture.
+// reconstruct it from the one surface this device happens to be looking at.
+// A whole deck's ink is the largest thing the app ever moves, so it arrives in
+// slices (see chunkStrokes in display.js) and is stitched back together here.
 const inkExportWaiters = new Map();
 function requestInkData(targetDeckId, timeoutMs = 8000) {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => { inkExportWaiters.delete(targetDeckId); resolve({}); }, timeoutMs);
-    inkExportWaiters.set(targetDeckId, (bySlide) => { clearTimeout(timer); resolve(bySlide); });
+    const acc = { bySlide: {}, timer: null };
+    const finish = () => { clearTimeout(acc.timer); inkExportWaiters.delete(targetDeckId); resolve(acc.bySlide); };
+    // The timeout is per SLICE, not for the whole transfer: a deck with a
+    // term's annotation on it can legitimately take several messages, and a
+    // fixed overall deadline would truncate the big exports rather than the
+    // broken ones.
+    const arm = () => { clearTimeout(acc.timer); acc.timer = setTimeout(finish, timeoutMs); };
+    acc.add = (msg) => {
+      for (const [slide, strokes] of Object.entries(msg.bySlide || {})) {
+        (acc.bySlide[slide] ||= []).push(...strokes);
+      }
+      if (msg.last) finish();
+      else arm();
+    };
+    arm();
+    inkExportWaiters.set(targetDeckId, acc);
     bus?.send({ t: 'ink-need', deckId: targetDeckId });
   });
 }
@@ -1058,28 +1074,82 @@ function redrawPad() {
 }
 
 // Whichever surface (whiteboard, or this one slide) is currently on screen,
-// mirrored from the display's authoritative copy - this is what makes ink
+// kept in step with the display's authoritative copy - this is what makes ink
 // restore when you flip back to an already-annotated slide, and what keeps a
-// second controller's pad in step.
+// second controller's pad showing the same marks as the first.
+//
+// Surfaces this device has already seen, so flipping back to slide 4 draws its
+// ink immediately rather than blanking until a request comes back. The digest
+// in the next heartbeat confirms what is held or corrects it, which makes this
+// an optimistic cache: worst case is one frame of slightly stale ink on a
+// surface someone else has edited since.
+const INK_CACHE_MAX = 60;
+const inkCache = new Map();
+
+function holdInk(surface, strokes) {
+  ink.strokes = strokes;
+  if (!surface) return;
+  // Re-inserted so the Map's own insertion order is a least-recently-used list.
+  inkCache.delete(surface);
+  inkCache.set(surface, strokes);
+  while (inkCache.size > INK_CACHE_MAX) inkCache.delete(inkCache.keys().next().value);
+}
+
+// An outstanding request for a surface's strokes, and the slices arriving in
+// answer to it. See requestInkSurface below.
+let inkPull = { surface: null, at: 0, parts: [] };
+
+// The heartbeat carries only a summary of the current surface's ink (see
+// inkDigest in protocol.js) - the strokes themselves were hundreds of
+// kilobytes on a busy whiteboard, going out every two seconds, and no relay
+// would carry that. This device normally stays in step without asking: it
+// applies its own strokes as it draws them and its peers' as they arrive. Ask
+// only when the summary says it has actually fallen behind - joining
+// mid-lecture, switching to a surface it has never seen, or a dropped message.
+function requestInkSurface() {
+  if (!inkSurface || !bus) return;
+  // One request in flight at a time, retried rather than repeated: an answer
+  // can take several messages, and asking again mid-transfer would only start
+  // the same transfer over.
+  if (inkPull.surface === inkSurface && Date.now() - inkPull.at < 3000) return;
+  inkPull = { surface: inkSurface, at: Date.now(), parts: [] };
+  bus.send({ t: 'ink-pull', surface: inkSurface });
+}
+
+function receiveInkSurface(msg) {
+  if (msg.surface !== inkPull.surface || msg.surface !== inkSurface) return;   // stale answer
+  inkPull.parts.push(...(msg.strokes || []));
+  if (!msg.last) return;
+  // Never clobber a stroke this device is in the middle of drawing; the next
+  // heartbeat will notice the difference and ask again.
+  if (!ink.drawing) {
+    holdInk(msg.surface, inkPull.parts);
+    if (!$('[data-panel="ink"]').hidden) redrawPad();
+  }
+  inkPull = { surface: null, at: 0, parts: [] };
+}
+
 function syncInkFromState() {
   const nextSurface = state.ink?.surface ?? null;
   const changedSurface = nextSurface !== inkSurface;
   inkSurface = nextSurface;
-  // Never clobber a stroke this device is actively drawing mid-gesture.
-  if (!ink.drawing || changedSurface) {
-    ink.strokes = (state.ink?.strokes || []).map((s) => ({ ...s, pts: s.pts.map((p) => [p[0], p[1]]) }));
+  if (changedSurface) {
+    // A different slide, board or panel. Whatever was held belongs to the old
+    // one, so show what this device already has for the new one - nothing, if
+    // it has never seen it - and let the digest below settle it.
+    holdInk(nextSurface, inkCache.get(nextSurface) || []);
+    inkPull = { surface: null, at: 0, parts: [] };
     if (!$('[data-panel="ink"]').hidden) redrawPad();
   }
-  // Resizing mid-stroke is what caused strokes to come out warped: a state
-  // echo arrives roughly every 60ms while drawing (your own points, echoed
-  // back), and if the deck's aspect had only just become known - e.g. Marp
-  // was still loading when the gesture started - the frame would resize
-  // partway through it. Points already captured are fractions of whatever
-  // box existed at that instant, so a resize between two points of the SAME
-  // stroke leaves them meaning different things once redrawn under one
-  // uniform size. Deferring the resize until the stroke ends (see
-  // endStroke()) keeps every point in a gesture measured against one
-  // constant box.
+  if (!ink.drawing && !inkDigestsAgree(inkDigest(ink.strokes), state.ink?.digest)) requestInkSurface();
+  // Resizing mid-stroke is what caused strokes to come out warped. If the
+  // deck's aspect had only just become known - Marp still loading when the
+  // gesture started - the frame would resize partway through it. Points
+  // already captured are fractions of whatever box existed at that instant,
+  // so a resize between two points of the SAME stroke leaves them meaning
+  // different things once redrawn under one uniform size. Deferring the
+  // resize until the stroke ends (see endStroke()) keeps every point in a
+  // gesture measured against one constant box.
   if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad();
 }
 
@@ -1099,6 +1169,7 @@ pad.addEventListener('pointerdown', (ev) => {
   ink.drawing = true;
   ink.strokeId = uid(6);
   const pt = padPoint(ev);
+  holdInk(inkSurface, ink.strokes);
   ink.strokes.push({ id: ink.strokeId, color: ink.color, width: ink.width, pts: [pt] });
   ink.buffer = [];
   send({ op: 'ink', action: 'begin', id: ink.strokeId, color: ink.color, width: ink.width, pts: [pt] });
@@ -1109,7 +1180,12 @@ pad.addEventListener('pointermove', (ev) => {
   ev.preventDefault();
   // Coalesced events keep an Apple Pencil line smooth without flooding the bus.
   const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
-  const stroke = ink.strokes[ink.strokes.length - 1];
+  // By id, not by position. A second controller's strokes now arrive live and
+  // are appended to this same list, so "the last stroke" is no longer reliably
+  // the one this finger is drawing - taking it would splice your points onto
+  // the end of someone else's line.
+  const stroke = ink.strokes.find((st) => st.id === ink.strokeId);
+  if (!stroke) return;
   for (const e of events) {
     const pt = padPoint(e);
     stroke.pts.push(pt);
@@ -1277,8 +1353,18 @@ async function connect() {
         return;
       }
       if (msg.t === 'ink-data') {
-        inkExportWaiters.get(msg.deckId)?.(msg.bySlide || {});
-        inkExportWaiters.delete(msg.deckId);
+        inkExportWaiters.get(msg.deckId)?.add(msg);
+        return;
+      }
+      if (msg.t === 'ink-surface') { receiveInkSurface(msg); return; }
+      // Another controller's ink, straight off the bus. Every peer already
+      // receives these; ignoring them used to mean a second device only saw
+      // the first one's strokes when the next heartbeat carried them, up to
+      // two seconds later. Now the heartbeat carries no strokes at all, so
+      // following the commands is also what keeps the two in step.
+      if (msg.t === 'cmd' && msg.op === 'ink') {
+        if (applyInkAction(ink.strokes, msg, { color: ink.color, width: ink.width })
+          && !$('[data-panel="ink"]').hidden) redrawPad();
         return;
       }
       if (msg.t === 'rtc') cameraSender?.handle(msg);
@@ -1535,7 +1621,10 @@ $('#ink-undo').addEventListener('click', () => {
   send({ op: 'ink', action: 'undo' });
 });
 $('#ink-clear').addEventListener('click', () => {
-  ink.strokes = [];
+  // Through holdInk, not a bare assignment: the cache holds the array by
+  // reference, so replacing it here would leave the old strokes cached and
+  // bring them back the moment you flipped away and back again.
+  holdInk(inkSurface, []);
   redrawPad();
   send({ op: 'ink', action: 'clear' });
 });
