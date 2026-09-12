@@ -6,6 +6,12 @@
 <title>Podium — Display</title>
 <meta name="robots" content="noindex">
 <link rel="stylesheet" href="assets/css/podium.css">
+<link rel="manifest" href="manifest-display.webmanifest">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0b0d10">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body class="display">
 
@@ -52,6 +58,12 @@
     </div>
     <p class="hint">Room <span id="room-name" class="mono"></span> · code <span id="arm-code" class="mono">····</span></p>
     <p class="hint" id="arm-status">Connecting…</p>
+    <!-- Shown when this tab is coming back to a lecture rather than starting
+         one: a reload on the classroom PC used to drop everything to black. -->
+    <p class="hint" id="arm-resume" hidden>
+      <span id="arm-resume-what"></span>
+      <button id="arm-resume-clear" type="button">Start black instead</button>
+    </p>
     <p class="hint mono relay-target"></p>
     <p class="hint stale-note" id="arm-build" hidden></p>
     <pre class="relay-log" hidden></pre>

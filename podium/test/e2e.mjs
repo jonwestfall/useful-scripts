@@ -2555,6 +2555,155 @@ await tablet.close();
 await room.close();
 }
 
+console.log('\n-- getting back to where you were, and an app that survives the Wi-Fi --');
+{
+const roomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'recover', passphrase: 'back' });
+const room = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+await room.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const screen = await room.newPage();
+trap(screen, 'recover display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+
+const tablet = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+await tablet.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const pad = await tablet.newPage();
+trap(pad, 'recover control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+
+// --- blank and freeze, on something without pages --------------------------
+// Both used to sit behind a "is this paged content" guard, so B did nothing on
+// a photo or a video - exactly when you reach for it.
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await pad.waitForTimeout(700);
+await pad.keyboard.press('b');
+await pad.waitForTimeout(400);
+ok('B blanks the screen even when what is on it has no pages',
+  await screen.$eval('#blank', (n) => n.classList.contains('is-on')));
+await pad.keyboard.press('b');
+await pad.waitForTimeout(300);
+await pad.keyboard.press('f');
+await pad.waitForTimeout(400);
+ok('and F freezes it', await screen.evaluate(() => document.body.classList.contains('is-frozen')));
+await pad.keyboard.press('f');
+await pad.waitForTimeout(300);
+
+// --- clearing the board is survivable --------------------------------------
+const onWall = () => screen.evaluate(() => {
+  const cv = document.querySelector('#ink');
+  const px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+  let n = 0;
+  for (let i = 3; i < px.length; i += 4) if (px[i] > 10) n++;
+  return n;
+});
+await pad.click('.tab[data-tab="ink"]');
+const box = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(box.x + box.w * 0.2, box.y + box.h * 0.3);
+await pad.mouse.down();
+await pad.mouse.move(box.x + box.w * 0.8, box.y + box.h * 0.7, { steps: 14 });
+await pad.mouse.up();
+await pad.waitForTimeout(700);
+const drawn = await onWall();
+ok(`there is ink on the projector to lose (${drawn} px)`, drawn > 500);
+await pad.click('#ink-clear');
+await pad.waitForTimeout(600);
+ok('Clear wipes it in one tap, as it should - this is a frequent, deliberate move',
+  (await onWall()) === 0 && !(await pad.$eval('#ink-unclear', (n) => n.hidden)));
+await pad.click('#ink-unclear');
+await pad.waitForTimeout(800);
+ok(`and an accidental one is recoverable: Undo clear puts every stroke back (${await onWall()} px)`,
+  Math.abs((await onWall()) - drawn) < 40);
+
+// --- back to where you were ------------------------------------------------
+// A deck picked from the Library always stages at slide 0, so an interruption
+// used to restart the lecture in front of everyone.
+const slideOnWall = () => screen.evaluate(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  if (!host?.shadowRoot) return -1;
+  return Array.from(host.shadowRoot.querySelectorAll('svg[data-marpit-svg]'))
+    .findIndex((svg) => svg.classList.contains('podium-on'));
+});
+await pad.click('.tab[data-tab="library"]');
+ok('nothing to go back to before you have been anywhere', await pad.$eval('#recent-bar', (n) => n.hidden));
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await pad.waitForTimeout(3200);
+await pad.click('.tab[data-tab="slides"]');
+await pad.waitForSelector('#deck-live:not([hidden])');
+for (let i = 0; i < 4; i++) { await pad.click('#deck-next'); await pad.waitForTimeout(420); }
+ok(`walked into the deck (slide ${(await slideOnWall()) + 1})`, (await slideOnWall()) === 4);
+
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Back in 5"))');
+await pad.waitForTimeout(900);
+const chip = await pad.$eval('.recent-chip', (n) => n.textContent);
+ok(`the deck is offered back, at the slide you left it ("${chip}")`, /slide 5 of 13/.test(chip));
+await pad.click('.recent-chip');
+await pad.waitForTimeout(3200);
+ok(`and one tap returns to that exact slide, not slide 1 (slide ${(await slideOnWall()) + 1})`,
+  (await slideOnWall()) === 4);
+ok('what is on screen is not offered as somewhere to go back to',
+  !(await pad.$$eval('.recent-chip', (n) => n.map((x) => x.textContent))).some((t) => /Weighing/.test(t)));
+
+// --- the display survives a reload -----------------------------------------
+// It holds the only authoritative copy of the lecture; an accidental refresh
+// on the classroom PC used to drop the whole thing to black.
+await screen.reload();
+await screen.waitForSelector('#arm:not([hidden])');
+const resumeNote = (await screen.textContent('#arm-resume-what')).trim();
+ok(`the arming screen says what it is coming back to ("${resumeNote}")`, /Weighing the Evidence/.test(resumeNote));
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+await screen.waitForTimeout(3500);
+ok(`and it comes back on the slide it was on, not at the beginning (slide ${(await slideOnWall()) + 1})`,
+  (await slideOnWall()) === 4);
+
+// --- the offline shell ------------------------------------------------------
+const shell = await pad.evaluate(async () => {
+  const link = document.querySelector('link[rel=manifest]');
+  const res = await fetch(link.href);
+  const body = await res.json();
+  const icon = await fetch(document.querySelector('link[rel=apple-touch-icon]').href);
+  return {
+    type: res.headers.get('content-type'),
+    start: body.start_url,
+    display: body.display,
+    icons: body.icons.length,
+    maskable: body.icons.some((i) => i.purpose === 'maskable'),
+    iconOk: icon.ok && icon.headers.get('content-type') === 'image/png',
+    theme: document.querySelector('meta[name=theme-color]')?.content,
+  };
+});
+ok(`the controller is installable: a manifest served as ${shell.type?.split(';')[0]}, ${shell.icons} icons, display ${shell.display}`,
+  shell.type?.startsWith('application/manifest+json') && shell.display === 'standalone'
+  && shell.start === 'control.html' && shell.icons >= 3 && shell.maskable);
+ok('with a real PNG for the iOS home screen, and a theme colour',
+  shell.iconOk && shell.theme === '#0b0d10');
+
+await pad.waitForFunction(async () => {
+  const reg = await navigator.serviceWorker.getRegistration();
+  return !!reg?.active;
+}, null, { timeout: 15000 }).catch(() => {});
+const cachedCount = await pad.evaluate(async () => {
+  const cache = await caches.open('podium-shell');
+  return (await cache.keys()).length;
+});
+ok(`and an offline shell warmed on the FIRST visit (${cachedCount} files), not the second`, cachedCount > 20);
+
+await tablet.setOffline(true);
+await pad.reload().catch(() => {});
+await pad.waitForTimeout(1500);
+ok('so the controller still opens with no network at all',
+  await pad.evaluate(() => !!document.querySelector('.topbar') && document.querySelectorAll('.tab').length > 3));
+ok(`and says plainly that the relay is what is missing ("${(await pad.$eval('#status', (n) => n.textContent)).slice(0, 44)}…")`,
+  /could not open|Reconnecting|Relay problem/.test(await pad.$eval('#status', (n) => n.textContent)));
+await tablet.setOffline(false);
+
+await tablet.close();
+await room.close();
+}
+
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
 } finally {
   await browser?.close().catch(() => {});

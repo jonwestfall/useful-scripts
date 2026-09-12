@@ -341,6 +341,9 @@ body.control.is-frozen { background: #171006; }
 
 #build-note.is-stale, .stale-note { color: #ffd9a8; }
 
+#arm-resume { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
+#arm-resume button { min-height: 32px; padding: 0 12px; font-size: 12px; }
+
 /* The relay readouts. A failing connection is the one problem where the useful
    text is long - a URL, a close code, an attempt count - so let it wrap and
    scroll rather than truncating it into uselessness. */
@@ -423,6 +426,18 @@ body.control.is-frozen { background: #171006; }
   width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px;
 }
 .empty { color: var(--dim); }
+
+/* Where you just were. A single scrolling row rather than a group in the
+   Library, because its whole value is being one reachable tap away - buried
+   under a lecture plan's twelve items it would be slower than re-picking. */
+#recent-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; min-width: 0; }
+.recent-label { font-size: 12px; color: var(--dim); white-space: nowrap; }
+.recent-strip { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.recent-chip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  min-height: 40px; padding: 4px 11px; font-size: 13px; white-space: nowrap; flex: none;
+}
+.recent-chip .where { font-size: 11px; color: var(--dim); }
 
 .stack { display: flex; flex-direction: column; gap: 10px; }
 .inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

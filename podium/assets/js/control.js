@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog } from './util.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
@@ -315,6 +315,72 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
       timers: plan.timers.slice(0, MAX_TIMERS).map((t) => ({ id: t.id, label: t.label, seconds: t.mins * 60 })),
     });
   }
+}
+
+// --- where you just were -----------------------------------------------------
+//
+// Picking a deck out of the Library always stages it from slide 0, so the
+// commonest interruption in a lecture - a student asks something, you put up a
+// photo, you go back - used to restart the deck from the beginning in front of
+// everyone. Nothing anywhere kept a history.
+//
+// The display's own state is the right place to read one from: it carries the
+// live slide, page and playhead, so a snapshot of the item you are LEAVING is
+// automatically the item at the position you left it.
+
+const RECENT_MAX = 6;
+let recent = [];
+let lastProgram = null;
+
+// What makes two items "the same thing", ignoring position: going from slide 3
+// to slide 4 is not leaving the deck.
+function itemIdentity(item) {
+  if (!item) return null;
+  return `${item.type}:${item.deckId || item.src || item.timerId || item.body || item.data || ''}`;
+}
+
+function recentWhere(item) {
+  if (item.type === 'deck') return `slide ${(item.slide || 0) + 1}${item.slideCount ? ` of ${item.slideCount}` : ''}`;
+  if (item.type === 'pdf') return `page ${item.page || 1}`;
+  if (item.type === 'slides') return `slide ${(item.slide || 0) + 1}`;
+  if (item.startAt) return fmtTime(item.startAt);
+  return TYPES[item.type]?.label || item.type;
+}
+
+// A clip's position is in telemetry, not in the item, so it has to be folded in
+// WHILE the clip is the one on screen. By the time you have left it, telemetry
+// already belongs to whatever replaced it - stamping the outgoing item then
+// would give it the new item's playhead.
+function withPosition(item) {
+  if (!item || !['video', 'audio', 'youtube'].includes(item.type)) return item;
+  if (!Number.isFinite(telemetry?.time) || telemetry.time < 1) return item;
+  return { ...item, startAt: Math.floor(telemetry.time) };
+}
+
+function trackRecent() {
+  const leaving = lastProgram;
+  // `key` is the identity protocol.js reissues on every stage, so it is
+  // meaningless on the way back in.
+  const { key: _k, ...now } = state.program || {};
+  lastProgram = state.program ? withPosition(now) : null;
+
+  if (!leaving || itemIdentity(leaving) === itemIdentity(lastProgram)) return;
+  if (leaving.type === 'black' || leaving.type === 'camera') return;
+
+  recent = [leaving, ...recent.filter((i) => itemIdentity(i) !== itemIdentity(leaving))].slice(0, RECENT_MAX);
+}
+
+function renderRecent() {
+  // Never offer "back to" the thing already on screen.
+  const here = itemIdentity(state.program);
+  const list = recent.filter((item) => itemIdentity(item) !== here);
+  $('#recent-bar').hidden = !list.length;
+  $('#recent').replaceChildren(...list.map((item) => el('button', {
+    class: 'recent-chip', type: 'button',
+    onclick: () => pick(item),
+  },
+    el('span', {}, itemTitle(item)),
+    el('span', { class: 'where' }, recentWhere(item)))));
 }
 
 // Sends a fully-formed item wherever it belongs right now. Panel A (focus 0)
@@ -827,6 +893,7 @@ function renderLayoutBar() {
 }
 
 function renderAll() {
+  renderRecent();
   renderPreview();
   renderNow();
   renderTimers();
@@ -1139,6 +1206,8 @@ function syncInkFromState() {
     // it has never seen it - and let the digest below settle it.
     holdInk(nextSurface, inkCache.get(nextSurface) || []);
     inkPull = { surface: null, at: 0, parts: [] };
+    // An undo offer belongs to the board it was made on.
+    if (clearedInk.surface && clearedInk.surface !== nextSurface) offerUnclear(null, []);
     if (!$('[data-panel="ink"]').hidden) redrawPad();
   }
   if (!ink.drawing && !inkDigestsAgree(inkDigest(ink.strokes), state.ink?.digest)) requestInkSurface();
@@ -1337,6 +1406,7 @@ async function connect() {
         state = { ...state, ...msg.state };
         telemetry = msg.telemetry || telemetry;
         telemetryAt = Date.now();
+        trackRecent();
         syncInkFromState();
         renderAll();
         renderConnection();
@@ -1620,13 +1690,41 @@ $('#ink-undo').addEventListener('click', () => {
   redrawPad();
   send({ op: 'ink', action: 'undo' });
 });
+// Clearing the board is one tap, because it is a frequent and deliberate move
+// mid-lecture. What makes an accidental one survivable is that the display
+// keeps what it wiped (see 'restore' in protocol.js) and this offers it back
+// for a few seconds - rather than taxing every intentional Clear with a
+// confirmation.
+const UNCLEAR_MS = 15000;
+let unclearTimer = null;
+let clearedInk = { surface: null, strokes: [] };
+
+function offerUnclear(surface, strokes) {
+  clearedInk = { surface, strokes };
+  const button = $('#ink-unclear');
+  button.hidden = !strokes.length;
+  clearTimeout(unclearTimer);
+  if (strokes.length) unclearTimer = setTimeout(() => { button.hidden = true; }, UNCLEAR_MS);
+}
+
 $('#ink-clear').addEventListener('click', () => {
+  offerUnclear(inkSurface, ink.strokes);
   // Through holdInk, not a bare assignment: the cache holds the array by
   // reference, so replacing it here would leave the old strokes cached and
   // bring them back the moment you flipped away and back again.
   holdInk(inkSurface, []);
   redrawPad();
   send({ op: 'ink', action: 'clear' });
+});
+
+$('#ink-unclear').addEventListener('click', () => {
+  const { surface, strokes } = clearedInk;
+  if (surface !== inkSurface || !strokes.length) { $('#ink-unclear').hidden = true; return; }
+  // The display puts its own copy back; this only has to catch up locally.
+  send({ op: 'ink', action: 'restore' });
+  holdInk(surface, strokes);
+  redrawPad();
+  offerUnclear(null, []);
 });
 $('#ink-pen-only').addEventListener('change', (ev) => { ink.penOnly = ev.target.checked; });
 $('#ink-width').addEventListener('input', (ev) => { ink.width = Number(ev.target.value); });
@@ -1647,16 +1745,23 @@ $('#cam-flip').addEventListener('click', async () => {
 // A Magic Keyboard or a clicker paired to the iPad should just work.
 document.addEventListener('keydown', (ev) => {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target.tagName)) return;
-  const paged = ['pdf', 'slides', 'web', 'deck'].includes(focusedItem(state)?.type);
-  if (!paged) return;
+
+  // Blank and freeze apply to whatever is on screen, so they come first. They
+  // used to sit behind the "is this paged content" guard below, which meant B
+  // did nothing on a photo or a video - exactly when you reach for it.
+  if (ev.key === 'b' || ev.key === 'B') { ev.preventDefault(); send({ op: 'blank' }); return; }
+  if (ev.key === 'f' || ev.key === 'F') { ev.preventDefault(); send({ op: 'freeze' }); return; }
+
+  // Paging, on the other hand, only means something on something with pages.
+  if (!['pdf', 'slides', 'web', 'deck'].includes(focusedItem(state)?.type)) return;
   if (ev.key === 'ArrowRight' || ev.key === 'PageDown' || ev.key === ' ') { ev.preventDefault(); send({ op: 'nav', dir: 'next' }); }
   if (ev.key === 'ArrowLeft' || ev.key === 'PageUp') { ev.preventDefault(); send({ op: 'nav', dir: 'prev' }); }
-  if (ev.key === 'b' || ev.key === 'B') { ev.preventDefault(); send({ op: 'blank' }); }
-  if (ev.key === 'f' || ev.key === 'F') { ev.preventDefault(); send({ op: 'freeze' }); }
 });
 
 window.addEventListener('resize', () => { if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad(); });
 window.addEventListener('beforeunload', () => bus?.close());
+
+installOfflineShell();
 setInterval(() => { renderNow(); renderTimers(); renderConnection(); }, 250);
 
 // Is this tab itself the stale one? Reloading a page that a cache is still

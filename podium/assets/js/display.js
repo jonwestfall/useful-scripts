@@ -8,7 +8,7 @@
 // scroll position. A layout can split the screen into up to four panels
 // (see LAYOUTS in protocol.js); B/C/D are simpler; set directly, no preview.
 
-import { $, $$, el, throttle, wireDangerButton, servedBuild, createRelayLog } from './util.js';
+import { $, $$, el, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD } from './protocol.js';
@@ -535,11 +535,25 @@ function inkStorageKey() {
   return `podium.ink.${cfg.room}`;
 }
 
+function saveInkNow() {
+  clearTimeout(inkSaveTimer);
+  {
+    try {
+      // Without `cleared`: what a Clear stashed is undoable for as long as the
+      // surface is on screen, not something to carry to next term, and keeping
+      // it would double what the ink of a wiped board costs on disk.
+      const saved = {};
+      for (const [key, surface] of Object.entries(state.ink.bySurface)) {
+        saved[key] = { strokes: surface.strokes, touched: surface.touched };
+      }
+      localStorage.setItem(inkStorageKey(), JSON.stringify(saved));
+    } catch { /* quota or private mode */ }
+  }
+}
+
 function saveInkSoon() {
   clearTimeout(inkSaveTimer);
-  inkSaveTimer = setTimeout(() => {
-    try { localStorage.setItem(inkStorageKey(), JSON.stringify(state.ink.bySurface)); } catch { /* quota or private mode */ }
-  }, INK_SAVE_MS);
+  inkSaveTimer = setTimeout(saveInkNow, INK_SAVE_MS);
 }
 
 function restoreInk() {
@@ -549,11 +563,87 @@ function restoreInk() {
   } catch { /* corrupt or absent - start with a blank slate */ }
 }
 
+// --- surviving a reload ------------------------------------------------------
+//
+// This screen holds the only authoritative copy of what the lecture is showing.
+// Ink already survived a reload; nothing else did, so an accidental refresh on
+// the classroom PC - or a browser that decided to reclaim the tab - dropped
+// back to black and left the presenter re-picking everything in front of the
+// room. No controller could help: they mirror this screen, they do not hold it.
+
+const STATE_SAVE_MS = 1200;
+// Long enough to cover a reload, a crash, or a machine that went to sleep
+// between two classes in the same room; short enough that yesterday's lecture
+// does not reappear when you open the room this morning.
+const STATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+let stateSaveTimer = null;
+
+function stateStorageKey() {
+  return `podium.state.${cfg.room}`;
+}
+
+function saveStateNow() {
+  clearTimeout(stateSaveTimer);
+  try {
+    const { program, panels, layout, focus, timers, overlay, volume, muted } = state;
+    localStorage.setItem(stateStorageKey(), JSON.stringify({
+      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, muted,
+    }));
+  } catch { /* quota or private mode - the lecture just will not come back */ }
+}
+
+function saveStateSoon() {
+  clearTimeout(stateSaveTimer);
+  stateSaveTimer = setTimeout(saveStateNow, STATE_SAVE_MS);
+}
+
+// Both saves are debounced, which leaves a window: the last thing you did
+// before the tab went away is exactly the thing a debounce has not written
+// yet, and that is the moment this whole mechanism exists for. A deliberate
+// reload, a closed tab and a backgrounded one all announce themselves first,
+// so flush on all three. A hard crash cannot be caught, and loses at most the
+// second or so since the last write.
+function flushPersistence() {
+  saveInkNow();
+  saveStateNow();
+}
+window.addEventListener('pagehide', flushPersistence);
+
+installOfflineShell();
+
+// What was on screen, if this tab is coming back rather than starting fresh.
+// Returns the item's name for the arming screen to mention, or null.
+function restoreState() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(stateStorageKey()) || 'null'); } catch { return null; }
+  if (!saved || typeof saved !== 'object') return null;
+  if (!Number.isFinite(saved.savedAt) || Date.now() - saved.savedAt > STATE_MAX_AGE_MS) return null;
+  if (!saved.program || saved.program.type === 'black') return null;
+
+  state.program = saved.program;
+  if (Array.isArray(saved.panels) && saved.panels.length === 3) state.panels = saved.panels;
+  if (LAYOUTS[saved.layout]) state.layout = saved.layout;
+  if (Number.isInteger(saved.focus) && saved.focus < (LAYOUTS[state.layout] || 1)) state.focus = saved.focus;
+  // An endsAt is an absolute moment, so a countdown restored here is still
+  // telling the truth about when it runs out.
+  if (Array.isArray(saved.timers) && saved.timers.length) state.timers = saved.timers;
+  if (saved.overlay && typeof saved.overlay === 'object') state.overlay = saved.overlay;
+  if (Number.isFinite(saved.volume)) state.volume = saved.volume;
+  state.muted = !!saved.muted;
+
+  // Deliberately NOT restored: frozen, blank and the cued preview. Those are
+  // "what I am doing this second", and coming back mid-gesture into a held or
+  // blacked-out screen with no memory of why is worse than coming back to the
+  // content itself.
+  return state.program.title || state.program.type;
+}
+
 function commit() {
   state.rev++;
   render();
   broadcastSoon();
   saveInkSoon();
+  saveStateSoon();
 }
 
 // Ink is the one payload that can be far larger than a relay message will
@@ -715,6 +805,7 @@ async function requestWakeLock() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && !wakeLock) requestWakeLock();
+  if (document.hidden) flushPersistence();
 });
 
 // Arming is only about the things a browser will not give a page without a
@@ -860,6 +951,29 @@ document.addEventListener('keydown', (ev) => {
 $('#room-name').textContent = cfg.room;
 $('#standby-room').textContent = cfg.room;
 $$('.relay-target').forEach((n) => { n.textContent = relayTarget(cfg); });
+
+// Down here rather than beside restoreInk() at the top: restoreState reads
+// consts declared further down the file, and a `const` - unlike a function
+// declaration - is not hoisted, so calling it early threw before anything else
+// on this page could run.
+const resumed = restoreState();
+
+// Say so rather than silently putting last lecture's slide back up: coming
+// back to content you did not expect is its own kind of surprise in front of
+// a room.
+if (resumed) {
+  $('#arm-resume-what').textContent = `Picking up where this screen left off — ${resumed}.`;
+  $('#arm-resume').hidden = false;
+}
+$('#arm-resume-clear').addEventListener('click', () => {
+  state.program = { type: 'black', title: 'Black' };
+  state.panels = [0, 1, 2].map(() => ({ type: 'black', title: 'Black' }));
+  state.layout = 'single';
+  state.focus = 0;
+  state.overlay = { text: '', visible: false };
+  $('#arm-resume').hidden = true;
+  commit();
+});
 
 if (!isConfigured(cfg)) {
   showSetup();

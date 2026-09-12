@@ -9,6 +9,12 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Podium">
 <link rel="stylesheet" href="assets/css/podium.css">
+<link rel="manifest" href="manifest-control.webmanifest">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0b0d10">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 </head>
 <body class="control">
 
@@ -107,6 +113,14 @@
       <div class="panels">
         <!-- Library -->
         <section class="panel" data-panel="library">
+          <!-- Where you just were, with the slide you were on. Picking a deck
+               out of the Library restages it from the beginning, so going to
+               look at a photo and coming back used to restart the lecture in
+               front of everyone. -->
+          <div id="recent-bar" hidden>
+            <span class="recent-label">Back to</span>
+            <div id="recent" class="recent-strip"></div>
+          </div>
           <form id="url-form" class="inline">
             <input id="url-input" class="grow" type="text" inputmode="url" autocomplete="off"
                    autocapitalize="off" spellcheck="false" placeholder="Paste a link — YouTube, image, video, PDF, any page">
@@ -248,6 +262,10 @@
             <button class="swatch" type="button" data-color="#ffffff" style="background:#ffffff"></button>
             <button id="ink-undo" type="button">Undo</button>
             <button id="ink-clear" type="button">Clear</button>
+            <!-- Appears for a few seconds after a Clear. Clearing the board is
+                 a frequent, deliberate move, so it stays one tap; this is what
+                 makes the accidental one survivable. -->
+            <button id="ink-unclear" type="button" hidden>Undo clear</button>
           </div>
           <div class="inline">
             <label class="grow" for="ink-width">Thickness</label>

@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 7;
+export const BUILD = 8;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -537,6 +537,24 @@ export function applyCommand(state, cmd) {
       const surface = touchSurface(ink, inkSurfaceKey(focusedItem(state)));
       // Note 'clear' empties the CURRENT surface only - the chalkboard you are
       // looking at, or this one slide - never every board you have ever drawn on.
+      //
+      // And it is undoable. Wiping the board is a frequent, deliberate move
+      // mid-lecture - finish one problem, start the next - so making it a
+      // two-tap confirmation would tax the common case to protect against the
+      // rare one. Keeping what it wiped costs nothing until it is needed, and
+      // an accidental Clear is recoverable for as long as the surface is still
+      // on screen. Only the most recent clear per surface is kept, and it is
+      // dropped before anything is written to disk (see saveInkSoon).
+      if (cmd.action === 'restore') {
+        // Put back from this screen's own stash rather than having the
+        // controller send the strokes again: a wiped board can be hundreds of
+        // kilobytes, and the point of undo is that nothing had to move.
+        if (!surface.cleared?.length) return false;
+        surface.strokes = surface.cleared;
+        delete surface.cleared;
+        return true;
+      }
+      if (cmd.action === 'clear' && surface.strokes.length) surface.cleared = surface.strokes.slice();
       applyInkAction(surface.strokes, cmd, { color: ink.color, width: ink.width });
       // Cap memory over a long lecture; the oldest strokes fall off first.
       if (surface.strokes.length > MAX_STROKES_PER_SURFACE) {
