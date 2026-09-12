@@ -46,6 +46,8 @@ button:hover { background: #242b33; }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: .4; cursor: default; }
 button.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
+button.is-danger { background: var(--live); border-color: var(--live); color: #fff; font-weight: 600; }
+button.danger-outline { border-color: #6b2b2b; color: #ff9d9d; }
 
 input[type=text], input[type=url], input[type=number], input[type=password], select, textarea {
   background: #0e1216;
@@ -69,14 +71,56 @@ label { display: block; font-size: 13px; color: var(--dim); margin-bottom: 5px; 
 body.display { overflow: hidden; cursor: default; }
 body.display.is-live { cursor: none; }
 
-body.display #stage { position: fixed; inset: 0; background: #000; }
+body.display #stage { position: fixed; inset: 0; background: #000; display: grid; }
+
+/* Splitting the screen (see LAYOUTS in protocol.js) is a CSS grid over
+   #stage: each layout picks its own template and which cells its panels
+   occupy, and a panel not shown by the current layout is simply not
+   rendered (a grid item that is display:none takes no space), so no
+   per-layout JS sizing math is needed here. */
+#stage.layout-single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+#stage.layout-2h { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+#stage.layout-2v { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+#stage.layout-3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; }
+#stage.layout-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+.panel-slot { position: relative; overflow: hidden; background: #000; display: none; }
+.panel-slot.is-on { display: block; }
+#stage.layout-single .panel-slot[data-panel='a'] { grid-column: 1; grid-row: 1; }
+#stage.layout-2h .panel-slot[data-panel='a'] { grid-column: 1; grid-row: 1; }
+#stage.layout-2h .panel-slot[data-panel='b'] { grid-column: 2; grid-row: 1; }
+#stage.layout-2v .panel-slot[data-panel='a'] { grid-column: 1; grid-row: 1; }
+#stage.layout-2v .panel-slot[data-panel='b'] { grid-column: 1; grid-row: 2; }
+#stage.layout-3 .panel-slot[data-panel='a'] { grid-column: 1; grid-row: 1 / 3; }
+#stage.layout-3 .panel-slot[data-panel='b'] { grid-column: 2; grid-row: 1; }
+#stage.layout-3 .panel-slot[data-panel='c'] { grid-column: 2; grid-row: 2; }
+#stage.layout-4 .panel-slot[data-panel='a'] { grid-column: 1; grid-row: 1; }
+#stage.layout-4 .panel-slot[data-panel='b'] { grid-column: 2; grid-row: 1; }
+#stage.layout-4 .panel-slot[data-panel='c'] { grid-column: 1; grid-row: 2; }
+#stage.layout-4 .panel-slot[data-panel='d'] { grid-column: 2; grid-row: 2; }
+/* A split's seams, so two adjacent panels don't visually run together. */
+#stage:not(.layout-single) .panel-slot { outline: 1px solid #000; }
 
 .layer { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
 .layer[data-role='program'] { opacity: 1; z-index: 2; pointer-events: auto; }
 .layer[data-role='preview'] { opacity: 0; z-index: 1; }
 .layer[data-role='idle'] { opacity: 0; z-index: 0; }
 
-body.display #ink { position: fixed; inset: 0; z-index: 5; pointer-events: none; }
+/* width/height are NOT redundant next to inset:0 here, and leaving them off
+   is a real bug: a <canvas> is a replaced element, so an absolutely
+   positioned one with `width:auto` takes its INTRINSIC width - its width
+   attribute, read as CSS pixels - rather than stretching to left:0/right:0.
+   That attribute is the backing store, which is sized in DEVICE pixels, so
+   on a 2x screen the canvas is laid out at twice the viewport, anchored top
+   left, and the window shows you the top-left quarter of it: ink at double
+   size, drifting further off the further from the corner you draw. Stating
+   the size explicitly is what pins the element's box to the viewport it is
+   supposed to cover. (#pad on the controller always had this; #ink did
+   not, which is why the pad was fine and the projector was not.) */
+body.display #ink {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  z-index: 5; pointer-events: none;
+}
 body.display #blank {
   position: fixed; inset: 0; z-index: 6; background: #000;
   opacity: 0; transition: opacity .18s ease; pointer-events: none;
@@ -93,6 +137,15 @@ body.display #overlay {
 }
 body.display #overlay.is-on { transform: none; }
 
+body.display #laser {
+  position: fixed; top: 0; left: 0; width: 34px; height: 34px; z-index: 6;
+  border-radius: 50%; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle, rgba(255,64,64,.95) 0%, rgba(255,64,64,.55) 45%, transparent 72%);
+  box-shadow: 0 0 18px 4px rgba(255,64,64,.65);
+  transform: translate(-50%, -50%);
+}
+body.display #laser.is-on { opacity: 1; }
+
 body.display #hud {
   position: fixed; right: 14px; bottom: 12px; z-index: 9;
   padding: 7px 13px; border-radius: 999px;
@@ -108,12 +161,20 @@ body.display.is-frozen #stage::after {
   border: 3px solid var(--cue); opacity: .5;
 }
 
-/* Full-screen overlays on the display */
+/* Full-screen overlays on the display.
+   These all share a stacking context, so they need an explicit ladder: with a
+   single z-index the last one in the document wins, which put the pairing QR
+   *underneath* the arming screen and made "Pair a device" look like it did
+   nothing. Order here is the order you want to see them in. */
 .sheet {
   position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
   background: radial-gradient(120% 120% at 50% 0%, #131a24, #07090c);
   padding: 24px; overflow: auto;
 }
+#standby { z-index: 20; }
+#arm { z-index: 21; }
+#pair { z-index: 22; }
+#setup { z-index: 23; }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
   padding: 28px; max-width: 620px; width: 100%;
@@ -200,6 +261,12 @@ body.display #standby:not(.is-on) { display: none; }
 .r-camera { background: #000; }
 .r-camera-hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: clamp(9px, 2.2cqw, 22px); text-align: center; padding: 0 4cqw; }
 .r-camera.has-stream .r-camera-hint { display: none; }
+.r-camera-frozen {
+  position: absolute; top: 3cqh; left: 3cqw; padding: .4em .9em; border-radius: 999px;
+  background: rgba(20, 12, 0, .78); color: var(--cue); font-size: clamp(9px, 1.8cqw, 16px);
+  font-weight: 600; letter-spacing: .04em; text-transform: uppercase; display: none;
+}
+.r-camera.has-stream.is-frozen .r-camera-frozen { display: block; }
 
 /* ===================== CONTROLLER ================================= */
 
@@ -227,6 +294,71 @@ body.control.is-frozen { background: #171006; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .workspace { display: flex; flex: 1; min-height: 0; }
+
+.layout-picker { display: flex; gap: 4px; }
+.layout-btn {
+  display: grid; place-items: center; width: 32px; min-height: 30px; padding: 0;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+}
+.layout-btn.is-on { border-color: var(--accent); background: #16202c; }
+/* Each icon is a tiny CSS-drawn copy of the actual on-screen grid (see
+   #stage.layout-* in the display rules) - what you tap is what you get. */
+.layout-icon { display: grid; width: 18px; height: 13px; gap: 2px; }
+.layout-icon i { background: var(--dim); border-radius: 1px; }
+.layout-btn.is-on .layout-icon i { background: var(--accent); }
+.layout-icon-single { grid-template-columns: 1fr; }
+.layout-icon-2h { grid-template-columns: 1fr 1fr; }
+.layout-icon-2v { grid-template-rows: 1fr 1fr; }
+.layout-icon-3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; }
+.layout-icon-3 i:first-child { grid-row: 1 / 3; }
+.layout-icon-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+.panel-picker { display: flex; gap: 4px; }
+.panel-btn {
+  min-width: 30px; min-height: 30px; padding: 0 8px; font-weight: 700; font-size: 13px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+}
+.panel-btn.is-on { border-color: var(--accent); color: var(--accent); background: #16202c; }
+
+#build-note.is-stale, .stale-note { color: #ffd9a8; }
+
+/* The relay readouts. A failing connection is the one problem where the useful
+   text is long - a URL, a close code, an attempt count - so let it wrap and
+   scroll rather than truncating it into uselessness. */
+.relay-target { word-break: break-all; }
+.relay-log {
+  margin: 8px 0 0; padding: 8px 10px; max-height: 130px; overflow: auto;
+  background: #0b0f14; border: 1px solid var(--line); border-radius: 8px;
+  color: var(--dim); font-size: 11.5px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word; text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#update-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: #2a1e12; border-bottom: 1px solid #6b4a22; color: #ffd9a8;
+  padding: 10px 14px; font-size: 13px; line-height: 1.5;
+}
+#update-banner[hidden] { display: none; }
+#update-banner button { min-height: 32px; padding: 0 12px; }
+
+/* A relay that will not come up is a red problem, not an amber one: nothing
+   works until it is fixed, unlike a display that has simply not joined yet. */
+#relay-help {
+  background: #2a1216; border-bottom: 1px solid #6b2b2b; color: #ffc4c4;
+  padding: 10px 14px; font-size: 13px; line-height: 1.5;
+}
+#relay-help p { margin: 6px 0 0; }
+#relay-help .relay-log { color: #e5bdbd; border-color: #6b2b2b; }
+
+#link-help {
+  background: #2a1e12; border-bottom: 1px solid #6b4a22; color: #ffd9a8;
+  padding: 10px 14px; font-size: 13px; line-height: 1.5;
+}
+#link-help ul { margin: 6px 0 0; padding-left: 18px; }
+#link-help li { margin-bottom: 3px; }
+#link-help code { font-family: ui-monospace, Menlo, monospace; }
+#link-help.is-mismatch { background: #2a1216; border-bottom-color: #6b2b2b; color: #ffc4c4; }
 
 /* Preview rail */
 #preview-pane {
@@ -276,8 +408,54 @@ body.control.is-frozen { background: #171006; }
 .stack { display: flex; flex-direction: column; gap: 10px; }
 .inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .inline > .grow { flex: 1; min-width: 140px; }
+.spacer { flex: 1; min-width: 0; }
 .check { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 14px; }
 .check input { width: auto; min-height: auto; }
+
+/* Marp deck panel */
+.filebtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: var(--tap); padding: 0 16px; margin: 0;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius);
+  cursor: pointer; font-size: 15px; color: var(--ink);
+}
+.filebtn:active { transform: translateY(1px); }
+.deck-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+#deck-title { font-size: 19px; font-weight: 650; }
+#deck-count { font-size: 15px; color: var(--dim); white-space: nowrap; }
+#deck-theme.is-warning { color: var(--cue); }
+.deck-nav button { flex: 1; min-height: 58px; font-size: 17px; font-weight: 600; }
+
+/* Now / Next confidence monitor */
+.confidence-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.confidence-box { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.confidence-label {
+  font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+}
+.confidence-preview {
+  position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius);
+  overflow: hidden; border: 2px solid var(--line); background: #101418;
+}
+#deck-now-preview { border-color: var(--accent); }
+#deck-now-preview .mirror-frame.laser-armed { cursor: crosshair; touch-action: none; }
+#deck-markup, #deck-laser { flex: 1; font-size: 13px; min-height: 38px; padding: 0 8px; }
+#deck-laser.is-on { background: var(--live); border-color: var(--live); color: #fff; }
+.laser-dot {
+  position: absolute; width: 22px; height: 22px; border-radius: 50%;
+  background: radial-gradient(circle, #ff4d4f 0%, rgba(255,77,79,.35) 60%, transparent 75%);
+  transform: translate(-50%, -50%); pointer-events: none; opacity: 0; z-index: 5;
+}
+.laser-dot.is-on { opacity: 1; }
+#deck-next-title { margin: 0; }
+.notes-head {
+  margin-top: 4px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+}
+.notes {
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; font-size: 17px; line-height: 1.55; white-space: pre-wrap;
+  min-height: 76px; color: var(--ink);
+}
+.notes.is-empty { color: var(--dim); font-style: italic; }
 
 #now-title { font-size: 19px; font-weight: 650; }
 #now-type { color: var(--dim); font-size: 13px; }
@@ -286,12 +464,50 @@ body.control.is-frozen { background: #171006; }
 input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .times { display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
 
-/* Ink pad */
+/* Ink pad.
+   #pad-viewport is the fixed window the user sees; #pad-frame is shaped (via
+   aspect-ratio, set from JS) to match the actual content - a deck slide's own
+   ratio, or the display's window shape for full-bleed content - so the WHOLE
+   pad is drawable surface, edge to edge, with no dead margin to draw into by
+   mistake. Zoom scales #pad-frame with a CSS transform only; the canvas's own
+   pixel grid never changes, so pointer capture (which reads the canvas's
+   on-screen, already-transformed box) stays correct at any zoom level. */
+#pad-viewport {
+  width: 100%; aspect-ratio: 16 / 9; overflow: hidden; position: relative;
+  background: #06090c; border: 1px solid var(--line); border-radius: var(--radius);
+}
+/* Sized and positioned from JS (fitFrame in control.js): CSS aspect-ratio
+   cannot win against the inset an absolutely-positioned element would
+   otherwise need, so the "contain"-style fit is computed in pixels instead. */
+#pad-frame {
+  position: absolute; transform-origin: 0 0; background: #101418;
+}
+/* The live slide/whiteboard/camera you are drawing on top of. Sits behind the
+   ink canvas (which is fully transparent outside your strokes) and can be
+   hidden without losing anything - it is a read-only mirror, never the
+   surface pointer events land on. */
+#pad-mirror {
+  position: absolute; inset: 0; pointer-events: none; overflow: hidden;
+  background: #101418;
+}
+#pad-mirror.is-hidden { display: none; }
 #pad {
-  width: 100%; aspect-ratio: 16 / 9; background: #101418;
-  border: 1px solid var(--line); border-radius: var(--radius);
+  position: absolute; inset: 0; width: 100%; height: 100%; background: transparent;
   touch-action: none; display: block;
 }
+/* A deck's real shape not being known yet (see deckAspectPending() in
+   control.js) blocks drawing rather than guessing - the mirror's own
+   "Loading deck..." status underneath is feedback enough for what is a
+   normally sub-second wait. */
+#pad.is-pending { pointer-events: none; opacity: .4; }
+#ink-zoom-level { min-width: 3em; text-align: center; color: var(--dim); }
+.pan-btn { width: 44px; padding: 0; }
+
+/* Shared by the Slides tab's Now/Next preview boxes. */
+.mirror-viewport {
+  position: relative; width: 100%; height: 100%; overflow: hidden; background: #101418;
+}
+.mirror-frame { position: absolute; background: #101418; }
 .swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; }
 .swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
 
@@ -335,6 +551,6 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
   #preview-stage { width: 132px; flex: none; }
   #preview-pane .meta { flex: 1; min-width: 0; }
   #take { min-height: 52px; width: 108px; flex: none; }
-  #swap, #clear-preview { display: none; }
+  #swap, #clear-preview, #preview-pane .hint { display: none; }
   .tiles { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
 }

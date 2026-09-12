@@ -1,0 +1,391 @@
+/* @theme psy415-dsu */
+@import "gaia";
+
+/*
+ * PSY 415 / Delta State University MARP theme
+ * White + Delta State green as the dominant visual language.
+ *
+ * Brand anchors:
+ *   DSU traditional green: #00753E
+ *   Homepage-style brighter green: #008542
+ *   DSU grey: #CBCBCB
+ *   Optional cool accent: #2596BE
+ */
+
+:root {
+  --dsu-green: #008542;
+  --dsu-green-brand: #00753E;
+  --dsu-green-dark: #005f31;
+  --dsu-green-deep: #004b27;
+  --dsu-green-soft: #eaf6ef;
+  --dsu-green-wash: #f5faf7;
+
+  --dsu-black: #111820;
+  --dsu-ink: #263238;
+  --dsu-muted: #66736d;
+  --dsu-grey: #CBCBCB;
+  --dsu-line: #dce7e1;
+
+  /* Keep a small trace of the former PSY 415 blue for charts or special accents. */
+  --psy-blue: #2596be;
+
+  --psy-alert: #fff4e5;
+  --psy-alert-border: #c96a16;
+}
+
+/* ---------- Core slide ---------- */
+
+section {
+  box-sizing: border-box;
+  justify-content: flex-start;
+  padding: 56px 68px 78px;
+
+  /*
+   * Deliberately system-font-first for reliable MARP PDF/PPTX export.
+   * If Montserrat is installed locally, move it to the front of this list.
+   */
+  font-family: "Helvetica Neue", Arial, "Segoe UI", sans-serif;
+  font-size: 28px;
+  line-height: 1.32;
+
+  color: var(--dsu-ink);
+  background: linear-gradient(135deg, #ffffff 0%, var(--dsu-green-wash) 100%);
+}
+
+/* Homepage-inspired green rule across the top. */
+section::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 8px;
+  background: var(--dsu-green);
+}
+
+/* ---------- Typography ---------- */
+
+h1 {
+  position: relative;
+  margin: 0 0 22px;
+  padding: 0;
+  color: var(--dsu-green-brand);
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+}
+
+h1::after {
+  content: "";
+  display: block;
+  width: 92px;
+  height: 5px;
+  margin-top: 11px;
+  border-radius: 3px;
+  background: var(--dsu-green);
+}
+
+h2 {
+  margin: 10px 0 12px;
+  color: var(--dsu-green-dark);
+  font-size: 34px;
+  font-weight: 650;
+  line-height: 1.14;
+}
+
+h3 {
+  margin: 8px 0;
+  color: var(--dsu-green-brand);
+  font-size: 27px;
+  font-weight: 650;
+  line-height: 1.18;
+}
+
+p {
+  margin: 0.65em 0 0;
+}
+
+strong {
+  color: var(--dsu-green-dark);
+  font-weight: 700;
+}
+
+/* Strong text inside headings should use the heading color */
+section h1 strong,
+section h2 strong,
+section h3 strong {
+  color: inherit;
+}
+
+a {
+  color: var(--dsu-green-brand);
+  text-decoration-color: rgba(0, 117, 62, 0.45);
+}
+
+/* ---------- Lists ---------- */
+
+ul,
+ol {
+  margin: 0.55em 0 0;
+}
+
+li {
+  margin-bottom: 0.3em;
+}
+
+ul li::marker,
+ol li::marker {
+  color: var(--dsu-green);
+}
+
+/* ---------- Quotes ---------- */
+
+blockquote {
+  margin: 20px 0;
+  padding: 14px 22px;
+  border-left: 6px solid var(--dsu-green);
+  background: var(--dsu-green-soft);
+  font-style: italic;
+}
+
+blockquote::before,
+blockquote::after {
+  content: none;
+}
+
+/* ---------- Tables ---------- */
+
+table {
+  width: 100%;
+  margin-top: 14px;
+  border-collapse: collapse;
+  font-size: 22px;
+  line-height: 1.18;
+}
+
+th {
+  padding: 8px 10px;
+  color: white;
+  background: var(--dsu-green-brand);
+}
+
+td {
+  padding: 7px 10px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--dsu-line);
+}
+
+tr:nth-child(even) {
+  background: var(--dsu-green-soft);
+}
+
+/* ---------- Code ---------- */
+
+pre {
+  margin: 16px 0;
+  padding: 16px 20px;
+  border-left: 5px solid var(--dsu-green);
+  background: #f4f7f5;
+  font-size: 21px;
+  line-height: 1.2;
+}
+
+code {
+  font-family: Consolas, "SFMono-Regular", "Courier New", monospace;
+}
+
+pre code {
+  color: var(--dsu-ink);
+  background: transparent;
+}
+
+/* ---------- Footer ---------- */
+
+footer {
+  position: absolute;
+  left: 68px;
+  bottom: 22px;
+  color: var(--dsu-muted);
+  font-size: 16px;
+}
+
+/* ---------- Lead / section-divider slides ---------- */
+
+section.lead,
+section.section-title {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  color: white;
+  background:
+    linear-gradient(
+      135deg,
+      var(--dsu-green-deep) 0%,
+      var(--dsu-green-brand) 50%,
+      var(--dsu-green) 100%
+    );
+}
+
+section.lead::before,
+section.section-title::before {
+  display: none;
+}
+
+/* A subtle white "navigation bar" echo from the DSU homepage. */
+section.lead::after,
+section.section-title::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+section.lead h1,
+section.section-title h1 {
+  max-width: 980px;
+  color: white;
+  font-size: 68px;
+  line-height: 1.03;
+  letter-spacing: -0.025em;
+}
+
+section.lead h1::after,
+section.section-title h1::after {
+  width: 124px;
+  height: 5px;
+  margin-top: 18px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+section.lead h2,
+section.lead h3,
+section.lead p,
+section.lead strong,
+section.section-title h2,
+section.section-title h3,
+section.section-title p,
+section.section-title strong {
+  color: #eef8f2;
+}
+
+section.lead footer,
+section.section-title footer {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* ---------- Big idea / quote slides ---------- */
+
+section.big-idea,
+section.quote-slide {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+section.big-idea p,
+section.quote-slide blockquote {
+  color: var(--dsu-green-dark);
+  font-size: 38px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+/* ---------- Alternate backgrounds ---------- */
+
+section.soft {
+  background: var(--dsu-green-soft);
+}
+
+/*
+ * Optional dark-green slide:
+ * <!-- _class: green -->
+ */
+section.green {
+  color: white;
+  background: var(--dsu-green-brand);
+}
+
+section.green::before {
+  background: white;
+}
+
+section.green h1,
+section.green h2,
+section.green h3,
+section.green strong,
+section.green a {
+  color: white;
+}
+
+section.green h1::after {
+  background: white;
+}
+
+section.green footer {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* ---------- Callouts ---------- */
+
+.highlight,
+.callout,
+.accent-box,
+.alert-box {
+  margin: 18px 0;
+  padding: 15px 20px;
+  border-left: 6px solid var(--dsu-green);
+  border-radius: 0 8px 8px 0;
+  background: var(--dsu-green-soft);
+}
+
+/* Use the old PSY blue only when you intentionally want contrast. */
+.accent-box.blue {
+  border-left-color: var(--psy-blue);
+  background: #edf8fc;
+}
+
+.alert-box {
+  border-left-color: var(--psy-alert-border);
+  background: var(--psy-alert);
+}
+
+/* ---------- Layout helpers ---------- */
+
+.columns,
+.grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 36px;
+  align-items: start;
+}
+
+.columns > *,
+.grid-2 > * {
+  min-width: 0;
+}
+
+/* ---------- Compact slides ---------- */
+
+section.compact {
+  font-size: 24px;
+  line-height: 1.24;
+}
+
+section.compact h1 {
+  margin-bottom: 16px;
+  font-size: 44px;
+}
+
+section.compact h2 {
+  font-size: 31px;
+}
+
+section.compact li {
+  margin-bottom: 0.18em;
+}
+
+section.compact table {
+  font-size: 21px;
+}

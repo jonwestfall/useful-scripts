@@ -1,0 +1,12 @@
+{
+  "name": "podium-vendor-build",
+  "private": true,
+  "description": "Rebuilds the vendored Marp browser bundle",
+  "scripts": {
+    "build": "node build-marp.mjs"
+  },
+  "devDependencies": {
+    "@marp-team/marp-core": "4.4.0",
+    "esbuild": "^0.25.0"
+  }
+}

@@ -1,67 +1,85 @@
 {
-  "_comment": "Your lecture library. Edit this file, commit, and it appears on the iPad. Every entry needs a type and a title; the rest depends on the type. Paths are relative to the podium/ directory, so podium/content/slides/week1/index.html is referenced as content/slides/week1/index.html.",
+  "_comment": "Your lecture library. Edit this file, commit, and it appears on the iPad. Every entry needs a type and a title; the rest depends on the type. Paths are relative to the podium/ directory, so podium/content/slides/week1/index.html is referenced as content/slides/week1/index.html. The 'Working examples' group below actually plays, out of the box, with files that ship in this repo - open one to see what a real entry looks like. The 'Template - point these at your files' group are illustrations of the format for content that has to be yours (a PDF, a photo, a video); their src paths do not exist yet and picking one will show an error until you replace it or delete the entry.",
   "items": [
     {
-      "group": "Week 1",
+      "group": "Working examples",
+      "title": "Day 6 — Weighing the Evidence",
+      "type": "deck",
+      "src": "content/decks/day06-evidence-weighting.md"
+    },
+    {
+      "group": "Working examples",
+      "title": "Podium deck features (example)",
+      "type": "deck",
+      "src": "content/decks/example-notes.md"
+    },
+    {
+      "group": "Working examples",
+      "title": "Progressive builds (example)",
+      "type": "deck",
+      "src": "content/decks/example-builds.md"
+    },
+    {
+      "group": "Working examples",
       "title": "Opening slide",
       "type": "text",
       "body": "**PSY 3010**\nWorking Memory",
       "size": "l"
     },
     {
-      "group": "Week 1",
+      "group": "Working examples",
       "title": "Course site",
       "type": "qr",
       "data": "https://example.edu/psy3010",
       "caption": "Slides and readings"
     },
     {
-      "group": "Week 1",
-      "title": "Lecture deck",
-      "type": "slides",
-      "src": "content/slides/week1/index.html"
-    },
-    {
-      "group": "Week 1",
-      "title": "Chapter 4 handout",
-      "type": "pdf",
-      "src": "content/handouts/ch4.pdf",
-      "page": 1
-    },
-    {
-      "group": "Demos",
-      "title": "Stroop demo",
-      "type": "image",
-      "src": "content/img/stroop.png",
-      "fit": "contain"
-    },
-    {
-      "group": "Demos",
+      "group": "Working examples",
       "title": "Split-brain interview",
       "type": "youtube",
       "videoId": "ZMLzP1VCANo",
       "startAt": 0
     },
     {
-      "group": "Demos",
-      "title": "Reaction-time clip",
-      "type": "video",
-      "src": "content/video/reaction.mp4"
-    },
-    {
-      "group": "Between classes",
+      "group": "Working examples",
       "title": "Waiting music",
       "type": "audio",
-      "src": "content/audio/ambient.mp3",
-      "artist": "Public-domain ambient",
+      "src": "content/audio/waiting-music.wav",
+      "artist": "Podium (synthesized placeholder - swap for your own)",
       "loop": true
     },
     {
-      "group": "Between classes",
+      "group": "Working examples",
       "title": "Back in 5",
       "type": "text",
       "body": "Back in 5 minutes",
       "size": "xl"
+    },
+    {
+      "group": "Template - point these at your files",
+      "title": "Lecture deck (HTML slides)",
+      "type": "slides",
+      "src": "content/slides/week1/index.html"
+    },
+    {
+      "group": "Template - point these at your files",
+      "title": "Chapter 4 handout (PDF)",
+      "type": "pdf",
+      "src": "content/handouts/ch4.pdf",
+      "page": 1
+    },
+    {
+      "group": "Template - point these at your files",
+      "title": "Stroop demo (image)",
+      "type": "image",
+      "src": "content/img/stroop.png",
+      "fit": "contain"
+    },
+    {
+      "group": "Template - point these at your files",
+      "title": "Reaction-time clip (video)",
+      "type": "video",
+      "src": "content/video/reaction.mp4"
     }
   ]
 }

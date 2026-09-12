@@ -13,6 +13,7 @@
 <canvas id="ink"></canvas>
 <div id="blank"></div>
 <div id="overlay"></div>
+<div id="laser"></div>
 <div id="hud" data-status="connecting">Not connected</div>
 
 <!-- Standby: shown when nothing is on screen and no controller is connected -->
@@ -47,8 +48,13 @@
     <button id="arm-button" class="big-button">Go live</button>
     <div class="row" style="margin-top:14px">
       <button id="pair-button">Pair a device</button>
+      <button id="arm-settings">Settings</button>
     </div>
-    <p class="hint">Room <span id="room-name" class="mono"></span></p>
+    <p class="hint">Room <span id="room-name" class="mono"></span> · code <span id="arm-code" class="mono">····</span></p>
+    <p class="hint" id="arm-status">Connecting…</p>
+    <p class="hint mono relay-target"></p>
+    <p class="hint stale-note" id="arm-build" hidden></p>
+    <pre class="relay-log" hidden></pre>
   </div>
 </div>
 
@@ -91,8 +97,28 @@
         <input id="d-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
       </div>
       <p class="error" id="setup-error"></p>
-      <button type="submit" class="big-button">Save</button>
+      <div class="row">
+        <button type="submit" class="big-button">Save</button>
+        <button type="button" id="setup-close" hidden>Close</button>
+      </div>
     </form>
+    <hr style="border:0;border-top:1px solid var(--line);margin:22px 0 16px">
+    <button id="reset-device" class="danger-outline" style="width:100%">Clear settings &amp; reload</button>
+    <p class="hint" id="reset-note">
+      Forgets the room, passphrase and everything else Podium saved in this browser,
+      then reloads as if this machine had never seen it. Affects this device only.
+    </p>
+    <p class="hint">
+      <b>Relay</b> <span class="mono relay-target"></span>
+      — what this display dials, and what happened when it last tried:
+    </p>
+    <pre class="relay-log" hidden></pre>
+    <p class="hint" id="build-note">
+      <b>Build <span id="build-number">–</span></b>
+      <span id="build-check"></span>
+      Check this matches the build your controller shows. If they differ, the older
+      device is running a cached copy and needs reloading.
+    </p>
   </div>
 </div>
 

@@ -83,3 +83,101 @@ export function guessItemFromUrl(raw) {
   if (/\.pdf$/.test(lower)) return { type: 'pdf', src: url, page: 1, title: 'PDF' };
   return { type: 'web', src: url, title: url.replace(/^https?:\/\//, '').slice(0, 40) };
 }
+
+/**
+ * Turn a button into a two-step destructive action. A plain confirm() dialog is
+ * awkward on a fullscreen kiosk display and on an iPad home-screen app, and a
+ * single tap is too easy to hit by accident five minutes before class.
+ */
+export function wireDangerButton(button, label, action, { armedLabel = 'Tap again to erase', window: ms = 5000 } = {}) {
+  let armed = false;
+  let timer = null;
+
+  const disarm = () => {
+    armed = false;
+    clearTimeout(timer);
+    button.textContent = label;
+    button.classList.remove('is-danger');
+  };
+
+  button.textContent = label;
+  button.addEventListener('click', async () => {
+    if (!armed) {
+      armed = true;
+      button.textContent = armedLabel;
+      button.classList.add('is-danger');
+      timer = setTimeout(disarm, ms);
+      return;
+    }
+    clearTimeout(timer);
+    button.disabled = true;
+    button.textContent = 'Clearing…';
+    try {
+      await action();
+    } catch {
+      button.disabled = false;
+      disarm();
+    }
+  });
+
+  return { disarm };
+}
+
+// What build the server is handing out RIGHT NOW, or null if it cannot be
+// read. Each page compares this against the BUILD compiled into the copy it
+// is actually running: they differ exactly when the browser served this tab
+// something out of a cache the deploy has since replaced. Fetched with
+// no-store so the check itself cannot be answered from that same cache, and
+// pointed at protocol.js because that is where BUILD lives - one source of
+// truth, no second file to drift out of step with it.
+export async function servedBuild() {
+  try {
+    const res = await fetch('assets/js/protocol.js', { cache: 'no-store' });
+    if (!res.ok) return null;
+    const match = (await res.text()).match(/BUILD\s*=\s*(\d+)/);
+    return match ? Number(match[1]) : null;
+  } catch {
+    // Offline, or blocked: there is nothing to compare against, which is not
+    // the same as being up to date. Say nothing rather than guess.
+    return null;
+  }
+}
+
+/**
+ * A rolling record of what the relay did, rendered into every `.relay-log` on
+ * the page.
+ *
+ * "Lost the relay - retrying" on its own is unactionable: it names no URL, no
+ * close code and no attempt count, and it overwrites the first attempt - which
+ * is the informative one - with the twentieth. Both pages need this, and a
+ * diagnostic that exists twice is a diagnostic that rots in one of the copies.
+ */
+export function createRelayLog(limit = 8) {
+  const entries = [];
+
+  const render = () => {
+    const text = entries
+      .map((e) => `${e.at} · ${e.status}${e.detail ? ` — ${e.detail}` : ''}${e.n > 1 ? ` (×${e.n})` : ''}`)
+      .join('\n');
+    $$('.relay-log').forEach((box) => { box.textContent = text; box.hidden = !text; });
+  };
+
+  return {
+    entries,
+    render,
+    push(status, detail = '') {
+      const at = new Date().toLocaleTimeString();
+      const last = entries[entries.length - 1];
+      // A retry loop repeats the same line forever; collapse it into a count so
+      // the first attempt, and anything that happened before it, stays visible.
+      if (last && last.status === status && last.detail === detail) {
+        last.n++;
+        last.at = at;
+      } else {
+        entries.push({ at, status, detail, n: 1 });
+        if (entries.length > limit) entries.shift();
+      }
+      render();
+    },
+  };
+}

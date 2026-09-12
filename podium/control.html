@@ -19,8 +19,57 @@
     <span id="display-state">No display connected</span>
     <span id="peer-count"></span>
     <span class="spacer"></span>
+    <!-- Splitting the screen: pick how many panels and how they're arranged,
+         then which one Library taps, deck nav, and Ink currently address.
+         Lives in the topbar rather than a row of its own so it costs no
+         extra height in the (default, common) single-panel case. -->
+    <div class="layout-picker" role="group" aria-label="Screen layout">
+      <button class="layout-btn is-on" data-layout="single" type="button" title="Full screen">
+        <span class="layout-icon layout-icon-single"><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="2h" type="button" title="Side by side">
+        <span class="layout-icon layout-icon-2h"><i></i><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="2v" type="button" title="Top and bottom">
+        <span class="layout-icon layout-icon-2v"><i></i><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="3" type="button" title="One large, two small">
+        <span class="layout-icon layout-icon-3"><i></i><i></i><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="4" type="button" title="Four panels">
+        <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
+      </button>
+    </div>
+    <div id="panel-picker" class="panel-picker" hidden></div>
     <span class="room-info">room <b id="room-name" class="mono"></b> · <b id="fingerprint" class="mono">····</b></span>
     <button id="open-settings" type="button">Settings</button>
+  </div>
+
+  <!-- Shown only when the copy running in this tab is older than the copy the
+       server is handing out - i.e. this page came out of a cache the deploy
+       has already replaced. -->
+  <div id="update-banner" hidden>
+    <b>This page is running an old copy.</b>
+    <span id="update-detail"></span>
+    <button id="update-reload" type="button">Reload now</button>
+  </div>
+
+  <div id="relay-help" hidden>
+    <b>The relay is not answering.</b>
+    <span id="relay-help-why"></span>
+    <p>Dialling <span class="mono relay-target"></span></p>
+    <pre class="relay-log" hidden></pre>
+  </div>
+
+  <div id="link-help" hidden>
+    <b>No display has answered.</b>
+    <ul>
+      <li>Is <code>display.html</code> open on the classroom PC? If it is showing a <b>Go live</b> button, click it.</li>
+      <li>Both devices need the same connection type, the same room and the same passphrase.
+          This one is room <b id="help-room" class="mono"></b>, code <b id="help-code" class="mono"></b> —
+          the display shows its code on the standby screen. They must match.</li>
+      <li>Easiest fix: press <b>Pair a device</b> on the display and scan the code again.</li>
+    </ul>
   </div>
 
   <div class="workspace">
@@ -32,14 +81,21 @@
       </div>
       <button id="take" type="button" disabled>TAKE</button>
       <div class="row">
-        <button id="swap" type="button">Swap</button>
-        <button id="clear-preview" type="button">Clear cue</button>
+        <button id="swap" type="button" disabled>Swap</button>
+        <button id="clear-preview" type="button" disabled>Clear cue</button>
       </div>
+      <p class="hint">
+        <b>Take</b> puts the cued item on screen and unfreezes.
+        <b>Swap</b> trades places without unfreezing, so you can peek at what
+        is cued without committing to it. <b>Clear cue</b> discards the cued
+        item and leaves the screen exactly as it is.
+      </p>
     </aside>
 
     <main class="main">
       <nav class="tabs">
         <button class="tab is-on" data-tab="library" type="button">Library</button>
+        <button class="tab" data-tab="slides" type="button">Slides</button>
         <button class="tab" data-tab="now" type="button">Now</button>
         <button class="tab" data-tab="ink" type="button">Ink</button>
         <button class="tab" data-tab="say" type="button">Say</button>
@@ -56,8 +112,62 @@
             <button type="submit">Show</button>
             <label class="check"><input id="url-save" type="checkbox"> Save</label>
           </form>
+          <div class="inline">
+            <label class="filebtn" for="deck-file">Open a Marp deck…</label>
+            <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
+            <span id="deck-file-note" class="hint"></span>
+          </div>
           <input id="lib-filter" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
           <div id="library"></div>
+        </section>
+
+        <!-- Marp deck: notes and slide navigation -->
+        <section class="panel" data-panel="slides" hidden>
+          <div id="deck-none" class="hint">No deck on screen. Open one from the Library tab, or upload a <code>.md</code> file.</div>
+          <div id="deck-live" hidden>
+            <div class="deck-head">
+              <div>
+                <div id="deck-title"></div>
+                <div id="deck-theme" class="hint"></div>
+              </div>
+              <div id="deck-count" class="mono"></div>
+            </div>
+
+            <div class="confidence-row">
+              <div class="confidence-box">
+                <div class="confidence-label">Now</div>
+                <div id="deck-now-preview" class="confidence-preview"></div>
+                <div class="inline">
+                  <button id="deck-markup" type="button">✎ Markup</button>
+                  <button id="deck-laser" type="button">🔴 Laser</button>
+                </div>
+              </div>
+              <div class="confidence-box">
+                <div class="confidence-label">Next</div>
+                <div id="deck-next-preview" class="confidence-preview"></div>
+                <div id="deck-next-title" class="hint"></div>
+              </div>
+            </div>
+            <p class="hint">
+              <b>Markup</b> jumps to the Ink tab, already lined up on this slide.
+              <b>Laser</b> turns the Now box into a pointer: drag on it and a dot follows your
+              finger on the projector, gone the moment you lift it - nothing is saved.
+            </p>
+
+            <div class="inline deck-nav">
+              <button id="deck-prev" type="button">◀ Previous</button>
+              <button id="deck-next" type="button">Next ▶</button>
+            </div>
+            <div class="notes-head">Presenter notes</div>
+            <div id="deck-notes" class="notes"></div>
+            <div class="notes-head">Jump to a slide</div>
+            <div id="deck-grid"></div>
+            <div class="notes-head">Export</div>
+            <div class="inline">
+              <button id="deck-export" type="button" disabled>Export marked-up slides (.zip)</button>
+            </div>
+            <p class="hint" id="deck-export-status"></p>
+          </div>
         </section>
 
         <!-- Now playing -->
@@ -92,7 +202,26 @@
 
         <!-- Ink -->
         <section class="panel" data-panel="ink" hidden>
-          <canvas id="pad"></canvas>
+          <div id="pad-viewport">
+            <div id="pad-frame">
+              <div id="pad-mirror"></div>
+              <canvas id="pad"></canvas>
+            </div>
+          </div>
+          <div class="inline">
+            <button id="ink-zoom-out" type="button" title="Zoom out">−</button>
+            <span id="ink-zoom-level" class="mono">1×</span>
+            <button id="ink-zoom-in" type="button" title="Zoom in">+</button>
+            <button id="ink-zoom-reset" type="button">Reset zoom</button>
+            <button id="ink-toggle-mirror" type="button" class="is-on">Showing slide</button>
+          </div>
+          <div class="inline">
+            <span class="hint" style="margin:0">Pan (once zoomed):</span>
+            <button id="pan-left" class="pan-btn" type="button" disabled title="Pan left">◀</button>
+            <button id="pan-up" class="pan-btn" type="button" disabled title="Pan up">▲</button>
+            <button id="pan-down" class="pan-btn" type="button" disabled title="Pan down">▼</button>
+            <button id="pan-right" class="pan-btn" type="button" disabled title="Pan right">▶</button>
+          </div>
           <div class="inline">
             <button class="swatch is-on" type="button" data-color="#ffd166" style="background:#ffd166"></button>
             <button class="swatch" type="button" data-color="#ff4d4f" style="background:#ff4d4f"></button>
@@ -107,7 +236,13 @@
             <input id="ink-width" class="grow" type="range" min="2" max="24" value="6">
             <label class="check"><input id="ink-pen-only" type="checkbox"> Apple Pencil only</label>
           </div>
-          <p class="hint">Ink draws over whatever is on screen, so you can annotate slides. Pick “Whiteboard” in the library for a blank surface.</p>
+          <p class="hint">
+            Ink draws over whatever is on screen and is shaped to match it, so the pad above
+            <i>is</i> the slide, edge to edge. Pick “Whiteboard” in the library for a blank
+            surface. Each slide of a deck keeps its own drawing - flip away and back and it is
+            still there; <b>Clear</b> only erases what you are looking at right now. Zoom in
+            and use the arrows to pan for more precise lines.
+          </p>
         </section>
 
         <!-- Say: big text, lower third, QR -->
@@ -225,8 +360,22 @@
         <input id="c-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
       </div>
       <p class="error" id="setup-error"></p>
-      <button type="submit" class="big-button">Save</button>
+      <div class="row">
+        <button type="submit" class="big-button">Save</button>
+        <button type="button" id="setup-close" hidden>Close</button>
+      </div>
     </form>
+    <p class="hint">
+      <b>Relay</b> <span class="mono relay-target"></span>
+      — what this device dials, and what happened when it last tried:
+    </p>
+    <pre class="relay-log" hidden></pre>
+    <hr style="border:0;border-top:1px solid var(--line);margin:22px 0 16px">
+    <button id="reset-device" class="danger-outline" style="width:100%">Clear settings &amp; reload</button>
+    <p class="hint" id="reset-note">
+      Forgets the room, passphrase and any decks or links you saved on this device,
+      then reloads as if this iPad had never seen Podium. Affects this device only.
+    </p>
   </div>
 </div>
 

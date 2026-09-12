@@ -74,7 +74,8 @@ python redactor_gui_win.py
 The PC opens one fullscreen browser tab and is never touched again; everything on the
 projector is chosen from a tablet or phone, from anywhere in the room.
 
-- Show slides, PDFs, images, video, YouTube, music, a QR code, a countdown, or your phone's camera
+- Present **Marp decks written in Markdown**, with presenter notes on the iPad, your own CSS themes, and math via KaTeX
+- Show PDFs, images, video, YouTube, music, a QR code, a countdown, or your phone's camera
 - **Freeze** holds the projector while you line up the next thing in the cue — the class sees none of it — then **TAKE** cuts to it
 - Annotate live over whatever is on screen with an Apple Pencil
 - iPad and iPhone can both be connected at once and stay in sync

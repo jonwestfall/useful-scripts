@@ -1,0 +1,6 @@
+{
+  "_comment": "Custom Marp themes. Drop a .css file in this folder, add its filename here, commit, and it becomes available to any deck whose front matter names it with `theme:`. The name Marp uses is the one in the file's own `/* @theme ... */` header, not the filename. Built-in Marp themes (default, gaia, uncover) are always available and can be @import-ed from your own.",
+  "themes": [
+    "psy415-dsu.css"
+  ]
+}
