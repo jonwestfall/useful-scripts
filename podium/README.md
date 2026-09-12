@@ -369,6 +369,94 @@ just be noise, and there is no cue step on those to decide which one meant to be
 heard. **Export marked-up slides** (Slides tab) only ever exports whichever deck the
 focused panel is currently showing.
 
+## Planning a lecture in your office
+
+`plan.html` is the third page, and the only one you use when there is no class in
+front of you. The controller is built for one-handed use at a lectern — big targets,
+nothing destructive within easy reach, no typing — which makes it a poor place to
+*build* a lecture. So planning lives on its own page: type, upload, drag things into
+order, and check each one against the projector's own renderer before anyone sees it.
+
+The workflow it is for:
+
+1. **In your office**, open **Planning**. Build the running order: upload the deck,
+   add the photo, write the "Back in 5" sign, save the countdown you always forget to
+   set, write yourself a note on the item you always forget to mention.
+2. **Save a plan file.** One JSON file, self-contained.
+3. **Get it to the iPad** — AirDrop, iCloud Drive, email it to yourself.
+4. **Before class**, in the controller: **Library → Load a lecture plan…**. The
+   running order appears at the top of the Library, numbered, in order, with your
+   notes on the tiles and your timers on the Timer tab.
+
+Nothing else about the controller changes. It is still the same tabs, the same
+freeze-and-take, the same everything — the plan only decides what is *in* it.
+
+### Why a file, and not a login
+
+The Saved library has always lived in `localStorage`, which never leaves the device
+that wrote it: a lecture built on a desktop would be invisible on the tablet you
+actually teach from. Syncing it would mean a server, an account and a password —
+three things Podium deliberately does not have, on a set of pages you can host by
+copying a folder.
+
+So a plan is a file, and it is **self-contained**: an uploaded deck travels as its
+markdown, an uploaded photo as a data URL. Nothing in a plan points at a file that
+has to be deployed before the plan will work, which is what makes "AirDrop it and
+open it" the whole of step 3. Everything is reconstructed on load: an uploaded deck
+is registered under the hash of its markdown, exactly as a deck you dropped on the
+iPad would be, so the projector asks for it over the encrypted bus the same way.
+
+Two consequences worth knowing:
+
+- **Photos are resized on the way in.** Every relay caps a message — the self-hosted
+  one at 256 KB, and the envelope is the JSON encrypted and then base64'd, so it
+  lands about a third larger than it went in. A phone photo is 3–6 MB and the
+  projector is 1920×1080, so a photo is re-encoded down a ladder of sizes and
+  qualities until it fits (about 120 KB). What you approve in the office is then
+  exactly what the class sees. For anything bigger — a video especially — put the
+  file on your server and give the plan a path instead.
+- **An item carries a reference, not the bytes.** `asset:a1b2c3`, resolved only at
+  the point of handing the item to a renderer. The item itself lives in the state the
+  projector rebroadcasts twice a second, and is what ink surfaces are keyed by; a
+  data URL inline would bloat every heartbeat and every saved stroke.
+
+### The rest of what the page does
+
+- **Lectures** are stored in IndexedDB on that machine, not `localStorage` — a plan
+  carries photos, and losing an hour of prep to a full 5 MB string bucket is not a
+  trade worth offering. Autosaved on a debounce; the header says which of saving,
+  saved, or *not* saved it is.
+- **Drag to reorder**, or use the ↑/↓ buttons, which is what a keyboard and a
+  touchscreen get.
+- **The preview is the real thing.** Same renderer files the projector runs, in a
+  16:9 box. If a web page refuses to be framed, or a theme fails to load, it fails
+  here — in your office, with time to fix it.
+- **A plan sets the starting screen layout**, so a lecture that wants slides beside a
+  countdown opens that way. Applied when you deliberately load the plan, never when
+  the tablet merely wakes up and restores it.
+- **Timers you save replace the iPad's 1/2/5/10/15 buttons**, labelled: *Group work ·
+  8m*.
+- **Opening a plan file** on this page loads it for editing, which is how you move a
+  lecture between machines or start next week from last week's.
+
+A plan is a file that arrived from somewhere else, so loading one rebuilds it field
+by field rather than trusting it: fields belonging to some other type are dropped,
+out-of-range values fall back to their defaults, an item pointing at a file the plan
+does not carry is named rather than left to fail on the wall, and a `src` with a
+scheme that is not `http` or `https` is stripped — `javascript:` has no business
+reaching a screen nobody is standing in front of. A plan from a *newer* build refuses
+outright rather than silently dropping what it does not understand. A plan with three
+bad rows and forty good ones loads the forty and tells you what it dropped: it is ten
+minutes before class.
+
+### It has no password of its own
+
+The page assumes whatever you already put in front of the site — HTTP basic auth in
+nginx, say — is the thing protecting it. It holds no credentials and makes no
+security claim: anything stored on that machine is readable by anyone who can open
+that browser, and a plan file is plain JSON. Put it behind the same auth as the rest
+of Podium and treat the file like any other lecture prep.
+
 ## Your lecture library
 
 Edit `content/manifest.json`, commit, and the tiles appear on the iPad. Files you put
@@ -627,6 +715,7 @@ passphrase, which the pairing QR handles for you.
 
 ```bash
 node podium/test/protocol.test.mjs          # the state machine, no browser needed
+node podium/test/plan.test.mjs              # the lecture-plan document, likewise
 cd podium/server && npm install             # once
 node podium/test/e2e.mjs                    # needs: npm i playwright
 ```
@@ -644,19 +733,24 @@ connection (Chromium's synthetic camera, no real hardware or permission prompt
 needed), export produces a real, valid-PNG-containing zip, waiting music actually
 plays, a countdown ticks on the display, a dead relay explains which URL it could
 not open (and neither page dies at its top-level `await` when the failure happens
-before a socket exists), and a controller with the wrong passphrase cannot touch the
-screen. 175 checks.
+before a socket exists), a lecture planned in the office reaches the projector intact
+— photo and slides that exist nowhere on the server included — after a round trip
+through a plan file and a second device, and a controller with the wrong passphrase
+cannot touch the screen. 198 checks.
 
 ## Layout
 
 ```
 podium/
-  display.html  control.html  index.html
+  display.html  control.html  plan.html  index.html
   config.json                     optional shared defaults
   assets/
     css/podium.css
     js/
       display.js  control.js      the two runtimes
+      plan.js                     the office page: build a lecture, write a plan file
+      planfile.js                 what a lecture plan is, and how to read an untrusted one
+      store.js                    IndexedDB for plans, plus photo resizing and file I/O
       protocol.js                 state shape + the rules for changing it
       renderers.js                one factory per content type
       bus.js                      encryption, identity, presence, reconnect
@@ -672,4 +766,9 @@ podium/
   server/                         the self-hosted relay
   vendor-build/                   rebuilds the Marp bundle
   test/
+```
+
+Three pages, three jobs. `display.html` is the projector. `control.html` is the iPad
+in your hand during class. `plan.html` is the desk: it never connects to anything,
+and writes a file the controller reads.
 ```

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Podium — Planning</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="assets/css/podium.css">
+</head>
+<body class="plan">
+
+<div class="topbar">
+  <span class="brand">PODIUM</span>
+  <span class="tag">Planning</span>
+  <input id="plan-title" class="title-input" type="text" placeholder="Lecture title" aria-label="Lecture title">
+  <input id="plan-course" class="course-input" type="text" placeholder="Course" aria-label="Course">
+  <span class="spacer"></span>
+  <span id="save-state" class="hint"></span>
+  <a href="control.html" class="linkish">Controller</a>
+  <a href="display.html" class="linkish">Display</a>
+</div>
+
+<div id="plan-warn" hidden></div>
+
+<div class="plan-grid">
+
+  <!-- Plans on this machine -->
+  <aside class="plan-col" id="col-plans">
+    <h2>Lectures</h2>
+    <div id="plan-list"></div>
+    <div class="col-actions">
+      <button id="plan-new" type="button" class="big-button">New lecture</button>
+      <button id="plan-import" type="button">Open a plan file…</button>
+      <input id="plan-import-file" type="file" accept=".json,application/json" hidden>
+    </div>
+    <hr>
+    <h3>This lecture</h3>
+    <div class="col-actions">
+      <button id="plan-export" type="button" class="big-button">Save a plan file for the iPad</button>
+      <p class="hint" id="plan-size"></p>
+      <button id="plan-duplicate" type="button">Duplicate</button>
+      <button id="plan-delete" type="button" class="danger-outline">Delete this lecture</button>
+    </div>
+    <hr>
+    <p class="hint">
+      Plans live in this browser on this machine. To teach from one, save a plan file and
+      open it on the iPad: <b>Library → Load a lecture plan</b> in the controller.
+    </p>
+    <p class="hint" id="plan-build"></p>
+  </aside>
+
+  <!-- The running order -->
+  <section class="plan-col" id="col-order">
+    <h2>Running order</h2>
+    <p class="hint">Drag to reorder. This is the order the Library shows on the iPad, numbered.</p>
+    <ol id="order"></ol>
+    <p class="empty" id="order-empty">Nothing in this lecture yet. Add the first thing below.</p>
+
+    <h3>Add</h3>
+    <div id="type-picker" class="type-picker"></div>
+
+    <h3>Timers</h3>
+    <p class="hint">Saved countdowns. These replace the iPad's 1/2/5/10/15 buttons.</p>
+    <ul id="timers"></ul>
+    <div class="inline">
+      <input id="timer-new-label" class="grow" type="text" placeholder="Label, e.g. Group work">
+      <input id="timer-new-mins" type="number" min="1" max="180" value="5" aria-label="Minutes">
+      <button id="timer-add" type="button">Add timer</button>
+    </div>
+
+    <h3>Screen layout to start in</h3>
+    <div class="layout-picker" id="plan-layout" role="group" aria-label="Screen layout">
+      <button class="layout-btn is-on" data-layout="single" type="button" title="Full screen">
+        <span class="layout-icon layout-icon-single"><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="2h" type="button" title="Side by side">
+        <span class="layout-icon layout-icon-2h"><i></i><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="2v" type="button" title="Stacked">
+        <span class="layout-icon layout-icon-2v"><i></i><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="3" type="button" title="One large, two small">
+        <span class="layout-icon layout-icon-3"><i></i><i></i><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="4" type="button" title="Four tiles">
+        <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
+      </button>
+    </div>
+
+    <h3>Notes to yourself</h3>
+    <textarea id="plan-notes" rows="4" placeholder="Anything you want to remember about this lecture."></textarea>
+  </section>
+
+  <!-- The selected item -->
+  <section class="plan-col" id="col-item">
+    <h2 id="item-heading">Nothing selected</h2>
+    <p class="hint" id="item-blurb">Pick something from the running order, or add one.</p>
+    <div id="item-fields"></div>
+
+    <div id="item-preview-wrap" hidden>
+      <h3>What the class sees</h3>
+      <div id="item-preview-viewport"><div id="item-preview"></div></div>
+      <div class="inline" id="deck-nav" hidden>
+        <button id="deck-prev" type="button">◀</button>
+        <span class="hint" id="deck-where"></span>
+        <button id="deck-next" type="button">▶</button>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script src="assets/vendor/qrcode.js"></script>
+<script type="module" src="assets/js/plan.js"></script>
+</body>
+</html>

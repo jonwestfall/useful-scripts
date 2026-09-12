@@ -18,6 +18,7 @@
     <span id="status" data-status="connecting">Connecting…</span>
     <span id="display-state">No display connected</span>
     <span id="peer-count"></span>
+    <span id="plan-name" hidden></span>
     <span class="spacer"></span>
     <!-- Splitting the screen: pick how many panels and how they're arranged,
          then which one Library taps, deck nav, and Ink currently address.
@@ -117,6 +118,18 @@
             <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
             <span id="deck-file-note" class="hint"></span>
           </div>
+          <!-- A lecture plan built in plan.html. It belongs here rather than in
+               Settings: it is content, not configuration, and Settings' Close
+               button reloads the page. -->
+          <div class="inline">
+            <label class="filebtn" for="plan-file">Load a lecture plan…</label>
+            <input id="plan-file" type="file" accept=".json,application/json" hidden>
+            <span id="plan-note" class="hint"></span>
+            <button type="button" id="plan-clear" hidden>Remove plan</button>
+          </div>
+          <p class="hint" style="margin:0">
+            Plans are built in <a href="plan.html">Planning</a> on your office machine and carried here as a file.
+          </p>
           <input id="lib-filter" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
           <div id="library"></div>
         </section>
@@ -280,7 +293,9 @@
         <!-- Timer -->
         <section class="panel" data-panel="timer" hidden>
           <div id="timer-readout">0:00</div>
-          <div class="inline">
+          <!-- Replaced by a loaded lecture plan's own saved timers; these are
+               the fallback when no plan is loaded. See renderTimerPresets(). -->
+          <div class="inline" id="timer-presets">
             <button class="timer-preset" type="button" data-mins="1">1m</button>
             <button class="timer-preset" type="button" data-mins="2">2m</button>
             <button class="timer-preset" type="button" data-mins="5">5m</button>

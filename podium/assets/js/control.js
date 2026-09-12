@@ -10,6 +10,8 @@ import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport } from './deck.js';
 import { createZip } from './zip.js';
+import { readPlan, itemForStage, itemLabel, assetIdOf } from './planfile.js';
+import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText } from './store.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -45,6 +47,28 @@ let deckGeneration = 0;
 // case worth a map for, and the worst it costs is a moment longer showing
 // "not ready yet" on whichever one loses that race.
 let pendingStage = null;
+
+// A loaded lecture plan (see planfile.js): its running order becomes the top of
+// the Library, its saved timers become the Timer tab's presets, and the photos
+// it carries are served to the projector on demand, exactly as an uploaded deck
+// is. Kept in IndexedDB rather than localStorage because a plan carries images.
+let currentPlan = null;
+const assetStore = new Map();
+// Which of them this controller has already pushed to the room, so re-picking
+// a photo does not re-send it.
+const assetsSent = new Set();
+
+// Items reach the display holding `asset:<id>`, not the bytes - the item is in
+// `state`, which is rebroadcast twice a second and is what ink surfaces are
+// keyed by. Only the local preview renderers resolve it, and only at the point
+// of handing an item to one, so every key stays identical on both ends.
+function resolveAssets(item) {
+  if (!item) return item;
+  const id = assetIdOf(item.src);
+  if (id === null) return item;
+  const data = assetStore.get(id);
+  return data ? { ...item, src: data } : item;
+}
 
 // Requesting a deck's saved ink for export: the display holds the only full
 // copy, keyed by deck+slide, so exporting asks for it rather than trying to
@@ -128,6 +152,20 @@ function saveCustom(items) {
   try { localStorage.setItem(LIB_KEY, JSON.stringify(items)); } catch { /* private mode */ }
 }
 
+// The running order, as library items. Numbered, because the whole point of a
+// plan is that it is a sequence: "we are on 4" is the useful thing to know when
+// you glance down mid-sentence.
+function planLibraryItems() {
+  if (!currentPlan) return [];
+  return currentPlan.items.map((row, i) => ({
+    ...itemForStage(row),
+    group: currentPlan.title || 'Lecture plan',
+    order: i + 1,
+    note: row.note || '',
+    planRow: row.id,
+  }));
+}
+
 async function loadLibrary() {
   let fromFile = [];
   try {
@@ -138,6 +176,9 @@ async function loadLibrary() {
     }
   } catch { /* no manifest committed yet - built-ins and pasted links still work */ }
   library = [
+    // The plan first: it is what you came to teach, and the built-ins are
+    // always one scroll away.
+    ...planLibraryItems(),
     ...BUILT_INS.map((i) => ({ ...i, group: 'Quick' })),
     ...fromFile.map((i) => ({ ...i, group: i.group || 'Library' })),
     ...loadCustom().map((i) => ({ ...i, group: 'Saved', custom: true })),
@@ -151,7 +192,7 @@ function renderLibrary() {
   grid.replaceChildren();
   const groups = new Map();
   for (const item of library) {
-    if (filter && !`${item.title} ${item.type}`.toLowerCase().includes(filter)) continue;
+    if (filter && !`${item.title} ${item.type} ${item.note || ''}`.toLowerCase().includes(filter)) continue;
     if (!groups.has(item.group)) groups.set(item.group, []);
     groups.get(item.group).push(item);
   }
@@ -165,8 +206,12 @@ function renderLibrary() {
         onclick: () => pick(item),
       },
         el('span', { class: 'tile-icon' }, TYPES[item.type]?.icon || '?'),
-        el('span', { class: 'tile-title' }, item.title || TYPES[item.type]?.label || item.type),
+        el('span', { class: 'tile-title' }, item.title || itemLabel(item)),
         el('span', { class: 'tile-type' }, TYPES[item.type]?.label || item.type));
+      if (item.order) tile.prepend(el('span', { class: 'tile-order' }, String(item.order)));
+      // The note you wrote in the office, where you will actually see it:
+      // on the tile, not behind a hover a tablet cannot do.
+      if (item.note) tile.append(el('span', { class: 'tile-note' }, item.note));
       if (item.custom) {
         tile.append(el('span', {
           class: 'tile-del',
@@ -185,6 +230,66 @@ function renderLibrary() {
   if (!grid.children.length) grid.append(el('p', { class: 'empty' }, 'Nothing matches.'));
 }
 
+// --- lecture plans ----------------------------------------------------------
+
+const DEFAULT_TIMER_PRESETS = [1, 2, 5, 10, 15].map((mins) => ({ mins, label: '' }));
+
+function renderTimerPresets() {
+  const presets = currentPlan?.timers?.length ? currentPlan.timers : DEFAULT_TIMER_PRESETS;
+  $('#timer-presets').replaceChildren(...presets.map((preset) => el('button', {
+    class: 'timer-preset',
+    type: 'button',
+    dataset: { mins: String(preset.mins), label: preset.label || '' },
+  }, preset.label ? `${preset.label} · ${preset.mins}m` : `${preset.mins}m`)));
+}
+
+function renderPlanBar() {
+  const badge = $('#plan-name');
+  badge.hidden = !currentPlan;
+  badge.textContent = currentPlan ? `\u{1F4CB} ${currentPlan.title}` : '';
+  $('#plan-clear').hidden = !currentPlan;
+  // Sits in a row of controls, so it says something only when there is
+  // something to say.
+  $('#plan-note').textContent = currentPlan
+    ? `Loaded “${currentPlan.title}” — ${currentPlan.items.length} item${currentPlan.items.length === 1 ? '' : 's'}, ${currentPlan.timers.length} timer${currentPlan.timers.length === 1 ? '' : 's'}.`
+    : '';
+}
+
+/**
+ * Take on a plan built elsewhere. Everything a plan carries has to be turned
+ * into the shapes the rest of the controller already speaks, up front rather
+ * than at the moment something is tapped: an uploaded deck becomes an entry in
+ * deckStore under the hash of its markdown - identical to a deck dropped on
+ * this device - and its photos become entries in assetStore, ready to answer
+ * the projector. The alternative, resolving lazily on the first tap, puts a
+ * fetch and a hash in front of the one action that has to be instant.
+ */
+async function adoptPlan(plan, { persist = true, applyLayout = true } = {}) {
+  assetStore.clear();
+  assetsSent.clear();
+  for (const [id, asset] of Object.entries(plan.assets || {})) assetStore.set(id, asset.data);
+
+  for (const row of plan.items) {
+    if (row.type !== 'deck' || !row.asset) continue;
+    const source = plan.assets?.[row.asset]?.data;
+    if (typeof source !== 'string') continue;
+    const id = await deckId(source);
+    deckStore.set(id, source);
+    row.deckId = id;
+  }
+
+  currentPlan = plan;
+  if (persist) {
+    try { await saveCurrentPlan(plan); } catch { /* private browsing: it just will not survive a reload */ }
+  }
+  renderPlanBar();
+  renderTimerPresets();
+  // A plan that lays the screen out says so - but only when you deliberately
+  // load it. Doing it on every page restore would yank the projector around
+  // every time the tablet woke up mid-lecture.
+  if (applyLayout && plan.layout && plan.layout !== 'single') send({ op: 'layout', mode: plan.layout });
+}
+
 // Sends a fully-formed item wherever it belongs right now. Panel A (focus 0)
 // goes through the usual freeze/cue/take pipeline via 'stage'. A focused
 // B/C/D panel has none of that - see "layout" in protocol.js's
@@ -195,8 +300,17 @@ function stage(item, where = 'auto') {
   // content that has to be parsed, so it is the only one that can be picked
   // and drawn on before the pad actually knows what shape to be.
   pendingStage = item.type === 'deck' ? { panel: state.focus, deckId: item.deckId } : null;
-  // group/custom are library bookkeeping; the display has no use for them.
-  const { group: _group, custom: _custom, ...clean } = item;
+  // group/custom/order/note/planRow are library bookkeeping; the display has no
+  // use for them.
+  const { group: _g, custom: _c, order: _o, note: _n, planRow: _p, ...clean } = item;
+  // Same courtesy the deck path extends: push the bytes ahead of the item that
+  // refers to them, so the projector does not have to notice and ask. Once
+  // each: a photo is ~120 KB and re-picking it is common, while a display that
+  // reloaded and lost it asks for it by name (see 'asset-need').
+  const assetId = assetIdOf(clean.src);
+  if (assetId && assetStore.has(assetId) && !assetsSent.has(assetId)) {
+    if (bus?.send({ t: 'asset', id: assetId, data: assetStore.get(assetId) }) !== false) assetsSent.add(assetId);
+  }
   if (state.focus === 0) send({ op: 'stage', item: clean, where });
   else send({ op: 'panel', index: state.focus - 1, item: clean });
 }
@@ -223,7 +337,10 @@ async function pick(item, where = 'auto') {
   const note = $('#deck-file-note');
   note.textContent = `Loading ${item.title || 'deck'}…`;
   try {
-    const source = await getDeckSource({ deckId: `src:${item.src}`, src: item.src });
+    // An uploaded deck (from a lecture plan, or dropped on this device) is
+    // already in deckStore under its content hash; a library deck is fetched
+    // by path. getDeckSource handles both, given the right reference.
+    const source = await getDeckSource(item.deckId ? item : { deckId: `src:${item.src}`, src: item.src });
     await stageDeck({ source, name: item.title, src: item.src });
     note.textContent = '';
   } catch (err) {
@@ -245,11 +362,11 @@ function renderPreview() {
     holder.replaceChildren();
     previewKey = key;
     if (item) {
-      previewRenderer = createRenderer(item, { preview: true, getTimer: () => state.timer, getDeckSource });
+      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: () => state.timer, getDeckSource });
       holder.append(previewRenderer.el);
     }
   } else if (previewRenderer && item) {
-    previewRenderer.update(item);
+    previewRenderer.update(resolveAssets(item));
     previewRenderer.reconcile({ ...item, playing: false }, { volume: 0, muted: true });
   }
 
@@ -759,10 +876,10 @@ function createLiveMirror(container) {
       renderer?.destroy();
       frame.replaceChildren();
       mountedKey = key;
-      renderer = item ? createRenderer(item, { preview: true, getTimer: () => state.timer, getDeckSource }) : null;
+      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: () => state.timer, getDeckSource }) : null;
       if (renderer) frame.append(renderer.el);
     } else {
-      renderer?.update(item);
+      renderer?.update(resolveAssets(item));
     }
   }
 
@@ -846,10 +963,10 @@ function updatePadMirror() {
     padMirrorRenderer?.destroy();
     padMirror.replaceChildren();
     padMirrorKey = key;
-    padMirrorRenderer = item ? createRenderer(item, { preview: true, getTimer: () => state.timer, getDeckSource }) : null;
+    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: () => state.timer, getDeckSource }) : null;
     if (padMirrorRenderer) padMirror.append(padMirrorRenderer.el);
   } else {
-    padMirrorRenderer?.update(item);
+    padMirrorRenderer?.update(resolveAssets(item));
   }
 }
 
@@ -1084,6 +1201,11 @@ async function connect() {
         if (source != null) bus.send({ t: 'deck', id: msg.id, source });
         return;
       }
+      if (msg.t === 'asset-need') {
+        const data = assetStore.get(msg.id);
+        if (data != null) bus.send({ t: 'asset', id: msg.id, data });
+        return;
+      }
       if (msg.t === 'ink-data') {
         inkExportWaiters.get(msg.deckId)?.(msg.bySlide || {});
         inkExportWaiters.delete(msg.deckId);
@@ -1268,11 +1390,16 @@ $('#timer-start').addEventListener('click', () => {
   else send({ op: 'timer', action: 'start', seconds: Number($('#timer-mins').value) * 60, label: $('#timer-label').value });
 });
 $('#timer-stop').addEventListener('click', () => send({ op: 'timer', action: 'stop' }));
-$$('.timer-preset').forEach((b) => b.addEventListener('click', () => {
+// Delegated: a loaded plan replaces these buttons with its own saved timers,
+// so binding the ones in the markup would leave the plan's dead.
+$('#timer-presets').addEventListener('click', (ev) => {
+  const b = ev.target.closest('.timer-preset');
+  if (!b) return;
   $('#timer-mins').value = b.dataset.mins;
-  send({ op: 'timer', action: 'start', seconds: Number(b.dataset.mins) * 60, label: $('#timer-label').value });
+  if (b.dataset.label) $('#timer-label').value = b.dataset.label;
+  send({ op: 'timer', action: 'start', seconds: Number(b.dataset.mins) * 60, label: b.dataset.label || $('#timer-label').value });
   stage({ type: 'timer', title: 'Timer' });
-}));
+});
 
 $('#ink-undo').addEventListener('click', () => {
   ink.strokes.pop();
@@ -1375,6 +1502,37 @@ wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
   reloadClean();
 });
 
+$('#plan-file').addEventListener('change', async (ev) => {
+  const file = ev.target.files?.[0];
+  // Cleared so picking the same file twice in a row still fires a change.
+  ev.target.value = '';
+  if (!file) return;
+  $('#plan-note').textContent = `Reading ${file.name}…`;
+  try {
+    const { plan, warnings } = readPlan(await readFileText(file));
+    await adoptPlan(plan);
+    await loadLibrary();
+    tab('library');
+    // A plan that half-loaded is worse than one that did not: say what was
+    // dropped, here, rather than letting a missing photo surface on the wall.
+    if (warnings.length) {
+      $('#plan-note').textContent = `Loaded “${plan.title}”, with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}`;
+    }
+  } catch (err) {
+    $('#plan-note').textContent = `That file did not load: ${err.message}`;
+  }
+});
+
+$('#plan-clear').addEventListener('click', async () => {
+  currentPlan = null;
+  assetStore.clear();
+  assetsSent.clear();
+  try { await clearCurrentPlan(); } catch { /* nothing was stored */ }
+  renderPlanBar();
+  renderTimerPresets();
+  await loadLibrary();
+});
+
 if (!isConfigured(cfg)) {
   showSetup();
 } else {
@@ -1390,6 +1548,16 @@ if (!isConfigured(cfg)) {
   } catch (err) {
     setStatus('error', err?.message || String(err));
   }
+  // A plan loaded before class survives a reload: the tablet is the device most
+  // likely to be locked, picked up and reopened in the middle of a lecture, and
+  // losing the running order at that moment would be the worst time for it.
+  // Restored without applying its layout - see adoptPlan.
+  try {
+    const saved = await loadCurrentPlan();
+    if (saved) await adoptPlan(saved, { persist: false, applyLayout: false });
+  } catch { /* no IndexedDB (Safari private browsing): the Library still works */ }
+  renderPlanBar();
+  renderTimerPresets();
   await loadLibrary();
   tab('library');
   renderAll();

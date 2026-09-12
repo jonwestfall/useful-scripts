@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 4;
+export const BUILD = 5;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
