@@ -1323,10 +1323,18 @@ await screen.waitForSelector('#hud[data-status="online"]');
 
 await screen.setViewportSize({ width: 1600, height: 900 });
 await screen.waitForTimeout(150);
-const stale = await screen.evaluate(() => { const i = document.querySelector('#ink'); return { w: i.width, h: i.height }; });
-ok('sanity check: with resize disabled, the ink canvas really is stuck at the old size', stale.w === 900 && stale.h === 700);
 
-await screen.evaluate(() => document.dispatchEvent(new Event('fullscreenchange')));
+// Force the canvas back out of step and immediately fire ONLY
+// fullscreenchange, so this still measures what it is named for. (It used to
+// assert the canvas sat stuck at the old size until something corrected it,
+// which stopped being true once every redraw started re-checking that for
+// itself - a better guarantee, but one that would quietly answer this
+// question for the event being tested here.)
+await screen.evaluate(() => {
+  const cv = document.querySelector('#ink');
+  cv.width = 640; cv.height = 480;
+  document.dispatchEvent(new Event('fullscreenchange'));
+});
 await screen.waitForTimeout(150);
 const after = await screen.evaluate(() => {
   const stage = document.querySelector('#stage');
@@ -1711,6 +1719,45 @@ const afterRoundTrip = await inkBox();
 ok(`a split and straight back leaves the ink exactly where it was (${beforeRoundTrip.w.toFixed(0)}x${beforeRoundTrip.h.toFixed(0)} -> ${afterRoundTrip.w.toFixed(0)}x${afterRoundTrip.h.toFixed(0)})`,
   Math.abs(afterRoundTrip.x - beforeRoundTrip.x) < 3 && Math.abs(afterRoundTrip.y - beforeRoundTrip.y) < 3
   && Math.abs(afterRoundTrip.w - beforeRoundTrip.w) < 3 && Math.abs(afterRoundTrip.h - beforeRoundTrip.h) < 3);
+await ctx.close();
+}
+
+console.log('\n-- a display running older code says so, instead of looking like a bug --');
+{
+// The two ends are separate devices loading their own copy of the app from
+// your server, so one can easily be running last week's code: a browser
+// that never revalidated the page, or a machine whose projector tab has
+// been open since before you deployed. That misbehaves in ways that read as
+// bugs - ink landing in the wrong place, say - and cost real debugging time
+// before the controller could just tell you. Simulated the only way that
+// matters: the display is served an older protocol.js.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.route('**/assets/js/protocol.js', async (route) => {
+  const res = await route.fetch();
+  const body = (await res.text()).replace(/export const BUILD = '[^']*';/, "export const BUILD = '1999-01-01';");
+  await route.fulfill({ response: res, body });
+});
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'stale-room', passphrase: 'old code' }));
+const screen = await ctx.newPage();
+trap(screen, 'stale display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+
+// The controller is current: its own protocol.js is not rewritten.
+const fresh = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+await fresh.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'stale-room', passphrase: 'old code' }));
+const pad = await fresh.newPage();
+trap(pad, 'stale control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => /older version/.test(document.querySelector('#display-state')?.textContent || ''), null, { timeout: 10000 }).catch(() => {});
+const staleLabel = await pad.textContent('#display-state');
+ok(`the controller names it: "${staleLabel}"`, /older version/.test(staleLabel));
+ok('and flags it as a problem rather than normal status', await pad.$eval('#display-state', (n) => n.classList.contains('is-bad')));
+await fresh.close();
 await ctx.close();
 }
 

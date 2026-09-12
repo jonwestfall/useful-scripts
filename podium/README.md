@@ -510,6 +510,21 @@ If the codes match and you still see nothing, the controller will say
 **Wrong passphrase somewhere** — that means encrypted traffic is arriving that it
 cannot read, which is a mismatch rather than an absence.
 
+### "Display is running an older version — reload it"
+
+The display and the controller are separate devices, each loading its own copy of
+Podium from wherever you serve it. So they can disagree about what version they are:
+a projector tab that has been open since before you deployed, or a browser that
+never revalidated the page, keeps running the old code indefinitely. That does not
+announce itself — it just misbehaves, in ways that look for all the world like fresh
+bugs. (Ink landing in the wrong place was one, and it cost a couple of rounds of
+hunting before the penny dropped.)
+
+So the two ends now compare notes. When the display reports an older build than the
+controller has, the top bar says exactly that instead of leaving you to infer it.
+Reload the display — a hard reload if your server sends long cache headers — and it
+clears.
+
 ## Security
 
 Every message is encrypted in the browser with AES-GCM, under a key derived from the

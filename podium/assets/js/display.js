@@ -11,7 +11,7 @@
 import { $, el, throttle, wireDangerButton } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, applyCommand, inkSurfaceKey, LAYOUTS, focusedItem } from './protocol.js';
+import { initialState, applyCommand, inkSurfaceKey, LAYOUTS, focusedItem, BUILD } from './protocol.js';
 import { createRenderer } from './renderers.js';
 import { createCameraReceiver } from './rtc.js';
 
@@ -450,6 +450,9 @@ function wireState() {
       strokes: inkState.bySurface[key]?.strokes || [],
     },
     stageAspect: stage.clientWidth && stage.clientHeight ? stage.clientWidth / stage.clientHeight : 16 / 9,
+    // So a controller can tell you when this screen is running older code
+    // than it is, rather than leaving you to diagnose it as a bug.
+    build: BUILD,
   };
 }
 

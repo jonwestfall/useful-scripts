@@ -5,7 +5,7 @@
 import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton } from './util.js';
 import { loadConfig, saveConfig, isConfigured, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, timerRemaining, LAYOUTS, focusedItem } from './protocol.js';
+import { initialState, timerRemaining, LAYOUTS, focusedItem, BUILD } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport } from './deck.js';
@@ -1019,13 +1019,20 @@ function renderConnection() {
   const display = peers.find((p) => p.role === 'display');
   const others = peers.filter((p) => p.role === 'control');
 
+  // A display still serving an older copy of the app - a browser that never
+  // revalidated the page, or a machine whose projector tab has been open
+  // since before you deployed - misbehaves in ways that look like bugs
+  // rather than like a stale page. Say which it is.
+  const stale = display && state.build && state.build !== BUILD;
+
   let label;
   if (!display) label = 'No display connected';
+  else if (stale) label = `Display is running an older version (${state.build} vs ${BUILD}) — reload it`;
   else if (state.armed === false) label = 'Display open — click “Go live” on it';
   else label = `Display connected${display.rtt ? ` · ${display.rtt} ms` : ''}`;
 
   $('#display-state').textContent = label;
-  $('#display-state').classList.toggle('is-bad', !display);
+  $('#display-state').classList.toggle('is-bad', !display || !!stale);
   $('#peer-count').textContent = others.length ? `+${others.length} other controller${others.length > 1 ? 's' : ''}` : '';
 
   if (display) waitingSince = Date.now();

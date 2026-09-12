@@ -10,6 +10,16 @@
 // command tells it to, so "hold what is on screen" is just routing incoming
 // content to `preview` instead of `program`.
 
+// Bumped whenever a change lands that the two ends have to agree on. The
+// display and the controller are separate devices loading their own copy of
+// this file from your server, so one of them can easily be running last
+// week's code - a browser that never revalidated display.html, or a machine
+// that has had the projector page open since before you deployed. That does
+// not look like a stale page; it looks like a bug, and it has cost real
+// debugging time. The controller compares this against the display's and
+// says so plainly instead (see renderConnection in control.js).
+export const BUILD = '2026-09-12';
+
 export const BLACK = { type: 'black', title: 'Black' };
 
 // How many panels each layout actually shows - panel A (state.program) is
