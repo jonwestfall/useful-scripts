@@ -261,13 +261,46 @@ function activePanels() {
   return list;
 }
 
-function sizeInk() {
+// The canvas's backing store is in DEVICE pixels, so it depends on both the
+// stage size and devicePixelRatio - and not everything that can invalidate
+// it is an event we get told about. A window dragged from a laptop screen
+// onto a projector of a different pixel density changes devicePixelRatio
+// with no resize event at all, and a canvas still scaled for the old ratio
+// then paints every stroke at the wrong size: on a 2x laptop driving a 1x
+// projector, ink lands at double the distance from the corner, nowhere near
+// the slide it was drawn on. So rather than chase every possible trigger,
+// check the invariant at the one moment it has to hold - just before
+// drawing. Returns true when it had to re-size, which wipes the canvas and
+// means there is nothing left to incrementally append to.
+function ensureInkCanvas() {
   const ratio = window.devicePixelRatio || 1;
-  inkCanvas.width = Math.round(stage.clientWidth * ratio);
-  inkCanvas.height = Math.round(stage.clientHeight * ratio);
+  const w = Math.round(stage.clientWidth * ratio);
+  const h = Math.round(stage.clientHeight * ratio);
+  if (inkCanvas.width === w && inkCanvas.height === h) return false;
+  inkCanvas.width = w;
+  inkCanvas.height = h;
+  // Assigning width/height resets the context - transform included - so the
+  // device-pixel scaling has to go back on afterwards, every time.
   ink.ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  return true;
+}
+
+function sizeInk() {
+  ensureInkCanvas();
   redrawInk(true);
 }
+
+// devicePixelRatio changes do not reliably fire resize, but they DO change
+// what this media query matches - it is the one signal that fires exactly
+// when the ratio does. It has to be re-armed each time, since the query can
+// only ask about one specific ratio.
+function watchPixelRatio() {
+  try {
+    const mq = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    mq.addEventListener('change', () => { sizeInk(); broadcastSoon(); watchPixelRatio(); }, { once: true });
+  } catch { /* the check before every redraw covers it regardless */ }
+}
+watchPixelRatio();
 
 function strokePath(ctx, stroke, rect, from = 0) {
   if (stroke.pts.length < 2) return;
@@ -303,10 +336,21 @@ function redrawSplitInk() {
     for (const stroke of strokes) strokePath(ctx, stroke, rect);
     if (strokes.length) any = true;
   }
+  // This path paints panel A somewhere quite different (a quarter of the
+  // screen, in a 4-panel layout) and keeps no incremental bookkeeping of its
+  // own. Leaving the single-panel cache intact would let the very next
+  // single-layout redraw decide nothing had changed and just append to what
+  // is on screen - keeping this smaller rendering, at this smaller scale,
+  // forever. Dropping the cache forces that redraw to be a full one.
+  ink.drawnKey = null;
+  ink.drawnStrokes = 0;
+  ink.drawnTail = 0;
   inkCanvas.classList.toggle('has-ink', any);
 }
 
 function redrawInk(force = false) {
+  // A canvas that had to be re-sized is a blank one: nothing to append to.
+  if (ensureInkCanvas()) force = true;
   if (state.layout !== 'single') { redrawSplitInk(); return; }
   const { ctx } = ink;
   const rect = contentRectFor(slotA, programRenderer());

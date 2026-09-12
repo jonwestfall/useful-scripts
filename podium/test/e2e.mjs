@@ -1338,6 +1338,75 @@ ok('fullscreenchange alone catches the ink canvas up to the current stage size',
 await ctx.close();
 }
 
+console.log('\n-- ink stays put when the display is dragged to a screen of a different pixel density --');
+{
+// A laptop screen and a projector rarely share a pixel density, and a window
+// moved between them changes devicePixelRatio WITHOUT firing a resize: the
+// window is the same size, so nothing tells the page anything happened. The
+// ink canvas is sized in device pixels, so one still scaled for the old
+// ratio paints every stroke at the wrong size - on a 2x laptop driving a 1x
+// projector, at double the distance from the corner, nowhere near the slide
+// it was drawn over. The page re-checks that before every redraw rather than
+// trusting it was told, so this has to come out right even with every event
+// that would normally have warned it suppressed.
+const ctx = await browser.newContext({ viewport: { width: 1512, height: 944 } });
+await ctx.addInitScript(() => {
+  window.__dpr = 2;
+  Object.defineProperty(window, 'devicePixelRatio', { get: () => window.__dpr, configurable: true });
+});
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'dpr-room', passphrase: 'two screens' }));
+const screen = await ctx.newPage();
+trap(screen, 'dpr display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'dpr control');
+await pad.setViewportSize({ width: 834, height: 1194 });
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length > 0, null, { timeout: 20000 });
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad:not(.is-pending)', { timeout: 5000 });
+await pad.waitForTimeout(400);
+ok('the ink canvas starts out sized for the 2x screen', await screen.evaluate(() => document.querySelector('#ink').width === 3024));
+
+// Now it is the projector's problem: same window size, half the density,
+// and not a single event to say so.
+await screen.evaluate(() => { window.__dpr = 1; });
+
+const pb = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+const fx = 0.25, fy = 0.30;
+await pad.mouse.move(pb.x + pb.w * fx, pb.y + pb.h * fy);
+await pad.mouse.down();
+for (let i = 1; i <= 8; i++) await pad.mouse.move(pb.x + pb.w * fx + i * 4, pb.y + pb.h * fy + i * 2);
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 6000 });
+await screen.waitForTimeout(400);
+
+const landed = await screen.evaluate(({ fx, fy }) => {
+  const svg = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot.querySelector('svg.podium-on');
+  const fo = svg.querySelector('foreignObject').getBoundingClientRect();
+  const cv = document.querySelector('#ink'); const c2d = cv.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const data = c2d.getImageData(0, 0, cv.width, cv.height).data;
+  let minX = Infinity, minY = Infinity;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+    const i = (y * cv.width + x) * 4;
+    if (data[i + 3] > 0) { if (x < minX) minX = x; if (y < minY) minY = y; }
+  }
+  return { dx: Math.abs(minX / dpr - (fo.x + fo.width * fx)), dy: Math.abs(minY / dpr - (fo.y + fo.height * fy)), canvasW: cv.width };
+}, { fx, fy });
+ok(`the canvas re-sizes itself for the new density (${landed.canvasW}px backing store)`, landed.canvasW === 1512);
+ok(`and the stroke still lands where it was drawn (dx=${landed.dx.toFixed(1)}, dy=${landed.dy.toFixed(1)}), not at double the distance`,
+  landed.dx < 20 && landed.dy < 20);
+await ctx.close();
+}
+
 console.log('\n-- Waiting Music under a strict (Safari-like) autoplay policy --');
 {
 // The main suite launches Chromium with --autoplay-policy=no-user-gesture-
@@ -1501,9 +1570,15 @@ ok('B is untouched by that Next', await screen.evaluate(() => !!document.querySe
 await pad.click('.tab[data-tab="ink"]');
 await pad.waitForTimeout(300);
 const padBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
-await pad.mouse.move(padBox.x + padBox.w * 0.5, padBox.y + padBox.h * 0.5);
+// A long diagonal rather than a dab: big enough that a rendering at a split
+// layout's smaller scale would be unmistakable in the before/after below.
+const strokeFrom = { x: padBox.x + padBox.w * 0.25, y: padBox.y + padBox.h * 0.25 };
+const strokeTo = { x: padBox.x + padBox.w * 0.70, y: padBox.y + padBox.h * 0.65 };
+await pad.mouse.move(strokeFrom.x, strokeFrom.y);
 await pad.mouse.down();
-await pad.mouse.move(padBox.x + padBox.w * 0.5 + 5, padBox.y + padBox.h * 0.5 + 5);
+for (let i = 1; i <= 10; i++) {
+  await pad.mouse.move(strokeFrom.x + (strokeTo.x - strokeFrom.x) * i / 10, strokeFrom.y + (strokeTo.y - strokeFrom.y) * i / 10);
+}
 await pad.mouse.up();
 await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 const inkInsideA = await screen.evaluate(() => {
@@ -1530,6 +1605,61 @@ const backToSingle = await screen.evaluate(() => {
   return { bHidden: getComputedStyle(document.querySelector('[data-panel="b"]')).display === 'none', aFillsStage: Math.abs(a.width - s.width) < 2 && Math.abs(a.height - s.height) < 2 };
 });
 ok('dropping back to single hides B/C/D again and A fills the whole stage', backToSingle.bHidden && backToSingle.aFillsStage);
+
+// A split layout paints panel A's ink into a fraction of the screen. Coming
+// back to full screen, the incremental "just append the new points" path
+// must NOT decide nothing has changed and keep that smaller rendering: the
+// stroke has to be re-scaled to the slide it is actually sitting on now.
+// Checked against where its own fractions say it belongs, since the two
+// layouts legitimately paint it at different sizes.
+await screen.waitForTimeout(500);
+const rescaled = await screen.evaluate(() => {
+  const svg = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot.querySelector('svg.podium-on');
+  const fo = svg.querySelector('foreignObject').getBoundingClientRect();
+  const cv = document.querySelector('#ink'); const c2d = cv.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const data = c2d.getImageData(0, 0, cv.width, cv.height).data;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+    const i = (y * cv.width + x) * 4;
+    if (data[i + 3] > 0) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+  }
+  // The stroke ran 0.25 -> 0.70 across and 0.25 -> 0.65 down the slide.
+  return {
+    w: (maxX - minX) / dpr, expectedW: fo.width * 0.45,
+    h: (maxY - minY) / dpr, expectedH: fo.height * 0.40,
+  };
+});
+ok(`ink is re-scaled to the full-screen slide, not left at the split layout's smaller scale (${rescaled.w.toFixed(0)}x${rescaled.h.toFixed(0)}, expected about ${rescaled.expectedW.toFixed(0)}x${rescaled.expectedH.toFixed(0)})`,
+  Math.abs(rescaled.w - rescaled.expectedW) < 20 && Math.abs(rescaled.h - rescaled.expectedH) < 20);
+
+// And the harder version of the same trap: ink already on screen in the
+// single layout, out to a split and straight back. The content box ends up
+// byte-identical to the one the incremental path last recorded, so nothing
+// about the key says anything changed - but the canvas in between was
+// repainted at a quarter size, and appending to THAT would keep it.
+const inkBox = () => screen.evaluate(() => {
+  const cv = document.querySelector('#ink'); const c2d = cv.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const data = c2d.getImageData(0, 0, cv.width, cv.height).data;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+    const i = (y * cv.width + x) * 4;
+    if (data[i + 3] > 0) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+  }
+  return { x: minX / dpr, y: minY / dpr, w: (maxX - minX) / dpr, h: (maxY - minY) / dpr };
+});
+const beforeRoundTrip = await inkBox();
+await pad.click('.layout-btn[data-layout="4"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-4'), null, { timeout: 5000 });
+await screen.waitForTimeout(300);
+await pad.click('.layout-btn[data-layout="single"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 5000 });
+await screen.waitForTimeout(500);
+const afterRoundTrip = await inkBox();
+ok(`a split and straight back leaves the ink exactly where it was (${beforeRoundTrip.w.toFixed(0)}x${beforeRoundTrip.h.toFixed(0)} -> ${afterRoundTrip.w.toFixed(0)}x${afterRoundTrip.h.toFixed(0)})`,
+  Math.abs(afterRoundTrip.x - beforeRoundTrip.x) < 3 && Math.abs(afterRoundTrip.y - beforeRoundTrip.y) < 3
+  && Math.abs(afterRoundTrip.w - beforeRoundTrip.w) < 3 && Math.abs(afterRoundTrip.h - beforeRoundTrip.h) < 3);
 await ctx.close();
 }
 

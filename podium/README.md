@@ -314,6 +314,18 @@ Between picking and the real shape being known, the pad simply will not draw (it
 dims and ignores touches) rather than guess — normally invisible, since a real hand
 takes longer to reach the pad than the deck takes to load.
 
+**Moving the display window between screens does not throw the ink off.** A laptop
+screen and a projector rarely share a pixel density, and the ink layer is a canvas
+sized in *device* pixels — so a window dragged from a 2× laptop display onto a 1×
+projector needs that canvas rebuilt. The catch is that this particular change fires
+no `resize` event at all: the window is the same size, so nothing tells the page
+anything happened, and a canvas still scaled for the old screen paints every stroke
+at double the distance from the corner — marks nowhere near the slide they were drawn
+over. Podium re-checks that the canvas still matches the screen immediately before
+every redraw, rather than trusting that it was told, so a missed notification costs
+one frame instead of the rest of the lecture. (It also listens for the density change
+directly, so the correction usually lands before you draw at all.)
+
 ## Splitting the screen
 
 The layout picker lives in the topbar (five small icons, next to Settings): **full
