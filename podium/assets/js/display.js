@@ -869,7 +869,10 @@ function showSetup() {
 
   form.addEventListener('submit', (ev) => {
     ev.preventDefault();
-    const next = { ...cfg };
+    // `generated: null` because submitting this form IS the choice: the room
+    // and passphrase it was pre-filled with were only a suggestion until now,
+    // and isConfigured refuses a config still carrying that marker.
+    const next = { ...cfg, generated: null };
     for (const key of Object.keys(DEFAULTS)) {
       const field = form.elements[key];
       if (field && typeof field.value === 'string') next[key] = field.value.trim();
