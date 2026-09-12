@@ -306,6 +306,16 @@ body.control.is-frozen { background: #171006; }
 }
 .panel-btn.is-on { border-color: var(--accent); color: var(--accent); background: #16202c; }
 
+#build-note.is-stale { color: #ffd9a8; }
+
+#update-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: #2a1e12; border-bottom: 1px solid #6b4a22; color: #ffd9a8;
+  padding: 10px 14px; font-size: 13px; line-height: 1.5;
+}
+#update-banner[hidden] { display: none; }
+#update-banner button { min-height: 32px; padding: 0 12px; }
+
 #link-help {
   background: #2a1e12; border-bottom: 1px solid #6b4a22; color: #ffd9a8;
   padding: 10px 14px; font-size: 13px; line-height: 1.5;

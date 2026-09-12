@@ -45,6 +45,15 @@
     <button id="open-settings" type="button">Settings</button>
   </div>
 
+  <!-- Shown only when the copy running in this tab is older than the copy the
+       server is handing out - i.e. this page came out of a cache the deploy
+       has already replaced. -->
+  <div id="update-banner" hidden>
+    <b>This page is running an old copy.</b>
+    <span id="update-detail"></span>
+    <button id="update-reload" type="button">Reload now</button>
+  </div>
+
   <div id="link-help" hidden>
     <b>No display has answered.</b>
     <ul>

@@ -122,3 +122,23 @@ export function wireDangerButton(button, label, action, { armedLabel = 'Tap agai
 
   return { disarm };
 }
+
+// What build the server is handing out RIGHT NOW, or null if it cannot be
+// read. Each page compares this against the BUILD compiled into the copy it
+// is actually running: they differ exactly when the browser served this tab
+// something out of a cache the deploy has since replaced. Fetched with
+// no-store so the check itself cannot be answered from that same cache, and
+// pointed at protocol.js because that is where BUILD lives - one source of
+// truth, no second file to drift out of step with it.
+export async function servedBuild() {
+  try {
+    const res = await fetch('assets/js/protocol.js', { cache: 'no-store' });
+    if (!res.ok) return null;
+    const match = (await res.text()).match(/BUILD\s*=\s*(\d+)/);
+    return match ? Number(match[1]) : null;
+  } catch {
+    // Offline, or blocked: there is nothing to compare against, which is not
+    // the same as being up to date. Say nothing rather than guess.
+    return null;
+  }
+}

@@ -8,7 +8,7 @@
 // scroll position. A layout can split the screen into up to four panels
 // (see LAYOUTS in protocol.js); B/C/D are simpler; set directly, no preview.
 
-import { $, el, throttle, wireDangerButton } from './util.js';
+import { $, el, throttle, wireDangerButton, servedBuild } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, inkSurfaceKey, LAYOUTS, focusedItem, BUILD } from './protocol.js';
@@ -301,6 +301,19 @@ function watchPixelRatio() {
   } catch { /* the check before every redraw covers it regardless */ }
 }
 watchPixelRatio();
+
+// This screen is the one nobody looks at, and the one most likely to have
+// been left open since before a deploy - so it states its build in Settings,
+// reports it to controllers (see wireState), and checks on load whether the
+// copy it is running is one the server has already replaced.
+$('#build-number').textContent = String(BUILD);
+servedBuild().then((served) => {
+  const note = $('#build-check');
+  if (served === null || served === BUILD) return;
+  note.textContent = ` — but the server is serving build ${served}, so this page came from a cache. Reload it.`;
+  $('#build-note').classList.add('is-stale');
+  setHud('error', `Running build ${BUILD}; server has ${served} — reload this page`);
+});
 
 function strokePath(ctx, stroke, rect, from = 0) {
   if (stroke.pts.length < 2) return;

@@ -10,15 +10,19 @@
 // command tells it to, so "hold what is on screen" is just routing incoming
 // content to `preview` instead of `program`.
 
-// Bumped whenever a change lands that the two ends have to agree on. The
-// display and the controller are separate devices loading their own copy of
-// this file from your server, so one of them can easily be running last
-// week's code - a browser that never revalidated display.html, or a machine
-// that has had the projector page open since before you deployed. That does
-// not look like a stale page; it looks like a bug, and it has cost real
-// debugging time. The controller compares this against the display's and
-// says so plainly instead (see renderConnection in control.js).
-export const BUILD = '2026-09-12';
+// Bumped on every release. The display and the controller are separate
+// devices loading their own copy of this file from your server, so one of
+// them can easily be running last week's code - a browser that never
+// revalidated the page, or a machine whose projector tab has been open
+// since before you deployed. That does not look like a stale page; it looks
+// like a bug, and it has cost real debugging time twice over.
+//
+// A plain increasing integer rather than a date, so "which of these two is
+// behind" is answerable rather than merely "these differ". Three things
+// compare against it: each page checks itself against the copy the server is
+// serving right now (see servedBuild in util.js), the controller checks the
+// display's, and both show it on screen so you can read it off directly.
+export const BUILD = 2;
 
 export const BLACK = { type: 'black', title: 'Black' };
 

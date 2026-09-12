@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton } from './util.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild } from './util.js';
 import { loadConfig, saveConfig, isConfigured, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, timerRemaining, LAYOUTS, focusedItem, BUILD } from './protocol.js';
@@ -1023,16 +1023,24 @@ function renderConnection() {
   // revalidated the page, or a machine whose projector tab has been open
   // since before you deployed - misbehaves in ways that look like bugs
   // rather than like a stale page. Say which it is.
-  const stale = display && state.build && state.build !== BUILD;
+  //
+  // A display old enough to predate this check reports no build at all, and
+  // the first version of this read that as "nothing to complain about" -
+  // staying silent for precisely the case it was written for. Missing is not
+  // "fine", it is the oldest answer there is.
+  const theirs = Number.isFinite(state.build) ? state.build : null;
+  const mismatch = display && theirs !== BUILD;
 
   let label;
   if (!display) label = 'No display connected';
-  else if (stale) label = `Display is running an older version (${state.build} vs ${BUILD}) — reload it`;
+  else if (theirs === null) label = `Display is running code older than build ${BUILD} — reload it`;
+  else if (theirs < BUILD) label = `Display is on build ${theirs}, this is build ${BUILD} — reload the display`;
+  else if (theirs > BUILD) label = `Display is on build ${theirs}, this is build ${BUILD} — reload THIS device`;
   else if (state.armed === false) label = 'Display open — click “Go live” on it';
-  else label = `Display connected${display.rtt ? ` · ${display.rtt} ms` : ''}`;
+  else label = `Display connected${display.rtt ? ` · ${display.rtt} ms` : ''} · build ${BUILD}`;
 
   $('#display-state').textContent = label;
-  $('#display-state').classList.toggle('is-bad', !display || !!stale);
+  $('#display-state').classList.toggle('is-bad', !display || !!mismatch);
   $('#peer-count').textContent = others.length ? `+${others.length} other controller${others.length > 1 ? 's' : ''}` : '';
 
   if (display) waitingSince = Date.now();
@@ -1298,6 +1306,23 @@ document.addEventListener('keydown', (ev) => {
 window.addEventListener('resize', () => { if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad(); });
 window.addEventListener('beforeunload', () => bus?.close());
 setInterval(() => { renderNow(); renderTimer(); renderConnection(); }, 250);
+
+// Is this tab itself the stale one? Reloading a page that a cache is still
+// answering for can leave you reloading forever without moving, so the
+// button below bypasses it explicitly rather than hoping.
+servedBuild().then((served) => {
+  if (served === null || served === BUILD) return;
+  $('#update-detail').textContent = `Running build ${BUILD}; the server is serving build ${served}.`;
+  $('#update-banner').hidden = false;
+});
+$('#update-reload').addEventListener('click', () => {
+  // A cache-busting query on the page URL forces the HTML - and with it the
+  // module graph hanging off it - to come from the server rather than from
+  // whatever this browser decided to keep.
+  const url = new URL(location.href);
+  url.searchParams.set('fresh', Date.now().toString(36));
+  location.replace(url);
+});
 
 // --- setup ------------------------------------------------------------------
 

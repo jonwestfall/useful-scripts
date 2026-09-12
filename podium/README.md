@@ -510,20 +510,38 @@ If the codes match and you still see nothing, the controller will say
 **Wrong passphrase somewhere** — that means encrypted traffic is arriving that it
 cannot read, which is a mismatch rather than an absence.
 
-### "Display is running an older version — reload it"
+### Builds, and telling when a device is running an old one
 
 The display and the controller are separate devices, each loading its own copy of
-Podium from wherever you serve it. So they can disagree about what version they are:
-a projector tab that has been open since before you deployed, or a browser that
-never revalidated the page, keeps running the old code indefinitely. That does not
-announce itself — it just misbehaves, in ways that look for all the world like fresh
-bugs. (Ink landing in the wrong place was one, and it cost a couple of rounds of
-hunting before the penny dropped.)
+Podium from wherever you serve it — so they can disagree about what version they
+are. A projector tab open since before you deployed, or a browser that never
+revalidated the page, keeps running the old code indefinitely. That does not
+announce itself; it just misbehaves, in ways that look for all the world like fresh
+bugs. (Ink landing in the wrong place was one, and it cost two rounds of hunting.)
 
-So the two ends now compare notes. When the display reports an older build than the
-controller has, the top bar says exactly that instead of leaving you to infer it.
-Reload the display — a hard reload if your server sends long cache headers — and it
-clears.
+Every release bumps an integer build number, and three things check it:
+
+- **The controller's top bar** reads `Display connected · 214 ms · build 7`. That is
+  the number to compare.
+- **The display's Settings**, under *Clear settings & reload*, states its own build.
+  If those two numbers differ, the lower one is stale and needs reloading — and the
+  controller says so outright rather than leaving you to notice: *"Display is on
+  build 5, this is build 7 — reload the display."* It names which end is behind,
+  including when the device in your hand is the old one.
+- **Each page checks itself on load**, re-reading its own code from the server with
+  caching bypassed. If what it is running is older than what the server is handing
+  out, it came from a cache — the controller shows a banner with a **Reload now**
+  button that bypasses the cache, rather than leaving you to reload a page the cache
+  will simply answer for again.
+
+One caveat worth stating plainly: silence only means agreement once *both* ends are
+new enough to have this. A device older than the check itself reports no build at
+all — which is why "no build reported" is treated as the oldest answer there is, not
+as nothing to report.
+
+Serving Podium yourself? Send `Cache-Control: no-cache` for the HTML and JS (the
+bundled relay in `server/` already does). Long cache lifetimes on `display.js` are
+what turn a deploy into a mystery.
 
 ## Security
 

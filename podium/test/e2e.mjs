@@ -1722,43 +1722,98 @@ ok(`a split and straight back leaves the ink exactly where it was (${beforeRound
 await ctx.close();
 }
 
-console.log('\n-- a display running older code says so, instead of looking like a bug --');
+console.log('\n-- version readouts, and a stale device that says so instead of looking like a bug --');
 {
 // The two ends are separate devices loading their own copy of the app from
-// your server, so one can easily be running last week's code: a browser
-// that never revalidated the page, or a machine whose projector tab has
-// been open since before you deployed. That misbehaves in ways that read as
-// bugs - ink landing in the wrong place, say - and cost real debugging time
-// before the controller could just tell you. Simulated the only way that
-// matters: the display is served an older protocol.js.
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-await ctx.route('**/assets/js/protocol.js', async (route) => {
+// your server, so one can easily be running last week's code: a browser that
+// never revalidated the page, or a machine whose projector tab has been open
+// since before you deployed. That misbehaves in ways that read as fresh bugs
+// - ink landing in the wrong place, say - and cost real debugging time twice
+// before either end could just say so. Simulated the only way that matters:
+// a context is served an older protocol.js, which is where BUILD lives.
+const withProtocol = (ctx, rewrite) => ctx.route('**/assets/js/protocol.js', async (route) => {
   const res = await route.fetch();
-  const body = (await res.text()).replace(/export const BUILD = '[^']*';/, "export const BUILD = '1999-01-01';");
-  await route.fulfill({ response: res, body });
+  await route.fulfill({ response: res, body: rewrite(await res.text()) });
 });
-await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
-  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'stale-room', passphrase: 'old code' }));
-const screen = await ctx.newPage();
-trap(screen, 'stale display');
-await screen.goto(`${BASE}/display.html`);
-await screen.click('#arm-button');
-await screen.waitForSelector('#hud[data-status="online"]');
+const roomCfg = (room) => JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room, passphrase: 'which build' });
 
-// The controller is current: its own protocol.js is not rewritten.
-const fresh = await browser.newContext({ viewport: { width: 1024, height: 768 } });
-await fresh.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
-  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'stale-room', passphrase: 'old code' }));
-const pad = await fresh.newPage();
-trap(pad, 'stale control');
-await pad.goto(`${BASE}/control.html`);
-await pad.waitForSelector('.tile');
-await pad.waitForFunction(() => /older version/.test(document.querySelector('#display-state')?.textContent || ''), null, { timeout: 10000 }).catch(() => {});
-const staleLabel = await pad.textContent('#display-state');
-ok(`the controller names it: "${staleLabel}"`, /older version/.test(staleLabel));
-ok('and flags it as a problem rather than normal status', await pad.$eval('#display-state', (n) => n.classList.contains('is-bad')));
-await fresh.close();
-await ctx.close();
+async function pair(room, rewrite) {
+  const dctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  if (rewrite) await withProtocol(dctx, rewrite);
+  await dctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg(room));
+  const screen = await dctx.newPage();
+  trap(screen, `${room} display`);
+  await screen.goto(`${BASE}/display.html`);
+  await screen.click('#arm-button');
+  await screen.waitForSelector('#hud[data-status="online"]');
+  const cctx = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  await cctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg(room));
+  const pad = await cctx.newPage();
+  trap(pad, `${room} control`);
+  await pad.goto(`${BASE}/control.html`);
+  await pad.waitForSelector('.tile');
+  return { screen, pad, close: async () => { await cctx.close(); await dctx.close(); } };
+}
+const settle = (pad, re) => pad.waitForFunction((src) => new RegExp(src).test(document.querySelector('#display-state')?.textContent || ''), re.source, { timeout: 10000 }).catch(() => {});
+
+{
+  const { screen, pad, close } = await pair('ver-match', null);
+  await settle(pad, /build \d+/);
+  const label = await pad.textContent('#display-state');
+  ok(`the controller reads out the build next to the response time ("${label}")`, /Display connected.*build \d+/.test(label));
+  ok('and does not cry wolf when they agree', !(await pad.$eval('#display-state', (n) => n.classList.contains('is-bad'))));
+  ok('the display states its own build in Settings', /^\d+$/.test((await screen.textContent('#build-number')).trim()));
+  await close();
+}
+{
+  // The case the first version of this check stayed silent for: a display old
+  // enough to report no build at all. Missing is not "fine", it is the oldest
+  // answer there is.
+  const { pad, close } = await pair('ver-none', (t) => t.replace(/export const BUILD = \d+;/, 'export const BUILD = undefined;'));
+  await settle(pad, /older/);
+  const label = await pad.textContent('#display-state');
+  ok(`a display too old to report a build is still called out ("${label}")`, /older than build/.test(label));
+  ok('and flagged as a problem', await pad.$eval('#display-state', (n) => n.classList.contains('is-bad')));
+  await close();
+}
+{
+  const { pad, close } = await pair('ver-old', (t) => t.replace(/export const BUILD = \d+;/, 'export const BUILD = 1;'));
+  await settle(pad, /build 1/);
+  const label = await pad.textContent('#display-state');
+  ok(`it names both builds and which end to reload ("${label}")`, /Display is on build 1/.test(label) && /reload the display/i.test(label));
+  await close();
+}
+{
+  // The mirror image: this controller is the one behind. An integer build is
+  // what makes that answerable rather than just "these differ".
+  const { pad, close } = await pair('ver-new', (t) => t.replace(/export const BUILD = \d+;/, 'export const BUILD = 99;'));
+  await settle(pad, /build 99/);
+  const label = await pad.textContent('#display-state');
+  ok(`it points at THIS device when this is the older one ("${label}")`, /reload THIS device/.test(label));
+  await close();
+}
+{
+  // And with no peer at all: a page notices on load that it is itself a copy
+  // the server has already replaced, by re-reading protocol.js with no-store.
+  const ctx = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  await ctx.route('**/assets/js/protocol.js', async (route) => {
+    const res = await route.fetch();
+    // Only the MODULE load is downgraded; the verification fetch sees current.
+    if (route.request().resourceType() === 'script') {
+      await route.fulfill({ response: res, body: (await res.text()).replace(/export const BUILD = \d+;/, 'export const BUILD = 1;') });
+      return;
+    }
+    await route.fulfill({ response: res });
+  });
+  await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg('ver-self'));
+  const pad = await ctx.newPage();
+  trap(pad, 'ver-self control');
+  await pad.goto(`${BASE}/control.html`);
+  await pad.waitForSelector('#update-banner:not([hidden])', { timeout: 10000 }).catch(() => {});
+  const detail = await pad.textContent('#update-detail').catch(() => '');
+  ok(`a cached page says so on load with no peer involved ("${detail}")`, /server is serving build/.test(detail));
+  await ctx.close();
+}
 }
 
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
