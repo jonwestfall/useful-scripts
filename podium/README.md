@@ -314,6 +314,39 @@ Between picking and the real shape being known, the pad simply will not draw (it
 dims and ignores touches) rather than guess — normally invisible, since a real hand
 takes longer to reach the pad than the deck takes to load.
 
+## Splitting the screen
+
+The layout picker lives in the topbar (five small icons, next to Settings): **full
+screen**, **side by side**, **top and bottom**, **one large + two small**, and **four
+panels**. Picking anything but full screen adds a row of panel buttons — **A**,
+**B**, **C**, and however many more the layout has — right next to it.
+
+Whichever panel is lit up is what the rest of the app currently talks to: Library
+taps stage content into it, Previous/Next and thumbnails page it, transport controls
+play/pause/scrub it, and the Ink tab draws on it. Switch panels the same way you
+would switch tabs — tap **A**, **B**, **C**, or **D** — and everything else follows.
+
+Panel **A** is exactly what Podium has always been: TAKE, freeze, cue, Swap all
+still work on it precisely as before, just confined to its own region of the screen
+once a layout splits it. **B**, **C**, and **D** are deliberately simpler and have
+none of that. Picking content into one is immediate — on screen the instant you tap
+it, even while frozen — because there is no moment to protect: unlike A, a split
+panel was never going to change in front of the class without you choosing to change
+it right then. Think of A as "what I am presenting" and B/C/D as "what's also up" —
+a countdown for group work, a slide of instructions, a photo — set once and left
+alone rather than cued and revealed.
+
+This is for laying a screen out, not for a fast during-class reveal: project your
+slides, split to add a countdown and an instruction panel for group work, then drop
+back to full screen when the group work ends. The class sees each change the moment
+you make it, on whichever panel you made it to.
+
+A few limits worth knowing: the room's sound always follows panel A, even when a
+video or audio clip ends up in B/C/D — two panels both making noise at once would
+just be noise, and there is no cue step on those to decide which one meant to be
+heard. **Export marked-up slides** (Slides tab) only ever exports whichever deck the
+focused panel is currently showing.
+
 ## Your lecture library
 
 Edit `content/manifest.json`, commit, and the tiles appear on the iPad. Files you put

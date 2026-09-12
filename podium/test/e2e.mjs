@@ -173,7 +173,9 @@ ok('TAKE releases the freeze', !(await display.evaluate(() => document.body.clas
 // --- the layer that was cued is the same node that went live (no rebuild)
 const reused = await display.evaluate(() => {
   const program = document.querySelector('.layer[data-role="program"]');
-  return program?.dataset.role === 'program' && document.querySelectorAll('.layer').length === 2;
+  // Scoped to panel A: B/C/D each carry their own (idle, single) .layer too,
+  // present but unused outside a split layout - see LAYOUTS in protocol.js.
+  return program?.dataset.role === 'program' && document.querySelectorAll('[data-panel="a"] .layer').length === 2;
 });
 ok('two content layers are reused rather than rebuilt', reused);
 
@@ -1425,6 +1427,109 @@ await screen.waitForFunction(() => {
   return a && !a.paused && a.currentTime > 0.1;
 }, null, { timeout: 3000 });
 ok('one unrelated keypress afterward is enough to self-heal it - no need to find the "exit fullscreen" trick', true);
+await ctx.close();
+}
+
+console.log('\n-- splitting the screen: B/C/D are direct and immediate, unlike A --');
+{
+// "I could split to slides + a countdown for group work + instruction
+// slide" - B/C/D have no freeze/cue/take of their own (see LAYOUTS and
+// "layout" in protocol.js's initialState()): picking into one is immediate,
+// even while frozen, since there is nothing to protect - it was never going
+// to be revealed at a moment the class was watching. Panel A keeps its full
+// freeze/cue pipeline exactly as it had it, just confined to its own region
+// once a layout splits the screen. Deck nav, transport, and Ink all follow
+// `focus`, not always panel A.
+const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'panels-room', passphrase: 'split screen' }));
+const screen = await ctx.newPage();
+trap(screen, 'panels display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'panels control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 20000 });
+
+await pad.click('.layout-btn[data-layout="3"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-3'), null, { timeout: 5000 });
+const slotDisplay = await screen.evaluate(() => ({
+  a: getComputedStyle(document.querySelector('[data-panel="a"]')).display,
+  b: getComputedStyle(document.querySelector('[data-panel="b"]')).display,
+  c: getComputedStyle(document.querySelector('[data-panel="c"]')).display,
+  d: getComputedStyle(document.querySelector('[data-panel="d"]')).display,
+}));
+ok('the 3-panel layout shows A/B/C and leaves D hidden', slotDisplay.a === 'block' && slotDisplay.b === 'block' && slotDisplay.c === 'block' && slotDisplay.d === 'none');
+await pad.waitForFunction(() => document.querySelectorAll('.panel-btn').length === 3, null, { timeout: 3000 });
+ok('the panel picker offers exactly 3 panels for a 3-panel layout', true);
+
+await pad.click('.panel-btn:nth-child(2)');
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'B', null, { timeout: 3000 });
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Timer"))');
+await screen.waitForFunction(() => document.querySelector('[data-panel="b"] .r-timer'), null, { timeout: 5000 });
+ok('picking content while focused on B lands directly on B, not A', true);
+ok('and panel A is untouched by it', await screen.evaluate(() => !!document.querySelector('[data-panel="a"] .r-deck')));
+
+await pad.click('#freeze');
+await pad.click('.panel-btn:text-is("C")');
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'C', null, { timeout: 3000 });
+await pad.click('.tab[data-tab="say"]');
+await pad.fill('#text-body', 'Discuss in your groups');
+await pad.$eval('#text-form', (f) => f.requestSubmit());
+await screen.waitForFunction(() => document.querySelector('[data-panel="c"] .r-text'), null, { timeout: 5000 });
+ok('freeze does not gate a focused B/C/D panel either - nothing to protect, it was never cued', true);
+await pad.click('#freeze');
+
+await pad.click('.panel-btn:nth-child(1)');
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'A', null, { timeout: 3000 });
+await pad.click('.tab[data-tab="slides"]');
+await pad.click('#deck-next');
+await screen.waitForFunction(() => {
+  const svgs = Array.from(document.querySelector('[data-panel="a"] .r-deck').shadowRoot.querySelectorAll('svg[data-marpit-svg]'));
+  return svgs.findIndex((s) => s.classList.contains('podium-on')) === 1;
+}, null, { timeout: 5000 });
+ok("Next while focused on A still advances A's own deck, not B or C", true);
+ok('B is untouched by that Next', await screen.evaluate(() => !!document.querySelector('[data-panel="b"] .r-timer')));
+
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(300);
+const padBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(padBox.x + padBox.w * 0.5, padBox.y + padBox.h * 0.5);
+await pad.mouse.down();
+await pad.mouse.move(padBox.x + padBox.w * 0.5 + 5, padBox.y + padBox.h * 0.5 + 5);
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+const inkInsideA = await screen.evaluate(() => {
+  const slotA = document.querySelector('[data-panel="a"]').getBoundingClientRect();
+  const cv = document.querySelector('#ink'); const ctx2d = cv.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const data = ctx2d.getImageData(0, 0, cv.width, cv.height).data;
+  for (let y = 0; y < cv.height; y += 2) for (let x = 0; x < cv.width; x += 2) {
+    const i = (y * cv.width + x) * 4;
+    if (data[i + 3] > 0) {
+      const cssX = x / dpr, cssY = y / dpr;
+      return cssX >= slotA.left && cssX <= slotA.right && cssY >= slotA.top && cssY <= slotA.bottom;
+    }
+  }
+  return false;
+});
+ok("ink drawn while focused on A lands inside A's own on-screen region, not the whole stage", inkInsideA);
+
+await pad.click('.layout-btn[data-layout="single"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 5000 });
+const backToSingle = await screen.evaluate(() => {
+  const a = document.querySelector('[data-panel="a"]').getBoundingClientRect();
+  const s = document.querySelector('#stage').getBoundingClientRect();
+  return { bHidden: getComputedStyle(document.querySelector('[data-panel="b"]')).display === 'none', aFillsStage: Math.abs(a.width - s.width) < 2 && Math.abs(a.height - s.height) < 2 };
+});
+ok('dropping back to single hides B/C/D again and A fills the whole stage', backToSingle.bHidden && backToSingle.aFillsStage);
 await ctx.close();
 }
 

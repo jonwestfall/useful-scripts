@@ -5,7 +5,7 @@
 import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton } from './util.js';
 import { loadConfig, saveConfig, isConfigured, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, timerRemaining } from './protocol.js';
+import { initialState, timerRemaining, LAYOUTS, focusedItem } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport } from './deck.js';
@@ -32,13 +32,18 @@ const deckStore = new Map();
 const deckFetches = new Map();
 let deckView = { id: null, deck: null };
 let deckGeneration = 0;
-// The id most recently sent in a 'stage' command, until state.program's own
-// echo confirms the display actually picked it up. Closes the one race
-// deckView alone cannot: state.program is the display's word, arriving over
-// the network, so there is always a beat between sending a pick and it
-// actually taking effect here - normally sub-frame, but real on a loaded
-// machine or a laggier transport (Supabase, MQTT). Without this, the pad
-// would briefly go on sizing itself for whatever WAS on screen a moment ago.
+// The panel most recently sent a deck pick, and the id it should end up
+// showing, until state's own echo confirms it actually landed - see
+// deckAspectPending() below. Closes the one race deckView alone cannot:
+// state is the display's word, arriving over the network, so there is
+// always a beat between sending a pick and it actually taking effect here -
+// normally sub-frame, but real on a loaded machine or a laggier transport
+// (Supabase, MQTT). Without this, the pad would briefly go on sizing itself
+// for whatever WAS on that panel a moment ago. `deckId: true` means "in
+// flight, real id not known yet" (see pick()). Tracks only the most recent
+// pick - picking into two different panels in the same instant is not a
+// case worth a map for, and the worst it costs is a moment longer showing
+// "not ready yet" on whichever one loses that race.
 let pendingStage = null;
 
 // Requesting a deck's saved ink for export: the display holds the only full
@@ -180,14 +185,20 @@ function renderLibrary() {
   if (!grid.children.length) grid.append(el('p', { class: 'empty' }, 'Nothing matches.'));
 }
 
+// Sends a fully-formed item wherever it belongs right now. Panel A (focus 0)
+// goes through the usual freeze/cue/take pipeline via 'stage'. A focused
+// B/C/D panel has none of that - see "layout" in protocol.js's
+// initialState() - so it is set directly and immediately via 'panel'
+// instead, and `where` (an explicit program/preview target) does not apply.
 function stage(item, where = 'auto') {
   // Only a deck needs this: it is the only type whose pad shape depends on
   // content that has to be parsed, so it is the only one that can be picked
   // and drawn on before the pad actually knows what shape to be.
-  pendingStage = item.type === 'deck' ? item.deckId : null;
+  pendingStage = item.type === 'deck' ? { panel: state.focus, deckId: item.deckId } : null;
   // group/custom are library bookkeeping; the display has no use for them.
   const { group: _group, custom: _custom, ...clean } = item;
-  send({ op: 'stage', item: clean, where });
+  if (state.focus === 0) send({ op: 'stage', item: clean, where });
+  else send({ op: 'panel', index: state.focus - 1, item: clean });
 }
 
 // A deck picked from the library needs fetching and counting before it can be
@@ -204,9 +215,11 @@ async function pick(item, where = 'auto') {
   // sizing logic could already be asked to run again - well before
   // stageDeck() gets far enough to call stage() and set pendingStage itself.
   // Mark intent to pick a deck right here, synchronously, so that gap does
-  // not exist: true stands for "a deck pick is in flight, real id not known
-  // yet" until stage() replaces it with the actual one.
-  pendingStage = true;
+  // not exist: deckId `true` stands for "in flight, real id not known yet"
+  // until stage() replaces it with the actual one. Captures the panel this
+  // click targeted, not whatever has focus by the time it resolves.
+  const panel = state.focus;
+  pendingStage = { panel, deckId: true };
   const note = $('#deck-file-note');
   note.textContent = `Loading ${item.title || 'deck'}…`;
   try {
@@ -214,7 +227,7 @@ async function pick(item, where = 'auto') {
     await stageDeck({ source, name: item.title, src: item.src });
     note.textContent = '';
   } catch (err) {
-    if (pendingStage === true) pendingStage = null;
+    if (pendingStage?.panel === panel && pendingStage.deckId === true) pendingStage = null;
     note.textContent = `Could not open that deck: ${err.message}`;
   }
 }
@@ -344,7 +357,7 @@ async function ensureDeckView(item) {
 }
 
 function renderSlides() {
-  const item = state.program?.type === 'deck' ? state.program : null;
+  const item = focusedItem(state)?.type === 'deck' ? focusedItem(state) : null;
   $('#deck-none').hidden = !!item;
   $('#deck-live').hidden = !item;
   if (!item) return;
@@ -468,7 +481,7 @@ async function rasterizeSlide(svgLive, css, aspect, strokes) {
 }
 
 async function exportDeck() {
-  const item = state.program;
+  const item = focusedItem(state);
   if (!item || item.type !== 'deck') return;
   const btn = $('#deck-export');
   const status = $('#deck-export-status');
@@ -525,7 +538,7 @@ async function exportDeck() {
   } catch (err) {
     status.textContent = `Export failed: ${err.message}`;
   } finally {
-    btn.disabled = !(deckView.deck && state.program?.type === 'deck');
+    btn.disabled = !(deckView.deck && focusedItem(state)?.type === 'deck');
   }
 }
 
@@ -538,7 +551,7 @@ function currentTime() {
 }
 
 function renderNow() {
-  const item = state.program;
+  const item = focusedItem(state);
   const type = item?.type;
   const isMedia = ['video', 'audio', 'youtube'].includes(type);
   const isPaged = ['pdf', 'slides', 'web', 'deck'].includes(type);
@@ -589,12 +602,34 @@ function renderTimer() {
   $('#timer-start').textContent = state.timer.running ? 'Pause' : (state.timer.remainingMs > 0 ? 'Resume' : 'Start');
 }
 
+const PANEL_LABELS = ['A', 'B', 'C', 'D'];
+
+// The layout picker mirrors state.layout; the panel picker (A/B/C/D) only
+// appears once there is more than one to choose between, and shows which
+// one Library taps, deck nav, transport, and Ink currently address.
+function renderLayoutBar() {
+  $$('.layout-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.layout === state.layout));
+  const count = LAYOUTS[state.layout] || 1;
+  const picker = $('#panel-picker');
+  picker.hidden = count <= 1;
+  if (count <= 1) return;
+  if (picker.childElementCount !== count) {
+    picker.replaceChildren(...Array.from({ length: count }, (_, i) => el('button', {
+      class: 'panel-btn',
+      type: 'button',
+      onclick: () => send({ op: 'focus', index: i }),
+    }, PANEL_LABELS[i])));
+  }
+  $$('.panel-btn', picker).forEach((b, i) => b.classList.toggle('is-on', i === state.focus));
+}
+
 function renderAll() {
   renderPreview();
   renderNow();
   renderTimer();
   renderSlides();
-  ensureDeckView(state.program);
+  renderLayoutBar();
+  ensureDeckView(focusedItem(state));
 }
 
 // --- ink pad ----------------------------------------------------------------
@@ -642,7 +677,7 @@ function contentAspectFor(item) {
   return state.stageAspect || 16 / 9;
 }
 
-const computeContentAspect = () => contentAspectFor(state.program);
+const computeContentAspect = () => contentAspectFor(focusedItem(state));
 
 // The "contain" fit math the display itself uses to letterbox a slide: sizes
 // and centers `frame` inside `viewport` to the given aspect ratio. Shared by
@@ -672,22 +707,23 @@ function fitBox(viewport, frame, aspect) {
 // refuses pointer input until the real shape is known (see below); the live
 // mirror behind it keeps showing Marp's own "Loading deck…" status in the
 // meantime, so the pad does not look broken, just not ready yet.
-function deckAspectPending(item) {
-  // state.program is the display's echo of what it actually put on screen -
-  // until it confirms the deck we just told it to show, that echo is still
-  // describing whatever was there before, and going by it would size the pad
-  // for the WRONG item, not merely an unready one. `true` means a pick just
-  // started and does not have a real deckId to compare against yet.
-  if (pendingStage === true) return true;
-  if (pendingStage) {
-    if (item?.type === 'deck' && item.deckId === pendingStage) pendingStage = null;
+function deckAspectPending(panel, item) {
+  // The item echoed back for this panel is the display's word on what it
+  // actually put there - until it confirms the deck we just told it to
+  // show, that echo is still describing whatever was there before, and
+  // going by it would size the pad for the WRONG item, not merely an
+  // unready one. deckId `true` means a pick just started and does not have
+  // a real deckId to compare against yet.
+  if (pendingStage && pendingStage.panel === panel) {
+    if (pendingStage.deckId === true) return true;
+    if (item?.type === 'deck' && item.deckId === pendingStage.deckId) pendingStage = null;
     else return true;
   }
   return item?.type === 'deck' && deckView.id !== item.deckId;
 }
 
 function fitFrame() {
-  const pending = deckAspectPending(state.program);
+  const pending = deckAspectPending(state.focus, focusedItem(state));
   pad.classList.toggle('is-pending', pending);
   if (pending) return;
   const { w, h } = fitBox(padViewport, padFrame, computeContentAspect());
@@ -804,7 +840,7 @@ let padMirrorKey = null;
 let showMirror = true;
 
 function updatePadMirror() {
-  const item = state.program;
+  const item = focusedItem(state);
   const key = item ? `${item.type}:${item.deckId || item.src || ''}` : null;
   if (key !== padMirrorKey) {
     padMirrorRenderer?.destroy();
@@ -1070,6 +1106,8 @@ $$('.tab').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)))
 
 $('#freeze').addEventListener('click', () => send({ op: 'freeze' }));
 $('#blank').addEventListener('click', () => send({ op: 'blank' }));
+
+$$('.layout-btn').forEach((b) => b.addEventListener('click', () => send({ op: 'layout', mode: b.dataset.layout })));
 $('#take').addEventListener('click', () => send({ op: 'take' }));
 $('#swap').addEventListener('click', () => send({ op: 'swap' }));
 $('#preview-mode').addEventListener('click', () => send({ op: 'previewMode' }));
@@ -1242,7 +1280,7 @@ $('#cam-flip').addEventListener('click', async () => {
 // A Magic Keyboard or a clicker paired to the iPad should just work.
 document.addEventListener('keydown', (ev) => {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target.tagName)) return;
-  const paged = ['pdf', 'slides', 'web', 'deck'].includes(state.program?.type);
+  const paged = ['pdf', 'slides', 'web', 'deck'].includes(focusedItem(state)?.type);
   if (!paged) return;
   if (ev.key === 'ArrowRight' || ev.key === 'PageDown' || ev.key === ' ') { ev.preventDefault(); send({ op: 'nav', dir: 'next' }); }
   if (ev.key === 'ArrowLeft' || ev.key === 'PageUp') { ev.preventDefault(); send({ op: 'nav', dir: 'prev' }); }

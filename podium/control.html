@@ -19,6 +19,28 @@
     <span id="display-state">No display connected</span>
     <span id="peer-count"></span>
     <span class="spacer"></span>
+    <!-- Splitting the screen: pick how many panels and how they're arranged,
+         then which one Library taps, deck nav, and Ink currently address.
+         Lives in the topbar rather than a row of its own so it costs no
+         extra height in the (default, common) single-panel case. -->
+    <div class="layout-picker" role="group" aria-label="Screen layout">
+      <button class="layout-btn is-on" data-layout="single" type="button" title="Full screen">
+        <span class="layout-icon layout-icon-single"><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="2h" type="button" title="Side by side">
+        <span class="layout-icon layout-icon-2h"><i></i><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="2v" type="button" title="Top and bottom">
+        <span class="layout-icon layout-icon-2v"><i></i><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="3" type="button" title="One large, two small">
+        <span class="layout-icon layout-icon-3"><i></i><i></i><i></i></span>
+      </button>
+      <button class="layout-btn" data-layout="4" type="button" title="Four panels">
+        <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
+      </button>
+    </div>
+    <div id="panel-picker" class="panel-picker" hidden></div>
     <span class="room-info">room <b id="room-name" class="mono"></b> · <b id="fingerprint" class="mono">····</b></span>
     <button id="open-settings" type="button">Settings</button>
   </div>

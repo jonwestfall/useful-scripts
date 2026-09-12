@@ -71,7 +71,35 @@ label { display: block; font-size: 13px; color: var(--dim); margin-bottom: 5px; 
 body.display { overflow: hidden; cursor: default; }
 body.display.is-live { cursor: none; }
 
-body.display #stage { position: fixed; inset: 0; background: #000; }
+body.display #stage { position: fixed; inset: 0; background: #000; display: grid; }
+
+/* Splitting the screen (see LAYOUTS in protocol.js) is a CSS grid over
+   #stage: each layout picks its own template and which cells its panels
+   occupy, and a panel not shown by the current layout is simply not
+   rendered (a grid item that is display:none takes no space), so no
+   per-layout JS sizing math is needed here. */
+#stage.layout-single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+#stage.layout-2h { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+#stage.layout-2v { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+#stage.layout-3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; }
+#stage.layout-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+.panel-slot { position: relative; overflow: hidden; background: #000; display: none; }
+.panel-slot.is-on { display: block; }
+#stage.layout-single .panel-slot[data-panel='a'] { grid-column: 1; grid-row: 1; }
+#stage.layout-2h .panel-slot[data-panel='a'] { grid-column: 1; grid-row: 1; }
+#stage.layout-2h .panel-slot[data-panel='b'] { grid-column: 2; grid-row: 1; }
+#stage.layout-2v .panel-slot[data-panel='a'] { grid-column: 1; grid-row: 1; }
+#stage.layout-2v .panel-slot[data-panel='b'] { grid-column: 1; grid-row: 2; }
+#stage.layout-3 .panel-slot[data-panel='a'] { grid-column: 1; grid-row: 1 / 3; }
+#stage.layout-3 .panel-slot[data-panel='b'] { grid-column: 2; grid-row: 1; }
+#stage.layout-3 .panel-slot[data-panel='c'] { grid-column: 2; grid-row: 2; }
+#stage.layout-4 .panel-slot[data-panel='a'] { grid-column: 1; grid-row: 1; }
+#stage.layout-4 .panel-slot[data-panel='b'] { grid-column: 2; grid-row: 1; }
+#stage.layout-4 .panel-slot[data-panel='c'] { grid-column: 1; grid-row: 2; }
+#stage.layout-4 .panel-slot[data-panel='d'] { grid-column: 2; grid-row: 2; }
+/* A split's seams, so two adjacent panels don't visually run together. */
+#stage:not(.layout-single) .panel-slot { outline: 1px solid #000; }
 
 .layer { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
 .layer[data-role='program'] { opacity: 1; z-index: 2; pointer-events: auto; }
@@ -252,6 +280,31 @@ body.control.is-frozen { background: #171006; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .workspace { display: flex; flex: 1; min-height: 0; }
+
+.layout-picker { display: flex; gap: 4px; }
+.layout-btn {
+  display: grid; place-items: center; width: 32px; min-height: 30px; padding: 0;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+}
+.layout-btn.is-on { border-color: var(--accent); background: #16202c; }
+/* Each icon is a tiny CSS-drawn copy of the actual on-screen grid (see
+   #stage.layout-* in the display rules) - what you tap is what you get. */
+.layout-icon { display: grid; width: 18px; height: 13px; gap: 2px; }
+.layout-icon i { background: var(--dim); border-radius: 1px; }
+.layout-btn.is-on .layout-icon i { background: var(--accent); }
+.layout-icon-single { grid-template-columns: 1fr; }
+.layout-icon-2h { grid-template-columns: 1fr 1fr; }
+.layout-icon-2v { grid-template-rows: 1fr 1fr; }
+.layout-icon-3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; }
+.layout-icon-3 i:first-child { grid-row: 1 / 3; }
+.layout-icon-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+.panel-picker { display: flex; gap: 4px; }
+.panel-btn {
+  min-width: 30px; min-height: 30px; padding: 0 8px; font-weight: 700; font-size: 13px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+}
+.panel-btn.is-on { border-color: var(--accent); color: var(--accent); background: #16202c; }
 
 #link-help {
   background: #2a1e12; border-bottom: 1px solid #6b4a22; color: #ffd9a8;

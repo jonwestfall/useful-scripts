@@ -125,6 +125,41 @@ chk('and Previous again walks back into slide 0 fully revealed', s.program.slide
 applyCommand(s, {op:'nav', dir:'goto', value:0});
 chk('jumping via a thumbnail lands fully revealed, not bullet-by-bullet', s.program.step === 2);
 
+// --- split-screen panels: B/C/D are direct and immediate, unlike A ---------
+chk('starts in single-panel layout', s.layout === 'single' && s.focus === 0);
+chk('switching to an unknown layout is ignored', applyCommand(s, {op:'layout', mode:'nonsense'}) === false && s.layout === 'single');
+applyCommand(s, {op:'layout', mode:'3'});
+chk('layout switches', s.layout === '3');
+applyCommand(s, {op:'panel', index:0, item:{type:'timer', label:'Group work'}});
+chk('a panel is set directly - no preview, no freeze', s.panels[0].type === 'timer' && s.preview === null);
+applyCommand(s, {op:'freeze', on:true});
+applyCommand(s, {op:'panel', index:1, item:{type:'text', body:'Instructions'}});
+chk('freeze does not block setting a panel either', s.panels[1].type === 'text');
+applyCommand(s, {op:'freeze', on:false});
+
+chk('focusing a panel out of range for the current layout is ignored', applyCommand(s, {op:'focus', index:5}) === false && s.focus === 0);
+applyCommand(s, {op:'focus', index:1});
+chk('focus moves to B', s.focus === 1);
+const programBefore = s.program.type;
+applyCommand(s, {op:'panel', index:0, item:{type:'deck', deckId:'panel-deck', slideCount:5, title:'Panel deck'}});
+applyCommand(s, {op:'nav', dir:'next'});
+chk('Next while focused on B advances B, not A', s.panels[0].slide === 1 && s.program.type === programBefore);
+applyCommand(s, {op:'freeze', on:true});
+applyCommand(s, {op:'nav', dir:'next'});
+chk('freeze does not protect a focused B/C/D from nav either - nothing to protect, it was never cued', s.panels[0].slide === 2);
+applyCommand(s, {op:'freeze', on:false});
+applyCommand(s, {op:'ink', action:'begin', id:'p1', pts:[[0.5,0.5]]});
+const bSurface = inkSurfaceKey(s.panels[0]);
+chk('ink while focused on B lands on B\'s own surface', s.ink.bySurface[bSurface]?.strokes.length === 1);
+applyCommand(s, {op:'focus', index:0});
+chk('focus back to A', s.focus === 0);
+applyCommand(s, {op:'layout', mode:'single'});
+chk('dropping back to single resets an out-of-range focus (already 0 here, but the guard exists)', s.focus === 0);
+applyCommand(s, {op:'layout', mode:'4'});
+applyCommand(s, {op:'focus', index:3});
+applyCommand(s, {op:'layout', mode:'2h'});
+chk('shrinking the layout falls focus back to A rather than pointing at a panel no longer shown', s.focus === 0);
+
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

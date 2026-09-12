@@ -12,6 +12,16 @@
 
 export const BLACK = { type: 'black', title: 'Black' };
 
+// How many panels each layout actually shows - panel A (state.program) is
+// always the first of them; B/C/D come from state.panels[0..2].
+export const LAYOUTS = {
+  single: 1,
+  '2h': 2,   // side by side
+  '2v': 2,   // top and bottom
+  3: 3,      // A large on one side, B/C stacked on the other
+  4: 4,      // A/B/C/D tiled 2x2
+};
+
 export function initialState() {
   return {
     rev: 0,
@@ -31,7 +41,30 @@ export function initialState() {
     // surface instead of carrying old strokes onto unrelated content.
     ink: { color: '#ffd166', width: 6, bySurface: {} },
     telemetry: { time: 0, duration: 0, playing: false },
+    // Splitting the screen (project slides + a countdown + instructions, say)
+    // is deliberately a separate, simpler world from panel A's freeze/cue/
+    // take: B/C/D are set directly and immediately, with no preview to cue
+    // into first - you are laying out a screen, not revealing something at
+    // a moment the class is watching. `layout` picks how many of them show
+    // and how they are arranged (see LAYOUTS); `panels` holds B/C/D's own
+    // content, same shape as `program`. `focus` (0=A, 1=B, 2=C, 3=D) is
+    // which one Next/Prev, thumbnails, transport, and Ink currently address -
+    // shared state so every controller agrees on which panel a bare "Next"
+    // means, the same reason program/preview are shared rather than local.
+    layout: 'single',
+    panels: [{ ...BLACK }, { ...BLACK }, { ...BLACK }],
+    focus: 0,
   };
+}
+
+// The item `focus` currently points at - state.program for focus 0 (never
+// the frozen preview: ink/nav/transport all address what is actually on
+// screen, exactly like today when there is only one panel), or state.panels
+// for 1/2/3. Returns null for an out-of-range focus rather than throwing, so
+// a stale focus from a layout that has since shrunk fails safe.
+export function focusedItem(state) {
+  if (state.focus === 0) return state.program;
+  return state.panels[state.focus - 1] || null;
 }
 
 // Where a newly picked item should land.
@@ -177,6 +210,35 @@ export function applyCommand(state, cmd) {
       state.previewMode = cmd.on ?? !state.previewMode;
       return true;
 
+    case 'layout': {
+      if (!Object.prototype.hasOwnProperty.call(LAYOUTS, cmd.mode)) return false;
+      state.layout = cmd.mode;
+      // A focus the new layout does not have (going from 4 panels down to 2,
+      // say) falls back to A rather than pointing at a panel that is no
+      // longer shown.
+      if (state.focus >= LAYOUTS[cmd.mode]) state.focus = 0;
+      return true;
+    }
+
+    case 'panel': {
+      // B/C/D are set directly, with no freeze/cue in between - see the
+      // comment on `layout` in initialState(). index 0/1/2 is B/C/D.
+      const index = Number(cmd.index);
+      if (!Number.isInteger(index) || index < 0 || index > 2) return false;
+      const item = normalizeItem(cmd.item);
+      if (!item) return false;
+      state.panels[index] = item;
+      return true;
+    }
+
+    case 'focus': {
+      const index = Number(cmd.index);
+      const count = LAYOUTS[state.layout] || 1;
+      if (!Number.isInteger(index) || index < 0 || index >= count) return false;
+      state.focus = index;
+      return true;
+    }
+
     case 'volume':
       state.volume = clamp01(cmd.value);
       if (state.volume > 0) state.muted = false;
@@ -189,9 +251,10 @@ export function applyCommand(state, cmd) {
     case 'media': {
       // Deliberately NOT frozen-aware: background music or a paused video is
       // "now playing" control, not a visual reveal, so it always targets what
-      // the room can actually hear.
-      const where = cmd.where === 'preview' ? 'preview' : 'program';
-      const item = state[where];
+      // the room can actually hear. In a split layout that is whichever
+      // panel has focus - B/C/D have no preview of their own to choose
+      // between, so cmd.where only matters for panel A.
+      const item = state.focus === 0 ? state[cmd.where === 'preview' ? 'preview' : 'program'] : state.panels[state.focus - 1];
       if (!item) return false;
       if (cmd.action === 'play') item.playing = true;
       else if (cmd.action === 'pause') item.playing = false;
@@ -203,8 +266,12 @@ export function applyCommand(state, cmd) {
     }
 
     case 'nav': {
-      const where = resolveVisualTarget(state, cmd);
-      const item = state[where];
+      // Panel A goes through freeze/cue like always; B/C/D have no preview
+      // to cue into, so a focused B/C/D is navigated directly and immediately
+      // regardless of freeze - freeze's whole point (browse ahead unseen) is
+      // moot for a panel that was never going to be seen changing anyway,
+      // since it is not what freeze is protecting.
+      const item = state.focus === 0 ? state[resolveVisualTarget(state, cmd)] : state.panels[state.focus - 1];
       if (!item) return false;
       const step = cmd.dir === 'prev' ? -1 : 1;
       if (item.type === 'deck') {
@@ -237,9 +304,9 @@ export function applyCommand(state, cmd) {
     }
 
     case 'fit': {
-      const where = resolveVisualTarget(state, cmd);
-      if (!state[where]) return false;
-      state[where].fit = cmd.value === 'cover' ? 'cover' : 'contain';
+      const item = state.focus === 0 ? state[resolveVisualTarget(state, cmd)] : state.panels[state.focus - 1];
+      if (!item) return false;
+      item.fit = cmd.value === 'cover' ? 'cover' : 'contain';
       return true;
     }
 
@@ -279,8 +346,9 @@ export function applyCommand(state, cmd) {
       if (cmd.width) ink.width = Number(cmd.width) || ink.width;
       // Every ink action applies to whatever is on screen right now - never to
       // a frozen preview. Annotating is "mark up what the class is looking
-      // at", and freeze is orthogonal to that.
-      const surface = touchSurface(ink, inkSurfaceKey(state.program));
+      // at", and freeze is orthogonal to that. In a split layout that means
+      // whichever panel has focus (A never means the preview here either).
+      const surface = touchSurface(ink, inkSurfaceKey(focusedItem(state)));
       if (cmd.action === 'begin') {
         surface.strokes.push({ id: cmd.id, color: cmd.color || ink.color, width: cmd.width || ink.width, pts: cmd.pts || [] });
       } else if (cmd.action === 'points') {

@@ -2,14 +2,16 @@
 // what a controller tells it to.
 //
 // It holds the single authoritative state, applies incoming commands, and
-// broadcasts the result. Two content layers alternate between program and
-// preview so that TAKE swaps which one is visible instead of rebuilding it -
-// a cued video keeps its playhead and a cued page keeps its scroll position.
+// broadcasts the result. Panel A's two content layers alternate between
+// program and preview so that TAKE swaps which one is visible instead of
+// rebuilding it - a cued video keeps its playhead and a cued page keeps its
+// scroll position. A layout can split the screen into up to four panels
+// (see LAYOUTS in protocol.js); B/C/D are simpler; set directly, no preview.
 
 import { $, el, throttle, wireDangerButton } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, applyCommand, inkSurfaceKey } from './protocol.js';
+import { initialState, applyCommand, inkSurfaceKey, LAYOUTS, focusedItem } from './protocol.js';
 import { createRenderer } from './renderers.js';
 import { createCameraReceiver } from './rtc.js';
 
@@ -71,12 +73,40 @@ setInterval(() => {
   }
 }, 3000);
 
-// --- two interchangeable content layers ------------------------------------
+// --- content layers, split across up to four panels ------------------------
+//
+// Panel A keeps the original two-layer program/preview alternation - TAKE
+// swaps which one is visible instead of rebuilding it, so a cued video keeps
+// its playhead and a cued page keeps its scroll position - just confined to
+// its own region of the screen instead of the whole stage once a layout
+// splits it. B/C/D (see LAYOUTS in protocol.js) are deliberately simpler:
+// one layer each, set directly and immediately from state.panels with no
+// preview to cue into first, since splitting the screen is "lay out what's
+// on it", not a reveal freeze is meant to protect.
 
+const EXTRA_PANEL_IDS = ['b', 'c', 'd'];
+
+function makeSlot(id) {
+  const slot = el('div', { class: 'panel-slot' });
+  slot.dataset.panel = id;
+  stage.append(slot);
+  return slot;
+}
+
+const slotA = makeSlot('a');
+slotA.classList.add('is-on'); // panel A is always shown, in every layout
 const layers = [0, 1].map(() => {
   const node = el('div', { class: 'layer' });
-  stage.append(node);
+  slotA.append(node);
   return { node, key: null, renderer: null };
+});
+
+const extraLayers = EXTRA_PANEL_IDS.map((id) => {
+  const slot = makeSlot(id);
+  const node = el('div', { class: 'layer' });
+  node.dataset.role = 'program';
+  slot.append(node);
+  return { slot, node, key: null, renderer: null };
 });
 
 function freeLayer(layer) {
@@ -100,7 +130,7 @@ function mount(layer, item) {
     // A deck's contentAspect() only has a real answer once it finishes
     // mounting (Marp parse + fetch, genuinely slow for a real lecture deck's
     // theme and fonts). Ink applied before then was drawn against
-    // contentRect()'s no-letterbox fallback; redoing it now that the real
+    // contentRectFor()'s no-letterbox fallback; redoing it now that the real
     // box is known is what makes that self-correct instead of staying
     // wrong for the rest of the item's time on screen.
     onReady: () => redrawInk(true),
@@ -148,6 +178,37 @@ function syncLayers() {
       want.layer.renderer.reconcile(want.item, audio);
     }
   }
+
+  // B/C/D: only as many as the current layout actually shows.
+  const panelCount = LAYOUTS[state.layout] || 1;
+  extraLayers.forEach((layer, i) => {
+    const item = i + 1 < panelCount ? state.panels[i] : null;
+    layer.slot.classList.toggle('is-on', !!item);
+    if (!item) { if (layer.key) freeLayer(layer); return; }
+    if (layer.key !== item.key) mount(layer, item);
+    else layer.renderer.update(item);
+    // The room's sound stays with panel A even when it is not the focused
+    // one - two panels both playing audio at once would just be noise, and
+    // there is no "cue" step here to decide which one meant to be heard.
+    layer.renderer.reconcile(item, { volume: 0, muted: true });
+  });
+
+  stage.className = `layout-${state.layout}`;
+}
+
+// Panel A's own renderer is whichever of its two layers is actually on
+// screen right now.
+function programRenderer() {
+  return layers.find((l) => l.node.dataset.role === 'program')?.renderer;
+}
+
+// Whichever slot/renderer/item `state.focus` currently points at - what
+// Next/Prev, transport, Ink, and the laser pointer all address. Panel A's
+// item is never the frozen preview, matching focusedItem() in protocol.js.
+function focusedPanel() {
+  if (state.focus === 0) return { item: state.program, slot: slotA, renderer: programRenderer() };
+  const layer = extraLayers[state.focus - 1];
+  return { item: state.panels[state.focus - 1], slot: layer?.slot, renderer: layer?.renderer };
 }
 
 // --- ink overlay ------------------------------------------------------------
@@ -156,29 +217,48 @@ function syncLayers() {
 // browser window: a 16:9 deck slide inside a wider or taller window is
 // letterboxed, and without this an iPad's flat rectangle of a pad would not
 // correspond to where the slide actually sits, letting you "draw" into the
-// dead space around it. contentRect() below is the one place that math
+// dead space around it. contentRectFor() below is the one place that math
 // happens; the pad on the controller mirrors the same content aspect so its
 // whole drawing surface really is the slide, edge to edge.
 
 const ink = { ctx: inkCanvas.getContext('2d'), drawnKey: null, drawnStrokes: 0, drawnTail: 0 };
 
-// Where the current item's meaningful content sits within the stage, in CSS
-// pixels. Letterboxed for anything with a fixed aspect ratio (a deck slide, an
-// image or video shown with "contain"); the full stage for everything else,
-// which is exactly how those render.
-function contentRect() {
-  const w = stage.clientWidth;
-  const h = stage.clientHeight;
-  const programLayer = layers.find((l) => l.node.dataset.role === 'program');
-  const aspect = programLayer?.renderer?.contentAspect?.() ?? null;
-  if (!aspect || !w || !h) return { x: 0, y: 0, w, h };
-  const stageAspect = w / h;
-  if (stageAspect > aspect) {
+// Where a panel's meaningful content sits, in CSS pixels relative to the
+// STAGE (not the panel itself) - the one #ink canvas covers the whole stage
+// regardless of how it is split, so every panel's strokes need to land in
+// its own on-screen region, not all drawn from (0,0). Letterboxed within
+// that region for anything with a fixed aspect ratio; the whole region for
+// everything else, which is exactly how those render.
+function contentRectFor(slot, renderer) {
+  if (!slot) return { x: 0, y: 0, w: 0, h: 0 };
+  const stageBox = stage.getBoundingClientRect();
+  const box = slot.getBoundingClientRect();
+  const w = box.width;
+  const h = box.height;
+  const ox = box.left - stageBox.left;
+  const oy = box.top - stageBox.top;
+  const aspect = renderer?.contentAspect?.() ?? null;
+  if (!aspect || !w || !h) return { x: ox, y: oy, w, h };
+  const boxAspect = w / h;
+  if (boxAspect > aspect) {
     const cw = h * aspect;
-    return { x: (w - cw) / 2, y: 0, w: cw, h };
+    return { x: ox + (w - cw) / 2, y: oy, w: cw, h };
   }
   const ch = w / aspect;
-  return { x: 0, y: (h - ch) / 2, w, h: ch };
+  return { x: ox, y: oy + (h - ch) / 2, w, h: ch };
+}
+
+// Every panel currently on screen (A always; B/C/D per the layout), each
+// with its own item, slot, and mounted renderer - what both redrawInk() and
+// wireState()'s telemetry lean on to treat "one panel" and "the whole
+// display used to be" the same shape of problem.
+function activePanels() {
+  const panelCount = LAYOUTS[state.layout] || 1;
+  const list = [{ item: state.program, slot: slotA, renderer: programRenderer() }];
+  extraLayers.forEach((layer, i) => {
+    if (i + 1 < panelCount) list.push({ item: state.panels[i], slot: layer.slot, renderer: layer.renderer });
+  });
+  return list;
 }
 
 function sizeInk() {
@@ -208,9 +288,28 @@ function currentInkStrokes() {
   return state.ink.bySurface[inkSurfaceKey(state.program)]?.strokes || [];
 }
 
-function redrawInk(force = false) {
+// A split screen redraws every visible panel's ink in one pass rather than
+// keeping the single-panel incremental "just append the new points" fast
+// path working across several surfaces at once - simpler, and drawing
+// during a lecture split across panels is not the same hot-loop-per-stroke
+// case that optimization exists for.
+function redrawSplitInk() {
   const { ctx } = ink;
-  const rect = contentRect();
+  ctx.clearRect(0, 0, stage.clientWidth, stage.clientHeight);
+  let any = false;
+  for (const panel of activePanels()) {
+    const rect = contentRectFor(panel.slot, panel.renderer);
+    const strokes = state.ink.bySurface[inkSurfaceKey(panel.item)]?.strokes || [];
+    for (const stroke of strokes) strokePath(ctx, stroke, rect);
+    if (strokes.length) any = true;
+  }
+  inkCanvas.classList.toggle('has-ink', any);
+}
+
+function redrawInk(force = false) {
+  if (state.layout !== 'single') { redrawSplitInk(); return; }
+  const { ctx } = ink;
+  const rect = contentRectFor(slotA, programRenderer());
   const strokes = currentInkStrokes();
   const last = strokes[strokes.length - 1];
   const key = `${inkSurfaceKey(state.program)}|${rect.x.toFixed(1)}|${rect.y.toFixed(1)}|${rect.w.toFixed(1)}|${rect.h.toFixed(1)}`;
@@ -239,15 +338,17 @@ function redrawInk(force = false) {
 // --- laser pointer -----------------------------------------------------------
 //
 // Deliberately outside `state`: a live gesture, not a document. Positions
-// arrive already mapped through the controller's own content-shaped preview,
-// so the same fraction lands in the same spot here via contentRect() - the
-// letterboxed slide's own bounds, exactly like ink.
+// arrive already mapped through the controller's own content-shaped preview
+// of whichever panel has focus, so the same fraction lands in the same spot
+// here via contentRectFor() - that panel's own letterboxed bounds, exactly
+// like ink.
 
 let laserHideTimer = null;
 
 function showLaser(msg) {
   if (!msg?.on) { hideLaser(); return; }
-  const rect = contentRect();
+  const { slot, renderer } = focusedPanel();
+  const rect = contentRectFor(slot, renderer);
   laserEl.style.left = `${rect.x + (Number(msg.x) || 0) * rect.w}px`;
   laserEl.style.top = `${rect.y + (Number(msg.y) || 0) * rect.h}px`;
   laserEl.classList.add('is-on');
@@ -292,7 +393,10 @@ function updateStandby() {
 // does, rather than only what it personally drew this session.
 function wireState() {
   const { ink: inkState, ...rest } = state;
-  const key = inkSurfaceKey(state.program);
+  // Ink and transport both address whichever panel has focus - a controller
+  // drawing or scrubbing needs the FOCUSED panel's surface and shape, not
+  // always panel A's, once more than one panel is on screen.
+  const key = inkSurfaceKey(focusedItem(state));
   return {
     ...rest,
     ink: {
@@ -306,8 +410,7 @@ function wireState() {
 }
 
 function telemetry() {
-  const programLayer = layers.find((l) => l.node.dataset.role === 'program');
-  return programLayer?.renderer?.telemetry() || { time: 0, duration: 0, playing: false };
+  return focusedPanel().renderer?.telemetry() || { time: 0, duration: 0, playing: false };
 }
 
 function broadcast() {
