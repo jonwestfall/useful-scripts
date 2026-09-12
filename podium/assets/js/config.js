@@ -70,6 +70,12 @@ function clean(obj) {
 
 export async function loadConfig() {
   const cfg = { ...DEFAULTS, ...clean(await fromFile()), ...clean(fromStorage()), ...clean(fromHash()) };
+  // A brand-new device gets a room and a passphrase invented for it so the
+  // setup form has something to offer rather than two empty boxes. They are a
+  // suggestion, not a decision - which is what `generated` records, so
+  // isConfigured can tell "nobody has set this up" from "somebody chose
+  // these". clean() drops the marker on the way to storage.
+  cfg.generated = { room: !cfg.room, passphrase: !cfg.passphrase };
   if (!cfg.room) cfg.room = `room-${uid(5)}`;
   if (!cfg.passphrase) cfg.passphrase = uid(10);
   // A device configured by a pairing link should keep those settings, and the
@@ -88,6 +94,13 @@ export function saveConfig(cfg) {
 }
 
 export function isConfigured(cfg) {
+  // Never treat the invented room and passphrase above as a setup. Otherwise a
+  // config.json naming a transport that needs no credentials of its own - MQTT,
+  // whose broker URL already has a working default - would carry a first-run
+  // device straight past the setup form and onto a random room with a random
+  // passphrase that nobody had seen, let alone chosen. Which is exactly the
+  // decision that setup form exists to put in front of someone.
+  if (cfg.generated?.room || cfg.generated?.passphrase) return false;
   if (!cfg.room || !cfg.passphrase) return false;
   if (cfg.transport === 'supabase') return !!(cfg.supabaseUrl && cfg.supabaseKey);
   if (cfg.transport === 'ws') return !!cfg.wsUrl;

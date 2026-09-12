@@ -122,8 +122,12 @@ The code grants control of the projector, so it is behind a deliberate button pr
 on the classroom machine and hides itself after 90 seconds. Do not leave it up in
 front of the room.
 
-On the iPad, Share → **Add to Home Screen** gives you a fullscreen controller with no
-Safari chrome. Repeat the pairing for your iPhone; both stay in sync.
+On the iPad, Share → **Add to Home Screen** gives you a real app: its own icon, no
+Safari chrome, and a shell that is cached on the very first visit, so it opens
+whether or not the classroom Wi-Fi is behaving. (When it opens without a network it
+says so plainly — *could not open wss://…* — rather than looking broken. See
+**reading the relay readout** below.) The display page installs the same way on the
+classroom PC. Repeat the pairing for your iPhone; both stay in sync.
 
 ## Marp decks
 
@@ -161,8 +165,9 @@ This lands on your iPad and nowhere else.
 
 The **Slides** tab shows the notes for the slide that is up, what is coming next,
 big Previous/Next buttons, and a thumbnail of every slide — tap one to jump
-straight there. An external keyboard or a presentation clicker works too: arrows,
-space, `B` to blank, `F` to freeze.
+straight there. An external keyboard or a presentation clicker works too: arrows and
+space page through anything with pages, and `B` to blank and `F` to freeze work on
+*whatever* is up — a photo, a video, a whiteboard — not only on a deck.
 
 Because the whole deck is rendered once into a shadow root, changing slide is
 instant, and a deck cued behind a freeze keeps its place when you take it.
@@ -275,12 +280,57 @@ can see what you are marking up rather than drawing blind on a black square —
 ever distracting. **Zoom** and the pan arrows next to it are a pure magnifier for a
 steadier line; they never change where a stroke actually lands.
 
+**Clear is one tap, and undoable.** Wiping the board is a frequent, deliberate move —
+finish one problem, start the next — so putting a confirmation in front of it would tax
+the common case to guard against the rare one. Instead the display keeps what it wiped
+and the controller offers **Undo clear** for fifteen seconds. Nothing crosses the
+network to put it back: the display restores its own copy.
+
 **Export marked-up slides** (Slides tab, while a deck is on screen) rasterizes every
 slide with its own ink baked in and downloads a `.zip` — `slide-01.png`,
 `slide-02.png`, … plus a `slides.txt` listing titles and which slides carry
 annotations. It is best-effort: a slide that depends on a font or image the browser
 refuses to bake into a canvas is skipped individually (noted in `slides.txt`) rather
 than failing the whole export.
+
+### What ink costs to move, and why that mattered
+
+A stroke is a list of points, and a point used to cross the wire at full float
+precision — `0.5488135039273248`, eighteen characters to place a dot on a projector.
+They are now rounded to four decimals: one ten-thousandth of the screen, 0.19px on a
+1920px projector, well under the width of the thinnest pen, and **60% smaller**.
+
+That was not a micro-optimisation. The state heartbeat used to carry every stroke on
+the current surface, in full, every two seconds — and every 400ms while anything was
+playing. A hundred strokes of sixty points is 243 KB of JSON, and two separate
+ceilings sat above that:
+
+- **Encryption overflowed the call stack** somewhere past 100 KB, because base64
+  encoding spread every byte of the message as a function argument. Past the limit,
+  `send()` threw and the message simply never went — with nothing on screen to say
+  why. That ceiling sat under *every* large message, so an uploaded deck (capped at
+  120 KB) and a lecture plan's photo (160 KB) were already at or over it.
+- **The relay closes a socket** that sends more than 256 KB, with code 1009. The
+  transport then reconnects, the next heartbeat closes it again, and a whiteboard
+  with a term's annotation on it took the projector off the air in a loop.
+
+Both are fixed, and the heartbeat now carries a *summary* of the current surface —
+how many strokes, and how many points in the finished ones — rather than the strokes
+themselves. A controller whose own copy does not match asks for the surface and gets
+it in slices small enough for any transport. It rarely needs to: it applies its own
+strokes as it draws them, and it now follows its peers' strokes straight off the bus,
+so a second iPad draws **live** rather than up to two seconds behind. It asks only
+when it has genuinely fallen behind — joining mid-lecture, opening a surface it has
+never seen, or a dropped message.
+
+The summary deliberately ignores the last stroke's point count. While someone is
+drawing, that count is legitimately different on every device, because batches are in
+flight; counting it would mean re-fetching the whole surface on every frame of every
+gesture.
+
+One stroke is also capped now, at 3000 points. The stroke *count* was always bounded;
+the points inside one were not, so a pen left down — or a pointer that never lifted
+because a tab was backgrounded mid-gesture — could grow a single stroke without limit.
 
 **Rotating the iPad mid-stroke does not warp the line.** Every point in a stroke is a
 fraction (0–1) of the pad's own box at the instant it was captured. If that box
@@ -342,6 +392,36 @@ over. Podium re-checks that the canvas still matches the screen immediately befo
 every redraw, rather than trusting that it was told, so a missed notification costs
 one frame instead of the rest of the lecture. (It also listens for the density change
 directly, so the correction usually lands before you draw at all.)
+
+## Getting back to where you were
+
+Two things a lecture does constantly, which the app used to be bad at.
+
+**A student asks something, you put up a photo, you go back.** Picking the deck out
+of the Library stages it from slide 1 — so that detour used to restart the lecture in
+front of everyone. The Library now leads with a **Back to** strip: the last few things
+that were on the projector, each at the position you left it (*Weighing the Evidence ·
+slide 5 of 13*, *Reaction clip · 4:12*). One tap returns to exactly that. Whatever is
+on screen is never offered, and the position comes from the display's own state, so it
+is where the class actually got to rather than where you last tapped.
+
+**The classroom PC reloads.** A stray refresh, a browser reclaiming the tab, a machine
+waking up — and the display, which holds the only authoritative copy of the lecture,
+used to come back to black with every panel empty. No controller could help; they
+mirror that screen, they do not hold it. It now saves what is on screen as it goes and
+offers it back: the arming screen reads *Picking up where this screen left off —
+Weighing the Evidence*, with **Start black instead** if you would rather not. A running
+countdown comes back still counting, because its end is an absolute moment rather than
+a duration. Anything older than twelve hours is ignored, so yesterday's lecture does
+not reappear this morning.
+
+Deliberately *not* restored: freeze, blank, and the cued preview. Those are "what I am
+doing this second", and coming back into a held or blacked-out screen with no memory of
+why is worse than coming back to the content.
+
+The save is debounced, which leaves the obvious window — the last thing you did is
+exactly what a debounce has not written yet — so it is also flushed when the tab is
+hidden, closed or reloaded. Only a hard crash loses anything, and then at most a second.
 
 ## Splitting the screen
 
@@ -759,7 +839,10 @@ node podium/test/e2e.mjs                    # needs: npm i playwright
 ```
 
 The end-to-end test starts the relay, drives a display and two controllers in real
-browsers, and checks the things that would embarrass you in front of a class: freeze
+browsers, and checks the things that would embarrass you in front of a class:
+a board with three hundred strokes on it keeps the projector on the relay rather than
+being closed off it, an interrupted lecture comes back to the slide it was on and a
+reloaded display does too, the controller opens with no network at all, freeze
 really holds even while paging through the deck already on screen (and never touches
 playing audio, and pauses a live camera on its current frame rather than pretending
 it can hold a still one), TAKE does not reload the cued item, ink lands inside a
@@ -775,13 +858,16 @@ not open (and neither page dies at its top-level `await` when the failure happen
 before a socket exists), a lecture planned in the office reaches the projector intact
 — photo and slides that exist nowhere on the server included — after a round trip
 through a plan file and a second device, and a controller with the wrong passphrase
-cannot touch the screen. 210 checks.
+cannot touch the screen. 234 checks.
 
 ## Layout
 
 ```
 podium/
   display.html  control.html  plan.html  index.html
+  sw.js                           offline shell (network-first; see the file)
+  manifest-control.webmanifest    Add to Home Screen, as the controller
+  manifest-display.webmanifest    ...and as the display
   config.json                     optional shared defaults
   assets/
     css/podium.css
@@ -797,6 +883,7 @@ podium/
       transport/                  supabase.js · mqtt.js · ws.js
       deck.js                     Marp: themes, rendering, presenter notes, builds
       zip.js                      minimal ZIP writer, for exporting marked-up slides
+    icons/                        app icons (regenerate: vendor-build/make-icons.mjs)
     vendor/qrcode.js              QR generator (MIT, Kazuhiko Arase)
     vendor/marp.esm.js            Marp renderer, bundled for browsers
   marp-themes/                    your Marp CSS + themes.json

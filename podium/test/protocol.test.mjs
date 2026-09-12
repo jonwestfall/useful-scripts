@@ -1,6 +1,7 @@
 // Run with:  node podium/test/protocol.test.mjs
 // Pure state-machine tests - no DOM, no network.
-import { initialState, applyCommand, timerRemaining, timerById, inkSurfaceKey, MAX_TIMERS } from '../assets/js/protocol.js';
+import { initialState, applyCommand, timerRemaining, timerById, inkSurfaceKey,
+  inkDigest, inkDigestsAgree, applyInkAction, MAX_TIMERS } from '../assets/js/protocol.js';
 const s = initialState();
 let ok = true;
 const chk = (label, cond) => { if (!cond) { ok = false; console.log('FAIL', label); } else console.log('ok  ', label); };
@@ -193,6 +194,75 @@ applyCommand(s, {op:'layout', mode:'4'});
 applyCommand(s, {op:'focus', index:3});
 applyCommand(s, {op:'layout', mode:'2h'});
 chk('shrinking the layout falls focus back to A rather than pointing at a panel no longer shown', s.focus === 0);
+
+// --- ink on the wire ---------------------------------------------------------
+// The heartbeat used to carry every stroke on the current surface, twice a
+// second. A hundred strokes of sixty points is 243 KB of JSON, which seals past
+// what any relay will carry: the self-hosted one closes the socket with 1009,
+// the transport reconnects, and the next heartbeat closes it again.
+{
+  const ink = initialState();
+  applyCommand(ink, {op:'stage', item:{type:'whiteboard', bg:'#fff'}});
+  const key = inkSurfaceKey(ink.program);
+  applyCommand(ink, {op:'ink', action:'begin', id:'s1', pts:[[0.5488135039273248, 0.7151893663724195]]});
+  const [x, y] = ink.ink.bySurface[key].strokes[0].pts[0];
+  chk('points are rounded to four decimals on the way in (0.19px on a 1920px projector)',
+    x === 0.5488 && y === 0.7152);
+  chk('which is what a point costs on the wire, down from eighteen characters',
+    JSON.stringify([x, y]).length <= 16);
+
+  applyCommand(ink, {op:'ink', action:'points', id:'s1', pts:[[NaN, 0.5], [0.2, 'nope'], [0.3, 0.4]]});
+  chk('a point that is not a pair of numbers is dropped rather than serialised as null',
+    ink.ink.bySurface[key].strokes[0].pts.length === 2);
+
+  applyCommand(ink, {op:'ink', action:'points', id:'s1', pts: Array.from({length: 5000}, () => [0.1, 0.2])});
+  chk('one stroke cannot grow without limit - a pen left down is bounded now, not just the stroke count',
+    ink.ink.bySurface[key].strokes[0].pts.length === 3000);
+
+  // A late batch addressed to an older stroke must not truncate the newest one.
+  applyCommand(ink, {op:'ink', action:'begin', id:'s2', pts:[[0.1, 0.1]]});
+  applyCommand(ink, {op:'ink', action:'points', id:'s1', pts:[[0.9, 0.9]]});
+  chk('a late batch lands on the stroke it names, and caps that one',
+    ink.ink.bySurface[key].strokes[1].pts.length === 1 && ink.ink.bySurface[key].strokes[0].pts.length === 3000);
+}
+
+// The digest is what the heartbeat carries instead.
+{
+  const a = [{id:'1', pts:[[0,0],[1,1]]}, {id:'2', pts:[[0,0]]}];
+  chk('the digest counts strokes, and the points of every stroke but the last',
+    inkDigest(a).n === 2 && inkDigest(a).p === 2);
+  chk('so a stroke still being drawn does not make two devices disagree',
+    inkDigestsAgree(inkDigest(a), inkDigest([a[0], {id:'2', pts:[[0,0],[0.5,0.5],[1,1]]}])));
+  chk('while a finished stroke nobody else has, does',
+    !inkDigestsAgree(inkDigest(a), inkDigest([a[0]])));
+  chk('and so does an undo followed by a different stroke',
+    !inkDigestsAgree(inkDigest(a), inkDigest([{id:'3', pts:[[0,0],[1,1],[2,2]]}, {id:'2', pts:[[0,0]]}])));
+  chk('an empty surface agrees with an empty surface', inkDigestsAgree(inkDigest([]), inkDigest([])));
+  chk('a missing digest never counts as agreement', !inkDigestsAgree(inkDigest([]), undefined));
+}
+
+// Both ends run the same applier, so a controller following its peers' strokes
+// cannot drift from the display that owns them.
+{
+  const mine = [];
+  const theirs = [];
+  const cmds = [
+    {action:'begin', id:'a', color:'#f00', width:4, pts:[[0.1,0.1]]},
+    {action:'points', id:'a', pts:[[0.2,0.2],[0.3,0.3]]},
+    {action:'begin', id:'b', pts:[[0.4,0.4]]},
+    {action:'undo'},
+  ];
+  for (const cmd of cmds) {
+    applyInkAction(mine, cmd, {color:'#000', width:1});
+    applyInkAction(theirs, cmd, {color:'#000', width:1});
+  }
+  chk('the shared applier gives both ends the same strokes', JSON.stringify(mine) === JSON.stringify(theirs));
+  chk('and it honours the sender\u2019s pen over the local default', mine[0].color === '#f00' && mine[0].width === 4);
+  chk('undo took the second stroke, not the first', mine.length === 1 && mine[0].id === 'a');
+  applyInkAction(mine, {action:'clear'});
+  chk('clear empties in place rather than replacing the array', mine.length === 0);
+  chk('an unknown ink action changes nothing', applyInkAction(mine, {action:'sneeze'}) === false);
+}
 
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');

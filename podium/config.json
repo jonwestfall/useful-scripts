@@ -1,7 +1,7 @@
 {
-  "_comment": "Optional defaults fetched by both pages. Anything configured on a device (or delivered by the pairing QR) overrides what is here. The Supabase anon key is designed to be public and every message is encrypted with the passphrase before it leaves the browser - but keep the passphrase out of this file if the repo is public, and let each device carry it.",
+  "_comment": "Optional defaults fetched by both pages. Anything configured on a device (or delivered by the pairing QR) overrides what is here, so changing this only affects devices that have never been set up. Defaults to the public MQTT broker, which needs no account: a device then only has to be given a room and a passphrase. NEVER put the passphrase here if the repo is public - every message is encrypted with it before it leaves the browser, so it is the only thing standing between a stranger and your projector. Let each device carry it (the pairing QR does this for you).",
 
-  "transport": "supabase",
+  "transport": "mqtt",
   "supabaseUrl": "",
   "supabaseKey": "",
   "room": ""

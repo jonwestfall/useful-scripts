@@ -8,10 +8,10 @@
 // scroll position. A layout can split the screen into up to four panels
 // (see LAYOUTS in protocol.js); B/C/D are simpler; set directly, no preview.
 
-import { $, $$, el, throttle, wireDangerButton, servedBuild, createRelayLog } from './util.js';
+import { $, $$, el, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, applyCommand, inkSurfaceKey, LAYOUTS, focusedItem, timerById, BUILD } from './protocol.js';
+import { initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD } from './protocol.js';
 import { createRenderer } from './renderers.js';
 import { createCameraReceiver } from './rtc.js';
 
@@ -500,7 +500,12 @@ function wireState() {
       color: inkState.color,
       width: inkState.width,
       surface: key,
-      strokes: inkState.bySurface[key]?.strokes || [],
+      // A summary, not the strokes. This object goes out every two seconds -
+      // and every 400ms while anything is playing - and the strokes of a
+      // well-annotated whiteboard are hundreds of kilobytes, which is past
+      // what any relay will carry. See inkDigest in protocol.js; a controller
+      // that does not match asks for the surface with 'ink-pull' below.
+      digest: inkDigest(inkState.bySurface[key]?.strokes),
     },
     stageAspect: stage.clientWidth && stage.clientHeight ? stage.clientWidth / stage.clientHeight : 16 / 9,
     // So a controller can tell you when this screen is running older code
@@ -530,11 +535,25 @@ function inkStorageKey() {
   return `podium.ink.${cfg.room}`;
 }
 
+function saveInkNow() {
+  clearTimeout(inkSaveTimer);
+  {
+    try {
+      // Without `cleared`: what a Clear stashed is undoable for as long as the
+      // surface is on screen, not something to carry to next term, and keeping
+      // it would double what the ink of a wiped board costs on disk.
+      const saved = {};
+      for (const [key, surface] of Object.entries(state.ink.bySurface)) {
+        saved[key] = { strokes: surface.strokes, touched: surface.touched };
+      }
+      localStorage.setItem(inkStorageKey(), JSON.stringify(saved));
+    } catch { /* quota or private mode */ }
+  }
+}
+
 function saveInkSoon() {
   clearTimeout(inkSaveTimer);
-  inkSaveTimer = setTimeout(() => {
-    try { localStorage.setItem(inkStorageKey(), JSON.stringify(state.ink.bySurface)); } catch { /* quota or private mode */ }
-  }, INK_SAVE_MS);
+  inkSaveTimer = setTimeout(saveInkNow, INK_SAVE_MS);
 }
 
 function restoreInk() {
@@ -544,11 +563,110 @@ function restoreInk() {
   } catch { /* corrupt or absent - start with a blank slate */ }
 }
 
+// --- surviving a reload ------------------------------------------------------
+//
+// This screen holds the only authoritative copy of what the lecture is showing.
+// Ink already survived a reload; nothing else did, so an accidental refresh on
+// the classroom PC - or a browser that decided to reclaim the tab - dropped
+// back to black and left the presenter re-picking everything in front of the
+// room. No controller could help: they mirror this screen, they do not hold it.
+
+const STATE_SAVE_MS = 1200;
+// Long enough to cover a reload, a crash, or a machine that went to sleep
+// between two classes in the same room; short enough that yesterday's lecture
+// does not reappear when you open the room this morning.
+const STATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+let stateSaveTimer = null;
+
+function stateStorageKey() {
+  return `podium.state.${cfg.room}`;
+}
+
+function saveStateNow() {
+  clearTimeout(stateSaveTimer);
+  try {
+    const { program, panels, layout, focus, timers, overlay, volume, muted } = state;
+    localStorage.setItem(stateStorageKey(), JSON.stringify({
+      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, muted,
+    }));
+  } catch { /* quota or private mode - the lecture just will not come back */ }
+}
+
+function saveStateSoon() {
+  clearTimeout(stateSaveTimer);
+  stateSaveTimer = setTimeout(saveStateNow, STATE_SAVE_MS);
+}
+
+// Both saves are debounced, which leaves a window: the last thing you did
+// before the tab went away is exactly the thing a debounce has not written
+// yet, and that is the moment this whole mechanism exists for. A deliberate
+// reload, a closed tab and a backgrounded one all announce themselves first,
+// so flush on all three. A hard crash cannot be caught, and loses at most the
+// second or so since the last write.
+function flushPersistence() {
+  saveInkNow();
+  saveStateNow();
+}
+window.addEventListener('pagehide', flushPersistence);
+
+installOfflineShell();
+
+// What was on screen, if this tab is coming back rather than starting fresh.
+// Returns the item's name for the arming screen to mention, or null.
+function restoreState() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(stateStorageKey()) || 'null'); } catch { return null; }
+  if (!saved || typeof saved !== 'object') return null;
+  if (!Number.isFinite(saved.savedAt) || Date.now() - saved.savedAt > STATE_MAX_AGE_MS) return null;
+  if (!saved.program || saved.program.type === 'black') return null;
+
+  state.program = saved.program;
+  if (Array.isArray(saved.panels) && saved.panels.length === 3) state.panels = saved.panels;
+  if (LAYOUTS[saved.layout]) state.layout = saved.layout;
+  if (Number.isInteger(saved.focus) && saved.focus < (LAYOUTS[state.layout] || 1)) state.focus = saved.focus;
+  // An endsAt is an absolute moment, so a countdown restored here is still
+  // telling the truth about when it runs out.
+  if (Array.isArray(saved.timers) && saved.timers.length) state.timers = saved.timers;
+  if (saved.overlay && typeof saved.overlay === 'object') state.overlay = saved.overlay;
+  if (Number.isFinite(saved.volume)) state.volume = saved.volume;
+  state.muted = !!saved.muted;
+
+  // Deliberately NOT restored: frozen, blank and the cued preview. Those are
+  // "what I am doing this second", and coming back mid-gesture into a held or
+  // blacked-out screen with no memory of why is worse than coming back to the
+  // content itself.
+  return state.program.title || state.program.type;
+}
+
 function commit() {
   state.rev++;
   render();
   broadcastSoon();
   saveInkSoon();
+  saveStateSoon();
+}
+
+// Ink is the one payload that can be far larger than a relay message will
+// carry, so anything that ships a whole surface ships it in slices. 90 KB of
+// JSON seals to roughly 125 KB, comfortably inside the smallest cap any of the
+// three transports imposes, and a single stroke cannot exceed it (points per
+// stroke are capped in protocol.js).
+const INK_CHUNK_BYTES = 90 * 1024;
+
+function chunkStrokes(strokes) {
+  const slices = [];
+  let batch = [];
+  let bytes = 0;
+  for (const stroke of strokes) {
+    const size = JSON.stringify(stroke).length;
+    if (batch.length && bytes + size > INK_CHUNK_BYTES) { slices.push(batch); batch = []; bytes = 0; }
+    batch.push(stroke);
+    bytes += size;
+  }
+  // Always at least one slice, so an empty surface still gets an answer and
+  // the asker is never left waiting on a reply that is never coming.
+  slices.push(batch);
+  return slices;
 }
 
 // --- connection -------------------------------------------------------------
@@ -619,19 +737,40 @@ async function connect() {
       if (msg.t === 'rtc') { camera.handle(msg); return; }
       if (msg.t === 'sync') { broadcast(); return; }
       if (msg.t === 'laser') { showLaser(msg); return; }
+      if (msg.t === 'ink-pull') {
+        // A controller whose digest does not match this screen's: hand it the
+        // surface it asked for. Addressed to that one controller rather than
+        // broadcast - the others have no use for it and it is the largest
+        // thing on the wire.
+        const strokes = state.ink.bySurface[msg.surface]?.strokes || [];
+        const slices = chunkStrokes(strokes);
+        slices.forEach((part, i) => bus.send({
+          t: 'ink-surface', to: msg.from, surface: msg.surface,
+          seq: i, last: i === slices.length - 1, strokes: part,
+        }));
+        return;
+      }
       if (msg.t === 'ink-need') {
         // Exporting marked-up slides: hand back every surface belonging to
         // this deck, keyed by slide index, so the controller can composite
         // ink onto its own rendering of each slide without a round trip per
-        // slide.
+        // slide. A whole deck's ink is the biggest payload in the app, so it
+        // goes slide by slide, in slices, rather than as one message no relay
+        // would accept.
         const prefix = `deck:${msg.deckId}:`;
-        const bySlide = {};
+        const parts = [];
         for (const [key, surface] of Object.entries(state.ink.bySurface)) {
           if (!key.startsWith(prefix)) continue;
           const slide = Number(key.slice(prefix.length));
-          if (Number.isInteger(slide) && surface.strokes.length) bySlide[slide] = surface.strokes;
+          if (!Number.isInteger(slide) || !surface.strokes.length) continue;
+          for (const slice of chunkStrokes(surface.strokes)) parts.push([slide, slice]);
         }
-        bus.send({ t: 'ink-data', deckId: msg.deckId, bySlide });
+        if (!parts.length) parts.push(null);
+        parts.forEach((part, i) => bus.send({
+          t: 'ink-data', to: msg.from, deckId: msg.deckId,
+          seq: i, last: i === parts.length - 1,
+          bySlide: part ? { [part[0]]: part[1] } : {},
+        }));
         return;
       }
       if (msg.t === 'cmd') {
@@ -666,6 +805,7 @@ async function requestWakeLock() {
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && !wakeLock) requestWakeLock();
+  if (document.hidden) flushPersistence();
 });
 
 // Arming is only about the things a browser will not give a page without a
@@ -729,7 +869,10 @@ function showSetup() {
 
   form.addEventListener('submit', (ev) => {
     ev.preventDefault();
-    const next = { ...cfg };
+    // `generated: null` because submitting this form IS the choice: the room
+    // and passphrase it was pre-filled with were only a suggestion until now,
+    // and isConfigured refuses a config still carrying that marker.
+    const next = { ...cfg, generated: null };
     for (const key of Object.keys(DEFAULTS)) {
       const field = form.elements[key];
       if (field && typeof field.value === 'string') next[key] = field.value.trim();
@@ -811,6 +954,29 @@ document.addEventListener('keydown', (ev) => {
 $('#room-name').textContent = cfg.room;
 $('#standby-room').textContent = cfg.room;
 $$('.relay-target').forEach((n) => { n.textContent = relayTarget(cfg); });
+
+// Down here rather than beside restoreInk() at the top: restoreState reads
+// consts declared further down the file, and a `const` - unlike a function
+// declaration - is not hoisted, so calling it early threw before anything else
+// on this page could run.
+const resumed = restoreState();
+
+// Say so rather than silently putting last lecture's slide back up: coming
+// back to content you did not expect is its own kind of surprise in front of
+// a room.
+if (resumed) {
+  $('#arm-resume-what').textContent = `Picking up where this screen left off — ${resumed}.`;
+  $('#arm-resume').hidden = false;
+}
+$('#arm-resume-clear').addEventListener('click', () => {
+  state.program = { type: 'black', title: 'Black' };
+  state.panels = [0, 1, 2].map(() => ({ type: 'black', title: 'Black' }));
+  state.layout = 'single';
+  state.focus = 0;
+  state.overlay = { text: '', visible: false };
+  $('#arm-resume').hidden = true;
+  commit();
+});
 
 if (!isConfigured(cfg)) {
   showSetup();

@@ -181,3 +181,26 @@ export function createRelayLog(limit = 8) {
     },
   };
 }
+
+/**
+ * Install the offline shell (sw.js), so the controller opens from the home
+ * screen like an app and survives the Wi-Fi dropping out.
+ *
+ * `updateViaCache: 'none'` matters: without it the browser may serve sw.js
+ * itself from the HTTP cache for up to a day, which is how a service worker
+ * becomes the thing you cannot deploy past.
+ *
+ * Fails quietly and by design - a secure context is required, and the whole
+ * app works without it.
+ */
+export function installOfflineShell() {
+  if (!('serviceWorker' in navigator)) return;
+  const go = () => navigator.serviceWorker
+    .register('sw.js', { scope: './', updateViaCache: 'none' })
+    .catch(() => { /* plain http, private mode, or blocked by policy */ });
+  // Not simply window.addEventListener('load', ...): both pages that call this
+  // use top-level await, so their module can finish evaluating AFTER load has
+  // already fired, and a listener added then never runs at all.
+  if (document.readyState === 'complete') go();
+  else window.addEventListener('load', go, { once: true });
+}
