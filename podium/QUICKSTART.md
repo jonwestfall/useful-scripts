@@ -193,6 +193,13 @@ it on screen, and since each photo is just a photo, you can split the screen and
 four of them up at once (four students' answers, side by side). They last for the
 class and are never saved to the tablet.
 
+To keep a board you have drawn on, **press and hold** the panel letter (A/B/C/D, top
+right) — you get a photo of that panel with the ink on it. Hold a layout button a
+moment longer for a shot of the whole screen. Everything you keep this way is on the
+**Photos** tab, and **Export this session** there downloads one zip with the photos,
+every slide you annotated, and every board you drew on. That zip is the only copy that
+outlives the class: nothing is written to the tablet until you press it.
+
 ---
 
 ## Is this safe?

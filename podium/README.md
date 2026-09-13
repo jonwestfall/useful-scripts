@@ -331,7 +331,12 @@ slide with its own ink baked in and downloads a `.zip` — `slide-01.png`,
 `slide-02.png`, … plus a `slides.txt` listing titles and which slides carry
 annotations. It is best-effort: a slide that depends on a font or image the browser
 refuses to bake into a canvas is skipped individually (noted in `slides.txt`) rather
-than failing the whole export.
+than failing the whole export. To take *everything* home rather than one deck, see
+[keeping what was on screen](#keeping-what-was-on-screen) below.
+
+**Save a photo**, next to Undo and Clear, keeps the board exactly as it stands — the
+content with your ink burnt into it — as a photo you can put straight back up later.
+That is the same thing holding a panel letter does; both are described below.
 
 ### What ink costs to move, and why that mattered
 
@@ -474,6 +479,9 @@ Whichever panel is lit up is what the rest of the app currently talks to: Librar
 taps stage content into it, Previous/Next and thumbnails page it, transport controls
 play/pause/scrub it, and the Ink tab draws on it. Switch panels the same way you
 would switch tabs — tap **A**, **B**, **C**, or **D** — and everything else follows.
+**Hold** one of those letters instead of tapping it and you get a photo of that
+panel, ink included; hold a layout icon and you get the whole screen. See
+[keeping what was on screen](#keeping-what-was-on-screen).
 
 Panel **A** is exactly what Podium has always been: TAKE, freeze, cue, Swap all
 still work on it precisely as before, just confined to its own region of the screen
@@ -550,8 +558,60 @@ and lets go the moment you unfreeze. A photo is a keeper; freeze is a pause.
 Photos last for the session and live only in memory — nothing is written to the
 tablet's storage, which is the right default for a picture of a student's work.
 Reloading the controller forgets them (whatever is already on the projector stays
-there), and the strip holds the last twelve. The × on a thumbnail discards it
-without taking it off the screen.
+there), and the strip holds the last two dozen. The × on a thumbnail discards it
+without taking it off the screen. They share the **Photos** tab with everything else
+you keep — see [keeping what was on screen](#keeping-what-was-on-screen) — and
+**Export this session** is how any of it leaves the tablet.
+
+## Keeping what was on screen
+
+Ink and camera frames are live things: the board gets wiped, the camera moves on, and
+the reload at the end of the day takes both with it. Three gestures keep any of it,
+and one button takes the lot home.
+
+| Gesture | What you get |
+| :-- | :-- |
+| **Hold a panel letter** (A/B/C/D, top right) | A photo of that panel — its content *with your ink on it* |
+| **Hold any layout button** (a little longer) | A photo of the whole screen, every panel at once |
+| **Save a photo** (Ink tab) | The panel you are drawing on, without reaching for the top bar |
+| **Take a photo** (Camera tab) | A frame frozen off the document camera |
+
+All four land in the same place: the **Photos** tab. Tap one to put it back on the
+focused panel — a photo is a photo, so it can sit in a panel while the lecture moves
+on, be annotated again on its own surface, and be photographed again in turn.
+
+The picture is composed *on the display*, because that is the only device that has the
+real thing: the camera frame as it arrives, the deck stopped three bullets into a
+build, the ink exactly as the room saw it. The photo then comes back to every
+controller in the room, so the iPhone in your pocket has what the iPad just took.
+
+Some panels cannot be photographed at all — an embedded web page, a PDF in the
+browser's own viewer, a YouTube player. A browser will not let a page read pixels back
+out of a frame it does not own. Podium says so rather than saving something that looks
+like a photo of the wrong thing; in a whole-screen shot the other panels still come
+out, and that corner is labelled instead.
+
+### Export this session
+
+**Export this session** (Photos tab) writes one zip:
+
+```
+photos/01-panel-a-whiteboard.jpg     every photo above, oldest first
+slides/day-6/slide-04.png            every deck slide you annotated, ink baked in
+boards/01-board-f7f5ef.png           every whiteboard or picture you drew on
+session.txt                          what is in it, and what was left out
+```
+
+The ink lives on the display, so building the zip pulls it across — keep the display
+connected while it runs. Everything is best-effort and itemised: a slide that will not
+rasterize, or ink on something Podium cannot rebuild, is named in `session.txt` rather
+than failing the export that holds the rest.
+
+Nothing here is written to the tablet until you press that button. Photos and the
+strip live in memory for the session, which is the right default for a picture of a
+student's work or a board mid-argument — and it means the zip, on the device you chose
+to save it to, is the only copy that outlives the class. On an iPad the download lands
+in Files, from where the images can be moved into Photos like any other download.
 
 ## Planning a lecture in your office
 
@@ -962,7 +1022,7 @@ podium/
       planfile.js                 what a lecture plan is, and how to read an untrusted one
       store.js                    IndexedDB for plans, plus photo resizing and file I/O
       protocol.js                 state shape + the rules for changing it
-      renderers.js                one factory per content type
+      renderers.js                one factory per content type, each able to photograph itself
       bus.js                      encryption, identity, presence, reconnect
       crypto.js  config.js  rtc.js  util.js
       transport/                  supabase.js · mqtt.js · ws.js

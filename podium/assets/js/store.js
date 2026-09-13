@@ -87,8 +87,15 @@ export function readFileDataUrl(file) {
  * pictures. The downscaled copy is what gets stored in the plan too - what you
  * approve in the office is then exactly what the class sees.
  */
-export async function downscaleImage(file, maxChars, { widths = [1920, 1600, 1280, 1024, 800], qualities = [0.85, 0.75, 0.62, 0.5] } = {}) {
-  const source = await loadBitmap(file);
+export async function downscaleImage(file, maxChars, options = {}) {
+  return encodeToFit(await loadBitmap(file), maxChars, options);
+}
+
+/**
+ * The ladder itself, for anything already drawable: a decoded photo, or a
+ * canvas the display has just painted a panel into.
+ */
+export function encodeToFit(source, maxChars, { widths = [1920, 1600, 1280, 1024, 800], qualities = [0.85, 0.75, 0.62, 0.5] } = {}) {
   const long = Math.max(source.width, source.height);
   let smallest = null;
   for (const width of widths) {
@@ -103,6 +110,9 @@ export async function downscaleImage(file, maxChars, { widths = [1920, 1600, 128
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(source, 0, 0, w, h);
     for (const quality of qualities) {
+      // Throws (rather than returning something unusable) when the source
+      // canvas is tainted - a photo or video from another site, drawn in by a
+      // renderer - which is a real failure the caller has to be able to report.
       const url = canvas.toDataURL('image/jpeg', quality);
       if (!smallest || url.length < smallest.url.length) smallest = { url, w, h, quality };
       if (url.length <= maxChars) return { dataUrl: url, width: w, height: h, quality, bytes: url.length };

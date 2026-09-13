@@ -123,6 +123,51 @@ export function wireDangerButton(button, label, action, { armedLabel = 'Tap agai
   return { disarm };
 }
 
+/**
+ * Press and hold, as a second meaning for a button that already does
+ * something when tapped.
+ *
+ * The hold has to be visible while it is happening - a control that only
+ * responds after you have held it long enough, with no sign that anything is
+ * underway, feels broken rather than deliberate - so the element is marked
+ * `is-holding` for the duration and told how long that is (`--hold-ms`),
+ * which the stylesheet turns into a sweep across the button.
+ *
+ * The click that a tap-and-release would normally produce is swallowed when
+ * the hold fires, so holding the "four panels" button photographs the screen
+ * instead of also rearranging it.
+ */
+export function onLongPress(node, ms, onHold) {
+  let timer = null;
+  let fired = false;
+
+  const stop = () => {
+    clearTimeout(timer);
+    timer = null;
+    node.classList.remove('is-holding');
+  };
+
+  node.style.setProperty('--hold-ms', `${ms}ms`);
+  node.addEventListener('pointerdown', (ev) => {
+    if (ev.button > 0) return;         // a right-click is not a hold
+    fired = false;
+    node.classList.add('is-holding');
+    timer = setTimeout(() => { fired = true; stop(); onHold(); }, ms);
+  });
+  for (const type of ['pointerup', 'pointerleave', 'pointercancel']) node.addEventListener(type, stop);
+  // Capture, so this runs before the button's own click handler and can stop
+  // it reaching it at all.
+  node.addEventListener('click', (ev) => {
+    if (!fired) return;
+    fired = false;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  }, true);
+  // Without this, holding a button on an iPad raises the system callout menu
+  // over the top of the thing you are trying to do.
+  node.addEventListener('contextmenu', (ev) => ev.preventDefault());
+}
+
 // --- fullscreen -------------------------------------------------------------
 //
 // Safari needs both halves of this, and got neither for a while.

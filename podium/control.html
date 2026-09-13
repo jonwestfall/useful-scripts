@@ -108,6 +108,7 @@
         <button class="tab" data-tab="say" type="button">Say</button>
         <button class="tab" data-tab="timer" type="button">Timer</button>
         <button class="tab" data-tab="camera" type="button">Camera</button>
+        <button class="tab" data-tab="photos" type="button">Photos</button>
       </nav>
 
       <div class="panels">
@@ -262,6 +263,7 @@
             <button class="swatch" type="button" data-color="#ffffff" style="background:#ffffff"></button>
             <button id="ink-undo" type="button">Undo</button>
             <button id="ink-clear" type="button">Clear</button>
+            <button id="ink-save" type="button" title="Keep a photo of this panel, ink and all">Save a photo</button>
             <!-- Appears for a few seconds after a Clear. Clearing the board is
                  a frequent, deliberate move, so it stays one tap; this is what
                  makes the accidental one survivable. -->
@@ -362,10 +364,43 @@
                concerned - which is what lets four of them sit in four panels. -->
           <div id="cam-shot-note" class="hint" hidden></div>
           <div id="cam-shots" class="shots" hidden></div>
-          <p class="hint" id="cam-shots-hint" hidden>
+          <p class="hint shots-hint" hidden>
             Tap a photo to put it on the panel you have focused (the A/B/C/D buttons in the top bar).
             Split the screen first and you can hold four different shots up at once — and each one can
-            be annotated separately on the Ink tab.
+            be annotated separately on the Ink tab. Everything you keep is on the <b>Photos</b> tab.
+          </p>
+        </section>
+
+        <!-- Photos: everything kept this session, and the way out of the app -->
+        <section class="panel" data-panel="photos" hidden>
+          <p class="hint">
+            Everything you have kept this session: frames frozen off the camera, photos of a single
+            panel with your ink burnt into them, and whole-screen shots.
+          </p>
+          <div class="inline">
+            <button id="photo-panel" type="button">Photograph this panel</button>
+            <button id="photo-screen" type="button">Photograph the whole screen</button>
+            <span id="photo-count" class="hint" style="margin:0"></span>
+          </div>
+          <div id="photo-note" class="hint" hidden></div>
+          <div id="photo-strip" class="shots" hidden></div>
+          <p class="hint shots-empty">
+            Nothing kept yet. <b>Press and hold</b> a panel letter (A/B/C/D, top right) to photograph
+            that panel, hold any layout button for the whole screen, or freeze a frame on the Camera tab.
+          </p>
+          <p class="hint shots-hint" hidden>
+            Tap one to put it back on the focused panel. They are held in memory only — nothing is
+            written to this device unless you export it.
+          </p>
+          <hr style="border:0;border-top:1px solid var(--line);margin:6px 0">
+          <div class="inline">
+            <button id="photo-export" class="big-button" type="button" disabled>Export this session…</button>
+          </div>
+          <div id="photo-export-status" class="hint"></div>
+          <p class="hint">
+            One zip: every photo above, every deck slide you annotated (ink included), and every board
+            or image you drew on. Ink lives on the display, so it is pulled from there as the zip is
+            built — keep the display connected.
           </p>
         </section>
       </div>

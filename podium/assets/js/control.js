@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell } from './util.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
@@ -87,6 +87,9 @@ function resolveAssets(item) {
 // A whole deck's ink is the largest thing the app ever moves, so it arrives in
 // slices (see chunkStrokes in display.js) and is stitched back together here.
 const inkExportWaiters = new Map();
+// The key the whole-session pull waits under, alongside the per-deck ones.
+const ALL_INK = Symbol('all ink');
+
 function requestInkData(targetDeckId, timeoutMs = 8000) {
   return new Promise((resolve) => {
     const acc = { bySlide: {}, timer: null };
@@ -106,6 +109,30 @@ function requestInkData(targetDeckId, timeoutMs = 8000) {
     arm();
     inkExportWaiters.set(targetDeckId, acc);
     bus?.send({ t: 'ink-need', deckId: targetDeckId });
+  });
+}
+
+/**
+ * Every surface the display has ink on, keyed the way inkSurfaceKey() keys
+ * them - `deck:<id>:<slide>`, `whiteboard:<bg>`, `image:<src>`, and so on.
+ * The display holds the only full copy; exporting a session is the one thing
+ * that needs all of it at once.
+ */
+function requestAllInk(timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    const acc = { bySurface: {}, timer: null };
+    const finish = () => { clearTimeout(acc.timer); inkExportWaiters.delete(ALL_INK); resolve(acc.bySurface); };
+    const arm = () => { clearTimeout(acc.timer); acc.timer = setTimeout(finish, timeoutMs); };
+    acc.add = (msg) => {
+      for (const [key, strokes] of Object.entries(msg.bySurface || {})) {
+        (acc.bySurface[key] ||= []).push(...strokes);
+      }
+      if (msg.last) finish();
+      else arm();
+    };
+    arm();
+    inkExportWaiters.set(ALL_INK, acc);
+    bus?.send({ t: 'ink-every-need' });
   });
 }
 
@@ -648,6 +675,26 @@ function renderSlides() {
 
 const RASTER_HEIGHT = 1080;
 
+// Strokes are fractions of whatever they were drawn on, so the same handful of
+// lines works for a slide, a whiteboard or a photo - only the box changes.
+// Stroke widths were chosen by eye against the pad at whatever size it
+// happened to be on screen, so they scale against a nominal 1280px-wide
+// surface: an export at any resolution is then the same pen.
+function paintStrokes(ctx, strokes, w, h) {
+  const widthScale = w / 1280;
+  for (const stroke of strokes || []) {
+    if (!stroke.pts || stroke.pts.length < 2) continue;
+    ctx.beginPath();
+    ctx.strokeStyle = stroke.color;
+    ctx.lineWidth = Math.max(1, stroke.width * widthScale);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.moveTo(stroke.pts[0][0] * w, stroke.pts[0][1] * h);
+    for (let i = 1; i < stroke.pts.length; i++) ctx.lineTo(stroke.pts[i][0] * w, stroke.pts[i][1] * h);
+    ctx.stroke();
+  }
+}
+
 async function rasterizeSlide(svgLive, css, aspect, strokes) {
   const w = Math.round(RASTER_HEIGHT * aspect);
   const h = RASTER_HEIGHT;
@@ -684,21 +731,7 @@ async function rasterizeSlide(svgLive, css, aspect, strokes) {
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, w, h);
 
-  // Stroke widths were chosen by eye against the pad at whatever size it
-  // happened to be on screen; scale them against a nominal 1280px-wide slide
-  // so a export at any resolution still looks like the same pen.
-  const widthScale = w / 1280;
-  for (const stroke of strokes) {
-    if (!stroke.pts || stroke.pts.length < 2) continue;
-    ctx.beginPath();
-    ctx.strokeStyle = stroke.color;
-    ctx.lineWidth = Math.max(1, stroke.width * widthScale);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.moveTo(stroke.pts[0][0] * w, stroke.pts[0][1] * h);
-    for (let i = 1; i < stroke.pts.length; i++) ctx.lineTo(stroke.pts[i][0] * w, stroke.pts[i][1] * h);
-    ctx.stroke();
-  }
+  paintStrokes(ctx, strokes, w, h);
 
   return new Promise((resolve, reject) => {
     try {
@@ -707,6 +740,242 @@ async function rasterizeSlide(svgLive, css, aspect, strokes) {
       reject(err);
     }
   });
+}
+
+// --- exporting the whole session ---------------------------------------------
+//
+// One zip holding everything this lecture produced that is worth keeping:
+// the photos in the strip, every deck slide that was annotated (with the ink
+// on it), and every board or picture that was drawn on. The ink itself lives
+// on the display - it is the only device that has all of it - so building the
+// zip starts by pulling it over.
+//
+// Deliberately best-effort per item: a slide that will not rasterize, or a
+// surface Podium cannot reconstruct (an embedded page, a camera frame that
+// has long since moved on), is named in session.txt rather than failing the
+// export that contains everything else.
+
+const safeName = (text, fallback = 'item') => String(text || '')
+  .replace(/[^a-z0-9-_ ]+/gi, '')
+  .trim()
+  .replace(/\s+/g, '-')
+  .slice(0, 48)
+  .toLowerCase() || fallback;
+
+function dataUrlToBytes(dataUrl) {
+  const base64 = String(dataUrl).slice(String(dataUrl).indexOf(',') + 1);
+  const binary = atob(base64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+const canvasToPng = (canvas) => new Promise((resolve, reject) => {
+  try {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('the browser would not encode it'))), 'image/png');
+  } catch (err) {
+    reject(err);
+  }
+});
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const timer = setTimeout(() => reject(new Error('timed out loading it')), 8000);
+    img.onload = () => { clearTimeout(timer); resolve(img); };
+    img.onerror = () => { clearTimeout(timer); reject(new Error('it could not be loaded here')); };
+    img.src = src;
+  });
+}
+
+/**
+ * A deck's slides, laid out off-screen so they can be rasterized whether or
+ * not that deck is the one currently open on the Slides tab.
+ */
+async function mountDeckForExport(deck) {
+  const host = el('div', { 'aria-hidden': 'true' });
+  host.style.cssText = 'position:fixed;left:-30000px;top:0;width:1280px;visibility:hidden;pointer-events:none;z-index:-1';
+  const shadow = host.attachShadow({ mode: 'open' });
+  shadow.innerHTML = `<style>:host{display:block}svg[data-marpit-svg]{display:block;width:1280px;height:auto}</style><style>${deck.css}</style>${deck.html}`;
+  document.body.append(host);
+  applyFits(shadow, deck.fits);
+  try { await document.fonts?.ready; } catch { /* measured in whatever face is here */ }
+  return {
+    svgs: Array.from(shadow.querySelectorAll('svg[data-marpit-svg]')),
+    release: () => host.remove(),
+  };
+}
+
+/** The markdown behind a deck id, from this device's cache or the server. */
+async function deckSourceById(id) {
+  if (deckStore.has(id)) return deckStore.get(id);
+  if (!String(id).startsWith('src:')) return null;
+  const src = String(id).slice(4);
+  try {
+    const res = await fetch(src, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    deckStore.set(id, text);
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+// A board or a picture that was drawn on, rebuilt here: the surface key says
+// what it was (see inkSurfaceKey in protocol.js), and the strokes are
+// fractions of it, so the two compose exactly as they did on the wall.
+async function renderInkSurface(key, strokes) {
+  if (key.startsWith('whiteboard:')) {
+    const bg = key.slice('whiteboard:'.length);
+    const canvas = document.createElement('canvas');
+    canvas.width = 1920;
+    canvas.height = 1080;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = bg && bg !== 'default' ? bg : '#f7f5ef';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    paintStrokes(ctx, strokes, canvas.width, canvas.height);
+    return { blob: await canvasToPng(canvas), name: `board-${safeName(bg, 'whiteboard')}` };
+  }
+  if (key.startsWith('image:')) {
+    const src = key.slice('image:'.length);
+    const id = assetIdOf(src);
+    const url = id ? assetStore.get(id) : src;
+    if (!url) throw new Error('the picture itself is not on this device');
+    const img = await loadImage(url);
+    const scale = Math.min(1, 1920 / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    paintStrokes(ctx, strokes, canvas.width, canvas.height);
+    const photo = photos.find((p) => p.id === id);
+    return { blob: await canvasToPng(canvas), name: safeName(photo?.title || src.split('/').pop(), 'picture') };
+  }
+  return null;   // a page, a PDF, a camera frame: nothing left to rebuild
+}
+
+async function exportSession() {
+  const btn = $('#photo-export');
+  const status = $('#photo-export-status');
+  btn.disabled = true;
+  const files = [];
+  const lines = [`Podium session — ${new Date().toLocaleString()}`, `Room: ${cfg.room}`, ''];
+  const skipped = [];
+
+  try {
+    // 1. The photos, which are already images and already in hand.
+    if (photos.length) {
+      status.textContent = 'Packing the photos…';
+      lines.push(`Photos (${photos.length}):`);
+      // Oldest first in the zip: the strip shows newest first because that is
+      // what you just took, but a folder wants to read forwards.
+      [...photos].reverse().forEach((photo, i) => {
+        const data = assetStore.get(photo.id);
+        if (!data) { skipped.push(`photo "${photo.title}" (no longer held)`); return; }
+        const name = `photos/${String(i + 1).padStart(2, '0')}-${safeName(photo.title, 'photo')}.jpg`;
+        files.push({ name, data: dataUrlToBytes(data) });
+        lines.push(`  ${name}  —  ${new Date(photo.at).toLocaleTimeString()}`);
+      });
+      lines.push('');
+    }
+
+    // 2. Everything the display has ink on.
+    status.textContent = 'Asking the display for your ink…';
+    const bySurface = await requestAllInk();
+    const surfaces = Object.entries(bySurface).filter(([, strokes]) => strokes?.length);
+
+    const deckSlides = new Map();   // deckId -> Map(slide -> strokes)
+    const others = [];
+    for (const [key, strokes] of surfaces) {
+      const deckMatch = /^deck:(.+):(\d+)$/.exec(key);
+      if (deckMatch) {
+        const [, id, slide] = deckMatch;
+        if (!deckSlides.has(id)) deckSlides.set(id, new Map());
+        deckSlides.get(id).set(Number(slide), strokes);
+      } else {
+        others.push([key, strokes]);
+      }
+    }
+
+    // 3. Annotated slides, deck by deck.
+    if (deckSlides.size) lines.push('Annotated slides:');
+    for (const [id, slides] of deckSlides) {
+      const source = await deckSourceById(id);
+      if (source == null) {
+        skipped.push(`${slides.size} annotated slide${slides.size === 1 ? '' : 's'} from a deck this device does not hold`);
+        continue;
+      }
+      const deck = await renderDeckSource(source, id);
+      const folder = `slides/${safeName(frontMatterTitle(source, 'deck'), 'deck')}`;
+      const mounted = await mountDeckForExport(deck);
+      try {
+        for (const [index, strokes] of [...slides.entries()].sort((a, b) => a[0] - b[0])) {
+          const svg = mounted.svgs[index];
+          if (!svg) { skipped.push(`slide ${index + 1} of ${folder} (not in the deck any more)`); continue; }
+          status.textContent = `Drawing slide ${index + 1} of ${deck.count}…`;
+          try {
+            const png = await rasterizeSlide(svg, deck.css, deck.aspects[index] || 16 / 9, strokes);
+            const name = `${folder}/slide-${String(index + 1).padStart(2, '0')}.png`;
+            files.push({ name, data: png });
+            lines.push(`  ${name}  —  ${deck.titles[index] || ''}`);
+          } catch (err) {
+            skipped.push(`slide ${index + 1} of ${folder} (${err.message})`);
+          }
+        }
+      } finally {
+        mounted.release();
+      }
+    }
+    if (deckSlides.size) lines.push('');
+
+    // 4. Boards and pictures that were drawn on.
+    if (others.length) lines.push('Other annotations:');
+    let boardNumber = 0;
+    for (const [key, strokes] of others) {
+      status.textContent = 'Drawing your boards…';
+      try {
+        const made = await renderInkSurface(key, strokes);
+        if (!made) { skipped.push(`ink on ${key} (nothing left to draw it on)`); continue; }
+        boardNumber += 1;
+        const name = `boards/${String(boardNumber).padStart(2, '0')}-${made.name}.png`;
+        files.push({ name, data: made.blob });
+        lines.push(`  ${name}  —  ${strokes.length} stroke${strokes.length === 1 ? '' : 's'}`);
+      } catch (err) {
+        skipped.push(`ink on ${key} (${err.message})`);
+      }
+    }
+    if (others.length) lines.push('');
+
+    if (!files.length) {
+      status.textContent = 'Nothing to export yet — take a photo, or annotate something.';
+      return;
+    }
+
+    if (skipped.length) lines.push('Not included:', ...skipped.map((line) => `  - ${line}`), '');
+    lines.push('Photos and ink are held only while the app is open; this zip is the copy that lasts.');
+    files.push({ name: 'session.txt', data: new TextEncoder().encode(lines.join('\n')) });
+
+    status.textContent = 'Building the zip…';
+    const blob = await createZip(files);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `podium-${safeName(cfg.room, 'session')}-${stamp}.zip`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    status.textContent = skipped.length
+      ? `Saved ${files.length - 1} file${files.length === 2 ? '' : 's'}, with ${skipped.length} left out — see session.txt.`
+      : `Saved ${files.length - 1} file${files.length === 2 ? '' : 's'}.`;
+  } catch (err) {
+    status.textContent = `Export failed: ${err.message}`;
+  } finally {
+    btn.disabled = !bus;
+  }
 }
 
 async function exportDeck() {
@@ -902,17 +1171,25 @@ function renderLayoutBar() {
   picker.hidden = count <= 1;
   if (count <= 1) return;
   if (picker.childElementCount !== count) {
-    picker.replaceChildren(...Array.from({ length: count }, (_, i) => el('button', {
-      class: 'panel-btn',
-      type: 'button',
-      onclick: () => send({ op: 'focus', index: i }),
-    }, PANEL_LABELS[i])));
+    picker.replaceChildren(...Array.from({ length: count }, (_, i) => {
+      const button = el('button', {
+        class: 'panel-btn',
+        type: 'button',
+        title: `Focus panel ${PANEL_LABELS[i]} — hold to photograph it`,
+        onclick: () => send({ op: 'focus', index: i }),
+      }, PANEL_LABELS[i]);
+      // Tap to focus, hold to keep a photo of what is in it - ink and all.
+      // The same button, because the panel you want a photo of is the one you
+      // are already pointing at.
+      onLongPress(button, HOLD_PANEL_MS, () => askForShot(i, `panel ${PANEL_LABELS[i]}`));
+      return button;
+    }));
   }
   $$('.panel-btn', picker).forEach((b, i) => b.classList.toggle('is-on', i === state.focus));
 }
 
 function renderAll() {
-  renderStills();
+  renderPhotos();
   renderRecent();
   renderPreview();
   renderNow();
@@ -1353,35 +1630,79 @@ async function startCamera(where = 'auto') {
   }
 }
 
-// --- stills from the camera --------------------------------------------------
+// --- photos kept for this session --------------------------------------------
 //
-// A live document camera can only ever show the thing it is pointed at. Freeze
-// a frame and it becomes an ordinary photo as far as the rest of Podium is
-// concerned - so it can sit in a panel while the camera moves on, and four of
-// them can be up at once in a four-panel layout, each annotatable on its own
-// ink surface.
+// Three things end up in the same place, because they are the same thing once
+// taken: a frame frozen off the document camera, a photo of one panel (its
+// content with your ink burnt into it), and a shot of the whole screen. Each
+// becomes an ordinary image item, so it can go straight back up in any panel,
+// be annotated again on its own surface, and be exported with the rest.
 //
-// Stills live in memory for this session only, exactly like the camera feed
-// itself: nothing about a photo of a student's worksheet should outlive the
-// class without someone deciding it should. They travel to the projector the
-// same way a lecture plan's photos do (assetStore + `asset:<id>`), so the
-// bytes cross the relay once and the item that refers to them stays small.
-const MAX_STILLS = 12;
-let stills = [];
-let stillCount = 0;
-let stillsDrawn = '';
+// They live in memory for this session only. Nothing about a photo of a
+// student's worksheet - or of a board you have since wiped - should be written
+// to the tablet unless someone decides it should, and Export is that decision.
+// The bytes travel to the projector the way a lecture plan's photos do
+// (assetStore + `asset:<id>`), so they cross the relay once and the item that
+// refers to them stays small enough for a heartbeat.
+const MAX_PHOTOS = 24;
+// How long "press and hold" means on each control. A panel letter is a
+// deliberate reach; a layout button is one you might brush past, so it asks
+// for a noticeably longer hold before it does something as surprising as
+// photographing the room's screen.
+const HOLD_PANEL_MS = 700;
+const HOLD_SCREEN_MS = 1200;
+let photos = [];
+let photoCount = 0;
+let photosDrawn = '';
 
-// Called from renderAll(), which runs on every heartbeat, so it re-builds the
-// strip only when the strip would actually look different. Rebuilding it
-// twice a second would throw away and re-decode a dozen data-URL <img>s for
-// nothing.
-function renderStills() {
-  const strip = $('#cam-shots');
-  strip.hidden = !stills.length;
-  $('#cam-shots-hint').hidden = !stills.length;
-  if (!stills.length) { strip.replaceChildren(); stillsDrawn = ''; return; }
+function addPhoto({ id, data, title, badge }) {
+  assetStore.set(id, data);
+  photoCount += 1;
+  photos.unshift({ id, title, badge, at: Date.now(), n: photoCount });
+  // Oldest first out of the strip. Whatever is already on the projector stays
+  // there - the display keeps its own copy of anything it has been sent.
+  for (const dropped of photos.slice(MAX_PHOTOS)) {
+    assetStore.delete(dropped.id);
+    assetsSent.delete(dropped.id);
+  }
+  photos = photos.slice(0, MAX_PHOTOS);
+  photosDrawn = '';
+  renderPhotos();
+  return photos[0];
+}
 
-  // Where each still currently is, so the strip answers "which one is in B?"
+function forgetPhoto(id) {
+  photos = photos.filter((p) => p.id !== id);
+  // Deliberately NOT pulled off the screen: discarding a thumbnail is tidying
+  // the strip, not an edit to what the class is looking at.
+  assetStore.delete(id);
+  assetsSent.delete(id);
+  photosDrawn = '';
+  renderPhotos();
+}
+
+// Called from renderAll(), which runs on every heartbeat, so it rebuilds the
+// strips only when they would actually look different. Rebuilding twice a
+// second would throw away and re-decode two dozen data-URL <img>s for nothing.
+function renderPhotos() {
+  const strips = $$('.shots');
+  const empty = !photos.length;
+  $$('.shots-empty').forEach((n) => { n.hidden = !empty; });
+  $$('.shots-hint').forEach((n) => { n.hidden = empty; });
+  // Enabled even with nothing in the strip: a session whose whole record is
+  // one annotated deck is exactly what this is for.
+  $('#photo-export').disabled = !bus;
+  $('#photo-count').textContent = empty ? '' : `${photos.length} saved this session`;
+  // The tab itself keeps the count, because a photo taken by holding a button
+  // in the top bar otherwise lands somewhere you are not looking.
+  $('.tab[data-tab="photos"]').dataset.count = empty ? '' : String(photos.length);
+  if (empty) {
+    strips.forEach((strip) => { strip.hidden = true; strip.replaceChildren(); });
+    photosDrawn = '';
+    return;
+  }
+
+  // Where each photo currently is, so the strip answers "which one is in B?"
   // without looking up at the wall.
   const where = new Map();
   const seat = (item, label) => {
@@ -1391,48 +1712,50 @@ function renderStills() {
   seat(state.program, PANEL_LABELS[0]);
   state.panels.forEach((item, i) => seat(item, PANEL_LABELS[i + 1]));
 
-  const signature = stills.map((s) => `${s.id}:${where.get(s.id) || ''}`).join('|');
-  if (signature === stillsDrawn) return;
-  stillsDrawn = signature;
+  const signature = photos.map((p) => `${p.id}:${where.get(p.id) || ''}`).join('|');
+  if (signature === photosDrawn) return;
+  photosDrawn = signature;
 
-  strip.replaceChildren(...stills.map((still) => {
-    const label = where.get(still.id);
-    const shot = el('button', {
-      class: `shot${label ? ' is-on' : ''}`,
-      type: 'button',
-      title: `${still.title} — put on screen`,
-      onclick: () => stage({ type: 'image', title: still.title, src: assetRef(still.id) }),
-    },
-      el('img', { src: assetStore.get(still.id), alt: still.title }),
-      el('span', { class: 'shot-num' }, still.title));
-    if (label) shot.append(el('span', { class: 'shot-where' }, label));
-    shot.append(el('span', {
-      class: 'shot-del',
-      title: 'Discard this photo',
-      onclick: (ev) => {
-        ev.stopPropagation();
-        stills = stills.filter((s) => s.id !== still.id);
-        // Deliberately NOT pulled off the screen: discarding a thumbnail is
-        // tidying the strip, not an edit to what the class is looking at.
-        assetStore.delete(still.id);
-        assetsSent.delete(still.id);
-        stillsDrawn = '';
-        renderStills();
+  for (const strip of strips) {
+    strip.hidden = false;
+    strip.replaceChildren(...photos.map((photo) => {
+      const label = where.get(photo.id);
+      const shot = el('button', {
+        class: `shot${label ? ' is-on' : ''}`,
+        type: 'button',
+        title: `${photo.title} — put on screen`,
+        onclick: () => stage({ type: 'image', title: photo.title, src: assetRef(photo.id) }),
       },
-    }, '\u00d7'));
-    return shot;
-  }));
+        el('img', { src: assetStore.get(photo.id), alt: photo.title }),
+        el('span', { class: 'shot-num' }, photo.badge));
+      if (label) shot.append(el('span', { class: 'shot-where' }, label));
+      shot.append(el('span', {
+        class: 'shot-del',
+        title: 'Discard this photo',
+        onclick: (ev) => { ev.stopPropagation(); forgetPhoto(photo.id); },
+      }, '\u00d7'));
+      return shot;
+    }));
+  }
 }
 
-async function takeStill() {
-  const video = $('#cam-local');
+function photoNote(text) {
   const note = $('#cam-shot-note');
-  const show = (text) => { note.textContent = text; note.hidden = !text; };
+  note.textContent = text;
+  note.hidden = !text;
+  $('#photo-note').textContent = text;
+  $('#photo-note').hidden = !text;
+}
+
+// --- a frame frozen off the camera feed --------------------------------------
+
+async function takeCameraPhoto() {
+  const video = $('#cam-local');
   if (!cameraSender?.active || !video.videoWidth || !video.videoHeight) {
-    show('Start the camera first — there is no picture to freeze yet.');
+    photoNote('Start the camera first — there is no picture to freeze yet.');
     return;
   }
-  show('Freezing that frame…');
+  photoNote('Freezing that frame…');
   try {
     // Straight off the video element rather than through ImageCapture: the
     // iPad is the device this is for, and Safari has no ImageCapture at all.
@@ -1446,28 +1769,43 @@ async function takeStill() {
     // The same ladder a photo dropped into a lecture plan walks down, so a
     // still is guaranteed to fit through the relay in one message.
     const shrunk = await downscaleImage(blob, MAX_ASSET_CHARS);
-    const id = uid(10);
-    assetStore.set(id, shrunk.dataUrl);
-    stillCount += 1;
-    stills.unshift({ id, title: `Photo ${stillCount}` });
-    // Oldest first out of the strip. What is already on the projector stays
-    // there - the display keeps its own copy of anything it has been sent.
-    for (const dropped of stills.slice(MAX_STILLS)) {
-      assetStore.delete(dropped.id);
-      assetsSent.delete(dropped.id);
-    }
-    stills = stills.slice(0, MAX_STILLS);
-    stillsDrawn = '';
-    renderStills();
-    show(shrunk.tooBig
+    const photo = addPhoto({
+      id: uid(10), data: shrunk.dataUrl,
+      title: `Camera photo ${photoCount + 1}`, badge: 'Camera',
+    });
+    photoNote(shrunk.tooBig
       // Every rung of the ladder was still too big for one relay message. It
       // is here in the strip either way - say so rather than let it fail
       // silently on the way to the projector.
-      ? `Photo ${stillCount} — ${shrunk.width}x${shrunk.height}, but bigger than a relay message carries. It may not reach the projector; try again with less in frame.`
-      : `Photo ${stillCount} — ${shrunk.width}x${shrunk.height}. Tap it below to put it on screen.`);
+      ? `${photo.title} — ${shrunk.width}x${shrunk.height}, but bigger than a relay message carries. It may not reach the projector; try again with less in frame.`
+      : `${photo.title} — ${shrunk.width}x${shrunk.height}. Tap it below to put it on screen.`);
   } catch (err) {
-    show(`Could not take that photo: ${err.message}`);
+    photoNote(`Could not take that photo: ${err.message}`);
   }
+}
+
+// --- photographing the projector ---------------------------------------------
+//
+// The display does the actual painting (see takeShot there) because it is the
+// only device holding the real thing - the live camera frame, the deck stopped
+// mid-build, the ink as the room saw it. This end asks, and files what comes
+// back. Photos are broadcast rather than addressed, so a second controller in
+// your other hand ends up holding them too.
+
+let shotPending = null;
+
+function askForShot(target, label) {
+  if (!bus) { photoNote('Not connected to the display yet.'); return; }
+  clearTimeout(shotPending);
+  photoNote(`Photographing ${label}…`);
+  // Generous, because the display may be rasterizing a slide with a webfont on
+  // it. A request that goes unanswered even so means a display running code
+  // that has never heard of `shot-need`, and saying that beats a note that
+  // sits there saying "photographing" forever.
+  shotPending = setTimeout(() => {
+    photoNote('The display did not answer. If it is running an older build, reload it.');
+  }, 15000);
+  bus.send({ t: 'shot-need', target });
 }
 
 // --- connection -------------------------------------------------------------
@@ -1571,6 +1909,30 @@ async function connect() {
         inkExportWaiters.get(msg.deckId)?.add(msg);
         return;
       }
+      if (msg.t === 'ink-every') {
+        inkExportWaiters.get(ALL_INK)?.add(msg);
+        return;
+      }
+      if (msg.t === 'shot') {
+        // Broadcast by the display, so this arrives on every controller in the
+        // room - including the one that did not ask for it, which is the point.
+        if (!msg.id || typeof msg.data !== 'string') return;
+        clearTimeout(shotPending);
+        const photo = addPhoto({
+          id: msg.id, data: msg.data,
+          title: msg.title || 'Photo',
+          badge: msg.target === 'screen' ? 'Screen' : `Panel ${PANEL_LABELS[msg.target] || '?'}`,
+        });
+        photoNote(msg.tooBig
+          ? `${photo.title} — saved, but bigger than a relay message carries, so putting it back on screen may not work.`
+          : `${photo.title} — saved. Tap it to put it on screen.`);
+        return;
+      }
+      if (msg.t === 'shot-failed') {
+        clearTimeout(shotPending);
+        photoNote(`Could not photograph that: ${msg.reason || 'the display did not say why'}.`);
+        return;
+      }
       if (msg.t === 'ink-surface') { receiveInkSurface(msg); return; }
       // Another controller's ink, straight off the bus. Every peer already
       // receives these; ignoring them used to mean a second device only saw
@@ -1623,7 +1985,14 @@ $$('.tab').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)))
 $('#freeze').addEventListener('click', () => send({ op: 'freeze' }));
 $('#blank').addEventListener('click', () => send({ op: 'blank' }));
 
-$$('.layout-btn').forEach((b) => b.addEventListener('click', () => send({ op: 'layout', mode: b.dataset.layout })));
+$$('.layout-btn').forEach((b) => {
+  b.addEventListener('click', () => send({ op: 'layout', mode: b.dataset.layout }));
+  b.title = `${b.title || ''} — hold to photograph the whole screen`.replace(/^ — /, '');
+  // Held longer than a panel letter, deliberately: this one is reached for by
+  // accident far more easily, and taking a screenshot instead of splitting the
+  // screen mid-lecture would be a genuine surprise.
+  onLongPress(b, HOLD_SCREEN_MS, () => askForShot('screen', 'the whole screen'));
+});
 $('#take').addEventListener('click', () => send({ op: 'take' }));
 $('#swap').addEventListener('click', () => send({ op: 'swap' }));
 $('#preview-mode').addEventListener('click', () => send({ op: 'previewMode' }));
@@ -1882,7 +2251,17 @@ $('#cam-start').addEventListener('click', async () => {
   if (cameraSender?.active) { await cameraSender.stop(); return; }
   await startCamera();
 });
-$('#cam-shot').addEventListener('click', takeStill);
+$('#cam-shot').addEventListener('click', takeCameraPhoto);
+$('#photo-export').addEventListener('click', exportSession);
+$('#photo-panel').addEventListener('click', () => askForShot(state.focus, `panel ${PANEL_LABELS[state.focus]}`));
+$('#photo-screen').addEventListener('click', () => askForShot('screen', 'the whole screen'));
+// Saving what you have just drawn, from where you drew it. The same thing
+// holding the panel letter does - this is just the button you are already
+// looking at when the annotation is finished.
+$('#ink-save').addEventListener('click', () => {
+  tab('photos');
+  askForShot(state.focus, `panel ${PANEL_LABELS[state.focus]}`);
+});
 $('#cam-flip').addEventListener('click', async () => {
   facing = facing === 'environment' ? 'user' : 'environment';
   if (cameraSender?.active) await cameraSender.start({ facingMode: facing });

@@ -859,6 +859,136 @@ ok('the controller reflects a live connection too', true);
 await ctx.close();
 }
 
+console.log('\n-- keeping what was on screen: panel photos, screenshots, and the export --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'keep-room', passphrase: 'keep that board' }));
+const screen = await ctx.newPage();
+trap(screen, 'keep display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'keep pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// A board with something on it: the case the whole feature exists for.
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await screen.waitForSelector('.r-whiteboard');
+await pad.click('.tab[data-tab="ink"]');
+const pad1 = await pad.locator('#pad').boundingBox();
+await pad.mouse.move(pad1.x + 60, pad1.y + 60);
+await pad.mouse.down();
+for (let i = 0; i < 12; i++) await pad.mouse.move(pad1.x + 60 + i * 18, pad1.y + 60 + Math.sin(i / 2) * 40);
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 });
+
+await pad.click('#ink-save');
+await pad.waitForSelector('#photo-strip .shot', { timeout: 20000 });
+ok('Save a photo on the Ink tab keeps the annotated board', true);
+const kept = await pad.evaluate(() => {
+  const img = document.querySelector('#photo-strip .shot img');
+  return { jpeg: img.src.startsWith('data:image/jpeg'), badge: document.querySelector('#photo-strip .shot-num').textContent };
+});
+ok(`it is a real photo, taken on the display (badge "${kept.badge}")`, kept.jpeg && kept.badge === 'Panel A');
+// The photo has to BE the board plus the ink - not a blank rectangle.
+const hasInk = await pad.evaluate(() => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx2 = c.getContext('2d');
+    ctx2.drawImage(img, 0, 0);
+    const { data } = ctx2.getImageData(0, 0, c.width, c.height);
+    let board = 0;
+    let ink = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      // The board is near-white; the pen is #ffd166, which is much less blue.
+      if (data[i] > 200 && data[i + 2] > 200) board++;
+      else if (data[i] > 180 && data[i + 2] < 160) ink++;
+    }
+    resolve({ board, ink });
+  };
+  img.src = document.querySelector('#photo-strip .shot img').src;
+}));
+ok(`the photo really is the board with the ink burnt into it (${hasInk.ink} inked pixels)`, hasInk.board > 1000 && hasInk.ink > 200);
+
+await pad.click('#photo-strip .shot');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-image'), null, { timeout: 10000 });
+ok('and it goes straight back up as an ordinary photo', true);
+
+// Hold a panel letter. The click that a tap would fire must not also happen.
+await pad.click('.layout-btn[data-layout="2h"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-2h'), null, { timeout: 8000 });
+await pad.waitForSelector('.panel-btn');
+const letter = await pad.locator('.panel-btn').nth(1).boundingBox();
+await pad.mouse.move(letter.x + letter.width / 2, letter.y + letter.height / 2);
+await pad.mouse.down();
+await pad.waitForTimeout(1000);
+await pad.mouse.up();
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 2, null, { timeout: 20000 });
+ok('holding a panel letter photographs that panel', true);
+ok('and photographs the panel held, not the one in focus',
+  (await pad.evaluate(() => document.querySelector('#photo-strip .shot-num').textContent)) === 'Panel B');
+
+// Hold a layout button: the whole screen, and the layout must not change.
+const layout = await pad.locator('.layout-btn[data-layout="4"]').boundingBox();
+await pad.mouse.move(layout.x + layout.width / 2, layout.y + layout.height / 2);
+await pad.mouse.down();
+await pad.waitForTimeout(1500);
+await pad.mouse.up();
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 3, null, { timeout: 20000 });
+ok('holding a layout button photographs the whole screen', true);
+ok('and does not also rearrange the screen it just photographed',
+  await pad.evaluate(() => document.querySelector('.layout-btn[data-layout="2h"]').classList.contains('is-on')));
+const screenShot = await pad.evaluate(() => {
+  const img = document.querySelector('#photo-strip .shot img');
+  return { badge: document.querySelector('#photo-strip .shot-num').textContent, len: img.src.length };
+});
+ok(`the screenshot is the whole stage, not one panel (${screenShot.badge})`, screenShot.badge === 'Screen' && screenShot.len > 2000);
+
+// An embedded page cannot be photographed, and says so rather than saving a lie.
+await pad.click('.tab[data-tab="library"]');
+await pad.fill('#url-input', 'https://example.com/');
+await pad.click('#url-form button[type="submit"]');
+await screen.waitForSelector('.layer[data-role="program"] .r-web', { timeout: 10000 });
+await pad.click('.tab[data-tab="photos"]');
+await pad.click('#photo-panel');
+await pad.waitForFunction(() => document.querySelector('#photo-note').textContent.includes('cannot photograph'), null, { timeout: 15000 });
+ok('a panel Podium cannot photograph says so instead of saving something false', true);
+ok('and nothing was added to the strip', (await pad.$$('#photo-strip .shot')).length === 3);
+
+// The export: photos, annotated slides, and the board itself.
+const download = pad.waitForEvent('download', { timeout: 40000 });
+await pad.click('#photo-export');
+const file = await download;
+const zipPath = path.join(HERE, 'fixtures', 'session-export.zip');
+await file.saveAs(zipPath);
+const names = [];
+{
+  // Just enough of a ZIP reader to check what is inside: local file headers,
+  // in order, each naming its entry.
+  const buf = fs.readFileSync(zipPath);
+  let at = 0;
+  while (at + 30 <= buf.length && buf.readUInt32LE(at) === 0x04034b50) {
+    const nameLen = buf.readUInt16LE(at + 26);
+    const extraLen = buf.readUInt16LE(at + 28);
+    const size = buf.readUInt32LE(at + 18);
+    names.push(buf.toString('utf8', at + 30, at + 30 + nameLen));
+    at += 30 + nameLen + extraLen + size;
+  }
+}
+ok(`the export is a zip holding ${names.length} files`, names.length >= 5);
+ok('with every photo in it', names.filter((n) => n.startsWith('photos/')).length === 3);
+ok('with the board that was drawn on, rebuilt as an image', names.some((n) => n.startsWith('boards/')));
+ok('and a manifest saying what is inside', names.includes('session.txt'));
+ok('named for the room and the day, not "download (3)"', /^podium-keep-room-\d{4}-\d{2}-\d{2}/.test(file.suggestedFilename()));
+await ctx.close();
+}
+
 console.log('\n-- stills from the camera, one per panel --');
 {
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, permissions: ['camera'] });
