@@ -144,6 +144,11 @@ Click **Save**, then **Go live**. That one click is what grants the page fullscr
 sound, and permission to keep the screen awake — browsers require a real click for
 those, which is the only reason the button exists.
 
+Press `?` on that machine at any point for the handful of keys it understands. The
+two worth knowing now: `F` toggles fullscreen, and `E` leaves fullscreen and puts the
+**Go live** screen back up — which is how you get out at the end of class without
+hunting for the browser's own controls.
+
 ### 6. Pair the iPad — 3 minutes
 
 On the display press **Pair a device** (or the `P` key). A QR code appears. Point the

@@ -8,7 +8,10 @@
 // scroll position. A layout can split the screen into up to four panels
 // (see LAYOUTS in protocol.js); B/C/D are simpler; set directly, no preview.
 
-import { $, $$, el, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell } from './util.js';
+import {
+  $, $$, el, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell,
+  enterFullscreen, exitFullscreen, toggleFullscreen, isFullscreen, onFullscreenChange,
+} from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD } from './protocol.js';
@@ -816,31 +819,64 @@ document.addEventListener('visibilitychange', () => {
 // round trip. Its only job is to be something real for the browser to play.
 const SILENT_CLIP = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==';
 
-async function goLive() {
+// Everything a browser will not grant a page without a gesture is ASKED FOR
+// here, in the click's own turn of the event loop, before this function awaits
+// anything at all. That is not style: Safari treats a request made after even
+// one `await` as not coming from a user gesture and refuses it without an
+// error. It is exactly how Go live stopped going fullscreen on Macs - the
+// audio unlock below was awaited first, so requestFullscreen() was not called
+// until the gesture was already over. The promises are collected and awaited
+// afterwards, where waiting costs nothing.
+//
+// The order within this block is deliberate. Two separate autoplay gates
+// exist and they do not unlock each other: resuming an AudioContext covers
+// the Web Audio API only and does nothing for a plain <audio>/<video>
+// element's own autoplay policy, which is the one that actually governs
+// Waiting Music and every video/YouTube item. The only thing every engine
+// honors for that is a real media element's play() from inside the gesture,
+// so it goes first. Fullscreen goes last of the three because it is the one
+// that SPENDS the gesture - the other two only check that there was one.
+function goLive() {
   armEl.hidden = true;
   document.body.classList.add('is-live');
   state.armed = true;
 
-  // Two separate autoplay gates exist, and they do not unlock each other:
-  // resuming an AudioContext (below) only covers the Web Audio API: it does
-  // nothing for a plain <audio>/<video> element's own autoplay policy, which
-  // is the one that actually governs Waiting Music and every video/YouTube
-  // item. Safari in particular enforces that gate strictly and separately.
-  // The one thing every engine reliably honors is an actual media element's
-  // play() called synchronously inside the click - so that happens first,
-  // before anything else gets a chance to spend this gesture.
-  try {
-    const unlock = new Audio(SILENT_CLIP);
-    unlock.muted = true;
-    await unlock.play();
-    unlock.pause();
-  } catch { /* best effort - the per-clip retry-on-next-gesture below covers the rest */ }
+  const unlock = new Audio(SILENT_CLIP);
+  unlock.muted = true;
+  const audio = Promise.resolve(unlock.play())
+    .then(() => unlock.pause())
+    .catch(() => { /* best effort - each clip retries on the next gesture */ });
 
-  try { await new (window.AudioContext || window.webkitAudioContext)().resume(); } catch { /* noop */ }
-  try { await document.documentElement.requestFullscreen({ navigationUI: 'hide' }); } catch { /* user can press F11 */ }
+  let context = Promise.resolve();
+  try { context = new (window.AudioContext || window.webkitAudioContext)().resume(); } catch { /* noop */ }
+
+  const fullscreen = enterFullscreen().catch(() => { /* the user can still press F11 */ });
+
+  sizeInk();
+  commit();
+  return finishGoLive([audio, context, fullscreen]);
+}
+
+async function finishGoLive(pending) {
+  await Promise.allSettled(pending);
   await requestWakeLock();
   sizeInk();
   commit();
+}
+
+// The way back out, without a keyboard shortcut for "quit" that a stray key
+// press could hit by accident: leave fullscreen and put the arming screen up
+// again, with whatever was on the projector still loaded behind it, so Go live
+// picks the lecture straight back up. The controller is told (state.armed),
+// so it reports "Display open - click Go live on it" rather than an absence.
+async function standDown() {
+  hidePairing();
+  hideShortcuts();
+  armEl.hidden = false;
+  document.body.classList.remove('is-live');
+  state.armed = false;
+  commit();
+  try { await exitFullscreen(); } catch { /* already windowed */ }
 }
 
 // --- setup screen -----------------------------------------------------------
@@ -911,6 +947,21 @@ function hidePairing() {
   $('#pair-url').textContent = '';
 }
 
+// --- the shortcut card ------------------------------------------------------
+
+function showShortcuts() {
+  $('#keys-fs').textContent = isFullscreen() ? 'Leave fullscreen' : 'Go fullscreen';
+  $('#keys').hidden = false;
+}
+
+function hideShortcuts() {
+  $('#keys').hidden = true;
+}
+
+function toggleShortcuts() {
+  if ($('#keys').hidden) showShortcuts(); else hideShortcuts();
+}
+
 // --- wiring -----------------------------------------------------------------
 
 $('#arm-button').addEventListener('click', goLive);
@@ -927,6 +978,7 @@ wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
 });
 $('#pair-button').addEventListener('click', showPairing);
 $('#pair-close').addEventListener('click', hidePairing);
+$('#keys-close').addEventListener('click', hideShortcuts);
 $('#standby-pair').addEventListener('click', showPairing);
 $('#standby-settings').addEventListener('click', showSetup);
 
@@ -939,16 +991,60 @@ $('#standby-settings').addEventListener('click', showSetup);
 // reliable enough signal for this specific transition, so fullscreenchange
 // is a second, redundant trigger for the same recompute.
 window.addEventListener('resize', () => { sizeInk(); broadcastSoon(); });
-document.addEventListener('fullscreenchange', () => { sizeInk(); broadcastSoon(); });
+onFullscreenChange(() => {
+  sizeInk();
+  broadcastSoon();
+  if (!$('#keys').hidden) showShortcuts();
+});
 window.addEventListener('beforeunload', () => bus?.close());
 
 // The display normally runs in kiosk mode with no browser chrome, and the
 // standby screen (the usual route to Settings) is hidden whenever a controller
-// is connected. These keys are the way back in mid-lecture.
+// is connected. These keys are the way back in mid-lecture - and `?` is the
+// one that means you do not have to remember the others.
 document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'p' || ev.key === 'P') { $('#pair').hidden ? showPairing() : hidePairing(); }
-  if (ev.key === 's' || ev.key === 'S') { hidePairing(); showSetup(); }
-  if (ev.key === 'Escape') { hidePairing(); }
+  // Settings is a form, and this handler is on the document: without this
+  // guard a room called "spare" pairs, opens Settings and stands the display
+  // down while you are still typing it.
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName)) return;
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+
+  switch (ev.key) {
+    case '?':
+      // Shift+/ on most layouts, but not all - accept the bare key too.
+    case '/':
+      ev.preventDefault();
+      toggleShortcuts();
+      break;
+    case 'f':
+    case 'F':
+      ev.preventDefault();
+      toggleFullscreen().catch(() => { /* the browser said no; nothing to do */ });
+      break;
+    case 'e':
+    case 'E':
+      ev.preventDefault();
+      standDown();
+      break;
+    case 'p':
+    case 'P':
+      ev.preventDefault();
+      $('#pair').hidden ? showPairing() : hidePairing();
+      break;
+    case 's':
+    case 'S':
+      ev.preventDefault();
+      hidePairing();
+      hideShortcuts();
+      showSetup();
+      break;
+    case 'Escape':
+      hidePairing();
+      hideShortcuts();
+      break;
+    default:
+      break;
+  }
 });
 
 $('#room-name').textContent = cfg.room;

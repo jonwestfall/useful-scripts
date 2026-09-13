@@ -467,6 +467,40 @@ await display.waitForFunction(() => {
 shown = await onScreen();
 ok(`an uploaded deck reaches the projector over the bus ("${shown.heading}")`, shown.total === 13);
 
+// A slide with more on it than a 1280x720 box holds used to lose its last
+// bullets off the bottom edge, silently. Slide 9 of this deck is one of those.
+await control.click('.tab[data-tab="slides"]');
+await control.waitForFunction(() => document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell').length === 13, null, { timeout: 30000 });
+await control.evaluate(() => document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')[8].click());
+await waitForSlide(8);
+const fitted = await display.evaluate(() => {
+  const sr = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot;
+  const svg = sr.querySelector('svg.podium-on');
+  const section = svg.querySelector('section');
+  return {
+    scale: Number(svg.dataset.podiumFit || 1),
+    over: section.scrollHeight - section.clientHeight,
+    // Shrinking must not change the slide's shape: ink is mapped onto it.
+    aspect: (() => { const b = svg.getAttribute('viewBox').split(' ').map(Number); return b[2] / b[3]; })(),
+  };
+});
+ok(`an over-full slide is shrunk to fit (to ${Math.round(fitted.scale * 100)}%)`, fitted.scale < 1 && fitted.scale >= 0.55);
+ok('and then nothing runs off the bottom of it', fitted.over <= 1);
+ok(`it is still the same shape, so ink still lands where it was drawn (${fitted.aspect.toFixed(3)})`,
+  Math.abs(fitted.aspect - 16 / 9) < 0.002);
+ok('the controller says the slide was shrunk rather than leaving you guessing',
+  (await control.textContent('#deck-count')).includes(`fit ${Math.round(fitted.scale * 100)}%`));
+ok('and its thumbnail is shrunk by the same amount, so the two agree',
+  await control.evaluate((want) => {
+    const svg = document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell svg')[8];
+    return Number(svg.dataset.podiumFit || 1).toFixed(3) === want.toFixed(3);
+  }, fitted.scale));
+ok('a slide that already fits is left at the size its author chose',
+  await display.evaluate(() => {
+    const sr = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot;
+    return [...sr.querySelectorAll('svg[data-marpit-svg]')].some((s) => !s.dataset.podiumFit);
+  }));
+
 // Cue a deck behind a freeze, exactly as you would mid-lecture.
 await control.click('#freeze');
 await display.waitForFunction(() => document.body.classList.contains('is-frozen'));
@@ -2702,6 +2736,72 @@ await tablet.setOffline(false);
 
 await tablet.close();
 await room.close();
+}
+
+console.log('\n-- the display\'s own keyboard --');
+{
+// Everything here happens on the classroom PC, which in a real room has no
+// browser chrome to fall back on.
+const c = await browser.newContext();
+await c.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'keys-room', passphrase: 'pw' }));
+const screen2 = await c.newPage();
+trap(screen2, 'keys display');
+
+// Prove the fullscreen request is made inside the click itself. Safari grants
+// it only while the gesture is still current, so a single `await` before the
+// call - which is how it regressed - loses fullscreen on every Mac while
+// leaving Chrome working perfectly.
+await screen2.addInitScript(() => {
+  window.__fsCalls = [];
+  const real = Element.prototype.requestFullscreen;
+  Element.prototype.requestFullscreen = function patched(...args) {
+    // window.event is set only while an event is actually being dispatched,
+    // which is precisely the window Safari grants fullscreen in. An `await`
+    // anywhere before the call - the regression - lands here with it unset,
+    // because the click's dispatch finished long before the continuation ran.
+    window.__fsCalls.push(window.event?.type || null);
+    return real.apply(this, args);
+  };
+});
+await screen2.goto(`${BASE}/display.html`);
+await screen2.waitForSelector('#arm:not([hidden])');
+
+await screen2.keyboard.press('?');
+await screen2.waitForFunction(() => !document.querySelector('#keys').hidden, null, { timeout: 5000 });
+ok('? brings up the shortcut card', true);
+ok('and it lists the way out', (await screen2.textContent('#keys')).includes('Go live screen'));
+await screen2.keyboard.press('Escape');
+await screen2.waitForFunction(() => document.querySelector('#keys').hidden, null, { timeout: 5000 });
+ok('Esc puts it away', true);
+
+await screen2.click('#arm-button');
+await screen2.waitForFunction(() => !!document.fullscreenElement, null, { timeout: 5000 });
+ok('Go live really does go fullscreen', true);
+const fsCalls = await screen2.evaluate(() => window.__fsCalls);
+ok(`and asks for it inside the click itself, which is the only thing Safari accepts (${JSON.stringify(fsCalls)})`,
+  fsCalls.length === 1 && fsCalls[0] === 'click');
+
+await screen2.keyboard.press('f');
+await screen2.waitForFunction(() => !document.fullscreenElement, null, { timeout: 5000 });
+ok('f drops out of fullscreen', true);
+await screen2.keyboard.press('f');
+await screen2.waitForFunction(() => !!document.fullscreenElement, null, { timeout: 5000 });
+ok('and f puts it back', true);
+
+await screen2.keyboard.press('e');
+await screen2.waitForFunction(() => !document.fullscreenElement && !document.querySelector('#arm').hidden, null, { timeout: 5000 });
+ok('e leaves fullscreen and comes back to the Go live screen', true);
+
+// A room or passphrase with an e, f, p or s in it must not fire any of these.
+await screen2.keyboard.press('s');
+await screen2.waitForSelector('#setup:not([hidden])');
+await screen2.click('#d-room');
+await screen2.type('#d-room', 'seminar-f');
+ok('and the same keys typed into Settings are just text',
+  (await screen2.inputValue('#d-room')).endsWith('seminar-f')
+  && await screen2.isHidden('#pair') && await screen2.isHidden('#keys'));
+await c.close();
 }
 
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));

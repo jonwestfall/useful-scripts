@@ -9,7 +9,7 @@ import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedIt
   inkDigest, inkDigestsAgree, applyInkAction, BUILD } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
-import { render as renderDeckSource, deckId, frontMatterTitle, themeReport } from './deck.js';
+import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits } from './deck.js';
 import { createZip } from './zip.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf } from './planfile.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText } from './store.js';
@@ -512,6 +512,9 @@ function buildGrid(deck) {
 
   const holder = document.createElement('div');
   holder.innerHTML = deck.html;
+  // Thumbnails (and the PNG export, which rasterizes these very nodes) show a
+  // slide shrunk exactly as much as the projector shrinks it.
+  applyFits(holder, deck.fits);
   const grid = shadow.getElementById('grid');
   Array.from(holder.querySelectorAll('svg[data-marpit-svg]')).forEach((svg, i) => {
     const cell = document.createElement('button');
@@ -578,9 +581,13 @@ function renderSlides() {
   const index = Math.min(total - 1, Math.max(0, item.slide || 0));
   const step = item.step || 0;
   const fragCount = (item.fragments && item.fragments[index]) || 0;
+  // A slide that had to be shrunk to fit says so, rather than leaving you to
+  // wonder why the type on the projector is not the size you authored.
+  const fit = deck?.fits?.[index];
+  const fitNote = Number.isFinite(fit) && fit < 1 ? ` · fit ${Math.round(fit * 100)}%` : '';
   $('#deck-count').textContent = fragCount
-    ? `Slide ${index + 1} / ${total} · build ${step}/${fragCount}`
-    : `Slide ${index + 1} / ${total}`;
+    ? `Slide ${index + 1} / ${total} · build ${step}/${fragCount}${fitNote}`
+    : `Slide ${index + 1} / ${total}${fitNote}`;
   // A slide mid-build still has Next/Previous left to do even at slide 0 or
   // the very last slide, so the ends of a build - not just of the deck -
   // decide when the buttons actually go grey.

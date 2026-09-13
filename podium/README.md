@@ -109,7 +109,11 @@ browsers only expose in a secure context. GitHub Pages is https by default.
 ### 3. Set up the classroom PC once
 
 Open `display.html`, fill in the connection settings, and click **Go live**.
-Settings are stored in that browser, so you do this once per machine.
+That click is what grants the page fullscreen, sound and the wake lock — the
+browser will not hand those to a page that did not ask for them inside a real
+click. Settings are stored in that browser, so you do this once per machine.
+Press `?` on that machine for the keys it understands; `E` is the one that
+leaves fullscreen and puts the **Go live** screen back at the end of class.
 
 Then bookmark it — or better, make a desktop shortcut that skips the browser chrome
 entirely. No install, no admin rights:
@@ -177,6 +181,35 @@ space page through anything with pages, and `B` to blank and `F` to freeze work 
 
 Because the whole deck is rendered once into a shadow root, changing slide is
 instant, and a deck cued behind a freeze keeps its place when you take it.
+
+### Slides that are too full
+
+Marp gives every slide the same fixed box — 1280x720 for a 16:9 deck — and
+simply hides anything that does not fit in it. A slide with one paragraph too
+many does not scroll and does not warn you: it loses its last bullets off the
+bottom edge, and you find out standing in front of the class.
+
+Podium shrinks that slide instead. Before a deck is shown anywhere, every slide
+is measured once, and any that overflows gets its type scaled down — 5%, 15%,
+whatever it takes — until the whole slide fits. A slide that already fits is
+left exactly as its author wrote it, and a slide that would have to go below 55%
+to fit is left at 55% rather than made unreadable.
+
+It is the same number everywhere: the projector, the Now/Next boxes on your
+iPad, the thumbnails, and the PNG export all shrink a slide by the same amount,
+so what you rehearse is what the room sees. The Slides tab says so — *Slide 9 /
+13 · fit 74%* — rather than leaving you wondering why the type looks small.
+
+Shrinking never changes a slide's shape, only the size of what is on it, so ink
+and the laser still land exactly where they were aimed.
+
+To opt a slide out and keep it cropped the way Marp would crop it:
+
+```markdown
+---
+<!-- _class: nofit -->
+# This slide is cropped on purpose
+```
 
 ### Progressive builds
 
@@ -693,16 +726,29 @@ If a page seems to be running old code rather than old settings, that is the
 browser's HTTP cache, not Podium's storage — a hard reload (Ctrl/Cmd+Shift+R)
 is the fix.
 
-### Getting at Settings on the classroom PC
+### The display's own keyboard
 
 The display normally runs fullscreen with no browser chrome, and the standby
-screen disappears as soon as a controller connects. Three keys get you back in:
+screen disappears as soon as a controller connects, so these keys — pressed on
+the classroom machine itself — are the way back in mid-lecture. `?` is the only
+one worth remembering, because it shows you the rest:
 
 | Key | What it does |
 | :-- | :-- |
+| `?` | Show or hide the shortcut card |
+| `F` | Go fullscreen, or leave it |
+| `E` | Leave fullscreen and go back to the **Go live** screen |
 | `P` | Show or hide the pairing QR |
 | `S` | Open Settings |
-| `Esc` | Close the pairing QR |
+| `Esc` | Close whatever is open |
+
+`E` is the end-of-class key: it drops out of fullscreen and puts the arming
+screen back up with the lecture still loaded behind it, so **Go live** picks up
+exactly where you were. The controller sees it too, and says *"Display open —
+click Go live on it"* rather than reporting the screen as missing.
+
+None of these fire while you are typing in Settings, so a room called
+`seminar-f` is just a room name.
 
 ## When the controller says the display isn't there
 
@@ -887,7 +933,7 @@ podium/
       bus.js                      encryption, identity, presence, reconnect
       crypto.js  config.js  rtc.js  util.js
       transport/                  supabase.js · mqtt.js · ws.js
-      deck.js                     Marp: themes, rendering, presenter notes, builds
+      deck.js                     Marp: themes, rendering, presenter notes, builds, slide fitting
       zip.js                      minimal ZIP writer, for exporting marked-up slides
     icons/                        app icons (regenerate: vendor-build/make-icons.mjs)
     vendor/qrcode.js              QR generator (MIT, Kazuhiko Arase)
