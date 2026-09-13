@@ -93,6 +93,25 @@ async function createMarp() {
   return marp;
 }
 
+/**
+ * A deck's CSS, re-pointed for a slide that has been lifted out on its own.
+ *
+ * Marpit scopes every rule it emits to `div.marpit > svg > foreignObject >
+ * section ...`. That wrapper cannot exist around the ROOT element of a
+ * standalone SVG document, which is exactly what rasterizing one slide
+ * produces - so every one of those selectors misses, and the slide comes out
+ * as unstyled black-on-transparent text: invisible against a dark backdrop,
+ * and nothing like the slide on the wall. Dropping the wrapper from the front
+ * of the chain re-points the rules at the root <svg>, which is the element
+ * that is actually there.
+ *
+ * Everything that rasterizes a slide goes through here: the photo of a panel
+ * (see snapshot() in renderers.js) and the marked-up slide export.
+ */
+export function cssForStandaloneSlide(css) {
+  return String(css || '').replace(/div\.marpit\s*>\s*/g, '');
+}
+
 export async function applyPolyfill(root) {
   const { browser } = await engine();
   try { return browser(root); } catch { return null; }

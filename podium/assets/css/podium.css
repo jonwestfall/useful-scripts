@@ -591,6 +591,28 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 #cam-local { width: 100%; max-width: 320px; border-radius: var(--radius); background: #000; }
 #cam-status { color: var(--dim); font-size: 14px; }
 
+/* How many photos are waiting on the Photos tab. A shot taken by holding a
+   button in the top bar lands on a tab you are probably not looking at, so the
+   tab says so. */
+.tab[data-count]:not([data-count=""])::after {
+  content: attr(data-count);
+  margin-left: 6px; padding: 0 6px; border-radius: 999px;
+  background: var(--accent); color: #07101f; font-size: 11px; font-weight: 700;
+}
+
+/* Press and hold (see onLongPress in util.js): the button fills up while you
+   hold it, so the gesture is visibly underway rather than either working or
+   appearing to do nothing at all. */
+.is-holding {
+  background-image: linear-gradient(rgba(110, 168, 254, .5), rgba(110, 168, 254, .5));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  animation: holding var(--hold-ms, 700ms) linear forwards;
+}
+@keyframes holding { to { background-size: 100% 100%; } }
+/* Holding a control must not also select its label or raise iOS's callout. */
+.panel-btn, .layout-btn { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+
 /* Stills taken from the camera feed: a scrolling row of what you have caught
    so far, big enough to tell one page of a book from the next at arm's length
    on a lectern. */
@@ -612,10 +634,20 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
   position: absolute; right: 4px; bottom: 4px; padding: 1px 6px; border-radius: 6px;
   background: var(--accent); font: 700 11px/1.7 system-ui, sans-serif; color: #07101f;
 }
-.shot-del {
-  position: absolute; top: 2px; right: 4px; width: 26px; height: 26px;
+/* The two corner actions. Deliberately tap-sized rather than tidy: this gets
+   used one-handed, at a lectern, in front of people. */
+.shot-del, .shot-save {
+  position: absolute; top: 2px; width: 26px; height: 26px;
   display: grid; place-items: center; border-radius: 8px;
   background: rgba(0, 0, 0, .55); color: #fff; font-size: 17px;
+}
+.shot-del { right: 4px; }
+.shot-save { right: 34px; font-size: 15px; }
+/* When it was taken: the one thing that tells two photos of the same panel
+   apart when there are twenty of them. */
+.shot-time {
+  position: absolute; top: 4px; left: 4px; padding: 0 4px; border-radius: 5px;
+  background: rgba(0, 0, 0, .55); color: #fff; font: 600 9px/1.7 system-ui, sans-serif;
 }
 
 /* The set of countdowns, each showing its own clock: you can see all four at

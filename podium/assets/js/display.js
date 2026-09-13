@@ -9,13 +9,15 @@
 // (see LAYOUTS in protocol.js); B/C/D are simpler; set directly, no preview.
 
 import {
-  $, $$, el, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell,
+  $, $$, el, uid, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell,
   enterFullscreen, exitFullscreen, toggleFullscreen, isFullscreen, onFullscreenChange,
 } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD } from './protocol.js';
-import { createRenderer } from './renderers.js';
+import { createRenderer, itemTitle, TYPES } from './renderers.js';
+import { encodeToFit } from './store.js';
+import { MAX_ASSET_CHARS } from './planfile.js';
 import { createCameraReceiver } from './rtc.js';
 
 const HEARTBEAT_MS = 2000;
@@ -428,6 +430,165 @@ function redrawInk(force = false) {
   inkCanvas.classList.toggle('has-ink', strokes.length > 0);
 }
 
+// --- photographing what is on screen -----------------------------------------
+//
+// "Take a photo of panel B" and "screenshot the whole thing" are one operation
+// over different rectangles: ask each panel's renderer to paint itself into a
+// canvas (see snapshot() in renderers.js), lay the real ink canvas over the
+// top, and hand the result back as an ordinary photo - one the presenter can
+// put straight back on screen later, or export with everything else.
+//
+// It happens on the DISPLAY because this is the only device that has the
+// thing being photographed: the live camera frame, the deck stopped three
+// bullets into a build, the ink exactly as the room saw it. A controller only
+// ever mirrors those.
+
+const PANEL_LABELS = ['A', 'B', 'C', 'D'];
+const SHOT_MAX_WIDTH = 1600;
+
+function panelAt(index) {
+  if (index === 0) return { item: state.program, slot: slotA, renderer: programRenderer() };
+  const layer = extraLayers[index - 1];
+  return layer ? { item: state.panels[index - 1], slot: layer.slot, renderer: layer.renderer } : null;
+}
+
+function slotRect(slot) {
+  const stageBox = stage.getBoundingClientRect();
+  const box = slot.getBoundingClientRect();
+  return { x: box.left - stageBox.left, y: box.top - stageBox.top, w: box.width, h: box.height };
+}
+
+// A panel nothing can photograph - an embedded page, a PDF in the browser's
+// own viewer, a YouTube player. In a whole-screen shot the other panels are
+// still worth having, so this says plainly what was in that corner rather
+// than leaving a black hole or failing the whole picture.
+function drawUnphotographable(ctx, rect, item) {
+  ctx.fillStyle = '#14181d';
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.fillStyle = '#97a2b0';
+  ctx.textAlign = 'center';
+  const size = Math.max(9, Math.round(Math.min(rect.w, rect.h) * 0.06));
+  ctx.font = `600 ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  ctx.fillText(itemTitle(item).slice(0, 40), rect.x + rect.w / 2, rect.y + rect.h / 2 - size * 0.2);
+  ctx.font = `${Math.round(size * 0.72)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  ctx.fillText(`${TYPES[item?.type]?.label || item?.type || 'empty'} — not photographable`,
+    rect.x + rect.w / 2, rect.y + rect.h / 2 + size);
+  ctx.textAlign = 'start';
+}
+
+// Why a panel could not be photographed, in terms of the thing that is in it.
+// "Podium cannot photograph camera" is technically true and useless; the
+// presenter wants to know whether to fix something or stop trying.
+function whyNot(panel) {
+  const type = panel?.item?.type;
+  if (type === 'camera') {
+    return panel.renderer?.el?.classList?.contains('has-stream')
+      ? 'the camera feed has no frame on screen yet'
+      : 'the phone\'s camera has not reached this screen yet — start it on the Camera tab first';
+  }
+  if (type === 'deck') return 'that slide would not render on its own — a font or an image in it may be blocking it';
+  const embedded = { web: 'an embedded web page', slides: 'an embedded slide deck', pdf: 'a PDF in the browser\'s own viewer', youtube: 'a YouTube player' }[type];
+  if (embedded) return `${embedded} cannot be photographed — a browser will not let a page read pixels out of a frame it does not own`;
+  const known = { text: 'a big-text card', audio: 'an audio player' }[type];
+  if (known) return `Podium cannot photograph ${known} yet`;
+  return 'Podium cannot photograph what is in that panel';
+}
+
+function drawCaption(ctx, rect) {
+  const text = state.overlay?.text;
+  if (!state.overlay?.visible || !text) return;
+  const size = Math.max(10, Math.round(rect.h * 0.055));
+  const band = size * 2.4;
+  const gradient = ctx.createLinearGradient(0, rect.y + rect.h - band * 1.6, 0, rect.y + rect.h);
+  gradient.addColorStop(0, 'rgba(0,0,0,0)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0.82)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(rect.x, rect.y + rect.h - band * 1.6, rect.w, band * 1.6);
+  ctx.fillStyle = '#fff';
+  ctx.font = `600 ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  ctx.fillText(text.slice(0, 120), rect.x + rect.w * 0.05, rect.y + rect.h - size * 0.8);
+}
+
+/**
+ * Photograph one panel (0-3) or the whole stage ('screen').
+ *
+ * Returns { dataUrl, title, width, height }, or throws with a reason worth
+ * showing to whoever pressed the button.
+ */
+async function takeShot(target) {
+  ensureInkCanvas();
+  const stageW = stage.clientWidth;
+  const stageH = stage.clientHeight;
+  if (!stageW || !stageH) throw new Error('this screen has no size yet');
+
+  const wholeScreen = target === 'screen';
+  const panels = wholeScreen ? activePanels() : [panelAt(target)];
+  if (!panels[0]?.slot) throw new Error(`panel ${PANEL_LABELS[target] || target} is not on screen`);
+  const area = wholeScreen ? { x: 0, y: 0, w: stageW, h: stageH } : slotRect(panels[0].slot);
+  // A panel the current layout does not show still HAS a slot; it is just
+  // display:none, which measures 0x0. Asking for one (a controller whose idea
+  // of the layout is a moment out of date) should say so rather than hand back
+  // a one-pixel photo.
+  if (!area.w || !area.h) throw new Error(`panel ${PANEL_LABELS[target] || target} is not on screen in this layout`);
+
+  const scale = Math.min(1, SHOT_MAX_WIDTH / area.w);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(area.w * scale));
+  canvas.height = Math.max(1, Math.round(area.h * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Everything below is written in stage CSS pixels - the same coordinates
+  // contentRectFor() and the ink canvas already use - and this transform is
+  // what maps them into whatever size this photo turned out to be.
+  ctx.save();
+  ctx.scale(scale, scale);
+  ctx.translate(-area.x, -area.y);
+
+  let painted = 0;
+  for (const panel of panels) {
+    if (!panel?.slot) continue;
+    const rect = slotRect(panel.slot);
+    let drew = false;
+    try {
+      drew = await (panel.renderer?.snapshot?.(ctx, rect) ?? false);
+    } catch { /* a slide that would not rasterize: treated as unphotographable */ }
+    if (drew) painted += 1;
+    else drawUnphotographable(ctx, rect, panel.item);
+  }
+  if (!painted) throw new Error(whyNot(panels[0]));
+
+  // The ink canvas covers the whole stage and already holds every visible
+  // panel's strokes in their own places, so one draw puts the annotation back
+  // exactly where it was drawn - no re-mapping, at any layout.
+  ctx.drawImage(inkCanvas, 0, 0, stageW, stageH);
+  drawCaption(ctx, { x: 0, y: 0, w: stageW, h: stageH });
+  ctx.restore();
+
+  // Deliberately ignores `blank`: a blanked screen is a moment of "eyes on
+  // me", not what you meant to keep, and a photo of it would be a black
+  // rectangle. Freeze needs no such note - a frozen panel is photographed
+  // holding exactly the frame the room is looking at.
+
+  let shrunk;
+  try {
+    shrunk = encodeToFit(canvas, MAX_ASSET_CHARS);
+  } catch {
+    // A picture or video from another site, drawn in by a renderer, taints the
+    // canvas and the browser refuses to let the page read it back. Nothing can
+    // be done about it from here; say which rule was hit rather than "failed".
+    throw new Error('the browser will not let Podium read those pixels back — something on screen came from another site without permission to copy it');
+  }
+  const item = panels[0]?.item;
+  // Photograph a panel, put that photo back in the panel, photograph it again:
+  // without this the titles nest ("Panel A - Panel A - Whiteboard") until they
+  // are unreadable. One prefix is enough to say where it came from.
+  const base = itemTitle(item).replace(/^Panel [A-D] — /, '');
+  const title = wholeScreen ? 'Whole screen' : `Panel ${PANEL_LABELS[target]} — ${base}`;
+  return { dataUrl: shrunk.dataUrl, title, width: shrunk.width, height: shrunk.height, tooBig: shrunk.tooBig };
+}
+
 // --- laser pointer -----------------------------------------------------------
 //
 // Deliberately outside `state`: a live gesture, not a document. Positions
@@ -726,6 +887,15 @@ async function connect() {
         syncLayers();
         return;
       }
+      if (msg.t === 'asset-need') {
+        // Usually this screen is the one asking. The exception is a controller
+        // that reloaded mid-lecture, or one that joined after a photo was
+        // taken: it has an `asset:<id>` on screen and no bytes for it, and
+        // this is the device that has them.
+        const data = assetStore.get(msg.id);
+        if (data != null) bus.send({ t: 'asset', to: msg.from, id: msg.id, data });
+        return;
+      }
       if (msg.t === 'asset') {
         if (!msg.id || typeof msg.data !== 'string') return;
         assetStore.set(msg.id, msg.data);
@@ -773,6 +943,40 @@ async function connect() {
           t: 'ink-data', to: msg.from, deckId: msg.deckId,
           seq: i, last: i === parts.length - 1,
           bySlide: part ? { [part[0]]: part[1] } : {},
+        }));
+        return;
+      }
+      if (msg.t === 'shot-need') {
+        // A photo of a panel, or of the whole screen. Broadcast rather than
+        // addressed: the iPad asked, but the iPhone in the other hand should
+        // end up holding the same photo.
+        takeShot(msg.target === 'screen' ? 'screen' : Math.max(0, Math.min(3, Number(msg.target) || 0)))
+          .then((shot) => {
+            const id = `shot-${uid(8)}`;
+            // Keep a copy. This screen has just made the photo; without this it
+            // would render a blank pixel the moment a controller put it back up
+            // and ask the room to send the 160 KB it produced itself straight
+            // back to it.
+            assetStore.set(id, shot.dataUrl);
+            bus.send({ t: 'shot', id, target: msg.target, title: shot.title, data: shot.dataUrl, tooBig: !!shot.tooBig });
+          })
+          .catch((err) => bus.send({ t: 'shot-failed', to: msg.from, target: msg.target, reason: err?.message || String(err) }));
+        return;
+      }
+      if (msg.t === 'ink-every-need') {
+        // Exporting a whole session: every surface that has any ink on it, not
+        // just one deck's. Same slicing as the deck path above, for the same
+        // reason - a term's annotation does not fit in one relay message.
+        const parts = [];
+        for (const [key, surface] of Object.entries(state.ink.bySurface)) {
+          if (!surface.strokes?.length) continue;
+          for (const slice of chunkStrokes(surface.strokes)) parts.push([key, slice]);
+        }
+        if (!parts.length) parts.push(null);
+        parts.forEach((part, i) => bus.send({
+          t: 'ink-every', to: msg.from,
+          seq: i, last: i === parts.length - 1,
+          bySurface: part ? { [part[0]]: part[1] } : {},
         }));
         return;
       }

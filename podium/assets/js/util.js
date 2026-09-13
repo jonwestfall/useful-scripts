@@ -123,6 +123,67 @@ export function wireDangerButton(button, label, action, { armedLabel = 'Tap agai
   return { disarm };
 }
 
+/**
+ * Press and hold, as a second meaning for a button that already does
+ * something when tapped.
+ *
+ * The hold has to be visible while it is happening - a control that only
+ * responds after you have held it long enough, with no sign that anything is
+ * underway, feels broken rather than deliberate - so the element is marked
+ * `is-holding` for the duration and told how long that is (`--hold-ms`),
+ * which the stylesheet turns into a sweep across the button.
+ *
+ * The click that a tap-and-release would normally produce is swallowed when
+ * the hold fires, so holding the "four panels" button photographs the screen
+ * instead of also rearranging it.
+ */
+// Which element's next click a completed hold has already spent, and the one
+// listener that swallows it.
+//
+// It has to be on WINDOW, in the capture phase. A capture listener on the
+// element itself does not help: when that element is the event's own target -
+// which a button with nothing but text inside it always is - the DOM runs its
+// listeners in the order they were added and ignores the capture flag
+// entirely, so the button's own click handler (added first, by el()) would run
+// before it. Holding "B" would photograph panel B and move the room's focus to
+// it. On window the capture phase genuinely comes first, for every target.
+let spentClick = null;
+let swallowerInstalled = false;
+
+function installClickSwallower() {
+  if (swallowerInstalled) return;
+  swallowerInstalled = true;
+  window.addEventListener('click', (ev) => {
+    const node = spentClick;
+    if (!node) return;
+    spentClick = null;
+    if (node !== ev.target && !node.contains(ev.target)) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  }, true);
+}
+
+export function onLongPress(node, ms, onHold) {
+  let timer = null;
+
+  const stop = () => {
+    clearTimeout(timer);
+    timer = null;
+    node.classList.remove('is-holding');
+  };
+
+  installClickSwallower();
+  node.style.setProperty('--hold-ms', `${ms}ms`);
+  node.addEventListener('pointerdown', (ev) => {
+    if (ev.button > 0) return;         // a right-click is not a hold
+    timer = setTimeout(() => { spentClick = node; stop(); onHold(); }, ms);
+  });
+  for (const type of ['pointerup', 'pointerleave', 'pointercancel']) node.addEventListener(type, stop);
+  // Without this, holding a button on an iPad raises the system callout menu
+  // over the top of the thing you are trying to do.
+  node.addEventListener('contextmenu', (ev) => ev.preventDefault());
+}
+
 // --- fullscreen -------------------------------------------------------------
 //
 // Safari needs both halves of this, and got neither for a while.

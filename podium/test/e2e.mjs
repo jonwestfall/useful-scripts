@@ -143,6 +143,25 @@ const fails = [];
 const errors = [];
 const ok = (label, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + label); if (!cond) fails.push(label); };
 
+// Iterating on one section without sitting through the other thirty:
+//
+//   node podium/test/e2e.mjs --only ink        every section with "ink" in its name
+//   node podium/test/e2e.mjs --only photos,camera
+//
+// A filtered run is a convenience, not the contract: the first few sections
+// share one display and controller and later ones can lean on what an earlier
+// one left on screen, so a section that passes alone can still fail in the
+// full run. CI, and anything you are about to push, runs all of it.
+const onlyArg = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : '';
+const only = String(onlyArg || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+const skipped = [];
+const want = (name) => {
+  if (!only.length || only.some((needle) => name.toLowerCase().includes(needle))) return true;
+  skipped.push(name);
+  return false;
+};
+if (only.length) console.log(`(only sections matching: ${only.join(', ')})`);
+
 const browser = await chromium.launch({
   args: [
     '--autoplay-policy=no-user-gesture-required',
@@ -306,8 +325,8 @@ ok(`a controller with the wrong passphrase cannot change the display (${before})
 await display.waitForFunction(() => document.querySelector('#hud').dataset.status === 'mismatch', null, { timeout: 15000 });
 ok('the display warns that something is speaking the wrong passphrase', true);
 
+if (want('media')) {
 console.log('\n-- media --');
-{
 // Start this section from a known state: the section above left the ink tab
 // open and the projector frozen.
 await control.click('.tab[data-tab="library"]');
@@ -382,8 +401,8 @@ await display.waitForFunction(()=>document.querySelector('.layer[data-role="prog
 ok('mute reaches the display', true);
 }
 
+if (want('marp decks')) {
 console.log('\n-- marp decks --');
-{
 await control.click('.tab[data-tab="library"]');
 if (await control.$eval('#freeze', (b) => b.classList.contains('is-on'))) await control.click('#freeze');
 await display.waitForFunction(() => !document.body.classList.contains('is-frozen'), null, { timeout: 5000 });
@@ -488,8 +507,13 @@ ok(`an over-full slide is shrunk to fit (to ${Math.round(fitted.scale * 100)}%)`
 ok('and then nothing runs off the bottom of it', fitted.over <= 1);
 ok(`it is still the same shape, so ink still lands where it was drawn (${fitted.aspect.toFixed(3)})`,
   Math.abs(fitted.aspect - 16 / 9) < 0.002);
-ok('the controller says the slide was shrunk rather than leaving you guessing',
-  (await control.textContent('#deck-count')).includes(`fit ${Math.round(fitted.scale * 100)}%`));
+// Waited for rather than read: the controller learns which slide is up from
+// the display's next heartbeat, so reading its readout the instant the
+// projector changed is a race that fails about one run in ten.
+await control.waitForFunction((want) => document.querySelector('#deck-count').textContent.includes(want),
+  `fit ${Math.round(fitted.scale * 100)}%`, { timeout: 8000 })
+  .then(() => ok('the controller says the slide was shrunk rather than leaving you guessing', true))
+  .catch(async () => ok(`the controller says the slide was shrunk rather than leaving you guessing (said "${await control.textContent('#deck-count')}")`, false));
 ok('and its thumbnail is shrunk by the same amount, so the two agree',
   await control.evaluate((want) => {
     const svg = document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell svg')[8];
@@ -525,8 +549,8 @@ await control.waitForFunction(() => document.querySelector('#deck-theme').textCo
 ok('a deck naming a missing theme is called out rather than silently defaulted', true);
 }
 
+if (want('telling the three kinds of silence apart')) {
 console.log('\n-- telling the three kinds of silence apart --');
-{
 const mk = (room, pass) => JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room, passphrase: pass });
 
 // A display that is loaded but not armed must be visible to a controller,
@@ -582,8 +606,8 @@ ok('a passphrase mismatch is named on the controller, not just the display', tru
 await c3.close(); await c4.close();
 }
 
+if (want('pairing overlay and clearing a device')) {
 console.log('\n-- pairing overlay and clearing a device --');
-{
 // These run in their own context so wiping storage cannot disturb the pages above.
 const fresh = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 // Seed once: addInitScript re-runs on every navigation, and re-seeding after a
@@ -662,8 +686,8 @@ ok('the display clears the same way', await screen.evaluate(() => !localStorage.
 await fresh.close();
 }
 
+if (want('freeze protects what is on screen, never the audio')) {
 console.log('\n-- freeze protects what is on screen, never the audio --');
-{
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'freeze-room', passphrase: 'hold still' }));
@@ -737,8 +761,8 @@ ok('seeking while frozen also reaches the real audio directly', true);
 await ctx.close();
 }
 
+if (want('ink is shaped to the content, not the whole (possibly letterboxed) screen')) {
 console.log('\n-- ink is shaped to the content, not the whole (possibly letterboxed) screen --');
-{
 // A deliberately odd, very wide viewport: a 16:9 deck slide will be
 // pillarboxed with real dead space left and right of it.
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 500 } });
@@ -833,8 +857,8 @@ ok('Clear wipes only the surface currently on screen', true);
 await ctx.close();
 }
 
+if (want('the phone-camera tile in the library actually starts the camera')) {
 console.log('\n-- the phone-camera tile in the library actually starts the camera --');
-{
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['camera'] });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'camera-room', passphrase: 'say cheese' }));
@@ -859,8 +883,289 @@ ok('the controller reflects a live connection too', true);
 await ctx.close();
 }
 
-console.log('\n-- stills from the camera, one per panel --');
+if (want('keeping what was on screen: panel photos, screenshots, and the export')) {
+console.log('\n-- keeping what was on screen: panel photos, screenshots, and the export --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
+// try/catch because this section puts a cross-origin page on screen, and an
+// init script runs in that frame too - where storage is (correctly) denied.
+await ctx.addInitScript((cfg) => { try { localStorage.setItem('podium.config.v2', cfg); } catch { /* not our frame */ } },
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'keep-room', passphrase: 'keep that board' }));
+const screen = await ctx.newPage();
+trap(screen, 'keep display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'keep pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// A board with something on it: the case the whole feature exists for.
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await screen.waitForSelector('.r-whiteboard');
+await pad.click('.tab[data-tab="ink"]');
+const pad1 = await pad.locator('#pad').boundingBox();
+await pad.mouse.move(pad1.x + 60, pad1.y + 60);
+await pad.mouse.down();
+for (let i = 0; i < 12; i++) await pad.mouse.move(pad1.x + 60 + i * 18, pad1.y + 60 + Math.sin(i / 2) * 40);
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 });
+
+await pad.click('#ink-save');
+await pad.waitForSelector('#photo-strip .shot', { timeout: 20000 });
+ok('Save a photo on the Ink tab keeps the annotated board', true);
+const kept = await pad.evaluate(() => {
+  const img = document.querySelector('#photo-strip .shot img');
+  return { jpeg: img.src.startsWith('data:image/jpeg'), badge: document.querySelector('#photo-strip .shot-num').textContent };
+});
+ok(`it is a real photo, taken on the display (badge "${kept.badge}")`, kept.jpeg && kept.badge === 'Panel A');
+await pad.click('#photo-strip .shot');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-image'), null, { timeout: 10000 });
+ok('and it goes straight back up as an ordinary photo', true);
+
+// The photo has to BE the board plus the ink - not a blank rectangle. Measured
+// on the projector rather than on the thumbnail in the strip: the strip draws
+// small JPEG copies, and a 6px pen shrunk to a fifth of its size and
+// re-compressed is not a fair test of whether the ink was captured.
+const hasInk = await screen.evaluate(() => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx2 = c.getContext('2d');
+    ctx2.drawImage(img, 0, 0);
+    const { data } = ctx2.getImageData(0, 0, c.width, c.height);
+    let board = 0;
+    let ink = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      // The board is near-white; the pen is #ffd166, which is much less blue.
+      if (data[i] > 200 && data[i + 2] > 200) board++;
+      else if (data[i] > 180 && data[i + 2] < 160) ink++;
+    }
+    resolve({ board, ink });
+  };
+  img.src = document.querySelector('.layer[data-role="program"] .r-image').src;
+}));
+ok(`the photo really is the board with the ink burnt into it (${hasInk.ink} inked pixels)`, hasInk.board > 1000 && hasInk.ink > 200);
+
+// Hold a panel letter. The click that a tap would fire must not also happen.
+await pad.click('.layout-btn[data-layout="2h"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-2h'), null, { timeout: 8000 });
+await pad.waitForSelector('.panel-btn');
+const letter = await pad.locator('.panel-btn').nth(1).boundingBox();
+await pad.mouse.move(letter.x + letter.width / 2, letter.y + letter.height / 2);
+await pad.mouse.down();
+await pad.waitForTimeout(1000);
+await pad.mouse.up();
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 2, null, { timeout: 20000 });
+ok('holding a panel letter photographs that panel', true);
+ok('and photographs the panel held, not the one in focus',
+  (await pad.evaluate(() => document.querySelector('#photo-strip .shot-num').textContent)) === 'Panel B');
+// The tap that a hold would otherwise also fire has to be swallowed, or
+// holding "B" photographs B and moves every controller's focus to it.
+ok('and the hold does not also fire the tap underneath it',
+  (await pad.evaluate(() => document.querySelector('.panel-btn.is-on')?.textContent)) === 'A');
+await pad.locator('.panel-btn').nth(1).click();
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'B', null, { timeout: 8000 })
+  .then(() => ok('while a plain tap still focuses that panel', true))
+  .catch(() => ok('while a plain tap still focuses that panel', false));
+await pad.locator('.panel-btn').nth(0).click();
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'A', null, { timeout: 8000 });
+
+// Hold a layout button: the whole screen, and the layout must not change.
+const layout = await pad.locator('.layout-btn[data-layout="4"]').boundingBox();
+await pad.mouse.move(layout.x + layout.width / 2, layout.y + layout.height / 2);
+await pad.mouse.down();
+await pad.waitForTimeout(1500);
+await pad.mouse.up();
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 3, null, { timeout: 20000 });
+ok('holding a layout button photographs the whole screen', true);
+ok('and does not also rearrange the screen it just photographed',
+  await pad.evaluate(() => document.querySelector('.layout-btn[data-layout="2h"]').classList.contains('is-on')));
+const screenShot = await pad.evaluate(() => {
+  const img = document.querySelector('#photo-strip .shot img');
+  return { badge: document.querySelector('#photo-strip .shot-num').textContent, len: img.src.length };
+});
+ok(`the screenshot is the whole stage, not one panel (${screenShot.badge})`, screenShot.badge === 'Screen' && screenShot.len > 2000);
+
+// A slide is the hard case: Marpit scopes every rule it emits to
+// `div.marpit > svg > ...`, and a slide rasterized on its own has no such
+// wrapper - so an unfixed build photographs a deck as a black rectangle
+// (unstyled black text on a transparent ground) and exports slides with no
+// theme on them at all.
+const rescoped = await pad.evaluate(async () => {
+  const deck = await import('/assets/js/deck.js');
+  return deck.cssForStandaloneSlide('div.marpit > svg > foreignObject > section{color:red}');
+});
+ok('a slide lifted out of the page has its theme re-scoped to follow it',
+  rescoped === 'svg > foreignObject > section{color:red}');
+
+// Back to one panel for this one, so "how much of the photo is black" is a
+// statement about the slide rather than about the letterboxing a half-width
+// panel puts around it.
+await pad.click('.layout-btn[data-layout="single"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 8000 });
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelector('svg.podium-on'), null, { timeout: 40000 });
+await screen.waitForTimeout(1500);
+// Annotate it too, so the export has a marked-up slide to render as well.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(800);
+const pad2 = await pad.locator('#pad').boundingBox();
+await pad.mouse.move(pad2.x + 40, pad2.y + 40);
+await pad.mouse.down();
+for (let i = 0; i < 10; i++) await pad.mouse.move(pad2.x + 40 + i * 22, pad2.y + 40 + i * 7);
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 });
+await pad.click('.tab[data-tab="photos"]');
+await pad.click('#photo-panel');
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 4, null, { timeout: 25000 });
+const slideShot = await pad.evaluate(() => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx2 = c.getContext('2d');
+    ctx2.drawImage(img, 0, 0);
+    const { data } = ctx2.getImageData(0, 0, c.width, c.height);
+    let black = 0;
+    let themed = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+      if (r + g + b < 40) black++;
+      // This deck's title slide is a field of Delta State green.
+      else if (g > r + 20 && g > b + 10) themed++;
+    }
+    const n = c.width * c.height;
+    resolve({ blackPct: Math.round(black / n * 100), themedPct: Math.round(themed / n * 100) });
+  };
+  img.src = document.querySelector('#photo-strip .shot img').src;
+}));
+ok(`a photographed slide is the slide, theme and all (${slideShot.themedPct}% of it is the theme's green)`, slideShot.themedPct > 20);
+ok(`and not the black rectangle an unscoped stylesheet produces (${slideShot.blackPct}% black)`, slideShot.blackPct < 35);
+
+// The same two things from a keyboard, for whoever teaches with a Magic
+// Keyboard propped up rather than an iPad in hand.
+await pad.keyboard.press('p');
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 5, null, { timeout: 20000 })
+  .then(() => ok('P photographs the focused panel', true))
+  .catch(() => ok('P photographs the focused panel', false));
+await pad.keyboard.press('Shift+P');
+await pad.waitForFunction(() => document.querySelector('#photo-strip .shot-num')?.textContent === 'Screen', null, { timeout: 20000 })
+  .then(() => ok('and Shift+P photographs the whole screen', true))
+  .catch(() => ok('and Shift+P photographs the whole screen', false));
+const beforeCtrlP = (await pad.$$('#photo-strip .shot')).length;
+await pad.keyboard.press('Control+p');
+await pad.waitForTimeout(2500);
+ok('while Ctrl+P still belongs to the browser, not to Podium',
+  (await pad.$$('#photo-strip .shot')).length === beforeCtrlP);
+
+// An embedded page cannot be photographed, and says so rather than saving a lie.
+await pad.click('.tab[data-tab="library"]');
+await pad.fill('#url-input', 'https://example.com/');
+await pad.click('#url-form button[type="submit"]');
+await screen.waitForSelector('.layer[data-role="program"] .r-web', { timeout: 10000 });
+await pad.click('.tab[data-tab="photos"]');
+await pad.click('#photo-panel');
+await pad.waitForFunction(() => /cannot be photographed|cannot photograph/.test(document.querySelector('#photo-note').textContent), null, { timeout: 15000 });
+const refusal = await pad.textContent('#photo-note');
+ok(`a panel Podium cannot photograph says so, in terms of what is in it ("${refusal.slice(0, 60)}…")`,
+  /embedded web page/.test(refusal));
+ok('and nothing was added to the strip', (await pad.$$('#photo-strip .shot')).length === 6);
+
+// The export: photos, annotated slides, and the board itself.
+const download = pad.waitForEvent('download', { timeout: 40000 });
+// Clicked from inside the page while watching the button: renderPhotos() runs
+// on every heartbeat and used to re-enable it half a second in, where a second
+// tap starts a second export that steals the first one's ink from the display.
+const enabledMidExport = await pad.evaluate(() => new Promise((resolve) => {
+  const btn = document.querySelector('#photo-export');
+  const status = document.querySelector('#photo-export-status');
+  let seen = false;
+  const poll = setInterval(() => {
+    const finished = /Saved|failed|Nothing/.test(status.textContent);
+    if (!btn.disabled && !finished) seen = true;   // enabled while still working
+    if (finished) { clearInterval(poll); resolve(seen); }
+  }, 40);
+  btn.click();
+  setTimeout(() => { clearInterval(poll); resolve(seen); }, 20000);
+}));
+const file = await download;
+ok('the export button is not re-enabled underneath a running export', !enabledMidExport);
+const zipPath = path.join(HERE, 'fixtures', 'session-export.zip');
+await file.saveAs(zipPath);
+const names = [];
 {
+  // Just enough of a ZIP reader to check what is inside: local file headers,
+  // in order, each naming its entry.
+  const buf = fs.readFileSync(zipPath);
+  let at = 0;
+  while (at + 30 <= buf.length && buf.readUInt32LE(at) === 0x04034b50) {
+    const nameLen = buf.readUInt16LE(at + 26);
+    const extraLen = buf.readUInt16LE(at + 28);
+    const size = buf.readUInt32LE(at + 18);
+    names.push(buf.toString('utf8', at + 30, at + 30 + nameLen));
+    at += 30 + nameLen + extraLen + size;
+  }
+}
+ok(`the export is a zip holding ${names.length} files`, names.length >= 5);
+ok('with every photo in it', names.filter((n) => n.startsWith('photos/')).length === 6);
+ok('with the annotated slide, rendered from the deck rather than photographed',
+  names.some((n) => n.startsWith('slides/') && n.endsWith('.png')));
+ok('with the board that was drawn on, rebuilt as an image', names.some((n) => n.startsWith('boards/')));
+ok('and a manifest saying what is inside', names.includes('session.txt'));
+ok('named for the room and the day, not "download (3)"', /^podium-keep-room-\d{4}-\d{2}-\d{2}/.test(file.suggestedFilename()));
+
+// The strip is drawn from small copies: two dozen full-size photos, rendered
+// twice over (Camera tab and Photos tab), is a few hundred megabytes of
+// decoded bitmap on the device least able to spare it.
+await pad.waitForFunction(() => [...document.querySelectorAll('#photo-strip .shot img')].every((i) => i.src.length < 30000), null, { timeout: 15000 })
+  .then(() => ok('the strip draws small copies rather than the full photos', true))
+  .catch(() => ok('the strip draws small copies rather than the full photos', false));
+ok('and every tile says when it was taken', (await pad.$$('#photo-strip .shot-time')).length === 6);
+
+const single = pad.waitForEvent('download', { timeout: 20000 });
+await pad.click('#photo-strip .shot .shot-save');
+const onePhoto = await single;
+ok(`one photo can be saved on its own, without building the whole zip (${onePhoto.suggestedFilename()})`,
+  /\.jpg$/.test(onePhoto.suggestedFilename()));
+ok('and saving it neither removes it nor puts it on screen', (await pad.$$('#photo-strip .shot')).length === 6);
+
+// Discarding the lot is two taps, like everything else here that cannot be
+// undone - and it is about the strip, not about the projector.
+await pad.click('#photo-strip .shot');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-image'), null, { timeout: 10000 });
+await pad.click('#photo-clear');
+ok('one tap only arms "discard every photo"', (await pad.$$('#photo-strip .shot')).length === 6);
+await pad.click('#photo-clear');
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 0, null, { timeout: 5000 })
+  .then(() => ok('the second tap clears the strip', true))
+  .catch(() => ok('the second tap clears the strip', false));
+ok('and what the class is looking at is not touched by it',
+  await screen.evaluate(() => !!document.querySelector('.layer[data-role="program"] .r-image')));
+
+// Last, because it empties this controller's strip: a controller that reloads
+// mid-lecture has no bytes for the photo the projector is showing. It asks the
+// display for them rather than rendering `asset:<id>` as a URL, which is a
+// broken image in every mirror on the page.
+await pad.reload();
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'), null, { timeout: 20000 });
+await pad.waitForFunction(() => {
+  const img = document.querySelector('#preview-stage img');
+  return !!img && img.src.startsWith('data:image/jpeg');
+}, null, { timeout: 15000 })
+  .then(() => ok('a reloaded controller gets the photo back from the display', true))
+  .catch(() => ok('a reloaded controller gets the photo back from the display', false));
+ok('and never renders an asset: reference as if it were a URL',
+  await pad.evaluate(() => ![...document.querySelectorAll('img')].some((i) => i.getAttribute('src')?.startsWith('asset:'))));
+await ctx.close();
+}
+
+if (want('stills from the camera, one per panel')) {
+console.log('\n-- stills from the camera, one per panel --');
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, permissions: ['camera'] });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'still-room', passphrase: 'freeze a frame' }));
@@ -935,8 +1240,8 @@ ok('without pulling what the class is looking at off the screen',
 await ctx.close();
 }
 
+if (want('progressive builds: bullets arrive one at a time')) {
 console.log('\n-- progressive builds: bullets arrive one at a time --');
-{
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'build-room', passphrase: 'one at a time' }));
@@ -1010,8 +1315,8 @@ ok('thumbnails always render a build slide finished, for a clear picture to jump
 await ctx.close();
 }
 
+if (want('zoom on the ink pad is a view convenience, not a coordinate change')) {
 console.log('\n-- zoom on the ink pad is a view convenience, not a coordinate change --');
-{
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'zoom-room', passphrase: 'steady hand' }));
@@ -1077,8 +1382,8 @@ ok('reset zoom returns to 1x and disables panning again', await pad.$eval('#pan-
 await ctx.close();
 }
 
+if (want('exporting marked-up slides to a zip')) {
 console.log('\n-- exporting marked-up slides to a zip --');
-{
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'export-room', passphrase: 'zip it up' }));
@@ -1145,8 +1450,8 @@ ok(`the controller reports success: ${JSON.stringify(statusText)}`, /saved/i.tes
 await ctx.close();
 }
 
+if (want('freezing a camera holds its current frame')) {
 console.log('\n-- freezing a camera holds its current frame --');
-{
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['camera'] });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'cam-freeze-room', passphrase: 'hold that frame' }));
@@ -1178,8 +1483,8 @@ ok('unfreezing resumes the live view', true);
 await ctx.close();
 }
 
+if (want('the Ink tab shows what you are drawing on, and can hide it')) {
 console.log('\n-- the Ink tab shows what you are drawing on, and can hide it --');
-{
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'ink-mirror-room', passphrase: 'see what you draw on' }));
@@ -1207,8 +1512,8 @@ ok('and show it again', !(await pad.evaluate(() => document.querySelector('#pad-
 await ctx.close();
 }
 
+if (want('Slides tab: a Now/Next confidence monitor, Markup, and a laser pointer')) {
 console.log('\n-- Slides tab: a Now/Next confidence monitor, Markup, and a laser pointer --');
-{
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'confidence-room', passphrase: 'now and next' }));
@@ -1268,8 +1573,8 @@ ok('releasing hides the dot - nothing is left behind, nothing was saved', true);
 await ctx.close();
 }
 
+if (want('waiting music actually plays')) {
 console.log('\n-- waiting music actually plays --');
-{
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'music-room', passphrase: 'between classes' }));
@@ -1293,8 +1598,8 @@ ok('picking "Waiting music" from the library actually plays sound', true);
 await ctx.close();
 }
 
+if (want('ink survives a layout change mid-stroke instead of warping')) {
 console.log('\n-- ink survives a layout change mid-stroke instead of warping --');
-{
 // A pad frame that resizes WHILE a stroke is still in progress is what
 // warped ink on a real iPad: an iPad rotation crosses the controller's
 // @media(max-width:900px) breakpoint (the preview rail moves from beside the
@@ -1368,8 +1673,8 @@ ok(`the drawn circle stays round on the projector (aspect ${paintedAspect.toFixe
 await ctx.close();
 }
 
+if (want('ink drawn the instant a deck pick allows it lands correctly, and never lands wrong')) {
 console.log('\n-- ink drawn the instant a deck pick allows it lands correctly, and never lands wrong --');
-{
 // The actual bug report: circling a word on a slide landed nowhere near it
 // on the projector. Root cause was three independent "real aspect not known
 // yet" windows, none needing any resize or rotation to trigger:
@@ -1458,8 +1763,8 @@ ok(`a stroke drawn the instant a real deck is picked still lands on the spot it 
 await ctx.close();
 }
 
+if (want('ink recovers even if a fullscreen transition never fires a resize event')) {
 console.log('\n-- ink recovers even if a fullscreen transition never fires a resize event --');
-{
 // requestFullscreen()'s promise is documented to settle before the viewport
 // has actually finished resizing in some browsers, and goLive() sizes the
 // ink canvas right after that promise resolves. If the eventual layout
@@ -1506,8 +1811,8 @@ ok('fullscreenchange alone catches the ink canvas up to the current stage size',
 await ctx.close();
 }
 
+if (want('ink stays put when the display is dragged to a screen of a different pixel density')) {
 console.log('\n-- ink stays put when the display is dragged to a screen of a different pixel density --');
-{
 // A laptop screen and a projector rarely share a pixel density, and a window
 // moved between them changes devicePixelRatio WITHOUT firing a resize: the
 // window is the same size, so nothing tells the page anything happened. The
@@ -1619,8 +1924,8 @@ ok(`a density change in a split layout still keeps panel A's ink inside panel A 
 await ctx.close();
 }
 
+if (want('Waiting Music under a strict (Safari-like) autoplay policy')) {
 console.log('\n-- Waiting Music under a strict (Safari-like) autoplay policy --');
-{
 // The main suite launches Chromium with --autoplay-policy=no-user-gesture-
 // required, which is realistic for Chromium's own default but would let a
 // broken unlock pass silently - it disables the very policy the fix targets.
@@ -1664,8 +1969,8 @@ ok('under a strict simulated autoplay policy, the Go Live click alone unlocks Wa
 await ctx.close();
 }
 
+if (want('audio self-heals on the next gesture if even the Go Live unlock fails')) {
 console.log('\n-- audio self-heals on the next gesture if even the Go Live unlock fails --');
-{
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'audio-selfheal-room', passphrase: 'self heal' }));
@@ -1711,8 +2016,8 @@ ok('one unrelated keypress afterward is enough to self-heal it - no need to find
 await ctx.close();
 }
 
+if (want('splitting the screen: B/C/D are direct and immediate, unlike A')) {
 console.log('\n-- splitting the screen: B/C/D are direct and immediate, unlike A --');
-{
 // "I could split to slides + a countdown for group work + instruction
 // slide" - B/C/D have no freeze/cue/take of their own (see LAYOUTS and
 // "layout" in protocol.js's initialState()): picking into one is immediate,
@@ -1882,8 +2187,8 @@ ok(`a split and straight back leaves the ink exactly where it was (${beforeRound
 await ctx.close();
 }
 
+if (want('the ink layer covers the screen exactly, on a 2x display')) {
 console.log('\n-- the ink layer covers the screen exactly, on a 2x display --');
-{
 // A <canvas> is a REPLACED element, so an absolutely positioned one with
 // width:auto takes its intrinsic width - its width attribute, read as CSS
 // pixels - rather than stretching to left:0/right:0. That attribute is the
@@ -1968,8 +2273,8 @@ ok(`and a loop drawn round the title comes out the size of the title, not double
 await ctx.close();
 }
 
+if (want('version readouts, and a stale device that says so instead of looking like a bug')) {
 console.log('\n-- version readouts, and a stale device that says so instead of looking like a bug --');
-{
 // The two ends are separate devices loading their own copy of the app from
 // your server, so one can easily be running last week's code: a browser that
 // never revalidated the page, or a machine whose projector tab has been open
@@ -2062,8 +2367,8 @@ const settle = (pad, re) => pad.waitForFunction((src) => new RegExp(src).test(do
 }
 }
 
+if (want('a relay that will not come up says which relay, and why')) {
 console.log('\n-- a relay that will not come up says which relay, and why --');
-{
 // "Lost the relay - retrying." was the whole of what a failing connection told
 // you: not which URL, not what the browser objected to, not how long it had
 // been trying. Two of the three ways this fails could not even get that far -
@@ -2198,8 +2503,8 @@ const alive = (page) => page.$$eval('.layer[data-role="program"]', (n) => n.leng
 }
 }
 
+if (want('planning in the office, teaching from the plan')) {
 console.log('\n-- planning in the office, teaching from the plan --');
-{
 // The Saved library lives in localStorage, which never leaves the device that
 // wrote it - so a lecture built on a desktop would be invisible on the tablet
 // you actually teach from. A plan is therefore a file you carry, and it has to
@@ -2394,8 +2699,8 @@ await tablet.close();
 await room.close();
 }
 
+if (want('more than one clock, and a laser you can pick the colour of')) {
 console.log('\n-- more than one clock, and a laser you can pick the colour of --');
-{
 const roomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'clocks', passphrase: 'tick' });
 const room = await browser.newContext({ viewport: { width: 1280, height: 800 } });
 await room.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
@@ -2517,8 +2822,8 @@ await tablet.close();
 await room.close();
 }
 
+if (want('a well-annotated board does not take the projector off the air')) {
 console.log('\n-- a well-annotated board does not take the projector off the air --');
-{
 // The heartbeat used to carry every stroke on the current surface, in full,
 // every two seconds - and every 400ms while anything was playing. Two separate
 // ceilings sat above that: seal() overflowed the call stack somewhere past
@@ -2665,8 +2970,8 @@ await tablet.close();
 await room.close();
 }
 
+if (want('getting back to where you were, and an app that survives the Wi-Fi')) {
 console.log('\n-- getting back to where you were, and an app that survives the Wi-Fi --');
-{
 const roomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'recover', passphrase: 'back' });
 const room = await browser.newContext({ viewport: { width: 1100, height: 900 } });
 await room.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
@@ -2814,8 +3119,8 @@ await tablet.close();
 await room.close();
 }
 
+if (want('the display\'s own keyboard')) {
 console.log('\n-- the display\'s own keyboard --');
-{
 // Everything here happens on the classroom PC, which in a real room has no
 // browser chrome to fall back on.
 const c = await browser.newContext();
@@ -2880,6 +3185,7 @@ ok('and the same keys typed into Settings are just text',
 await c.close();
 }
 
+if (skipped.length) console.log(`\nskipped ${skipped.length} section${skipped.length === 1 ? '' : 's'} (--only)`);
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
 } finally {
   await browser?.close().catch(() => {});

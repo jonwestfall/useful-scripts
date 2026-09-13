@@ -20,6 +20,46 @@ the whole thing in plain English and walks through putting it online free on Git
 Pages in about twenty minutes — no terminal, no server, no card. This file is the
 full reference; that one is the road in.
 
+<details>
+<summary><b>What is in this file</b> (it is long; this is the map)</summary>
+
+**Understanding it** ·
+[freeze is a cue](#the-idea-worth-knowing-about-freeze-is-a-cue) ·
+[what it can put on screen](#what-it-can-put-on-screen) ·
+[three things to remember](#three-things-to-remember)
+
+**Getting it running** ·
+[setup](#setup) ·
+[your lecture library](#your-lecture-library) ·
+[planning a lecture in your office](#planning-a-lecture-in-your-office) ·
+[what to expect in a real room](#what-to-expect-in-a-real-room)
+
+**Teaching with it** ·
+[Marp decks](#marp-decks) ·
+[slides that are too full](#slides-that-are-too-full) ·
+[progressive builds](#progressive-builds) ·
+[the slide the class sees](#the-slide-the-class-sees) ·
+[annotating with ink](#annotating-with-ink) ·
+[splitting the screen](#splitting-the-screen) ·
+[countdowns](#countdowns) ·
+[the document camera](#the-document-camera-and-photos-taken-with-it) ·
+[keeping what was on screen](#keeping-what-was-on-screen) ·
+[getting back to where you were](#getting-back-to-where-you-were)
+
+**When something is wrong** ·
+[the display isn't there](#when-the-controller-says-the-display-isnt-there) ·
+[reading the relay readout](#when-nothing-connects-at-all-reading-the-relay-readout) ·
+[the display's own keyboard](#the-displays-own-keyboard) ·
+[starting a device over](#starting-a-device-over) ·
+[builds and stale devices](#builds-and-telling-when-a-device-is-running-an-old-one)
+
+**Under the bonnet** ·
+[security](#security) ·
+[tests](#tests) ·
+[layout](#layout)
+
+</details>
+
 ## The idea worth knowing about: freeze is a cue
 
 The display only ever changes when a controller tells it to. So "hold the screen" is
@@ -177,8 +217,9 @@ This lands on your iPad and nowhere else.
 The **Slides** tab shows the notes for the slide that is up, what is coming next,
 big Previous/Next buttons, and a thumbnail of every slide — tap one to jump
 straight there. An external keyboard or a presentation clicker works too: arrows and
-space page through anything with pages, and `B` to blank and `F` to freeze work on
-*whatever* is up — a photo, a video, a whiteboard — not only on a deck.
+space page through anything with pages, and `B` to blank, `F` to freeze and `P` to
+photograph the panel (`Shift+P` for the whole screen) work on *whatever* is up — a
+photo, a video, a whiteboard — not only on a deck.
 
 Because the whole deck is rendered once into a shadow root, changing slide is
 instant, and a deck cued behind a freeze keeps its place when you take it.
@@ -331,7 +372,12 @@ slide with its own ink baked in and downloads a `.zip` — `slide-01.png`,
 `slide-02.png`, … plus a `slides.txt` listing titles and which slides carry
 annotations. It is best-effort: a slide that depends on a font or image the browser
 refuses to bake into a canvas is skipped individually (noted in `slides.txt`) rather
-than failing the whole export.
+than failing the whole export. To take *everything* home rather than one deck, see
+[keeping what was on screen](#keeping-what-was-on-screen) below.
+
+**Save a photo**, next to Undo and Clear, keeps the board exactly as it stands — the
+content with your ink burnt into it — as a photo you can put straight back up later.
+That is the same thing holding a panel letter does; both are described below.
 
 ### What ink costs to move, and why that mattered
 
@@ -474,6 +520,9 @@ Whichever panel is lit up is what the rest of the app currently talks to: Librar
 taps stage content into it, Previous/Next and thumbnails page it, transport controls
 play/pause/scrub it, and the Ink tab draws on it. Switch panels the same way you
 would switch tabs — tap **A**, **B**, **C**, or **D** — and everything else follows.
+**Hold** one of those letters instead of tapping it and you get a photo of that
+panel, ink included; hold a layout icon and you get the whole screen. See
+[keeping what was on screen](#keeping-what-was-on-screen).
 
 Panel **A** is exactly what Podium has always been: TAKE, freeze, cue, Swap all
 still work on it precisely as before, just confined to its own region of the screen
@@ -550,8 +599,85 @@ and lets go the moment you unfreeze. A photo is a keeper; freeze is a pause.
 Photos last for the session and live only in memory — nothing is written to the
 tablet's storage, which is the right default for a picture of a student's work.
 Reloading the controller forgets them (whatever is already on the projector stays
-there), and the strip holds the last twelve. The × on a thumbnail discards it
-without taking it off the screen.
+there), and the strip holds the last two dozen. The × on a thumbnail discards it
+without taking it off the screen. They share the **Photos** tab with everything else
+you keep — see [keeping what was on screen](#keeping-what-was-on-screen) — and
+**Export this session** is how any of it leaves the tablet.
+
+## Keeping what was on screen
+
+Ink and camera frames are live things: the board gets wiped, the camera moves on, and
+the reload at the end of the day takes both with it. Three gestures keep any of it,
+and one button takes the lot home.
+
+| Gesture | What you get |
+| :-- | :-- |
+| **Hold a panel letter** (A/B/C/D, top right) | A photo of that panel — its content *with your ink on it* |
+| **Hold any layout button** (a little longer) | A photo of the whole screen, every panel at once |
+| **Save a photo** (Ink tab) | The panel you are drawing on, without reaching for the top bar |
+| **Take a photo** (Camera tab) | A frame frozen off the document camera |
+| **`P`** / **`Shift+P`** (any keyboard) | The focused panel / the whole screen, for whoever drives from a Magic Keyboard |
+
+All four land in the same place: the **Photos** tab, which keeps a count on its own
+label so a photo taken by holding a button in the top bar does not land somewhere you
+are not looking. Tap one to put it back on the focused panel — a photo is a photo, so
+it can sit in a panel while the lecture moves on, be annotated again on its own
+surface, and be photographed again in turn. Each tile carries the time it was taken,
+a **⤓** to save that one photo on its own, and a **×** to discard it (which tidies the
+strip and leaves the projector alone). **Discard every photo** at the bottom clears
+the lot, behind the same two taps as everything else here that cannot be undone.
+
+The picture is composed *on the display*, because that is the only device that has the
+real thing: the camera frame as it arrives, the deck stopped three bullets into a
+build, the ink exactly as the room saw it. The photo then comes back to every
+controller in the room, so the iPhone in your pocket has what the iPad just took.
+
+A slide is photographed by re-rendering it rather than by copying the screen, which
+takes one piece of care worth recording: Marp scopes every rule of a theme to
+`div.marpit > svg > …`, and a slide lifted out on its own has no such wrapper, so the
+theme has to be re-scoped as it travels (`cssForStandaloneSlide` in `deck.js`).
+Without that a photographed slide comes out as unstyled black text on nothing — which
+over a black backdrop is a black rectangle — and exported slides lose their theme
+entirely. Everything that rasterizes a slide goes through the one helper.
+
+Some panels cannot be photographed at all — an embedded web page, a PDF in the
+browser's own viewer, a YouTube player. A browser will not let a page read pixels back
+out of a frame it does not own. Podium says so, in terms of what is actually in the
+panel ("an embedded web page cannot be photographed", "the phone's camera has not
+reached this screen yet") rather than saving something that looks like a photo of the
+wrong thing; in a whole-screen shot the other panels still come out, and that corner
+is labelled instead.
+
+Photos reach every controller in the room, and a controller that reloads mid-lecture
+asks the display for the bytes of whatever is on screen rather than showing a broken
+image — the strip itself still starts empty, because that list is deliberately not
+persisted.
+
+### Export this session
+
+**Export this session** (Photos tab) writes one zip:
+
+```
+photos/01-panel-a-whiteboard.jpg     every photo above, oldest first
+slides/day-6/slide-04.png            every deck slide you annotated, ink baked in
+boards/01-board-f7f5ef.png           every whiteboard or picture you drew on
+session.txt                          what is in it, and what was left out
+```
+
+The ink lives on the display, so building the zip pulls it across — keep the display
+connected while it runs. If it is not there, the photos still come out and the export
+says plainly that the annotations could not be fetched, rather than handing you a
+partial record that looks complete. It is quick: a measured lecture's worth — twelve photos and
+six annotated slides — came to eighteen files and 8.7 MB in about three quarters of a
+second. Everything is best-effort and itemised: a slide that will not
+rasterize, or ink on something Podium cannot rebuild, is named in `session.txt` rather
+than failing the export that holds the rest.
+
+Nothing here is written to the tablet until you press that button. Photos and the
+strip live in memory for the session, which is the right default for a picture of a
+student's work or a board mid-argument — and it means the zip, on the device you chose
+to save it to, is the only copy that outlives the class. On an iPad the download lands
+in Files, from where the images can be moved into Photos like any other download.
 
 ## Planning a lecture in your office
 
@@ -921,7 +1047,15 @@ node podium/test/protocol.test.mjs          # the state machine, no browser need
 node podium/test/plan.test.mjs              # the lecture-plan document, likewise
 cd podium/server && npm install             # once
 node podium/test/e2e.mjs                    # needs: npm i playwright
+node podium/test/e2e.mjs --only ink         # ...or just the sections you are working on
+node podium/test/e2e.mjs --only photos,camera
 ```
+
+`--only` matches section names loosely, and is for iterating: the whole run takes
+about twelve minutes, one section takes seconds. It is a convenience rather than the
+contract — the first sections share one display and controller, and a later section
+can lean on what an earlier one left on screen, so a section that passes alone can
+still fail in the full run. Run all of it before pushing.
 
 The end-to-end test starts the relay, drives a display and two controllers in real
 browsers, and checks the things that would embarrass you in front of a class:
@@ -943,7 +1077,13 @@ not open (and neither page dies at its top-level `await` when the failure happen
 before a socket exists), a lecture planned in the office reaches the projector intact
 — photo and slides that exist nowhere on the server included — after a round trip
 through a plan file and a second device, and a controller with the wrong passphrase
-cannot touch the screen. 234 checks.
+cannot touch the screen — and, since photographing what is on screen became a
+feature, that a photographed slide really is the slide (measured in pixels: the
+theme's own colour, not the black rectangle an unscoped stylesheet produces), that
+holding a layout button does not also rearrange the screen it just photographed,
+and that a controller which reloads mid-lecture gets the photo back from the display
+rather than rendering a broken image, that holding a button does not also fire the tap
+underneath it, and that `Ctrl+P` still belongs to the browser. 296 checks.
 
 ## Layout
 
@@ -962,7 +1102,7 @@ podium/
       planfile.js                 what a lecture plan is, and how to read an untrusted one
       store.js                    IndexedDB for plans, plus photo resizing and file I/O
       protocol.js                 state shape + the rules for changing it
-      renderers.js                one factory per content type
+      renderers.js                one factory per content type, each able to photograph itself
       bus.js                      encryption, identity, presence, reconnect
       crypto.js  config.js  rtc.js  util.js
       transport/                  supabase.js · mqtt.js · ws.js

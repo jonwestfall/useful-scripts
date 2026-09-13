@@ -11,9 +11,11 @@
 //   reconcile(it, audio)  apply playback/nav intent
 //   telemetry() { time, duration, playing }
 //   destroy()
+//   snapshot(ctx, rect)  optional: paint what you are showing into someone
+//                        else's canvas, for "take a photo of this panel".
 
 import { el, miniMarkdown, fmtTime } from './util.js';
-import { render as renderDeckSource, applyPolyfill, applyFits, FRAGMENT_CSS } from './deck.js';
+import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -39,10 +41,82 @@ export function itemTitle(item) {
 
 const noTelemetry = () => ({ time: 0, duration: 0, playing: false });
 
+// --- photographing a panel ---------------------------------------------------
+//
+// A renderer that can honestly produce pixels for what it is showing exposes
+// snapshot(ctx, rect): "draw yourself into that rectangle of this canvas".
+// The display composes panel photos and whole-screen shots out of these (see
+// takeShot there), then paints the real ink canvas over the top, so a photo
+// is the content and the annotation exactly as the room saw them.
+//
+// Types that genuinely cannot be photographed - an embedded web page, a PDF in
+// the browser's own viewer, a YouTube player - deliberately do NOT define it.
+// A page cannot read pixels out of a cross-origin frame, and inventing a
+// picture of one would be worse than saying so, which is what the caller does.
+
+function paintBackdrop(ctx, rect, node, fallback = '#000') {
+  const bg = node ? getComputedStyle(node).backgroundColor : '';
+  ctx.fillStyle = bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' ? bg : fallback;
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+}
+
+// object-fit, done in canvas: the same letterbox or crop the CSS is applying
+// on screen, so the photo is framed the way the projector framed it.
+function drawFitted(ctx, rect, source, sw, sh, fit) {
+  if (!sw || !sh || !rect.w || !rect.h) return false;
+  if (fit === 'fill') { ctx.drawImage(source, rect.x, rect.y, rect.w, rect.h); return true; }
+  const scale = fit === 'cover'
+    ? Math.max(rect.w / sw, rect.h / sh)
+    : Math.min(rect.w / sw, rect.h / sh);
+  const w = sw * scale;
+  const h = sh * scale;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(rect.x, rect.y, rect.w, rect.h);
+  ctx.clip();
+  ctx.drawImage(source, rect.x + (rect.w - w) / 2, rect.y + (rect.h - h) / 2, w, h);
+  ctx.restore();
+  return true;
+}
+
+const objectFitOf = (node) => getComputedStyle(node).objectFit || 'fill';
+
+/** An <svg> element, standalone, as a decoded image - the deck and QR route. */
+function svgToImage(svg, css, width, height) {
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', String(width));
+  clone.setAttribute('height', String(height));
+  if (css) {
+    const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+    style.textContent = css;
+    clone.insertBefore(style, clone.firstChild);
+  }
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(clone))}`;
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    // A slide whose fonts or images never arrive would otherwise hang the
+    // whole photo; one that fails is reported as a failure to photograph.
+    const timer = setTimeout(() => reject(new Error('timed out rendering it')), 8000);
+    img.onload = () => { clearTimeout(timer); resolve(img); };
+    img.onerror = () => { clearTimeout(timer); reject(new Error('the browser could not render it')); };
+    img.src = url;
+  });
+}
+
 // ---------------------------------------------------------------------------
 
 function staticRenderer(node) {
-  return { el: node, update() {}, reconcile() {}, telemetry: noTelemetry, destroy() { node.remove(); } };
+  return {
+    el: node,
+    update() {},
+    reconcile() {},
+    telemetry: noTelemetry,
+    // A flat colour: the whole point of photographing one is the ink the
+    // display paints on top of it afterwards.
+    snapshot(ctx, rect) { paintBackdrop(ctx, rect, node); return true; },
+    destroy() { node.remove(); },
+  };
 }
 
 function renderBlack() {
@@ -65,6 +139,10 @@ function renderImage(item) {
     contentAspect() {
       if (fit === 'cover') return null;
       return img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : null;
+    },
+    snapshot(ctx, rect) {
+      paintBackdrop(ctx, rect, node);
+      return drawFitted(ctx, rect, img, img.naturalWidth, img.naturalHeight, objectFitOf(img));
     },
     destroy() { node.remove(); },
   };
@@ -156,6 +234,13 @@ function renderVideo(item, opts) {
   base.contentAspect = () => {
     if (fit === 'cover') return null;
     return video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : null;
+  };
+  // The frame on screen this instant. A video served from another origin
+  // without CORS headers taints the canvas instead, which surfaces as a clear
+  // "the browser would not let Podium read those pixels" when it is encoded.
+  base.snapshot = (ctx, rect) => {
+    paintBackdrop(ctx, rect, node);
+    return drawFitted(ctx, rect, video, video.videoWidth, video.videoHeight, objectFitOf(video));
   };
   return base;
 }
@@ -374,6 +459,23 @@ function renderQr(item) {
     update: draw,
     reconcile() {},
     telemetry: noTelemetry,
+    async snapshot(ctx, rect) {
+      const svg = holder.querySelector('svg');
+      if (!svg) return false;
+      paintBackdrop(ctx, rect, node, '#0a0d12');
+      const side = Math.round(Math.min(rect.w, rect.h) * 0.62);
+      const img = await svgToImage(svg, '', side, side);
+      ctx.drawImage(img, rect.x + (rect.w - side) / 2, rect.y + rect.h * 0.08, side, side);
+      const text = caption.textContent || '';
+      if (text) {
+        ctx.fillStyle = '#e8ecf1';
+        ctx.textAlign = 'center';
+        ctx.font = `${Math.max(10, Math.round(rect.h * 0.045))}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        ctx.fillText(text.slice(0, 90), rect.x + rect.w / 2, rect.y + rect.h * 0.08 + side + rect.h * 0.07);
+        ctx.textAlign = 'start';
+      }
+      return true;
+    },
     destroy() { node.remove(); },
   };
 }
@@ -399,6 +501,22 @@ function renderTimer(item, opts) {
     update(it) { item = it; tick(); },
     reconcile() {},
     telemetry: noTelemetry,
+    // Two lines of text on a flat ground: close enough to redraw honestly,
+    // and a photo of a countdown is a photo of what the clock said.
+    snapshot(ctx, rect) {
+      paintBackdrop(ctx, rect, node, '#0a0d12');
+      ctx.fillStyle = '#e8ecf1';
+      ctx.textAlign = 'center';
+      const text = label.textContent || '';
+      if (text) {
+        ctx.font = `${Math.max(9, Math.round(rect.h * 0.07))}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        ctx.fillText(text.slice(0, 60), rect.x + rect.w / 2, rect.y + rect.h * 0.34);
+      }
+      ctx.font = `700 ${Math.round(rect.h * 0.3)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+      ctx.fillText(value.textContent || '0:00', rect.x + rect.w / 2, rect.y + rect.h * 0.62);
+      ctx.textAlign = 'start';
+      return true;
+    },
     destroy() { clearInterval(handle); node.remove(); },
   };
 }
@@ -407,7 +525,16 @@ function renderWhiteboard(item) {
   const node = el('div', { class: 'r-whiteboard' });
   const apply = (it) => { node.style.background = it.bg || '#f7f5ef'; node.dataset.ink = it.bg && it.bg !== '#f7f5ef' ? 'light' : 'dark'; };
   apply(item);
-  return { el: node, update: apply, reconcile() {}, telemetry: noTelemetry, destroy() { node.remove(); } };
+  return {
+    el: node,
+    update: apply,
+    reconcile() {},
+    telemetry: noTelemetry,
+    // The board itself is a flat colour; photographing one is really about the
+    // ink the display paints over the top of this.
+    snapshot(ctx, rect) { paintBackdrop(ctx, rect, node, '#f7f5ef'); return true; },
+    destroy() { node.remove(); },
+  };
 }
 
 const CAMERA_HINTS = {
@@ -453,6 +580,14 @@ function renderCamera(item, opts) {
     update() { attach(); syncFreeze(); },
     reconcile() { attach(); syncFreeze(); },
     telemetry: noTelemetry,
+    // Same frame the room is looking at. Nothing to photograph before the
+    // phone connects, which is a failure worth reporting rather than a black
+    // rectangle labelled "camera".
+    snapshot(ctx, rect) {
+      if (!video.srcObject || !video.videoWidth) return false;
+      paintBackdrop(ctx, rect, node);
+      return drawFitted(ctx, rect, video, video.videoWidth, video.videoHeight, objectFitOf(video));
+    },
     destroy() { video.srcObject = null; node.remove(); },
   };
 }
@@ -560,6 +695,23 @@ function renderDeck(item, opts) {
     },
     reconcile() {},
     telemetry: noTelemetry,
+    // The slide as it stands, mid-build included: the deck's own CSS and the
+    // fragment rules travel with the clone, so a photo taken three bullets in
+    // has three bullets on it.
+    async snapshot(ctx, rect) {
+      const svg = slides[current.slide];
+      if (!svg) return false;
+      const box = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+      const aspect = box.length === 4 && box[3] > 0 ? box[2] / box[3] : 16 / 9;
+      const deckCss = wrap.querySelector('style')?.textContent || '';
+      const width = Math.max(1, Math.round(Math.min(rect.w, rect.h * aspect)));
+      const height = Math.max(1, Math.round(width / aspect));
+      const img = await svgToImage(svg, `${cssForStandaloneSlide(deckCss)}\n${FRAGMENT_CSS}`, width, height);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.drawImage(img, rect.x + (rect.w - width) / 2, rect.y + (rect.h - height) / 2, width, height);
+      return true;
+    },
     // The aspect ratio baked into the visible slide's own viewBox, so ink can
     // be confined to exactly the slide instead of the whole (often
     // letterboxed) screen.
