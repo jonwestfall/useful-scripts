@@ -20,6 +20,46 @@ the whole thing in plain English and walks through putting it online free on Git
 Pages in about twenty minutes — no terminal, no server, no card. This file is the
 full reference; that one is the road in.
 
+<details>
+<summary><b>What is in this file</b> (it is long; this is the map)</summary>
+
+**Understanding it** ·
+[freeze is a cue](#the-idea-worth-knowing-about-freeze-is-a-cue) ·
+[what it can put on screen](#what-it-can-put-on-screen) ·
+[three things to remember](#three-things-to-remember)
+
+**Getting it running** ·
+[setup](#setup) ·
+[your lecture library](#your-lecture-library) ·
+[planning a lecture in your office](#planning-a-lecture-in-your-office) ·
+[what to expect in a real room](#what-to-expect-in-a-real-room)
+
+**Teaching with it** ·
+[Marp decks](#marp-decks) ·
+[slides that are too full](#slides-that-are-too-full) ·
+[progressive builds](#progressive-builds) ·
+[the slide the class sees](#the-slide-the-class-sees) ·
+[annotating with ink](#annotating-with-ink) ·
+[splitting the screen](#splitting-the-screen) ·
+[countdowns](#countdowns) ·
+[the document camera](#the-document-camera-and-photos-taken-with-it) ·
+[keeping what was on screen](#keeping-what-was-on-screen) ·
+[getting back to where you were](#getting-back-to-where-you-were)
+
+**When something is wrong** ·
+[the display isn't there](#when-the-controller-says-the-display-isnt-there) ·
+[reading the relay readout](#when-nothing-connects-at-all-reading-the-relay-readout) ·
+[the display's own keyboard](#the-displays-own-keyboard) ·
+[starting a device over](#starting-a-device-over) ·
+[builds and stale devices](#builds-and-telling-when-a-device-is-running-an-old-one)
+
+**Under the bonnet** ·
+[security](#security) ·
+[tests](#tests) ·
+[layout](#layout)
+
+</details>
+
 ## The idea worth knowing about: freeze is a cue
 
 The display only ever changes when a controller tells it to. So "hold the screen" is
@@ -595,9 +635,16 @@ entirely. Everything that rasterizes a slide goes through the one helper.
 
 Some panels cannot be photographed at all — an embedded web page, a PDF in the
 browser's own viewer, a YouTube player. A browser will not let a page read pixels back
-out of a frame it does not own. Podium says so rather than saving something that looks
-like a photo of the wrong thing; in a whole-screen shot the other panels still come
-out, and that corner is labelled instead.
+out of a frame it does not own. Podium says so, in terms of what is actually in the
+panel ("an embedded web page cannot be photographed", "the phone's camera has not
+reached this screen yet") rather than saving something that looks like a photo of the
+wrong thing; in a whole-screen shot the other panels still come out, and that corner
+is labelled instead.
+
+Photos reach every controller in the room, and a controller that reloads mid-lecture
+asks the display for the bytes of whatever is on screen rather than showing a broken
+image — the strip itself still starts empty, because that list is deliberately not
+persisted.
 
 ### Export this session
 
@@ -989,7 +1036,15 @@ node podium/test/protocol.test.mjs          # the state machine, no browser need
 node podium/test/plan.test.mjs              # the lecture-plan document, likewise
 cd podium/server && npm install             # once
 node podium/test/e2e.mjs                    # needs: npm i playwright
+node podium/test/e2e.mjs --only ink         # ...or just the sections you are working on
+node podium/test/e2e.mjs --only photos,camera
 ```
+
+`--only` matches section names loosely, and is for iterating: the whole run takes
+about twelve minutes, one section takes seconds. It is a convenience rather than the
+contract — the first sections share one display and controller, and a later section
+can lean on what an earlier one left on screen, so a section that passes alone can
+still fail in the full run. Run all of it before pushing.
 
 The end-to-end test starts the relay, drives a display and two controllers in real
 browsers, and checks the things that would embarrass you in front of a class:
@@ -1011,7 +1066,12 @@ not open (and neither page dies at its top-level `await` when the failure happen
 before a socket exists), a lecture planned in the office reaches the projector intact
 — photo and slides that exist nowhere on the server included — after a round trip
 through a plan file and a second device, and a controller with the wrong passphrase
-cannot touch the screen. 234 checks.
+cannot touch the screen — and, since photographing what is on screen became a
+feature, that a photographed slide really is the slide (measured in pixels: the
+theme's own colour, not the black rectangle an unscoped stylesheet produces), that
+holding a layout button does not also rearrange the screen it just photographed,
+and that a controller which reloads mid-lecture gets the photo back from the display
+rather than rendering a broken image. 283 checks.
 
 ## Layout
 

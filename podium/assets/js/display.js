@@ -476,6 +476,24 @@ function drawUnphotographable(ctx, rect, item) {
   ctx.textAlign = 'start';
 }
 
+// Why a panel could not be photographed, in terms of the thing that is in it.
+// "Podium cannot photograph camera" is technically true and useless; the
+// presenter wants to know whether to fix something or stop trying.
+function whyNot(panel) {
+  const type = panel?.item?.type;
+  if (type === 'camera') {
+    return panel.renderer?.el?.classList?.contains('has-stream')
+      ? 'the camera feed has no frame on screen yet'
+      : 'the phone\'s camera has not reached this screen yet — start it on the Camera tab first';
+  }
+  if (type === 'deck') return 'that slide would not render on its own — a font or an image in it may be blocking it';
+  const embedded = { web: 'an embedded web page', slides: 'an embedded slide deck', pdf: 'a PDF in the browser\'s own viewer', youtube: 'a YouTube player' }[type];
+  if (embedded) return `${embedded} cannot be photographed — a browser will not let a page read pixels out of a frame it does not own`;
+  const known = { text: 'a big-text card', audio: 'an audio player' }[type];
+  if (known) return `Podium cannot photograph ${known} yet`;
+  return 'Podium cannot photograph what is in that panel';
+}
+
 function drawCaption(ctx, rect) {
   const text = state.overlay?.text;
   if (!state.overlay?.visible || !text) return;
@@ -534,10 +552,7 @@ async function takeShot(target) {
     if (drew) painted += 1;
     else drawUnphotographable(ctx, rect, panel.item);
   }
-  if (!painted) {
-    const item = panels[0]?.item;
-    throw new Error(`Podium cannot photograph ${TYPES[item?.type]?.label?.toLowerCase() || 'that'} — the browser will not let a page read pixels back out of it`);
-  }
+  if (!painted) throw new Error(whyNot(panels[0]));
 
   // The ink canvas covers the whole stage and already holds every visible
   // panel's strokes in their own places, so one draw puts the annotation back
@@ -865,6 +880,15 @@ async function connect() {
         deckStore.set(msg.id, msg.source);
         deckWanted.delete(msg.id);
         syncLayers();
+        return;
+      }
+      if (msg.t === 'asset-need') {
+        // Usually this screen is the one asking. The exception is a controller
+        // that reloaded mid-lecture, or one that joined after a photo was
+        // taken: it has an `asset:<id>` on screen and no bytes for it, and
+        // this is the device that has them.
+        const data = assetStore.get(msg.id);
+        if (data != null) bus.send({ t: 'asset', to: msg.from, id: msg.id, data });
         return;
       }
       if (msg.t === 'asset') {

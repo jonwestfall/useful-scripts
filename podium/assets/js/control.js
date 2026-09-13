@@ -73,12 +73,37 @@ function forgetPlanAssets() {
 // `state`, which is rebroadcast twice a second and is what ink surfaces are
 // keyed by. Only the local preview renderers resolve it, and only at the point
 // of handing an item to one, so every key stays identical on both ends.
+// A 1x1 transparent GIF, for the moment between wanting a photo and holding
+// its bytes. Without it an unresolved `asset:<id>` reaches an <img> as a URL
+// with a scheme no browser knows, which is a broken image and a console error
+// rather than a blank.
+const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+// id -> when this device last asked for it. resolveAssets() runs on every
+// heartbeat, so without a note of that it would ask twice a second for as long
+// as the answer took; with one it asks, waits, and asks again only if the
+// display was not there to hear it.
+const assetWanted = new Map();
+const ASSET_ASK_MS = 3000;
+
+function wantAsset(id) {
+  const now = Date.now();
+  if (now - (assetWanted.get(id) || 0) < ASSET_ASK_MS) return;
+  assetWanted.set(id, now);
+  bus?.send({ t: 'asset-need', id });
+}
+
 function resolveAssets(item) {
   if (!item) return item;
   const id = assetIdOf(item.src);
   if (id === null) return item;
   const data = assetStore.get(id);
-  return data ? { ...item, src: data } : item;
+  if (data) return { ...item, src: data };
+  // This controller does not have the bytes: it reloaded mid-lecture, or the
+  // photo was taken on the other device before this one joined. The display
+  // has them - it is the one screen that holds everything on screen - so ask,
+  // and show nothing rather than a broken image until it answers.
+  wantAsset(id);
+  return { ...item, src: BLANK_PIXEL };
 }
 
 // Requesting a deck's saved ink for export: the display holds the only full
@@ -1904,6 +1929,16 @@ async function connect() {
       if (msg.t === 'asset-need') {
         const data = assetStore.get(msg.id);
         if (data != null) bus.send({ t: 'asset', id: msg.id, data });
+        return;
+      }
+      if (msg.t === 'asset') {
+        // An answer to resolveAssets() asking for a photo this device does not
+        // hold. Everything showing it re-renders on the next heartbeat.
+        if (!msg.id || typeof msg.data !== 'string' || !assetWanted.has(msg.id)) return;
+        assetStore.set(msg.id, msg.data);
+        assetWanted.delete(msg.id);
+        previewKey = null;   // force the mirrors to rebuild against real bytes
+        renderAll();
         return;
       }
       if (msg.t === 'ink-data') {
