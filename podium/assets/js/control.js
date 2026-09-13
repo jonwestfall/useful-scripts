@@ -883,7 +883,11 @@ async function renderInkSurface(key, strokes) {
   return null;   // a page, a PDF, a camera frame: nothing left to rebuild
 }
 
+let exporting = false;
+
 async function exportSession() {
+  if (exporting) return;
+  exporting = true;
   const btn = $('#photo-export');
   const status = $('#photo-export-status');
   btn.disabled = true;
@@ -1000,6 +1004,7 @@ async function exportSession() {
   } catch (err) {
     status.textContent = `Export failed: ${err.message}`;
   } finally {
+    exporting = false;
     btn.disabled = !bus;
   }
 }
@@ -1770,8 +1775,11 @@ function renderPhotos() {
   $$('.shots-empty').forEach((n) => { n.hidden = !empty; });
   $$('.shots-hint').forEach((n) => { n.hidden = empty; });
   // Enabled even with nothing in the strip: a session whose whole record is
-  // one annotated deck is exactly what this is for.
-  $('#photo-export').disabled = !bus;
+  // one annotated deck is exactly what this is for. Not while one is being
+  // built, though - this runs on every heartbeat, and would otherwise re-enable
+  // the button half a second into an export, where a second tap starts a second
+  // one that steals the first's reply from the display.
+  $('#photo-export').disabled = !bus || exporting;
   $('#photo-count').textContent = empty ? '' : `${photos.length} saved this session`;
   // The tab itself keeps the count, because a photo taken by holding a button
   // in the top bar otherwise lands somewhere you are not looking.
@@ -2374,6 +2382,10 @@ $('#cam-flip').addEventListener('click', async () => {
 // A Magic Keyboard or a clicker paired to the iPad should just work.
 document.addEventListener('keydown', (ev) => {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target.tagName)) return;
+  // Cmd/Ctrl+P is print and Cmd/Ctrl+F is find. Taking a photo of the
+  // projector when someone asked the browser to print is worse than doing
+  // nothing, so a modified key is not ours.
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
 
   // Blank and freeze apply to whatever is on screen, so they come first. They
   // used to sit behind the "is this paged content" guard below, which meant B

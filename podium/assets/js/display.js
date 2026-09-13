@@ -951,10 +951,15 @@ async function connect() {
         // addressed: the iPad asked, but the iPhone in the other hand should
         // end up holding the same photo.
         takeShot(msg.target === 'screen' ? 'screen' : Math.max(0, Math.min(3, Number(msg.target) || 0)))
-          .then((shot) => bus.send({
-            t: 'shot', id: `shot-${uid(8)}`, target: msg.target,
-            title: shot.title, data: shot.dataUrl, tooBig: !!shot.tooBig,
-          }))
+          .then((shot) => {
+            const id = `shot-${uid(8)}`;
+            // Keep a copy. This screen has just made the photo; without this it
+            // would render a blank pixel the moment a controller put it back up
+            // and ask the room to send the 160 KB it produced itself straight
+            // back to it.
+            assetStore.set(id, shot.dataUrl);
+            bus.send({ t: 'shot', id, target: msg.target, title: shot.title, data: shot.dataUrl, tooBig: !!shot.tooBig });
+          })
           .catch((err) => bus.send({ t: 'shot-failed', to: msg.from, target: msg.target, reason: err?.message || String(err) }));
         return;
       }

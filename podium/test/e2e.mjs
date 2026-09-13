@@ -962,6 +962,16 @@ await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').
 ok('holding a panel letter photographs that panel', true);
 ok('and photographs the panel held, not the one in focus',
   (await pad.evaluate(() => document.querySelector('#photo-strip .shot-num').textContent)) === 'Panel B');
+// The tap that a hold would otherwise also fire has to be swallowed, or
+// holding "B" photographs B and moves every controller's focus to it.
+ok('and the hold does not also fire the tap underneath it',
+  (await pad.evaluate(() => document.querySelector('.panel-btn.is-on')?.textContent)) === 'A');
+await pad.locator('.panel-btn').nth(1).click();
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'B', null, { timeout: 8000 })
+  .then(() => ok('while a plain tap still focuses that panel', true))
+  .catch(() => ok('while a plain tap still focuses that panel', false));
+await pad.locator('.panel-btn').nth(0).click();
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'A', null, { timeout: 8000 });
 
 // Hold a layout button: the whole screen, and the layout must not change.
 const layout = await pad.locator('.layout-btn[data-layout="4"]').boundingBox();
@@ -1046,6 +1056,11 @@ await pad.keyboard.press('Shift+P');
 await pad.waitForFunction(() => document.querySelector('#photo-strip .shot-num')?.textContent === 'Screen', null, { timeout: 20000 })
   .then(() => ok('and Shift+P photographs the whole screen', true))
   .catch(() => ok('and Shift+P photographs the whole screen', false));
+const beforeCtrlP = (await pad.$$('#photo-strip .shot')).length;
+await pad.keyboard.press('Control+p');
+await pad.waitForTimeout(2500);
+ok('while Ctrl+P still belongs to the browser, not to Podium',
+  (await pad.$$('#photo-strip .shot')).length === beforeCtrlP);
 
 // An embedded page cannot be photographed, and says so rather than saving a lie.
 await pad.click('.tab[data-tab="library"]');
@@ -1062,8 +1077,23 @@ ok('and nothing was added to the strip', (await pad.$$('#photo-strip .shot')).le
 
 // The export: photos, annotated slides, and the board itself.
 const download = pad.waitForEvent('download', { timeout: 40000 });
-await pad.click('#photo-export');
+// Clicked from inside the page while watching the button: renderPhotos() runs
+// on every heartbeat and used to re-enable it half a second in, where a second
+// tap starts a second export that steals the first one's ink from the display.
+const enabledMidExport = await pad.evaluate(() => new Promise((resolve) => {
+  const btn = document.querySelector('#photo-export');
+  const status = document.querySelector('#photo-export-status');
+  let seen = false;
+  const poll = setInterval(() => {
+    const finished = /Saved|failed|Nothing/.test(status.textContent);
+    if (!btn.disabled && !finished) seen = true;   // enabled while still working
+    if (finished) { clearInterval(poll); resolve(seen); }
+  }, 40);
+  btn.click();
+  setTimeout(() => { clearInterval(poll); resolve(seen); }, 20000);
+}));
 const file = await download;
+ok('the export button is not re-enabled underneath a running export', !enabledMidExport);
 const zipPath = path.join(HERE, 'fixtures', 'session-export.zip');
 await file.saveAs(zipPath);
 const names = [];

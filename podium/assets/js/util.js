@@ -137,9 +137,34 @@ export function wireDangerButton(button, label, action, { armedLabel = 'Tap agai
  * the hold fires, so holding the "four panels" button photographs the screen
  * instead of also rearranging it.
  */
+// Which element's next click a completed hold has already spent, and the one
+// listener that swallows it.
+//
+// It has to be on WINDOW, in the capture phase. A capture listener on the
+// element itself does not help: when that element is the event's own target -
+// which a button with nothing but text inside it always is - the DOM runs its
+// listeners in the order they were added and ignores the capture flag
+// entirely, so the button's own click handler (added first, by el()) would run
+// before it. Holding "B" would photograph panel B and move the room's focus to
+// it. On window the capture phase genuinely comes first, for every target.
+let spentClick = null;
+let swallowerInstalled = false;
+
+function installClickSwallower() {
+  if (swallowerInstalled) return;
+  swallowerInstalled = true;
+  window.addEventListener('click', (ev) => {
+    const node = spentClick;
+    if (!node) return;
+    spentClick = null;
+    if (node !== ev.target && !node.contains(ev.target)) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  }, true);
+}
+
 export function onLongPress(node, ms, onHold) {
   let timer = null;
-  let fired = false;
 
   const stop = () => {
     clearTimeout(timer);
@@ -147,22 +172,13 @@ export function onLongPress(node, ms, onHold) {
     node.classList.remove('is-holding');
   };
 
+  installClickSwallower();
   node.style.setProperty('--hold-ms', `${ms}ms`);
   node.addEventListener('pointerdown', (ev) => {
     if (ev.button > 0) return;         // a right-click is not a hold
-    fired = false;
-    node.classList.add('is-holding');
-    timer = setTimeout(() => { fired = true; stop(); onHold(); }, ms);
+    timer = setTimeout(() => { spentClick = node; stop(); onHold(); }, ms);
   });
   for (const type of ['pointerup', 'pointerleave', 'pointercancel']) node.addEventListener(type, stop);
-  // Capture, so this runs before the button's own click handler and can stop
-  // it reaching it at all.
-  node.addEventListener('click', (ev) => {
-    if (!fired) return;
-    fired = false;
-    ev.preventDefault();
-    ev.stopImmediatePropagation();
-  }, true);
   // Without this, holding a button on an iPad raises the system callout menu
   // over the top of the thing you are trying to do.
   node.addEventListener('contextmenu', (ev) => ev.preventDefault());
