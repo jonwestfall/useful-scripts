@@ -2380,6 +2380,16 @@ document.addEventListener('keydown', (ev) => {
   // did nothing on a photo or a video - exactly when you reach for it.
   if (ev.key === 'b' || ev.key === 'B') { ev.preventDefault(); send({ op: 'blank' }); return; }
   if (ev.key === 'f' || ev.key === 'F') { ev.preventDefault(); send({ op: 'freeze' }); return; }
+  // P photographs the focused panel and Shift+P the whole screen: the same two
+  // things holding a button in the top bar does, for whoever is driving from a
+  // Magic Keyboard rather than by hand. Like blank and freeze, it applies to
+  // whatever is up, so it sits above the "has pages" guard below.
+  if (ev.key === 'p' || ev.key === 'P') {
+    ev.preventDefault();
+    if (ev.shiftKey) askForShot('screen', 'the whole screen');
+    else askForShot(state.focus, `panel ${PANEL_LABELS[state.focus]}`);
+    return;
+  }
 
   // Paging, on the other hand, only means something on something with pages.
   if (!['pdf', 'slides', 'web', 'deck'].includes(focusedItem(state)?.type)) return;

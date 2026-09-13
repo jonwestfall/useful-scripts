@@ -217,8 +217,9 @@ This lands on your iPad and nowhere else.
 The **Slides** tab shows the notes for the slide that is up, what is coming next,
 big Previous/Next buttons, and a thumbnail of every slide — tap one to jump
 straight there. An external keyboard or a presentation clicker works too: arrows and
-space page through anything with pages, and `B` to blank and `F` to freeze work on
-*whatever* is up — a photo, a video, a whiteboard — not only on a deck.
+space page through anything with pages, and `B` to blank, `F` to freeze and `P` to
+photograph the panel (`Shift+P` for the whole screen) work on *whatever* is up — a
+photo, a video, a whiteboard — not only on a deck.
 
 Because the whole deck is rendered once into a shadow root, changing slide is
 instant, and a deck cued behind a freeze keeps its place when you take it.
@@ -615,6 +616,7 @@ and one button takes the lot home.
 | **Hold any layout button** (a little longer) | A photo of the whole screen, every panel at once |
 | **Save a photo** (Ink tab) | The panel you are drawing on, without reaching for the top bar |
 | **Take a photo** (Camera tab) | A frame frozen off the document camera |
+| **`P`** / **`Shift+P`** (any keyboard) | The focused panel / the whole screen, for whoever drives from a Magic Keyboard |
 
 All four land in the same place: the **Photos** tab, which keeps a count on its own
 label so a photo taken by holding a button in the top bar does not land somewhere you

@@ -525,6 +525,11 @@ async function takeShot(target) {
   const panels = wholeScreen ? activePanels() : [panelAt(target)];
   if (!panels[0]?.slot) throw new Error(`panel ${PANEL_LABELS[target] || target} is not on screen`);
   const area = wholeScreen ? { x: 0, y: 0, w: stageW, h: stageH } : slotRect(panels[0].slot);
+  // A panel the current layout does not show still HAS a slot; it is just
+  // display:none, which measures 0x0. Asking for one (a controller whose idea
+  // of the layout is a moment out of date) should say so rather than hand back
+  // a one-pixel photo.
+  if (!area.w || !area.h) throw new Error(`panel ${PANEL_LABELS[target] || target} is not on screen in this layout`);
 
   const scale = Math.min(1, SHOT_MAX_WIDTH / area.w);
   const canvas = document.createElement('canvas');

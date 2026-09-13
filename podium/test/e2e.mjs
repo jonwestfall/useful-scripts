@@ -1036,6 +1036,17 @@ const slideShot = await pad.evaluate(() => new Promise((resolve) => {
 ok(`a photographed slide is the slide, theme and all (${slideShot.themedPct}% of it is the theme's green)`, slideShot.themedPct > 20);
 ok(`and not the black rectangle an unscoped stylesheet produces (${slideShot.blackPct}% black)`, slideShot.blackPct < 35);
 
+// The same two things from a keyboard, for whoever teaches with a Magic
+// Keyboard propped up rather than an iPad in hand.
+await pad.keyboard.press('p');
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 5, null, { timeout: 20000 })
+  .then(() => ok('P photographs the focused panel', true))
+  .catch(() => ok('P photographs the focused panel', false));
+await pad.keyboard.press('Shift+P');
+await pad.waitForFunction(() => document.querySelector('#photo-strip .shot-num')?.textContent === 'Screen', null, { timeout: 20000 })
+  .then(() => ok('and Shift+P photographs the whole screen', true))
+  .catch(() => ok('and Shift+P photographs the whole screen', false));
+
 // An embedded page cannot be photographed, and says so rather than saving a lie.
 await pad.click('.tab[data-tab="library"]');
 await pad.fill('#url-input', 'https://example.com/');
@@ -1047,7 +1058,7 @@ await pad.waitForFunction(() => /cannot be photographed|cannot photograph/.test(
 const refusal = await pad.textContent('#photo-note');
 ok(`a panel Podium cannot photograph says so, in terms of what is in it ("${refusal.slice(0, 60)}…")`,
   /embedded web page/.test(refusal));
-ok('and nothing was added to the strip', (await pad.$$('#photo-strip .shot')).length === 4);
+ok('and nothing was added to the strip', (await pad.$$('#photo-strip .shot')).length === 6);
 
 // The export: photos, annotated slides, and the board itself.
 const download = pad.waitForEvent('download', { timeout: 40000 });
@@ -1070,7 +1081,7 @@ const names = [];
   }
 }
 ok(`the export is a zip holding ${names.length} files`, names.length >= 5);
-ok('with every photo in it', names.filter((n) => n.startsWith('photos/')).length === 4);
+ok('with every photo in it', names.filter((n) => n.startsWith('photos/')).length === 6);
 ok('with the annotated slide, rendered from the deck rather than photographed',
   names.some((n) => n.startsWith('slides/') && n.endsWith('.png')));
 ok('with the board that was drawn on, rebuilt as an image', names.some((n) => n.startsWith('boards/')));
@@ -1083,21 +1094,21 @@ ok('named for the room and the day, not "download (3)"', /^podium-keep-room-\d{4
 await pad.waitForFunction(() => [...document.querySelectorAll('#photo-strip .shot img')].every((i) => i.src.length < 30000), null, { timeout: 15000 })
   .then(() => ok('the strip draws small copies rather than the full photos', true))
   .catch(() => ok('the strip draws small copies rather than the full photos', false));
-ok('and every tile says when it was taken', (await pad.$$('#photo-strip .shot-time')).length === 4);
+ok('and every tile says when it was taken', (await pad.$$('#photo-strip .shot-time')).length === 6);
 
 const single = pad.waitForEvent('download', { timeout: 20000 });
 await pad.click('#photo-strip .shot .shot-save');
 const onePhoto = await single;
 ok(`one photo can be saved on its own, without building the whole zip (${onePhoto.suggestedFilename()})`,
   /\.jpg$/.test(onePhoto.suggestedFilename()));
-ok('and saving it neither removes it nor puts it on screen', (await pad.$$('#photo-strip .shot')).length === 4);
+ok('and saving it neither removes it nor puts it on screen', (await pad.$$('#photo-strip .shot')).length === 6);
 
 // Discarding the lot is two taps, like everything else here that cannot be
 // undone - and it is about the strip, not about the projector.
 await pad.click('#photo-strip .shot');
 await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-image'), null, { timeout: 10000 });
 await pad.click('#photo-clear');
-ok('one tap only arms "discard every photo"', (await pad.$$('#photo-strip .shot')).length === 4);
+ok('one tap only arms "discard every photo"', (await pad.$$('#photo-strip .shot')).length === 6);
 await pad.click('#photo-clear');
 await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 0, null, { timeout: 5000 })
   .then(() => ok('the second tap clears the strip', true))
