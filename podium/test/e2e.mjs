@@ -859,6 +859,82 @@ ok('the controller reflects a live connection too', true);
 await ctx.close();
 }
 
+console.log('\n-- stills from the camera, one per panel --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, permissions: ['camera'] });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'still-room', passphrase: 'freeze a frame' }));
+const screen = await ctx.newPage();
+trap(screen, 'stills display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const phone = await ctx.newPage();
+trap(phone, 'stills phone');
+await phone.goto(`${BASE}/control.html`);
+await phone.waitForSelector('.tile');
+await phone.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await phone.click('.tab[data-tab="camera"]');
+ok('there is nothing to photograph before the camera is on', await phone.isDisabled('#cam-shot'));
+await phone.click('#cam-start');
+await phone.waitForFunction(() => document.querySelector('#cam-local')?.videoWidth > 0, null, { timeout: 20000 });
+await phone.waitForFunction(() => !document.querySelector('#cam-shot').disabled, null, { timeout: 10000 });
+
+await phone.click('#cam-shot');
+await phone.waitForSelector('#cam-shots .shot', { timeout: 10000 });
+ok('taking a photo puts a still in the strip', true);
+const thumb = await phone.evaluate(() => document.querySelector('#cam-shots .shot img').src.slice(0, 15));
+ok('the thumbnail is the frame itself, not a placeholder', thumb === 'data:image/jpeg');
+
+await phone.click('#cam-shots .shot');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-image'), null, { timeout: 15000 });
+const shown = await screen.evaluate(() => {
+  const img = document.querySelector('.layer[data-role="program"] .r-image');
+  return { data: img.src.startsWith('data:image/jpeg'), w: img.naturalWidth, h: img.naturalHeight };
+});
+ok(`a still reaches the projector as an ordinary photo (${shown.w}x${shown.h})`, shown.data && shown.w > 100);
+
+// The point of the feature: four frames caught from one camera, up at once.
+await phone.click('.layout-btn[data-layout="4"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-4'), null, { timeout: 8000 });
+for (const panel of [1, 2, 3]) {
+  await phone.click(`.panel-btn:nth-child(${panel + 1})`);
+  await phone.waitForTimeout(400);
+  await phone.click('#cam-shot');
+  await phone.waitForFunction((n) => document.querySelectorAll('#cam-shots .shot').length === n, panel + 1, { timeout: 10000 });
+  // Newest first, so the one just taken is the first in the strip.
+  await phone.click('#cam-shots .shot');
+  await screen.waitForTimeout(700);
+}
+const filled = await screen.evaluate(() => {
+  const slots = [...document.querySelectorAll('.panel-slot.is-on')];
+  return { panels: slots.length, photos: slots.filter((s) => s.querySelector('.r-image')).length,
+    distinct: new Set(slots.map((s) => s.querySelector('.r-image')?.src)).size };
+});
+ok('four stills from one camera sit in four panels at once', filled.panels === 4 && filled.photos === 4);
+ok(`and they are four different frames, not four copies of one (${filled.distinct})`, filled.distinct === 4);
+const badges = await phone.evaluate(() => [...document.querySelectorAll('#cam-shots .shot')].map((s) => s.querySelector('.shot-where')?.textContent || '-'));
+ok(`the strip says which panel each photo is in (${badges.join(' ')})`, badges.join(',') === 'D,C,B,A');
+
+// Each still is its own ink surface, so annotating one does not mark the rest.
+const surfaces = await phone.evaluate(() => [...document.querySelectorAll('#cam-shots .shot img')].map((i) => i.src.length));
+ok('each still is a distinct item rather than one shared photo', new Set(surfaces).size > 1);
+
+// Stopping the camera is not throwing the photos away.
+await phone.click('#cam-start');
+await phone.waitForFunction(() => document.querySelector('#cam-status').textContent === 'Off', null, { timeout: 10000 });
+ok('the photos outlive the camera feed they came from', (await phone.$$('#cam-shots .shot')).length === 4);
+ok('and the projector still holds all four', (await screen.evaluate(() => document.querySelectorAll('.panel-slot.is-on .r-image').length)) === 4);
+
+await phone.click('#cam-shots .shot .shot-del');
+await phone.waitForFunction(() => document.querySelectorAll('#cam-shots .shot').length === 3, null, { timeout: 5000 });
+ok('discarding a thumbnail tidies the strip', true);
+ok('without pulling what the class is looking at off the screen',
+  (await screen.evaluate(() => document.querySelectorAll('.panel-slot.is-on .r-image').length)) === 4);
+await ctx.close();
+}
+
 console.log('\n-- progressive builds: bullets arrive one at a time --');
 {
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });

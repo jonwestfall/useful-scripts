@@ -61,7 +61,8 @@ see below. Plus: images · video files · audio (with a now-playing card) · You
 (play, pause, seek and volume, all driven from the iPad) · any embeddable web page ·
 HTML slide decks including reveal.js · PDFs with page-turn buttons · big text cards ·
 a QR code for the class to scan · countdown timers · a whiteboard · your phone's
-camera as a document camera.
+camera as a document camera, including stills taken from it that you can hold in
+four panels at once.
 
 Two more that sit on top of anything: **ink**, so you can annotate live over a slide
 with an Apple Pencil, and a **caption** along the bottom of the screen.
@@ -522,6 +523,36 @@ tablet sleeps or you close the controller and reopen it.
 A lecture plan defines the set: its saved timers become the four clocks, with their
 names and lengths, and a plan's countdown items say which one they show. See below.
 
+## The document camera, and photos taken with it
+
+The **Camera** tab turns the phone in your pocket into a document camera: hold it
+over a book, a worked solution, a piece of apparatus, and it is on the projector.
+The feed is peer-to-peer (WebRTC), so it does not go through the relay.
+
+**Take a photo** freezes the frame the camera is looking at *right now* and keeps
+it. Each photo becomes an ordinary image item, exactly as if you had put a JPEG in
+your library, which is what makes it useful:
+
+- Tap one to put it on the panel you have focused. Split the screen first and you
+  can hold **four different photos up at once** — four students' answers side by
+  side, or the same experiment at four stages — from a single phone camera.
+- Each is its own ink surface, so you can circle the error on one without marking
+  the others.
+- They outlive the feed. Stop the camera, put the phone down, and the photos stay
+  where they are.
+- A photo travels over the relay, not device-to-device. So on a guest network where
+  the live feed cannot connect at all, **Take a photo still works** — the fallback
+  is the one thing you actually need when WebRTC is blocked.
+
+This is not the same as **Freeze**, which holds the live feed on its current frame
+and lets go the moment you unfreeze. A photo is a keeper; freeze is a pause.
+
+Photos last for the session and live only in memory — nothing is written to the
+tablet's storage, which is the right default for a picture of a student's work.
+Reloading the controller forgets them (whatever is already on the projector stays
+there), and the strip holds the last twelve. The × on a thumbnail discards it
+without taking it off the screen.
+
 ## Planning a lecture in your office
 
 `plan.html` is the third page, and the only one you use when there is no class in
@@ -702,7 +733,9 @@ starts it; both ask for the camera and open the connection the same way. **Freez
 pauses the live feed on its current frame — there is no timeline to hold otherwise,
 so this is what "freeze" means for a camera — and a small **Frozen** badge says so on
 the projector; unfreezing (or taking a cue) simply resumes showing whatever is live
-by then.
+by then. When the live feed genuinely cannot connect, **Take a photo** is the way
+through: a still goes to the projector over the relay like any other image. See
+[the camera section](#the-document-camera-and-photos-taken-with-it).
 
 **You cannot mirror the iPad's screen.** iOS Safari has no screen-capture API, so no
 web app can do this. The camera feed and the content library are the way around it —

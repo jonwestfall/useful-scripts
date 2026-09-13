@@ -187,6 +187,12 @@ slide while the class sees only the current one.
 If you wander off to a photo and want to get back, the Library's **Back to** strip
 returns you to the exact slide you left — not the start of the deck.
 
+The **Camera** tab makes your phone a document camera — hold it over a book and it is
+on the wall. **Take a photo** freezes a frame and keeps it: tap the thumbnail to put
+it on screen, and since each photo is just a photo, you can split the screen and hold
+four of them up at once (four students' answers, side by side). They last for the
+class and are never saved to the tablet.
+
 ---
 
 ## Is this safe?

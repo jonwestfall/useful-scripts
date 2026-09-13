@@ -591,6 +591,33 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 #cam-local { width: 100%; max-width: 320px; border-radius: var(--radius); background: #000; }
 #cam-status { color: var(--dim); font-size: 14px; }
 
+/* Stills taken from the camera feed: a scrolling row of what you have caught
+   so far, big enough to tell one page of a book from the next at arm's length
+   on a lectern. */
+.shots { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.shot {
+  position: relative; flex: 0 0 auto; padding: 0; overflow: hidden;
+  width: 132px; aspect-ratio: 4 / 3; min-height: 0; border-radius: var(--radius);
+  background: #000;
+}
+.shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The panel it is currently up in, so four stills in four panels are
+   distinguishable from four stills and one panel. */
+.shot.is-on { border-color: var(--accent); }
+.shot-num {
+  position: absolute; left: 4px; bottom: 4px; padding: 1px 6px; border-radius: 6px;
+  background: rgba(0, 0, 0, .68); font: 600 11px/1.7 system-ui, sans-serif; color: #fff;
+}
+.shot-where {
+  position: absolute; right: 4px; bottom: 4px; padding: 1px 6px; border-radius: 6px;
+  background: var(--accent); font: 700 11px/1.7 system-ui, sans-serif; color: #07101f;
+}
+.shot-del {
+  position: absolute; top: 2px; right: 4px; width: 26px; height: 26px;
+  display: grid; place-items: center; border-radius: 8px;
+  background: rgba(0, 0, 0, .55); color: #fff; font-size: 17px;
+}
+
 /* The set of countdowns, each showing its own clock: you can see all four at
    a glance, and the controls below drive whichever is selected. */
 #timer-chips { gap: 6px; }
