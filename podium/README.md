@@ -585,6 +585,14 @@ real thing: the camera frame as it arrives, the deck stopped three bullets into 
 build, the ink exactly as the room saw it. The photo then comes back to every
 controller in the room, so the iPhone in your pocket has what the iPad just took.
 
+A slide is photographed by re-rendering it rather than by copying the screen, which
+takes one piece of care worth recording: Marp scopes every rule of a theme to
+`div.marpit > svg > …`, and a slide lifted out on its own has no such wrapper, so the
+theme has to be re-scoped as it travels (`cssForStandaloneSlide` in `deck.js`).
+Without that a photographed slide comes out as unstyled black text on nothing — which
+over a black backdrop is a black rectangle — and exported slides lose their theme
+entirely. Everything that rasterizes a slide goes through the one helper.
+
 Some panels cannot be photographed at all — an embedded web page, a PDF in the
 browser's own viewer, a YouTube player. A browser will not let a page read pixels back
 out of a frame it does not own. Podium says so rather than saving something that looks

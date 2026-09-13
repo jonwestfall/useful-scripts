@@ -15,7 +15,7 @@
 //                        else's canvas, for "take a photo of this panel".
 
 import { el, miniMarkdown, fmtTime } from './util.js';
-import { render as renderDeckSource, applyPolyfill, applyFits, FRAGMENT_CSS } from './deck.js';
+import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -706,7 +706,7 @@ function renderDeck(item, opts) {
       const deckCss = wrap.querySelector('style')?.textContent || '';
       const width = Math.max(1, Math.round(Math.min(rect.w, rect.h * aspect)));
       const height = Math.max(1, Math.round(width / aspect));
-      const img = await svgToImage(svg, `${deckCss}\n${FRAGMENT_CSS}`, width, height);
+      const img = await svgToImage(svg, `${cssForStandaloneSlide(deckCss)}\n${FRAGMENT_CSS}`, width, height);
       ctx.fillStyle = '#000';
       ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
       ctx.drawImage(img, rect.x + (rect.w - width) / 2, rect.y + (rect.h - height) / 2, width, height);

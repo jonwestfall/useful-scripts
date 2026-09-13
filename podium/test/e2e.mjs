@@ -862,7 +862,9 @@ await ctx.close();
 console.log('\n-- keeping what was on screen: panel photos, screenshots, and the export --');
 {
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
-await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+// try/catch because this section puts a cross-origin page on screen, and an
+// init script runs in that frame too - where storage is (correctly) denied.
+await ctx.addInitScript((cfg) => { try { localStorage.setItem('podium.config.v2', cfg); } catch { /* not our frame */ } },
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'keep-room', passphrase: 'keep that board' }));
 const screen = await ctx.newPage();
 trap(screen, 'keep display');
@@ -950,6 +952,63 @@ const screenShot = await pad.evaluate(() => {
 });
 ok(`the screenshot is the whole stage, not one panel (${screenShot.badge})`, screenShot.badge === 'Screen' && screenShot.len > 2000);
 
+// A slide is the hard case: Marpit scopes every rule it emits to
+// `div.marpit > svg > ...`, and a slide rasterized on its own has no such
+// wrapper - so an unfixed build photographs a deck as a black rectangle
+// (unstyled black text on a transparent ground) and exports slides with no
+// theme on them at all.
+const rescoped = await pad.evaluate(async () => {
+  const deck = await import('/assets/js/deck.js');
+  return deck.cssForStandaloneSlide('div.marpit > svg > foreignObject > section{color:red}');
+});
+ok('a slide lifted out of the page has its theme re-scoped to follow it',
+  rescoped === 'svg > foreignObject > section{color:red}');
+
+// Back to one panel for this one, so "how much of the photo is black" is a
+// statement about the slide rather than about the letterboxing a half-width
+// panel puts around it.
+await pad.click('.layout-btn[data-layout="single"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 8000 });
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelector('svg.podium-on'), null, { timeout: 40000 });
+await screen.waitForTimeout(1500);
+// Annotate it too, so the export has a marked-up slide to render as well.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(800);
+const pad2 = await pad.locator('#pad').boundingBox();
+await pad.mouse.move(pad2.x + 40, pad2.y + 40);
+await pad.mouse.down();
+for (let i = 0; i < 10; i++) await pad.mouse.move(pad2.x + 40 + i * 22, pad2.y + 40 + i * 7);
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 });
+await pad.click('.tab[data-tab="photos"]');
+await pad.click('#photo-panel');
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 4, null, { timeout: 25000 });
+const slideShot = await pad.evaluate(() => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx2 = c.getContext('2d');
+    ctx2.drawImage(img, 0, 0);
+    const { data } = ctx2.getImageData(0, 0, c.width, c.height);
+    let black = 0;
+    let themed = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const [r, g, b] = [data[i], data[i + 1], data[i + 2]];
+      if (r + g + b < 40) black++;
+      // This deck's title slide is a field of Delta State green.
+      else if (g > r + 20 && g > b + 10) themed++;
+    }
+    const n = c.width * c.height;
+    resolve({ blackPct: Math.round(black / n * 100), themedPct: Math.round(themed / n * 100) });
+  };
+  img.src = document.querySelector('#photo-strip .shot img').src;
+}));
+ok(`a photographed slide is the slide, theme and all (${slideShot.themedPct}% of it is the theme's green)`, slideShot.themedPct > 20);
+ok(`and not the black rectangle an unscoped stylesheet produces (${slideShot.blackPct}% black)`, slideShot.blackPct < 35);
+
 // An embedded page cannot be photographed, and says so rather than saving a lie.
 await pad.click('.tab[data-tab="library"]');
 await pad.fill('#url-input', 'https://example.com/');
@@ -959,7 +1018,7 @@ await pad.click('.tab[data-tab="photos"]');
 await pad.click('#photo-panel');
 await pad.waitForFunction(() => document.querySelector('#photo-note').textContent.includes('cannot photograph'), null, { timeout: 15000 });
 ok('a panel Podium cannot photograph says so instead of saving something false', true);
-ok('and nothing was added to the strip', (await pad.$$('#photo-strip .shot')).length === 3);
+ok('and nothing was added to the strip', (await pad.$$('#photo-strip .shot')).length === 4);
 
 // The export: photos, annotated slides, and the board itself.
 const download = pad.waitForEvent('download', { timeout: 40000 });
@@ -982,7 +1041,9 @@ const names = [];
   }
 }
 ok(`the export is a zip holding ${names.length} files`, names.length >= 5);
-ok('with every photo in it', names.filter((n) => n.startsWith('photos/')).length === 3);
+ok('with every photo in it', names.filter((n) => n.startsWith('photos/')).length === 4);
+ok('with the annotated slide, rendered from the deck rather than photographed',
+  names.some((n) => n.startsWith('slides/') && n.endsWith('.png')));
 ok('with the board that was drawn on, rebuilt as an image', names.some((n) => n.startsWith('boards/')));
 ok('and a manifest saying what is inside', names.includes('session.txt'));
 ok('named for the room and the day, not "download (3)"', /^podium-keep-room-\d{4}-\d{2}-\d{2}/.test(file.suggestedFilename()));

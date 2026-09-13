@@ -9,7 +9,7 @@ import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedIt
   inkDigest, inkDigestsAgree, applyInkAction, BUILD } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
-import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits } from './deck.js';
+import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide } from './deck.js';
 import { createZip } from './zip.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
@@ -706,9 +706,10 @@ async function rasterizeSlide(svgLive, css, aspect, strokes) {
   if (box.length === 4) { clone.setAttribute('width', String(box[2])); clone.setAttribute('height', String(box[3])); }
   // The theme's CSS lives on a sibling <style> in the grid's shadow root; a
   // standalone SVG document has no access to that, so it travels inside the
-  // clone instead.
+  // clone instead - re-scoped, because the .marpit wrapper its selectors are
+  // written against does not come with it (see cssForStandaloneSlide).
   const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-  style.textContent = css;
+  style.textContent = cssForStandaloneSlide(css);
   clone.insertBefore(style, clone.firstChild);
   clone.querySelectorAll('.podium-fragment').forEach((n) => n.classList.add('is-shown'));
 
