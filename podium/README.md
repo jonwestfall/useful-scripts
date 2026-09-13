@@ -61,7 +61,8 @@ see below. Plus: images · video files · audio (with a now-playing card) · You
 (play, pause, seek and volume, all driven from the iPad) · any embeddable web page ·
 HTML slide decks including reveal.js · PDFs with page-turn buttons · big text cards ·
 a QR code for the class to scan · countdown timers · a whiteboard · your phone's
-camera as a document camera.
+camera as a document camera, including stills taken from it that you can hold in
+four panels at once.
 
 Two more that sit on top of anything: **ink**, so you can annotate live over a slide
 with an Apple Pencil, and a **caption** along the bottom of the screen.
@@ -109,7 +110,11 @@ browsers only expose in a secure context. GitHub Pages is https by default.
 ### 3. Set up the classroom PC once
 
 Open `display.html`, fill in the connection settings, and click **Go live**.
-Settings are stored in that browser, so you do this once per machine.
+That click is what grants the page fullscreen, sound and the wake lock — the
+browser will not hand those to a page that did not ask for them inside a real
+click. Settings are stored in that browser, so you do this once per machine.
+Press `?` on that machine for the keys it understands; `E` is the one that
+leaves fullscreen and puts the **Go live** screen back at the end of class.
 
 Then bookmark it — or better, make a desktop shortcut that skips the browser chrome
 entirely. No install, no admin rights:
@@ -177,6 +182,35 @@ space page through anything with pages, and `B` to blank and `F` to freeze work 
 
 Because the whole deck is rendered once into a shadow root, changing slide is
 instant, and a deck cued behind a freeze keeps its place when you take it.
+
+### Slides that are too full
+
+Marp gives every slide the same fixed box — 1280x720 for a 16:9 deck — and
+simply hides anything that does not fit in it. A slide with one paragraph too
+many does not scroll and does not warn you: it loses its last bullets off the
+bottom edge, and you find out standing in front of the class.
+
+Podium shrinks that slide instead. Before a deck is shown anywhere, every slide
+is measured once, and any that overflows gets its type scaled down — 5%, 15%,
+whatever it takes — until the whole slide fits. A slide that already fits is
+left exactly as its author wrote it, and a slide that would have to go below 55%
+to fit is left at 55% rather than made unreadable.
+
+It is the same number everywhere: the projector, the Now/Next boxes on your
+iPad, the thumbnails, and the PNG export all shrink a slide by the same amount,
+so what you rehearse is what the room sees. The Slides tab says so — *Slide 9 /
+13 · fit 74%* — rather than leaving you wondering why the type looks small.
+
+Shrinking never changes a slide's shape, only the size of what is on it, so ink
+and the laser still land exactly where they were aimed.
+
+To opt a slide out and keep it cropped the way Marp would crop it:
+
+```markdown
+---
+<!-- _class: nofit -->
+# This slide is cropped on purpose
+```
 
 ### Progressive builds
 
@@ -489,6 +523,36 @@ tablet sleeps or you close the controller and reopen it.
 A lecture plan defines the set: its saved timers become the four clocks, with their
 names and lengths, and a plan's countdown items say which one they show. See below.
 
+## The document camera, and photos taken with it
+
+The **Camera** tab turns the phone in your pocket into a document camera: hold it
+over a book, a worked solution, a piece of apparatus, and it is on the projector.
+The feed is peer-to-peer (WebRTC), so it does not go through the relay.
+
+**Take a photo** freezes the frame the camera is looking at *right now* and keeps
+it. Each photo becomes an ordinary image item, exactly as if you had put a JPEG in
+your library, which is what makes it useful:
+
+- Tap one to put it on the panel you have focused. Split the screen first and you
+  can hold **four different photos up at once** — four students' answers side by
+  side, or the same experiment at four stages — from a single phone camera.
+- Each is its own ink surface, so you can circle the error on one without marking
+  the others.
+- They outlive the feed. Stop the camera, put the phone down, and the photos stay
+  where they are.
+- A photo travels over the relay, not device-to-device. So on a guest network where
+  the live feed cannot connect at all, **Take a photo still works** — the fallback
+  is the one thing you actually need when WebRTC is blocked.
+
+This is not the same as **Freeze**, which holds the live feed on its current frame
+and lets go the moment you unfreeze. A photo is a keeper; freeze is a pause.
+
+Photos last for the session and live only in memory — nothing is written to the
+tablet's storage, which is the right default for a picture of a student's work.
+Reloading the controller forgets them (whatever is already on the projector stays
+there), and the strip holds the last twelve. The × on a thumbnail discards it
+without taking it off the screen.
+
 ## Planning a lecture in your office
 
 `plan.html` is the third page, and the only one you use when there is no class in
@@ -669,7 +733,9 @@ starts it; both ask for the camera and open the connection the same way. **Freez
 pauses the live feed on its current frame — there is no timeline to hold otherwise,
 so this is what "freeze" means for a camera — and a small **Frozen** badge says so on
 the projector; unfreezing (or taking a cue) simply resumes showing whatever is live
-by then.
+by then. When the live feed genuinely cannot connect, **Take a photo** is the way
+through: a still goes to the projector over the relay like any other image. See
+[the camera section](#the-document-camera-and-photos-taken-with-it).
 
 **You cannot mirror the iPad's screen.** iOS Safari has no screen-capture API, so no
 web app can do this. The camera feed and the content library are the way around it —
@@ -693,16 +759,29 @@ If a page seems to be running old code rather than old settings, that is the
 browser's HTTP cache, not Podium's storage — a hard reload (Ctrl/Cmd+Shift+R)
 is the fix.
 
-### Getting at Settings on the classroom PC
+### The display's own keyboard
 
 The display normally runs fullscreen with no browser chrome, and the standby
-screen disappears as soon as a controller connects. Three keys get you back in:
+screen disappears as soon as a controller connects, so these keys — pressed on
+the classroom machine itself — are the way back in mid-lecture. `?` is the only
+one worth remembering, because it shows you the rest:
 
 | Key | What it does |
 | :-- | :-- |
+| `?` | Show or hide the shortcut card |
+| `F` | Go fullscreen, or leave it |
+| `E` | Leave fullscreen and go back to the **Go live** screen |
 | `P` | Show or hide the pairing QR |
 | `S` | Open Settings |
-| `Esc` | Close the pairing QR |
+| `Esc` | Close whatever is open |
+
+`E` is the end-of-class key: it drops out of fullscreen and puts the arming
+screen back up with the lecture still loaded behind it, so **Go live** picks up
+exactly where you were. The controller sees it too, and says *"Display open —
+click Go live on it"* rather than reporting the screen as missing.
+
+None of these fire while you are typing in Settings, so a room called
+`seminar-f` is just a room name.
 
 ## When the controller says the display isn't there
 
@@ -887,7 +966,7 @@ podium/
       bus.js                      encryption, identity, presence, reconnect
       crypto.js  config.js  rtc.js  util.js
       transport/                  supabase.js · mqtt.js · ws.js
-      deck.js                     Marp: themes, rendering, presenter notes, builds
+      deck.js                     Marp: themes, rendering, presenter notes, builds, slide fitting
       zip.js                      minimal ZIP writer, for exporting marked-up slides
     icons/                        app icons (regenerate: vendor-build/make-icons.mjs)
     vendor/qrcode.js              QR generator (MIT, Kazuhiko Arase)

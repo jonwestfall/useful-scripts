@@ -467,6 +467,40 @@ await display.waitForFunction(() => {
 shown = await onScreen();
 ok(`an uploaded deck reaches the projector over the bus ("${shown.heading}")`, shown.total === 13);
 
+// A slide with more on it than a 1280x720 box holds used to lose its last
+// bullets off the bottom edge, silently. Slide 9 of this deck is one of those.
+await control.click('.tab[data-tab="slides"]');
+await control.waitForFunction(() => document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell').length === 13, null, { timeout: 30000 });
+await control.evaluate(() => document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')[8].click());
+await waitForSlide(8);
+const fitted = await display.evaluate(() => {
+  const sr = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot;
+  const svg = sr.querySelector('svg.podium-on');
+  const section = svg.querySelector('section');
+  return {
+    scale: Number(svg.dataset.podiumFit || 1),
+    over: section.scrollHeight - section.clientHeight,
+    // Shrinking must not change the slide's shape: ink is mapped onto it.
+    aspect: (() => { const b = svg.getAttribute('viewBox').split(' ').map(Number); return b[2] / b[3]; })(),
+  };
+});
+ok(`an over-full slide is shrunk to fit (to ${Math.round(fitted.scale * 100)}%)`, fitted.scale < 1 && fitted.scale >= 0.55);
+ok('and then nothing runs off the bottom of it', fitted.over <= 1);
+ok(`it is still the same shape, so ink still lands where it was drawn (${fitted.aspect.toFixed(3)})`,
+  Math.abs(fitted.aspect - 16 / 9) < 0.002);
+ok('the controller says the slide was shrunk rather than leaving you guessing',
+  (await control.textContent('#deck-count')).includes(`fit ${Math.round(fitted.scale * 100)}%`));
+ok('and its thumbnail is shrunk by the same amount, so the two agree',
+  await control.evaluate((want) => {
+    const svg = document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell svg')[8];
+    return Number(svg.dataset.podiumFit || 1).toFixed(3) === want.toFixed(3);
+  }, fitted.scale));
+ok('a slide that already fits is left at the size its author chose',
+  await display.evaluate(() => {
+    const sr = document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot;
+    return [...sr.querySelectorAll('svg[data-marpit-svg]')].some((s) => !s.dataset.podiumFit);
+  }));
+
 // Cue a deck behind a freeze, exactly as you would mid-lecture.
 await control.click('#freeze');
 await display.waitForFunction(() => document.body.classList.contains('is-frozen'));
@@ -822,6 +856,82 @@ await screen.waitForFunction(() => document.querySelector('.layer[data-role="pro
 ok('tapping the library tile alone starts the camera and gets it on screen', true);
 await phone.waitForFunction(() => document.querySelector('#cam-status').textContent === 'Live on the display', null, { timeout: 10000 });
 ok('the controller reflects a live connection too', true);
+await ctx.close();
+}
+
+console.log('\n-- stills from the camera, one per panel --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, permissions: ['camera'] });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'still-room', passphrase: 'freeze a frame' }));
+const screen = await ctx.newPage();
+trap(screen, 'stills display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const phone = await ctx.newPage();
+trap(phone, 'stills phone');
+await phone.goto(`${BASE}/control.html`);
+await phone.waitForSelector('.tile');
+await phone.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await phone.click('.tab[data-tab="camera"]');
+ok('there is nothing to photograph before the camera is on', await phone.isDisabled('#cam-shot'));
+await phone.click('#cam-start');
+await phone.waitForFunction(() => document.querySelector('#cam-local')?.videoWidth > 0, null, { timeout: 20000 });
+await phone.waitForFunction(() => !document.querySelector('#cam-shot').disabled, null, { timeout: 10000 });
+
+await phone.click('#cam-shot');
+await phone.waitForSelector('#cam-shots .shot', { timeout: 10000 });
+ok('taking a photo puts a still in the strip', true);
+const thumb = await phone.evaluate(() => document.querySelector('#cam-shots .shot img').src.slice(0, 15));
+ok('the thumbnail is the frame itself, not a placeholder', thumb === 'data:image/jpeg');
+
+await phone.click('#cam-shots .shot');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-image'), null, { timeout: 15000 });
+const shown = await screen.evaluate(() => {
+  const img = document.querySelector('.layer[data-role="program"] .r-image');
+  return { data: img.src.startsWith('data:image/jpeg'), w: img.naturalWidth, h: img.naturalHeight };
+});
+ok(`a still reaches the projector as an ordinary photo (${shown.w}x${shown.h})`, shown.data && shown.w > 100);
+
+// The point of the feature: four frames caught from one camera, up at once.
+await phone.click('.layout-btn[data-layout="4"]');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-4'), null, { timeout: 8000 });
+for (const panel of [1, 2, 3]) {
+  await phone.click(`.panel-btn:nth-child(${panel + 1})`);
+  await phone.waitForTimeout(400);
+  await phone.click('#cam-shot');
+  await phone.waitForFunction((n) => document.querySelectorAll('#cam-shots .shot').length === n, panel + 1, { timeout: 10000 });
+  // Newest first, so the one just taken is the first in the strip.
+  await phone.click('#cam-shots .shot');
+  await screen.waitForTimeout(700);
+}
+const filled = await screen.evaluate(() => {
+  const slots = [...document.querySelectorAll('.panel-slot.is-on')];
+  return { panels: slots.length, photos: slots.filter((s) => s.querySelector('.r-image')).length,
+    distinct: new Set(slots.map((s) => s.querySelector('.r-image')?.src)).size };
+});
+ok('four stills from one camera sit in four panels at once', filled.panels === 4 && filled.photos === 4);
+ok(`and they are four different frames, not four copies of one (${filled.distinct})`, filled.distinct === 4);
+const badges = await phone.evaluate(() => [...document.querySelectorAll('#cam-shots .shot')].map((s) => s.querySelector('.shot-where')?.textContent || '-'));
+ok(`the strip says which panel each photo is in (${badges.join(' ')})`, badges.join(',') === 'D,C,B,A');
+
+// Each still is its own ink surface, so annotating one does not mark the rest.
+const surfaces = await phone.evaluate(() => [...document.querySelectorAll('#cam-shots .shot img')].map((i) => i.src.length));
+ok('each still is a distinct item rather than one shared photo', new Set(surfaces).size > 1);
+
+// Stopping the camera is not throwing the photos away.
+await phone.click('#cam-start');
+await phone.waitForFunction(() => document.querySelector('#cam-status').textContent === 'Off', null, { timeout: 10000 });
+ok('the photos outlive the camera feed they came from', (await phone.$$('#cam-shots .shot')).length === 4);
+ok('and the projector still holds all four', (await screen.evaluate(() => document.querySelectorAll('.panel-slot.is-on .r-image').length)) === 4);
+
+await phone.click('#cam-shots .shot .shot-del');
+await phone.waitForFunction(() => document.querySelectorAll('#cam-shots .shot').length === 3, null, { timeout: 5000 });
+ok('discarding a thumbnail tidies the strip', true);
+ok('without pulling what the class is looking at off the screen',
+  (await screen.evaluate(() => document.querySelectorAll('.panel-slot.is-on .r-image').length)) === 4);
 await ctx.close();
 }
 
@@ -2702,6 +2812,72 @@ await tablet.setOffline(false);
 
 await tablet.close();
 await room.close();
+}
+
+console.log('\n-- the display\'s own keyboard --');
+{
+// Everything here happens on the classroom PC, which in a real room has no
+// browser chrome to fall back on.
+const c = await browser.newContext();
+await c.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'keys-room', passphrase: 'pw' }));
+const screen2 = await c.newPage();
+trap(screen2, 'keys display');
+
+// Prove the fullscreen request is made inside the click itself. Safari grants
+// it only while the gesture is still current, so a single `await` before the
+// call - which is how it regressed - loses fullscreen on every Mac while
+// leaving Chrome working perfectly.
+await screen2.addInitScript(() => {
+  window.__fsCalls = [];
+  const real = Element.prototype.requestFullscreen;
+  Element.prototype.requestFullscreen = function patched(...args) {
+    // window.event is set only while an event is actually being dispatched,
+    // which is precisely the window Safari grants fullscreen in. An `await`
+    // anywhere before the call - the regression - lands here with it unset,
+    // because the click's dispatch finished long before the continuation ran.
+    window.__fsCalls.push(window.event?.type || null);
+    return real.apply(this, args);
+  };
+});
+await screen2.goto(`${BASE}/display.html`);
+await screen2.waitForSelector('#arm:not([hidden])');
+
+await screen2.keyboard.press('?');
+await screen2.waitForFunction(() => !document.querySelector('#keys').hidden, null, { timeout: 5000 });
+ok('? brings up the shortcut card', true);
+ok('and it lists the way out', (await screen2.textContent('#keys')).includes('Go live screen'));
+await screen2.keyboard.press('Escape');
+await screen2.waitForFunction(() => document.querySelector('#keys').hidden, null, { timeout: 5000 });
+ok('Esc puts it away', true);
+
+await screen2.click('#arm-button');
+await screen2.waitForFunction(() => !!document.fullscreenElement, null, { timeout: 5000 });
+ok('Go live really does go fullscreen', true);
+const fsCalls = await screen2.evaluate(() => window.__fsCalls);
+ok(`and asks for it inside the click itself, which is the only thing Safari accepts (${JSON.stringify(fsCalls)})`,
+  fsCalls.length === 1 && fsCalls[0] === 'click');
+
+await screen2.keyboard.press('f');
+await screen2.waitForFunction(() => !document.fullscreenElement, null, { timeout: 5000 });
+ok('f drops out of fullscreen', true);
+await screen2.keyboard.press('f');
+await screen2.waitForFunction(() => !!document.fullscreenElement, null, { timeout: 5000 });
+ok('and f puts it back', true);
+
+await screen2.keyboard.press('e');
+await screen2.waitForFunction(() => !document.fullscreenElement && !document.querySelector('#arm').hidden, null, { timeout: 5000 });
+ok('e leaves fullscreen and comes back to the Go live screen', true);
+
+// A room or passphrase with an e, f, p or s in it must not fire any of these.
+await screen2.keyboard.press('s');
+await screen2.waitForSelector('#setup:not([hidden])');
+await screen2.click('#d-room');
+await screen2.type('#d-room', 'seminar-f');
+ok('and the same keys typed into Settings are just text',
+  (await screen2.inputValue('#d-room')).endsWith('seminar-f')
+  && await screen2.isHidden('#pair') && await screen2.isHidden('#keys'));
+await c.close();
 }
 
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));

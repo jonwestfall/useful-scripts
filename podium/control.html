@@ -353,9 +353,20 @@
           <div class="inline">
             <button id="cam-start" type="button">Start camera</button>
             <button id="cam-flip" type="button">Flip</button>
+            <button id="cam-shot" type="button" disabled>Take a photo</button>
           </div>
           <div id="cam-status">Off</div>
           <video id="cam-local" playsinline muted hidden></video>
+          <!-- Stills taken from the feed. They last for this session only, and
+               each one is an ordinary photo as far as the rest of Podium is
+               concerned - which is what lets four of them sit in four panels. -->
+          <div id="cam-shot-note" class="hint" hidden></div>
+          <div id="cam-shots" class="shots" hidden></div>
+          <p class="hint" id="cam-shots-hint" hidden>
+            Tap a photo to put it on the panel you have focused (the A/B/C/D buttons in the top bar).
+            Split the screen first and you can hold four different shots up at once — and each one can
+            be annotated separately on the Ink tab.
+          </p>
         </section>
       </div>
     </main>

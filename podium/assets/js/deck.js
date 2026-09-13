@@ -105,6 +105,219 @@ export async function deckId(source) {
   return Array.from(new Uint8Array(digest).slice(0, 6), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// --- fitting a slide into its own box ---------------------------------------
+//
+// Marp gives every slide the same fixed box - 1280x720 for 16:9 - and hides
+// whatever does not fit inside it. A slide with one paragraph too many does not
+// scroll and does not complain: it simply loses its last bullets off the bottom
+// edge, and you find that out standing in front of the class. Podium shrinks
+// that slide until it fits instead.
+//
+// The mechanism is the one Marp already uses to put a 1280px slide on any
+// screen. Each slide is an <svg> whose viewBox is scaled to whatever box it is
+// given, so growing the viewBox (with the foreignObject and section inside it)
+// by 1/scale, while leaving the type at its authored pixel size, means the same
+// slide at the same size on screen with smaller text and more room - "shrink
+// text on overflow", done by the renderer rather than by hand.
+//
+// It is deliberately NOT a CSS transform on the <section>: Marp's own Safari
+// polyfill (see applyPolyfill) rewrites that one property every animation
+// frame, so anything Podium put there would survive about 16 milliseconds.
+
+const FIT_MIN = 0.55;      // never shrink type past this - unreadable is not "fits"
+const FIT_SLACK = 1;       // px: sub-pixel overflow is not overflow
+const FIT_STEPS = 5;       // shrink passes before giving up
+const FIT_REFINE = 4;      // halvings used to give size back afterwards
+const FIT_WAIT_MS = 1200;  // cap on waiting for webfonts/images before measuring
+
+/** The slide's authored box, remembered so a re-fit is not measured against a fit. */
+function slideBox(svg) {
+  if (!svg.dataset.podiumBox) {
+    const box = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
+    const ok = box.length === 4 && box[2] > 0 && box[3] > 0;
+    svg.dataset.podiumBox = ok ? `${box[2]} ${box[3]}` : '1280 720';
+  }
+  const [w, h] = svg.dataset.podiumBox.split(' ').map(Number);
+  return { w, h };
+}
+
+/** The <section> holding the slide's content (not an advanced background's). */
+function contentSection(svg) {
+  for (const fo of svg.children) {
+    if (fo.tagName !== 'foreignObject') continue;
+    for (const sec of fo.children) {
+      if (sec.tagName !== 'SECTION') continue;
+      if (sec.dataset.marpitAdvancedBackground === 'background') continue;
+      return sec;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resize one slide's SVG user space. `scale` is how big its type ends up
+ * relative to what the theme asked for, so 1 restores the authored slide and
+ * 0.8 is "everything at 80%, with 25% more room to put it in".
+ */
+function setSlideScale(svg, scale) {
+  const base = slideBox(svg);
+  const w = Math.round(base.w / scale * 100) / 100;
+  const h = Math.round(base.h / scale * 100) / 100;
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  for (const fo of svg.children) {
+    if (fo.tagName !== 'foreignObject') continue;
+    fo.setAttribute('width', String(w));
+    fo.setAttribute('height', String(h));
+    for (const sec of fo.children) {
+      if (sec.tagName !== 'SECTION') continue;
+      sec.style.width = `${w}px`;
+      sec.style.height = `${h}px`;
+    }
+  }
+  if (scale < 1) svg.dataset.podiumFit = scale.toFixed(3);
+  else delete svg.dataset.podiumFit;
+}
+
+/** Apply scales measured earlier (see measureFits) to a fresh copy of a deck. */
+export function applyFits(root, fits) {
+  if (!fits?.length) return;
+  Array.from(root.querySelectorAll('svg[data-marpit-svg]')).forEach((svg, i) => {
+    const scale = fits[i];
+    if (Number.isFinite(scale) && scale > 0 && scale < 1) setSlideScale(svg, scale);
+  });
+}
+
+/**
+ * How much taller than its box this slide's content is, in slide pixels.
+ * Null means the slide is not laid out (a display:none thumbnail, a deck in a
+ * hidden tab), where there is nothing to measure and nothing to conclude.
+ */
+function overflowOf(section) {
+  const rect = section.getBoundingClientRect();
+  const drawn = section.offsetHeight;
+  if (!drawn || !rect.height) return null;
+  // The slide is inside an <svg>, so what is on screen is some scale of the
+  // layout pixels every other number here is in. Measure it rather than
+  // assuming it: in a thumbnail the same slide is a twentieth of the size.
+  const scale = rect.height / drawn;
+
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (const child of section.children) {
+    const style = getComputedStyle(child);
+    // Footers, headers and the page number are placed against the slide edge
+    // and are not what pushes content off it.
+    if (style.position === 'absolute' || style.position === 'fixed' || style.display === 'none') continue;
+    const box = child.getBoundingClientRect();
+    if (!box.width && !box.height) continue;
+    top = Math.min(top, (box.top - rect.top) / scale);
+    bottom = Math.max(bottom, (box.bottom - rect.top) / scale);
+  }
+
+  let need = section.scrollHeight;
+  if (Number.isFinite(top)) {
+    const style = getComputedStyle(section);
+    const pad = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+    // Two measures, because neither covers both kinds of slide on its own:
+    // scrollHeight cannot see what a vertically centred slide (the theme's
+    // `lead` and `big-idea` classes are flex-centred) pushes off the TOP, and
+    // the extent of the children misses the last one's bottom margin.
+    need = Math.max(need, (bottom - top) + pad);
+  }
+  return need - section.clientHeight;
+}
+
+/** Largest scale at which this slide's content fits its box. */
+function fitOne(svg, section) {
+  setSlideScale(svg, 1);
+  let over = overflowOf(section);
+  if (over === null) return null;
+  if (over <= FIT_SLACK) return 1;
+
+  // Growing the box also widens every line, so the first guess - grow it by
+  // exactly the fraction the content overflows by - usually overshoots and
+  // leaves the slide fitting with room to spare. Hence the refinement after.
+  let scale = 1;
+  let fails = 1;
+  for (let i = 0; i < FIT_STEPS && over > FIT_SLACK && scale > FIT_MIN; i++) {
+    const room = section.clientHeight;
+    fails = scale;
+    scale = Math.max(FIT_MIN, scale * room / (room + over));
+    setSlideScale(svg, scale);
+    over = overflowOf(section);
+  }
+  if (over > FIT_SLACK) return scale;  // as small as Podium is willing to go
+
+  let fits = scale;
+  for (let i = 0; i < FIT_REFINE && fails - fits > 0.005; i++) {
+    const mid = (fits + fails) / 2;
+    setSlideScale(svg, mid);
+    if (overflowOf(section) <= FIT_SLACK) fits = mid; else fails = mid;
+  }
+  setSlideScale(svg, fits);
+  return fits;
+}
+
+/** Webfonts and images change how tall text is, so measure after they land. */
+async function contentSettled(root) {
+  const waits = [];
+  if (document.fonts?.ready) waits.push(document.fonts.ready);
+  for (const img of root.querySelectorAll('img')) {
+    if (img.complete) continue;
+    waits.push(new Promise((resolve) => {
+      img.addEventListener('load', resolve, { once: true });
+      img.addEventListener('error', resolve, { once: true });
+    }));
+  }
+  if (!waits.length) return;
+  // A lecture hall with no route to the font CDN must not hold the deck up: a
+  // font that never arrives is measured in whatever face the box is using now.
+  await Promise.race([
+    Promise.all(waits),
+    new Promise((resolve) => setTimeout(resolve, FIT_WAIT_MS)),
+  ]);
+}
+
+/**
+ * Measure every slide's fit once, in a hidden copy of the deck.
+ *
+ * It happens here, at render time, rather than in each place a deck is shown,
+ * because measuring needs a laid-out slide and most of those places do not have
+ * one: the thumbnail grid is built while its tab is closed, the PNG export
+ * rasterizes slides that were never on screen, and the projector must not be
+ * seen reflowing a slide it has already put up. One measurement, cached with
+ * the deck, applied everywhere.
+ */
+async function measureFits(html, css) {
+  if (typeof document === 'undefined' || !document.body) return [];
+  const host = document.createElement('div');
+  host.setAttribute('aria-hidden', 'true');
+  // Off-screen and invisible, but still laid out - `display: none` would make
+  // every measurement below zero.
+  host.style.cssText = 'position:fixed;left:-30000px;top:0;width:1280px;visibility:hidden;pointer-events:none;z-index:-1';
+  const shadow = host.attachShadow({ mode: 'open' });
+  shadow.innerHTML = `<style>
+    :host { display: block; }
+    svg[data-marpit-svg] { display: block; width: 1280px; height: auto; }
+  </style><style>${css}</style>${html}`;
+  document.body.append(host);
+  try {
+    await contentSettled(shadow);
+    return Array.from(shadow.querySelectorAll('svg[data-marpit-svg]')).map((svg) => {
+      const section = contentSection(svg);
+      // `<!-- _class: nofit -->` on a slide (or `class: nofit` on the deck) is
+      // the way to say "leave my slide alone, I meant it to be cropped".
+      if (!section || section.classList.contains('nofit')) return 1;
+      const scale = fitOne(svg, section);
+      return Number.isFinite(scale) ? scale : 1;
+    });
+  } catch {
+    return [];  // a deck that renders is worth showing even if fitting failed
+  } finally {
+    host.remove();
+  }
+}
+
 const cache = new Map();
 
 function outline(root) {
@@ -171,6 +384,9 @@ export async function render(source, id) {
   });
   const finalHtml = root.outerHTML;
 
+  // Measured here, once, and carried with the deck: see measureFits.
+  const fits = await measureFits(finalHtml, css);
+
   // A deck naming a theme that was never installed falls back to the default
   // silently, which is a maddening thing to discover from the back of a lecture
   // hall. Say so instead.
@@ -192,6 +408,10 @@ export async function render(source, id) {
     titles,
     fragments,
     aspects,
+    // One scale per slide: 1 for a slide that fits its box as authored, less
+    // for one whose content would otherwise run off the bottom. Apply with
+    // applyFits() wherever the deck's html is mounted.
+    fits,
     count: titles.length,
   };
   cache.set(key, result);

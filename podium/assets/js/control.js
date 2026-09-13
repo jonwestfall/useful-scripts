@@ -9,10 +9,10 @@ import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedIt
   inkDigest, inkDigestsAgree, applyInkAction, BUILD } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
-import { render as renderDeckSource, deckId, frontMatterTitle, themeReport } from './deck.js';
+import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits } from './deck.js';
 import { createZip } from './zip.js';
-import { readPlan, itemForStage, itemLabel, assetIdOf } from './planfile.js';
-import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText } from './store.js';
+import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
+import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -58,6 +58,16 @@ const assetStore = new Map();
 // Which of them this controller has already pushed to the room, so re-picking
 // a photo does not re-send it.
 const assetsSent = new Set();
+// Which entries came from the loaded plan. assetStore also holds this
+// session's camera stills, which have nothing to do with any plan, so loading
+// or clearing one drops exactly the plan's own photos and leaves the stills
+// where they are.
+let planAssetIds = new Set();
+
+function forgetPlanAssets() {
+  for (const id of planAssetIds) { assetStore.delete(id); assetsSent.delete(id); }
+  planAssetIds = new Set();
+}
 
 // Items reach the display holding `asset:<id>`, not the bytes - the item is in
 // `state`, which is rebroadcast twice a second and is what ink surfaces are
@@ -281,9 +291,11 @@ function renderPlanBar() {
  * fetch and a hash in front of the one action that has to be instant.
  */
 async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
-  assetStore.clear();
-  assetsSent.clear();
-  for (const [id, asset] of Object.entries(plan.assets || {})) assetStore.set(id, asset.data);
+  forgetPlanAssets();
+  for (const [id, asset] of Object.entries(plan.assets || {})) {
+    assetStore.set(id, asset.data);
+    planAssetIds.add(id);
+  }
 
   for (const row of plan.items) {
     if (row.type !== 'deck' || !row.asset) continue;
@@ -512,6 +524,9 @@ function buildGrid(deck) {
 
   const holder = document.createElement('div');
   holder.innerHTML = deck.html;
+  // Thumbnails (and the PNG export, which rasterizes these very nodes) show a
+  // slide shrunk exactly as much as the projector shrinks it.
+  applyFits(holder, deck.fits);
   const grid = shadow.getElementById('grid');
   Array.from(holder.querySelectorAll('svg[data-marpit-svg]')).forEach((svg, i) => {
     const cell = document.createElement('button');
@@ -578,9 +593,13 @@ function renderSlides() {
   const index = Math.min(total - 1, Math.max(0, item.slide || 0));
   const step = item.step || 0;
   const fragCount = (item.fragments && item.fragments[index]) || 0;
+  // A slide that had to be shrunk to fit says so, rather than leaving you to
+  // wonder why the type on the projector is not the size you authored.
+  const fit = deck?.fits?.[index];
+  const fitNote = Number.isFinite(fit) && fit < 1 ? ` · fit ${Math.round(fit * 100)}%` : '';
   $('#deck-count').textContent = fragCount
-    ? `Slide ${index + 1} / ${total} · build ${step}/${fragCount}`
-    : `Slide ${index + 1} / ${total}`;
+    ? `Slide ${index + 1} / ${total} · build ${step}/${fragCount}${fitNote}`
+    : `Slide ${index + 1} / ${total}${fitNote}`;
   // A slide mid-build still has Next/Previous left to do even at slide 0 or
   // the very last slide, so the ends of a build - not just of the deck -
   // decide when the buttons actually go grey.
@@ -893,6 +912,7 @@ function renderLayoutBar() {
 }
 
 function renderAll() {
+  renderStills();
   renderRecent();
   renderPreview();
   renderNow();
@@ -1305,9 +1325,17 @@ function setCameraState(status) {
     requesting: 'Asking for camera permission…',
     connecting: 'Connecting to the display…',
     live: 'Live on the display',
-    failed: 'Could not connect. If this is a guest network, the two devices may be blocked from reaching each other.',
+    // The live feed is peer-to-peer and a guest network can block that outright.
+    // A still is not: it goes to the projector over the relay, like any other
+    // photo, so it is the way out of exactly this failure.
+    failed: 'Could not connect the live feed. If this is a guest network, the two devices may be blocked from reaching each other — but Take a photo still works, because a still goes by the relay instead.',
   }[status] || status;
   $('#cam-start').textContent = status === 'idle' ? 'Start camera' : 'Stop camera';
+  // Anything but "off" means this device has the camera and there is a frame
+  // to freeze. Notably that includes `failed` (see above), and it does not
+  // require the feed to be on the projector: photographing the next page while
+  // the class still looks at the last one is the point.
+  $('#cam-shot').disabled = status === 'idle';
 }
 
 // Shared by the Camera tab's button and the "Phone camera" library tile, so
@@ -1322,6 +1350,123 @@ async function startCamera(where = 'auto') {
     setCameraState('failed');
     $('#cam-status').textContent = `Camera unavailable: ${err.message}`;
     tab('camera');
+  }
+}
+
+// --- stills from the camera --------------------------------------------------
+//
+// A live document camera can only ever show the thing it is pointed at. Freeze
+// a frame and it becomes an ordinary photo as far as the rest of Podium is
+// concerned - so it can sit in a panel while the camera moves on, and four of
+// them can be up at once in a four-panel layout, each annotatable on its own
+// ink surface.
+//
+// Stills live in memory for this session only, exactly like the camera feed
+// itself: nothing about a photo of a student's worksheet should outlive the
+// class without someone deciding it should. They travel to the projector the
+// same way a lecture plan's photos do (assetStore + `asset:<id>`), so the
+// bytes cross the relay once and the item that refers to them stays small.
+const MAX_STILLS = 12;
+let stills = [];
+let stillCount = 0;
+let stillsDrawn = '';
+
+// Called from renderAll(), which runs on every heartbeat, so it re-builds the
+// strip only when the strip would actually look different. Rebuilding it
+// twice a second would throw away and re-decode a dozen data-URL <img>s for
+// nothing.
+function renderStills() {
+  const strip = $('#cam-shots');
+  strip.hidden = !stills.length;
+  $('#cam-shots-hint').hidden = !stills.length;
+  if (!stills.length) { strip.replaceChildren(); stillsDrawn = ''; return; }
+
+  // Where each still currently is, so the strip answers "which one is in B?"
+  // without looking up at the wall.
+  const where = new Map();
+  const seat = (item, label) => {
+    const id = assetIdOf(item?.src);
+    if (id && !where.has(id)) where.set(id, label);
+  };
+  seat(state.program, PANEL_LABELS[0]);
+  state.panels.forEach((item, i) => seat(item, PANEL_LABELS[i + 1]));
+
+  const signature = stills.map((s) => `${s.id}:${where.get(s.id) || ''}`).join('|');
+  if (signature === stillsDrawn) return;
+  stillsDrawn = signature;
+
+  strip.replaceChildren(...stills.map((still) => {
+    const label = where.get(still.id);
+    const shot = el('button', {
+      class: `shot${label ? ' is-on' : ''}`,
+      type: 'button',
+      title: `${still.title} — put on screen`,
+      onclick: () => stage({ type: 'image', title: still.title, src: assetRef(still.id) }),
+    },
+      el('img', { src: assetStore.get(still.id), alt: still.title }),
+      el('span', { class: 'shot-num' }, still.title));
+    if (label) shot.append(el('span', { class: 'shot-where' }, label));
+    shot.append(el('span', {
+      class: 'shot-del',
+      title: 'Discard this photo',
+      onclick: (ev) => {
+        ev.stopPropagation();
+        stills = stills.filter((s) => s.id !== still.id);
+        // Deliberately NOT pulled off the screen: discarding a thumbnail is
+        // tidying the strip, not an edit to what the class is looking at.
+        assetStore.delete(still.id);
+        assetsSent.delete(still.id);
+        stillsDrawn = '';
+        renderStills();
+      },
+    }, '\u00d7'));
+    return shot;
+  }));
+}
+
+async function takeStill() {
+  const video = $('#cam-local');
+  const note = $('#cam-shot-note');
+  const show = (text) => { note.textContent = text; note.hidden = !text; };
+  if (!cameraSender?.active || !video.videoWidth || !video.videoHeight) {
+    show('Start the camera first — there is no picture to freeze yet.');
+    return;
+  }
+  show('Freezing that frame…');
+  try {
+    // Straight off the video element rather than through ImageCapture: the
+    // iPad is the device this is for, and Safari has no ImageCapture at all.
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('this browser would not encode the frame'))), 'image/jpeg', 0.92);
+    });
+    // The same ladder a photo dropped into a lecture plan walks down, so a
+    // still is guaranteed to fit through the relay in one message.
+    const shrunk = await downscaleImage(blob, MAX_ASSET_CHARS);
+    const id = uid(10);
+    assetStore.set(id, shrunk.dataUrl);
+    stillCount += 1;
+    stills.unshift({ id, title: `Photo ${stillCount}` });
+    // Oldest first out of the strip. What is already on the projector stays
+    // there - the display keeps its own copy of anything it has been sent.
+    for (const dropped of stills.slice(MAX_STILLS)) {
+      assetStore.delete(dropped.id);
+      assetsSent.delete(dropped.id);
+    }
+    stills = stills.slice(0, MAX_STILLS);
+    stillsDrawn = '';
+    renderStills();
+    show(shrunk.tooBig
+      // Every rung of the ladder was still too big for one relay message. It
+      // is here in the strip either way - say so rather than let it fail
+      // silently on the way to the projector.
+      ? `Photo ${stillCount} — ${shrunk.width}x${shrunk.height}, but bigger than a relay message carries. It may not reach the projector; try again with less in frame.`
+      : `Photo ${stillCount} — ${shrunk.width}x${shrunk.height}. Tap it below to put it on screen.`);
+  } catch (err) {
+    show(`Could not take that photo: ${err.message}`);
   }
 }
 
@@ -1737,6 +1882,7 @@ $('#cam-start').addEventListener('click', async () => {
   if (cameraSender?.active) { await cameraSender.stop(); return; }
   await startCamera();
 });
+$('#cam-shot').addEventListener('click', takeStill);
 $('#cam-flip').addEventListener('click', async () => {
   facing = facing === 'environment' ? 'user' : 'environment';
   if (cameraSender?.active) await cameraSender.start({ facingMode: facing });
@@ -1850,8 +1996,7 @@ $('#plan-file').addEventListener('change', async (ev) => {
 
 $('#plan-clear').addEventListener('click', async () => {
   currentPlan = null;
-  assetStore.clear();
-  assetsSent.clear();
+  forgetPlanAssets();
   try { await clearCurrentPlan(); } catch { /* nothing was stored */ }
   renderPlanBar();
   renderTimerPresets();

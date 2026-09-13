@@ -189,11 +189,18 @@ body.display.is-frozen #stage::after {
   position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
   background: radial-gradient(120% 120% at 50% 0%, #131a24, #07090c);
   padding: 24px; overflow: auto;
+  /* A live display hides the pointer (body.display.is-live). Any sheet over it
+     is something you are meant to click, so give the pointer back here rather
+     than leaving whoever is at the lectern clicking Done blind. */
+  cursor: default;
 }
 #standby { z-index: 20; }
 #arm { z-index: 21; }
 #pair { z-index: 22; }
 #setup { z-index: 23; }
+/* Above the rest: the shortcut card answers "how do I get out of this?", which
+   is asked with something else already on screen. */
+#keys { z-index: 24; }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
   padding: 28px; max-width: 620px; width: 100%;
@@ -222,6 +229,22 @@ body.display #standby:not(.is-on) { display: none; }
   background: #2a1e12; border: 1px solid #6b4a22; color: #ffd9a8;
   border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 16px;
 }
+
+kbd {
+  display: inline-block; min-width: 30px; padding: 3px 8px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+  text-align: center; color: var(--ink);
+}
+
+/* Key on the left, what it does on the right, aligned down the card. */
+dl.keys {
+  display: grid; grid-template-columns: auto 1fr; gap: 10px 14px;
+  align-items: baseline; margin: 0 0 18px;
+}
+dl.keys dt { justify-self: start; }
+dl.keys dd { margin: 0; color: var(--dim); }
 
 /* ===================== RENDERERS ==================================
    Renderers size themselves against their own box, not the viewport, so the
@@ -567,6 +590,33 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 
 #cam-local { width: 100%; max-width: 320px; border-radius: var(--radius); background: #000; }
 #cam-status { color: var(--dim); font-size: 14px; }
+
+/* Stills taken from the camera feed: a scrolling row of what you have caught
+   so far, big enough to tell one page of a book from the next at arm's length
+   on a lectern. */
+.shots { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.shot {
+  position: relative; flex: 0 0 auto; padding: 0; overflow: hidden;
+  width: 132px; aspect-ratio: 4 / 3; min-height: 0; border-radius: var(--radius);
+  background: #000;
+}
+.shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The panel it is currently up in, so four stills in four panels are
+   distinguishable from four stills and one panel. */
+.shot.is-on { border-color: var(--accent); }
+.shot-num {
+  position: absolute; left: 4px; bottom: 4px; padding: 1px 6px; border-radius: 6px;
+  background: rgba(0, 0, 0, .68); font: 600 11px/1.7 system-ui, sans-serif; color: #fff;
+}
+.shot-where {
+  position: absolute; right: 4px; bottom: 4px; padding: 1px 6px; border-radius: 6px;
+  background: var(--accent); font: 700 11px/1.7 system-ui, sans-serif; color: #07101f;
+}
+.shot-del {
+  position: absolute; top: 2px; right: 4px; width: 26px; height: 26px;
+  display: grid; place-items: center; border-radius: 8px;
+  background: rgba(0, 0, 0, .55); color: #fff; font-size: 17px;
+}
 
 /* The set of countdowns, each showing its own clock: you can see all four at
    a glance, and the controls below drive whichever is selected. */

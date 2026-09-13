@@ -123,6 +123,55 @@ export function wireDangerButton(button, label, action, { armedLabel = 'Tap agai
   return { disarm };
 }
 
+// --- fullscreen -------------------------------------------------------------
+//
+// Safari needs both halves of this, and got neither for a while.
+//
+// The prefix: Safari only learned the standard `requestFullscreen` in 16.4.
+// Before that - including on Macs that cannot run a newer Safari - the whole
+// API is `webkit`-prefixed, and an unprefixed call simply is not there.
+//
+// The timing: a fullscreen request is only granted while the click that asked
+// for it is still the browser's "current user gesture". Chrome is forgiving
+// about awaiting something first; Safari is not, and drops the request on the
+// floor without an error. So these are written to be CALLED synchronously from
+// inside the handler - the returned promise is for reporting, not sequencing.
+
+export function isFullscreen() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+export function enterFullscreen(target = document.documentElement) {
+  try {
+    if (target.requestFullscreen) return target.requestFullscreen({ navigationUI: 'hide' }) || Promise.resolve();
+    if (target.webkitRequestFullscreen) { target.webkitRequestFullscreen(); return Promise.resolve(); }
+  } catch (err) {
+    return Promise.reject(err);
+  }
+  return Promise.reject(new Error('This browser will not put the page fullscreen.'));
+}
+
+export function exitFullscreen() {
+  try {
+    if (!isFullscreen()) return Promise.resolve();
+    if (document.exitFullscreen) return document.exitFullscreen() || Promise.resolve();
+    if (document.webkitExitFullscreen) { document.webkitExitFullscreen(); return Promise.resolve(); }
+  } catch (err) {
+    return Promise.reject(err);
+  }
+  return Promise.resolve();
+}
+
+export function toggleFullscreen(target = document.documentElement) {
+  return isFullscreen() ? exitFullscreen() : enterFullscreen(target);
+}
+
+/** Both spellings of the event, since Safari before 16.4 only fires its own. */
+export function onFullscreenChange(fn) {
+  document.addEventListener('fullscreenchange', fn);
+  document.addEventListener('webkitfullscreenchange', fn);
+}
+
 // What build the server is handing out RIGHT NOW, or null if it cannot be
 // read. Each page compares this against the BUILD compiled into the copy it
 // is actually running: they differ exactly when the browser served this tab

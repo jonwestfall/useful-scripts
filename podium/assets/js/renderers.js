@@ -13,7 +13,7 @@
 //   destroy()
 
 import { el, miniMarkdown, fmtTime } from './util.js';
-import { render as renderDeckSource, applyPolyfill, FRAGMENT_CSS } from './deck.js';
+import { render as renderDeckSource, applyPolyfill, applyFits, FRAGMENT_CSS } from './deck.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -524,6 +524,9 @@ function renderDeck(item, opts) {
       const deck = await renderDeckSource(source, it.deckId);
       if (mine !== generation) return;
       wrap.innerHTML = `<style>${deck.css}</style>${deck.html}`;
+      // Before anything is shown, so an over-full slide arrives already shrunk
+      // to fit rather than being seen to reflow on the projector.
+      applyFits(wrap, deck.fits);
       slides = Array.from(wrap.querySelectorAll('svg[data-marpit-svg]'));
       // Marp needs its DOM polyfill for inline-SVG slides; without it Safari
       // (so, every iPad) lays foreignObject content out wrongly.

@@ -57,6 +57,7 @@
       <button id="arm-settings">Settings</button>
     </div>
     <p class="hint">Room <span id="room-name" class="mono"></span> · code <span id="arm-code" class="mono">····</span></p>
+    <p class="hint">Press <kbd>?</kbd> at any time for the keyboard shortcuts.</p>
     <p class="hint" id="arm-status">Connecting…</p>
     <!-- Shown when this tab is coming back to a lecture rather than starting
          one: a reload on the classroom PC used to drop everything to black. -->
@@ -67,6 +68,24 @@
     <p class="hint mono relay-target"></p>
     <p class="hint stale-note" id="arm-build" hidden></p>
     <pre class="relay-log" hidden></pre>
+  </div>
+</div>
+
+<!-- Keyboard shortcuts, on ? -->
+<div id="keys" class="sheet" hidden>
+  <div class="card">
+    <h2>Keyboard shortcuts</h2>
+    <p>Keys pressed on this machine — the one driving the projector.</p>
+    <dl class="keys">
+      <dt><kbd>?</kbd></dt><dd>Show or hide this card</dd>
+      <dt><kbd>F</kbd></dt><dd id="keys-fs">Go fullscreen</dd>
+      <dt><kbd>E</kbd></dt><dd>Leave fullscreen and go back to the Go live screen</dd>
+      <dt><kbd>P</kbd></dt><dd>Show or hide the pairing QR</dd>
+      <dt><kbd>S</kbd></dt><dd>Open Settings</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close whatever is open</dd>
+    </dl>
+    <p class="hint">Paging, blanking and freezing live on the controller, not here.</p>
+    <button id="keys-close" style="margin-top:18px;width:100%">Done</button>
   </div>
 </div>
 
