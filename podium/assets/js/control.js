@@ -917,6 +917,15 @@ async function exportSession() {
     const bySurface = await requestAllInk();
     const surfaces = Object.entries(bySurface).filter(([, strokes]) => strokes?.length);
 
+    // Ink lives only on the display. With the display gone the pull above just
+    // times out quietly, and "Saved 3 files" would read as a complete record of
+    // the lecture when the annotations - often the whole reason for exporting -
+    // are exactly what is missing.
+    if (!bus?.hasPeer('display')) {
+      lines.push('The display was not connected while this was built, so no ink could be collected.', '');
+      skipped.push('every annotation — the display was not connected, so its ink could not be fetched');
+    }
+
     const deckSlides = new Map();   // deckId -> Map(slide -> strokes)
     const others = [];
     for (const [key, strokes] of surfaces) {

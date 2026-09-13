@@ -665,7 +665,11 @@ session.txt                          what is in it, and what was left out
 ```
 
 The ink lives on the display, so building the zip pulls it across — keep the display
-connected while it runs. Everything is best-effort and itemised: a slide that will not
+connected while it runs. If it is not there, the photos still come out and the export
+says plainly that the annotations could not be fetched, rather than handing you a
+partial record that looks complete. It is quick: a measured lecture's worth — twelve photos and
+six annotated slides — came to eighteen files and 8.7 MB in about three quarters of a
+second. Everything is best-effort and itemised: a slide that will not
 rasterize, or ink on something Podium cannot rebuild, is named in `session.txt` rather
 than failing the export that holds the rest.
 
@@ -1078,7 +1082,8 @@ feature, that a photographed slide really is the slide (measured in pixels: the
 theme's own colour, not the black rectangle an unscoped stylesheet produces), that
 holding a layout button does not also rearrange the screen it just photographed,
 and that a controller which reloads mid-lecture gets the photo back from the display
-rather than rendering a broken image. 283 checks.
+rather than rendering a broken image, that holding a button does not also fire the tap
+underneath it, and that `Ctrl+P` still belongs to the browser. 296 checks.
 
 ## Layout
 
