@@ -1681,10 +1681,49 @@ let photos = [];
 let photoCount = 0;
 let photosDrawn = '';
 
+// The strip shows every photo twice - once on the Camera tab, once on Photos -
+// and a photo is a full-size JPEG. Handing those straight to <img> means the
+// tablet decodes two dozen 1280x900 bitmaps and holds them all: a few hundred
+// megabytes of nothing, on the device least able to spare it, for pictures
+// drawn 132px wide. So each photo carries a small copy for the strip, and the
+// full one is fetched from assetStore only when it actually goes on screen.
+const THUMB_WIDTH = 260;
+
+function makeThumb(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, THUMB_WIDTH / (img.naturalWidth || THUMB_WIDTH));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.72));
+      } catch {
+        resolve(dataUrl);   // no thumbnail is better than no photo
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 function addPhoto({ id, data, title, badge }) {
   assetStore.set(id, data);
   photoCount += 1;
-  photos.unshift({ id, title, badge, at: Date.now(), n: photoCount });
+  photos.unshift({ id, title, badge, at: Date.now(), n: photoCount, thumb: data });
+  // Swap in the small copy as soon as it is ready; until then the strip shows
+  // the full-size one rather than an empty box.
+  makeThumb(data).then((thumb) => {
+    const photo = photos.find((p) => p.id === id);
+    if (!photo) return;
+    photo.thumb = thumb;
+    photosDrawn = '';
+    renderPhotos();
+  });
   // Oldest first out of the strip. Whatever is already on the projector stays
   // there - the display keeps its own copy of anything it has been sent.
   for (const dropped of photos.slice(MAX_PHOTOS)) {
@@ -1695,6 +1734,21 @@ function addPhoto({ id, data, title, badge }) {
   photosDrawn = '';
   renderPhotos();
   return photos[0];
+}
+
+// One photo out of the app, without building the whole session zip: the
+// export is the record of a lecture, this is "I want that picture now". On an
+// iPad it lands in Files, from where it can go into Photos like any download.
+function savePhoto(photo) {
+  const data = assetStore.get(photo.id);
+  if (!data) { photoNote('That photo is no longer held on this device.'); return; }
+  const a = document.createElement('a');
+  a.href = data;
+  a.download = `${safeName(photo.title, 'photo')}.jpg`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  photoNote(`Saved ${a.download}.`);
 }
 
 function forgetPhoto(id) {
@@ -1738,7 +1792,7 @@ function renderPhotos() {
   seat(state.program, PANEL_LABELS[0]);
   state.panels.forEach((item, i) => seat(item, PANEL_LABELS[i + 1]));
 
-  const signature = photos.map((p) => `${p.id}:${where.get(p.id) || ''}`).join('|');
+  const signature = photos.map((p) => `${p.id}:${where.get(p.id) || ''}:${p.thumb.length}`).join('|');
   if (signature === photosDrawn) return;
   photosDrawn = signature;
 
@@ -1752,9 +1806,15 @@ function renderPhotos() {
         title: `${photo.title} — put on screen`,
         onclick: () => stage({ type: 'image', title: photo.title, src: assetRef(photo.id) }),
       },
-        el('img', { src: assetStore.get(photo.id), alt: photo.title }),
+        el('img', { src: photo.thumb, alt: photo.title }),
+        el('span', { class: 'shot-time' }, new Date(photo.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })),
         el('span', { class: 'shot-num' }, photo.badge));
       if (label) shot.append(el('span', { class: 'shot-where' }, label));
+      shot.append(el('span', {
+        class: 'shot-save',
+        title: 'Save this photo to this device',
+        onclick: (ev) => { ev.stopPropagation(); savePhoto(photo); },
+      }, '\u2913'));
       shot.append(el('span', {
         class: 'shot-del',
         title: 'Discard this photo',
@@ -2289,6 +2349,14 @@ $('#cam-start').addEventListener('click', async () => {
 });
 $('#cam-shot').addEventListener('click', takeCameraPhoto);
 $('#photo-export').addEventListener('click', exportSession);
+// Two taps, like every other irreversible button here. Clearing the strip
+// costs nothing that is on screen - the display keeps what it was sent - but
+// it does throw away the only copy of anything not yet exported.
+wireDangerButton($('#photo-clear'), 'Discard every photo', () => {
+  const n = photos.length;
+  for (const photo of [...photos]) forgetPhoto(photo.id);
+  photoNote(n ? `Discarded ${n} photo${n === 1 ? '' : 's'}. What is on screen stays there.` : 'Nothing to discard.');
+}, { armedLabel: 'Tap again to discard' });
 $('#photo-panel').addEventListener('click', () => askForShot(state.focus, `panel ${PANEL_LABELS[state.focus]}`));
 $('#photo-screen').addEventListener('click', () => askForShot('screen', 'the whole screen'));
 // Saving what you have just drawn, from where you drew it. The same thing

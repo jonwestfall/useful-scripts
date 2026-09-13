@@ -507,8 +507,13 @@ ok(`an over-full slide is shrunk to fit (to ${Math.round(fitted.scale * 100)}%)`
 ok('and then nothing runs off the bottom of it', fitted.over <= 1);
 ok(`it is still the same shape, so ink still lands where it was drawn (${fitted.aspect.toFixed(3)})`,
   Math.abs(fitted.aspect - 16 / 9) < 0.002);
-ok('the controller says the slide was shrunk rather than leaving you guessing',
-  (await control.textContent('#deck-count')).includes(`fit ${Math.round(fitted.scale * 100)}%`));
+// Waited for rather than read: the controller learns which slide is up from
+// the display's next heartbeat, so reading its readout the instant the
+// projector changed is a race that fails about one run in ten.
+await control.waitForFunction((want) => document.querySelector('#deck-count').textContent.includes(want),
+  `fit ${Math.round(fitted.scale * 100)}%`, { timeout: 8000 })
+  .then(() => ok('the controller says the slide was shrunk rather than leaving you guessing', true))
+  .catch(async () => ok(`the controller says the slide was shrunk rather than leaving you guessing (said "${await control.textContent('#deck-count')}")`, false));
 ok('and its thumbnail is shrunk by the same amount, so the two agree',
   await control.evaluate((want) => {
     const svg = document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell svg')[8];
@@ -915,8 +920,15 @@ const kept = await pad.evaluate(() => {
   return { jpeg: img.src.startsWith('data:image/jpeg'), badge: document.querySelector('#photo-strip .shot-num').textContent };
 });
 ok(`it is a real photo, taken on the display (badge "${kept.badge}")`, kept.jpeg && kept.badge === 'Panel A');
-// The photo has to BE the board plus the ink - not a blank rectangle.
-const hasInk = await pad.evaluate(() => new Promise((resolve) => {
+await pad.click('#photo-strip .shot');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-image'), null, { timeout: 10000 });
+ok('and it goes straight back up as an ordinary photo', true);
+
+// The photo has to BE the board plus the ink - not a blank rectangle. Measured
+// on the projector rather than on the thumbnail in the strip: the strip draws
+// small JPEG copies, and a 6px pen shrunk to a fifth of its size and
+// re-compressed is not a fair test of whether the ink was captured.
+const hasInk = await screen.evaluate(() => new Promise((resolve) => {
   const img = new Image();
   img.onload = () => {
     const c = document.createElement('canvas');
@@ -933,13 +945,9 @@ const hasInk = await pad.evaluate(() => new Promise((resolve) => {
     }
     resolve({ board, ink });
   };
-  img.src = document.querySelector('#photo-strip .shot img').src;
+  img.src = document.querySelector('.layer[data-role="program"] .r-image').src;
 }));
 ok(`the photo really is the board with the ink burnt into it (${hasInk.ink} inked pixels)`, hasInk.board > 1000 && hasInk.ink > 200);
-
-await pad.click('#photo-strip .shot');
-await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-image'), null, { timeout: 10000 });
-ok('and it goes straight back up as an ordinary photo', true);
 
 // Hold a panel letter. The click that a tap would fire must not also happen.
 await pad.click('.layout-btn[data-layout="2h"]');
@@ -1069,12 +1077,38 @@ ok('with the board that was drawn on, rebuilt as an image', names.some((n) => n.
 ok('and a manifest saying what is inside', names.includes('session.txt'));
 ok('named for the room and the day, not "download (3)"', /^podium-keep-room-\d{4}-\d{2}-\d{2}/.test(file.suggestedFilename()));
 
+// The strip is drawn from small copies: two dozen full-size photos, rendered
+// twice over (Camera tab and Photos tab), is a few hundred megabytes of
+// decoded bitmap on the device least able to spare it.
+await pad.waitForFunction(() => [...document.querySelectorAll('#photo-strip .shot img')].every((i) => i.src.length < 30000), null, { timeout: 15000 })
+  .then(() => ok('the strip draws small copies rather than the full photos', true))
+  .catch(() => ok('the strip draws small copies rather than the full photos', false));
+ok('and every tile says when it was taken', (await pad.$$('#photo-strip .shot-time')).length === 4);
+
+const single = pad.waitForEvent('download', { timeout: 20000 });
+await pad.click('#photo-strip .shot .shot-save');
+const onePhoto = await single;
+ok(`one photo can be saved on its own, without building the whole zip (${onePhoto.suggestedFilename()})`,
+  /\.jpg$/.test(onePhoto.suggestedFilename()));
+ok('and saving it neither removes it nor puts it on screen', (await pad.$$('#photo-strip .shot')).length === 4);
+
+// Discarding the lot is two taps, like everything else here that cannot be
+// undone - and it is about the strip, not about the projector.
+await pad.click('#photo-strip .shot');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-image'), null, { timeout: 10000 });
+await pad.click('#photo-clear');
+ok('one tap only arms "discard every photo"', (await pad.$$('#photo-strip .shot')).length === 4);
+await pad.click('#photo-clear');
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 0, null, { timeout: 5000 })
+  .then(() => ok('the second tap clears the strip', true))
+  .catch(() => ok('the second tap clears the strip', false));
+ok('and what the class is looking at is not touched by it',
+  await screen.evaluate(() => !!document.querySelector('.layer[data-role="program"] .r-image')));
+
 // Last, because it empties this controller's strip: a controller that reloads
 // mid-lecture has no bytes for the photo the projector is showing. It asks the
 // display for them rather than rendering `asset:<id>` as a URL, which is a
 // broken image in every mirror on the page.
-await pad.click('#photo-strip .shot');
-await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-image'), null, { timeout: 10000 });
 await pad.reload();
 await pad.waitForSelector('.tile');
 await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'), null, { timeout: 20000 });

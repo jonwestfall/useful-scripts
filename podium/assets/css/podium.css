@@ -634,10 +634,20 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
   position: absolute; right: 4px; bottom: 4px; padding: 1px 6px; border-radius: 6px;
   background: var(--accent); font: 700 11px/1.7 system-ui, sans-serif; color: #07101f;
 }
-.shot-del {
-  position: absolute; top: 2px; right: 4px; width: 26px; height: 26px;
+/* The two corner actions. Deliberately tap-sized rather than tidy: this gets
+   used one-handed, at a lectern, in front of people. */
+.shot-del, .shot-save {
+  position: absolute; top: 2px; width: 26px; height: 26px;
   display: grid; place-items: center; border-radius: 8px;
   background: rgba(0, 0, 0, .55); color: #fff; font-size: 17px;
+}
+.shot-del { right: 4px; }
+.shot-save { right: 34px; font-size: 15px; }
+/* When it was taken: the one thing that tells two photos of the same panel
+   apart when there are twenty of them. */
+.shot-time {
+  position: absolute; top: 4px; left: 4px; padding: 0 4px; border-radius: 5px;
+  background: rgba(0, 0, 0, .55); color: #fff; font: 600 9px/1.7 system-ui, sans-serif;
 }
 
 /* The set of countdowns, each showing its own clock: you can see all four at

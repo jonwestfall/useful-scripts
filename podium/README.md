@@ -616,9 +616,14 @@ and one button takes the lot home.
 | **Save a photo** (Ink tab) | The panel you are drawing on, without reaching for the top bar |
 | **Take a photo** (Camera tab) | A frame frozen off the document camera |
 
-All four land in the same place: the **Photos** tab. Tap one to put it back on the
-focused panel — a photo is a photo, so it can sit in a panel while the lecture moves
-on, be annotated again on its own surface, and be photographed again in turn.
+All four land in the same place: the **Photos** tab, which keeps a count on its own
+label so a photo taken by holding a button in the top bar does not land somewhere you
+are not looking. Tap one to put it back on the focused panel — a photo is a photo, so
+it can sit in a panel while the lecture moves on, be annotated again on its own
+surface, and be photographed again in turn. Each tile carries the time it was taken,
+a **⤓** to save that one photo on its own, and a **×** to discard it (which tidies the
+strip and leaves the projector alone). **Discard every photo** at the bottom clears
+the lot, behind the same two taps as everything else here that cannot be undone.
 
 The picture is composed *on the display*, because that is the only device that has the
 real thing: the camera frame as it arrives, the deck stopped three bullets into a
