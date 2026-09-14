@@ -1,0 +1,25 @@
+{
+  "_comment": "Background music for the controller's Music tab. Each playlist is a name and a list of tracks; a track needs a src (a path next to these pages, or a full URL to a file on your own server) and ideally a title and artist. Nothing here is loaded until you press Load on that tab, and nothing about it ever appears on the projector. Keep your own music on your own server and point at it - a public repository is no place for it.",
+  "playlists": [
+    {
+      "name": "Before class (example)",
+      "tracks": [
+        {
+          "title": "Waiting music",
+          "artist": "Podium (synthesized placeholder - swap for your own)",
+          "src": "content/audio/waiting-music.wav"
+        }
+      ]
+    },
+    {
+      "name": "Your own server (template)",
+      "tracks": [
+        {
+          "title": "Point these at your own files",
+          "artist": "Any https:// URL that serves audio works - no CORS headers needed",
+          "src": "https://your-server.example/music/track-01.mp3"
+        }
+      ]
+    }
+  ]
+}

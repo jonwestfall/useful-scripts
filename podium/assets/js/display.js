@@ -14,7 +14,10 @@ import {
 } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD } from './protocol.js';
+import {
+  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD,
+  MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS,
+} from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { encodeToFit } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
@@ -589,6 +592,160 @@ async function takeShot(target) {
   return { dataUrl: shrunk.dataUrl, title, width: shrunk.width, height: shrunk.height, tooBig: shrunk.tooBig };
 }
 
+// --- background music --------------------------------------------------------
+//
+// One <audio> element that is never added to the document: the room hears it,
+// the projector shows nothing, and no panel is spent on it. It is driven from
+// state.music (see protocol.js) exactly the way the panels are driven from
+// state.program, so two controllers agree about what is playing and one that
+// joins mid-lecture is caught up by the next heartbeat.
+//
+// Volume is ramped rather than set, everywhere. Music that starts or stops at
+// full level in a quiet room is startling, and a clip that begins while music
+// is playing should not have to shout over it - so a clip with its own sound
+// ducks the music to a whisper and it comes back when the clip finishes.
+
+const musicEl = new Audio();
+musicEl.id = 'music';
+musicEl.preload = 'auto';
+// Its own element, so the room volume applies to CONTENT audio and this has a
+// level of its own. Mute is the exception: that button means silence.
+musicEl.volume = 0;
+// In the document, but with nothing to draw: an <audio> without `controls`
+// has no box at all, and `hidden` says so out loud. It is here rather than
+// floating loose so that everything about this screen can be inspected the
+// same way - by looking at the page.
+musicEl.hidden = true;
+document.body.append(musicEl);
+
+let musicFade = null;
+// Where a ramp in flight is headed. syncMusic runs on every render, so it has
+// to be able to tell "the level is already on its way there" from "the level
+// is wrong": without that it restarts the fade from wherever it had got to,
+// every render, and a three-second fade out lasts as long as the renders do.
+let musicFadeTo = -1;
+let musicApplied = { src: '', playing: false, target: -1 };
+
+function rampMusic(to, ms) {
+  clearInterval(musicFade);
+  musicFade = null;
+  const from = musicEl.volume;
+  const target = Math.min(1, Math.max(0, to));
+  if (ms <= 0 || Math.abs(target - from) < 0.005) {
+    musicEl.volume = target;
+    return Promise.resolve();
+  }
+  const steps = Math.max(1, Math.round(ms / 50));
+  let step = 0;
+  musicFadeTo = target;
+  return new Promise((resolve) => {
+    musicFade = setInterval(() => {
+      step += 1;
+      musicEl.volume = Math.min(1, Math.max(0, from + (target - from) * (step / steps)));
+      if (step >= steps) { clearInterval(musicFade); musicFade = null; resolve(); }
+    }, 50);
+  });
+}
+
+// Anything on screen that has its own sound. Not the camera (a document
+// camera sends no audio) and not a whiteboard - only the things that would
+// actually be competing with the music.
+function contentIsSounding() {
+  return activePanels().some((panel) => {
+    if (!['video', 'audio', 'youtube'].includes(panel.item?.type)) return false;
+    return !!panel.renderer?.telemetry?.().playing;
+  });
+}
+
+function musicTarget() {
+  if (state.muted) return 0;
+  return state.music.volume * (contentIsSounding() ? MUSIC_DUCK : 1);
+}
+
+// A track that will not play is the single most likely thing to go wrong the
+// first time someone points this at their own server - a typo, a file that is
+// not there, or an http:// URL inside an https:// page, which browsers block
+// as mixed content without a word. Silence with no explanation is the worst
+// possible answer, so what happened rides back to the controllers.
+let musicError = '';
+musicEl.addEventListener('error', () => {
+  const track = state.music.tracks[state.music.index];
+  const url = track?.src || '';
+  musicError = /^http:\/\//i.test(url) && location.protocol === 'https:'
+    ? 'that track is an http:// link inside an https:// page, which the browser blocks'
+    : 'that track would not load — check the link is right and reachable from this screen';
+  broadcastSoon();
+});
+for (const ok of ['playing', 'loadeddata']) musicEl.addEventListener(ok, () => {
+  if (!musicError) return;
+  musicError = '';
+  broadcastSoon();
+});
+
+function syncMusic() {
+  const music = state.music;
+  const track = music.tracks[music.index] || null;
+  const src = track ? new URL(track.src, location.href).href : '';
+
+  if (!src) {
+    clearInterval(musicFade);
+    musicFade = null;
+    musicEl.pause();
+    musicEl.removeAttribute('src');
+    musicApplied = { src: '', playing: false, target: -1 };
+    // Nothing queued any more, so a complaint about a track has nothing left
+    // to be about.
+    if (musicError) { musicError = ''; broadcastSoon(); }
+    return;
+  }
+
+  const changed = src !== musicApplied.src;
+  if (changed) {
+    musicEl.src = src;
+    musicEl.volume = 0;
+  }
+
+  const target = musicTarget();
+  // What the level will be once everything in flight has finished, which is
+  // what a decision about it has to be made against.
+  const heading = musicFade ? musicFadeTo : musicEl.volume;
+
+  if (music.playing) {
+    if (musicEl.paused || changed) {
+      // A play() the browser refuses (nobody has clicked Go live yet) is not
+      // an error worth showing: the click that arms this screen commits state
+      // again, which brings us straight back here.
+      musicEl.play().then(() => rampMusic(target, music.fadeMs)).catch(() => {});
+    } else if (Math.abs(target - heading) > 0.005) {
+      // A duck, an un-duck, the level being dragged on the iPad - or Play
+      // pressed during a fade out, which has to catch the level on its way
+      // down and bring it back rather than leave it running at silence.
+      rampMusic(target, MUSIC_DUCK_MS);
+    }
+  } else if (!musicEl.paused && !(musicFade && musicFadeTo <= 0.005)) {
+    // Not already fading out: start doing so. A fade that is in flight is left
+    // strictly alone - see musicFadeTo.
+    const fade = music.fadeMs ?? MUSIC_PAUSE_MS;
+    rampMusic(0, fade).then(() => { if (!state.music.playing) musicEl.pause(); });
+  }
+
+  musicApplied = { src, playing: music.playing, target };
+}
+
+// A track running out is the display's own observation, so it goes through
+// applyCommand like anything else and is broadcast: every controller's queue
+// moves on with it.
+musicEl.addEventListener('ended', () => {
+  if (applyCommand(state, { op: 'music', action: 'next', auto: true })) commit();
+});
+
+// Ducking depends on what content is doing, which nothing commits state for -
+// so it is re-checked on the same beat that carries playback telemetry.
+setInterval(() => {
+  if (!state.music.playing) return;
+  if (Math.abs(musicTarget() - musicApplied.target) > 0.005) syncMusic();
+}, TELEMETRY_MS);
+
 // --- laser pointer -----------------------------------------------------------
 //
 // Deliberately outside `state`: a live gesture, not a document. Positions
@@ -628,6 +785,7 @@ function hideLaser() {
 // --- rendering the rest of the chrome --------------------------------------
 
 function render() {
+  syncMusic();
   blankEl.classList.toggle('is-on', state.blank);
   overlayEl.textContent = state.overlay.text;
   overlayEl.classList.toggle('is-on', state.overlay.visible && !!state.overlay.text);
@@ -672,6 +830,14 @@ function wireState() {
       digest: inkDigest(inkState.bySurface[key]?.strokes),
     },
     stageAspect: stage.clientWidth && stage.clientHeight ? stage.clientWidth / stage.clientHeight : 16 / 9,
+    // Where the music has got to, and whether something on screen is currently
+    // talking over it - both things a controller can only learn from here.
+    musicNow: {
+      time: musicEl.currentTime || 0,
+      duration: Number.isFinite(musicEl.duration) ? musicEl.duration : 0,
+      ducked: state.music.playing && contentIsSounding(),
+      error: musicError,
+    },
     // So a controller can tell you when this screen is running older code
     // than it is, rather than leaving you to diagnose it as a bug.
     build: BUILD,
@@ -749,9 +915,13 @@ function stateStorageKey() {
 function saveStateNow() {
   clearTimeout(stateSaveTimer);
   try {
-    const { program, panels, layout, focus, timers, overlay, volume, muted } = state;
+    const { program, panels, layout, focus, timers, overlay, volume, muted, music } = state;
     localStorage.setItem(stateStorageKey(), JSON.stringify({
       savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, muted,
+      // The queue, not the playing: a reload lands on the arming screen, and
+      // music that started itself the moment someone clicked Go live would be
+      // a surprise in a room that had gone quiet.
+      music: { ...music, playing: false },
     }));
   } catch { /* quota or private mode - the lecture just will not come back */ }
 }
@@ -794,6 +964,9 @@ function restoreState() {
   if (saved.overlay && typeof saved.overlay === 'object') state.overlay = saved.overlay;
   if (Number.isFinite(saved.volume)) state.volume = saved.volume;
   state.muted = !!saved.muted;
+  if (saved.music && Array.isArray(saved.music.tracks)) {
+    state.music = { ...state.music, ...saved.music, playing: false };
+  }
 
   // Deliberately NOT restored: frozen, blank and the cued preview. Those are
   // "what I am doing this second", and coming back mid-gesture into a held or

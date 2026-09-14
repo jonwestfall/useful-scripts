@@ -650,6 +650,46 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
   background: rgba(0, 0, 0, .55); color: #fff; font: 600 9px/1.7 system-ui, sans-serif;
 }
 
+/* --- background music -------------------------------------------------------
+   A remote for something happening in another room, so it leans on saying what
+   is true right now: which track, how far in, and whether it is currently
+   ducked under something else. */
+.music-now {
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel);
+}
+#music-title { font-size: 17px; font-weight: 600; }
+/* A track that will not play says so here, and a dim grey hint is exactly
+   what the eye skips over, so the line takes the cue colour instead. */
+#music-sub.is-warning { color: var(--cue); }
+.music-bar {
+  height: 6px; margin-top: 10px; border-radius: 999px; overflow: hidden;
+  background: #0e1216;
+}
+#music-elapsed { height: 100%; width: 0; background: var(--accent); transition: width .4s linear; }
+.music-times { display: flex; justify-content: space-between; margin-top: 5px; font-size: 12px; color: var(--dim); }
+
+/* Prev, play and next belong on one row with the thumb in the middle - the
+   shared .big-button is full-width by design, which stacks them. */
+.music-transport { display: flex; gap: 10px; align-items: stretch; }
+.music-transport button { min-height: 58px; font-size: 17px; font-weight: 600; }
+.music-transport .skip { flex: 0 0 72px; font-size: 20px; padding: 0; }
+#music-play {
+  flex: 1; background: var(--accent); border-color: var(--accent); color: #06101f;
+}
+#music-play:disabled { background: var(--panel-2); border-color: var(--line); color: var(--ink); }
+
+.music-queue { display: flex; flex-direction: column; gap: 4px; max-height: 42vh; overflow: auto; }
+.music-row {
+  display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center;
+  min-height: 42px; padding: 6px 10px; text-align: left; border-radius: 10px;
+}
+.music-row.is-on { border-color: var(--accent); background: #16202c; }
+.music-row-n { color: var(--dim); font-size: 12px; text-align: center; }
+.music-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.music-row-artist { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
+#bar-music.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
+
 /* The set of countdowns, each showing its own clock: you can see all four at
    a glance, and the controls below drive whichever is selected. */
 #timer-chips { gap: 6px; }
@@ -679,7 +719,7 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .bottombar .vol { flex: 2; display: flex; align-items: center; gap: 8px; min-width: 0; }
 /* A range input's intrinsic min-width would otherwise push it off a phone. */
 .bottombar .vol input { flex: 1; min-width: 0; width: 100%; }
-#mute, #bar-play { flex: none; width: 52px; padding: 0; }
+#mute, #bar-play, #bar-music { flex: none; width: 52px; padding: 0; }
 
 /* On a phone the bar has to fit one row: drop the identifiers you only need
    when something is wrong, and let the buttons shrink. */
@@ -688,7 +728,7 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
   .bottombar { gap: 6px; }
   .bottombar button { min-width: 0; padding: 0 8px; }
   .bottombar .vol { flex: 1; min-width: 76px; gap: 6px; }
-  #mute, #bar-play { width: 44px; }
+  #mute, #bar-play, #bar-music { width: 44px; }
 }
 
 @media (max-width: 900px) {
