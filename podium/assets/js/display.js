@@ -619,10 +619,16 @@ musicEl.hidden = true;
 document.body.append(musicEl);
 
 let musicFade = null;
+// Where a ramp in flight is headed. syncMusic runs on every render, so it has
+// to be able to tell "the level is already on its way there" from "the level
+// is wrong": without that it restarts the fade from wherever it had got to,
+// every render, and a three-second fade out lasts as long as the renders do.
+let musicFadeTo = -1;
 let musicApplied = { src: '', playing: false, target: -1 };
 
 function rampMusic(to, ms) {
   clearInterval(musicFade);
+  musicFade = null;
   const from = musicEl.volume;
   const target = Math.min(1, Math.max(0, to));
   if (ms <= 0 || Math.abs(target - from) < 0.005) {
@@ -631,6 +637,7 @@ function rampMusic(to, ms) {
   }
   const steps = Math.max(1, Math.round(ms / 50));
   let step = 0;
+  musicFadeTo = target;
   return new Promise((resolve) => {
     musicFade = setInterval(() => {
       step += 1;
@@ -655,6 +662,26 @@ function musicTarget() {
   return state.music.volume * (contentIsSounding() ? MUSIC_DUCK : 1);
 }
 
+// A track that will not play is the single most likely thing to go wrong the
+// first time someone points this at their own server - a typo, a file that is
+// not there, or an http:// URL inside an https:// page, which browsers block
+// as mixed content without a word. Silence with no explanation is the worst
+// possible answer, so what happened rides back to the controllers.
+let musicError = '';
+musicEl.addEventListener('error', () => {
+  const track = state.music.tracks[state.music.index];
+  const url = track?.src || '';
+  musicError = /^http:\/\//i.test(url) && location.protocol === 'https:'
+    ? 'that track is an http:// link inside an https:// page, which the browser blocks'
+    : 'that track would not load — check the link is right and reachable from this screen';
+  broadcastSoon();
+});
+for (const ok of ['playing', 'loadeddata']) musicEl.addEventListener(ok, () => {
+  if (!musicError) return;
+  musicError = '';
+  broadcastSoon();
+});
+
 function syncMusic() {
   const music = state.music;
   const track = music.tracks[music.index] || null;
@@ -662,9 +689,13 @@ function syncMusic() {
 
   if (!src) {
     clearInterval(musicFade);
+    musicFade = null;
     musicEl.pause();
     musicEl.removeAttribute('src');
     musicApplied = { src: '', playing: false, target: -1 };
+    // Nothing queued any more, so a complaint about a track has nothing left
+    // to be about.
+    if (musicError) { musicError = ''; broadcastSoon(); }
     return;
   }
 
@@ -675,17 +706,25 @@ function syncMusic() {
   }
 
   const target = musicTarget();
+  // What the level will be once everything in flight has finished, which is
+  // what a decision about it has to be made against.
+  const heading = musicFade ? musicFadeTo : musicEl.volume;
+
   if (music.playing) {
     if (musicEl.paused || changed) {
       // A play() the browser refuses (nobody has clicked Go live yet) is not
       // an error worth showing: the click that arms this screen commits state
       // again, which brings us straight back here.
       musicEl.play().then(() => rampMusic(target, music.fadeMs)).catch(() => {});
-    } else if (Math.abs(target - musicApplied.target) > 0.005) {
-      // A duck, an un-duck, or the level being dragged on the iPad.
+    } else if (Math.abs(target - heading) > 0.005) {
+      // A duck, an un-duck, the level being dragged on the iPad - or Play
+      // pressed during a fade out, which has to catch the level on its way
+      // down and bring it back rather than leave it running at silence.
       rampMusic(target, MUSIC_DUCK_MS);
     }
-  } else if (!musicEl.paused) {
+  } else if (!musicEl.paused && !(musicFade && musicFadeTo <= 0.005)) {
+    // Not already fading out: start doing so. A fade that is in flight is left
+    // strictly alone - see musicFadeTo.
     const fade = music.fadeMs ?? MUSIC_PAUSE_MS;
     rampMusic(0, fade).then(() => { if (!state.music.playing) musicEl.pause(); });
   }
@@ -797,6 +836,7 @@ function wireState() {
       time: musicEl.currentTime || 0,
       duration: Number.isFinite(musicEl.duration) ? musicEl.duration : 0,
       ducked: state.music.playing && contentIsSounding(),
+      error: musicError,
     },
     // So a controller can tell you when this screen is running older code
     // than it is, rather than leaving you to diagnose it as a bug.

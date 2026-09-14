@@ -179,11 +179,18 @@ await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), 
 // the slides still render, so they are noise rather than a result.
 const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_PROXY_CONNECTION_FAILED/;
 
+// One test deliberately points the music player at a file that is not there, to
+// prove the room is told why it went quiet. The browser's own 404 is the point
+// of that test rather than a result, and naming the fixture keeps the allowance
+// narrow enough that a real 404 anywhere else still counts.
+const DELIBERATE = /not-a-real-file/;
+
 const trap = (page, tag) => {
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
-    if (OFFLINE_NOISE.test(m.text())) return;
+    const where = `${m.text()} ${m.location()?.url || ''}`;
+    if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where)) return;
     errors.push(`${tag} console: ${m.text()}`);
   });
 };
@@ -1266,9 +1273,10 @@ await screen.waitForFunction(() => (document.querySelector('audio#music').curren
   .catch(() => ok('next moves the display to the next track', false));
 
 // A track running out advances by itself, and everyone follows.
+await screen.waitForFunction(() => Number.isFinite(document.querySelector('audio#music').duration), null, { timeout: 15000 });
 await screen.evaluate(() => {
   const el = document.querySelector('audio#music');
-  el.currentTime = Math.max(0, (el.duration || 1) - 0.25);
+  el.currentTime = Math.max(0, el.duration - 0.25);
 });
 await pad.waitForFunction(() => document.querySelector('#music-sub').textContent.includes('1 of 2'), null, { timeout: 15000 })
   .then(() => ok('a track running out wraps to the next one on its own', true))
@@ -1281,6 +1289,20 @@ await screen.waitForFunction(() => {
   const el = document.querySelector('audio#music');
   return el && !el.paused && el.currentTime > 0.3 && el.volume > 0.3;
 }, null, { timeout: 15000 });
+
+// A fade out you change your mind about, which is what happens when someone
+// walks in late: Play has to catch the level on its way down and bring it
+// back, rather than leave the track running at silence.
+await pad.click('#music-fade');
+await screen.waitForFunction(() => document.querySelector('audio#music').volume < 0.4, null, { timeout: 8000 });
+await pad.click('#music-play');
+await screen.waitForFunction(() => {
+  const el = document.querySelector('audio#music');
+  return !el.paused && el.volume > 0.5;
+}, null, { timeout: 8000 })
+  .then(() => ok('Play during a fade out catches the music and brings it back', true))
+  .catch(() => ok('Play during a fade out catches the music and brings it back', false));
+
 await pad.click('#music-fade');
 const fade = await screen.evaluate(() => new Promise((resolve) => {
   const el = document.querySelector('audio#music');
@@ -1292,8 +1314,41 @@ const fade = await screen.evaluate(() => new Promise((resolve) => {
   }, 50);
 }));
 ok(`"fade out and stop" takes the room down gently rather than cutting it (${fade.ms}ms)`,
-  fade.ms > 1500 && fade.ms < 6000 && fade.end < 0.05);
+  fade.ms > 2200 && fade.ms < 4200 && fade.end < 0.05);
 ok('and leaves the player paused, not silently running', (await music()).paused);
+
+// A path that is not there is the likeliest first-night mistake, and music
+// that simply never starts, with nothing said anywhere, is the worst possible
+// answer to it: you stand there in a quiet room checking cables.
+await pad.click('#music-clear');
+await pad.fill('#music-url', 'content/audio/not-a-real-file.mp3');
+await pad.click('#music-url-form button[type="submit"]');
+await pad.waitForFunction(() => /would not load/.test(document.querySelector('#music-sub').textContent), null, { timeout: 10000 })
+  .then(() => ok('a track that will not load says so instead of going quiet', true))
+  .catch(() => ok('a track that will not load says so instead of going quiet', false));
+ok('and says it in the warning colour, not as a grey hint',
+  await pad.evaluate(() => document.querySelector('#music-sub').classList.contains('is-warning')));
+await phone.waitForFunction(() => /would not load/.test(document.querySelector('#music-sub').textContent), null, { timeout: 8000 })
+  .then(() => ok('every controller in the room hears about it', true))
+  .catch(() => ok('every controller in the room hears about it', false));
+
+// And the complaint clears itself once something does play, rather than
+// haunting the panel for the rest of the class.
+await pad.fill('#music-url', 'content/audio/waiting-music.wav?v=2#start');
+await pad.click('#music-url-form button[type="submit"]');
+await pad.click('#music-next');
+await pad.waitForFunction(() => !/would not load/.test(document.querySelector('#music-sub').textContent), null, { timeout: 12000 })
+  .then(() => ok('and the message clears itself when a track does play', true))
+  .catch(() => ok('and the message clears itself when a track does play', false));
+ok('a pasted link keeps its query string out of the track name',
+  (await pad.$$eval('.music-row-title', (ns) => ns.map((n) => n.textContent))).every((t) => !/[?#]/.test(t)));
+
+// And emptying the queue takes the complaint with it, rather than leaving it
+// on the panel for the rest of the class.
+await pad.click('#music-clear');
+await pad.waitForFunction(() => document.querySelector('#music-title').textContent === 'Nothing queued', null, { timeout: 8000 });
+ok('clearing the queue leaves no stale warning behind',
+  !/would not load/.test(await pad.textContent('#music-sub')));
 await ctx.close();
 }
 }

@@ -619,6 +619,11 @@ position without being told.
 The queue survives a reload of the display — it comes back paused rather than starting
 by itself in a room that had gone quiet.
 
+**When a track will not play**, the Music tab says so in the cue colour instead of
+leaving you in a quiet room checking cables: a bad path, a file that is not there, or
+an `http://` link inside an `https://` page, which browsers block silently as mixed
+content. The message clears itself as soon as something does play.
+
 **What about Apple Music or YouTube?** Neither is here, deliberately. Apple Music needs
 a paid Apple Developer membership, a MusicKit private key and a signed token that
 expires every six months before a browser can play a single subscriber track. YouTube's
@@ -1141,7 +1146,7 @@ and that a controller which reloads mid-lecture gets the photo back from the dis
 rather than rendering a broken image, that holding a button does not also fire the tap
 underneath it, that `Ctrl+P` still belongs to the browser, and that the background
 music fades in, ducks under a clip, survives freeze and blank, and shows the projector
-nothing at all. 309 checks.
+nothing at all. 316 checks.
 
 ## Layout
 

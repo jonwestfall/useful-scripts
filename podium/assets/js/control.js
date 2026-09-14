@@ -1960,11 +1960,13 @@ function renderMusic() {
 
   $('#music-title').textContent = track ? track.title : 'Nothing queued';
   const parts = [];
+  if (now.error) parts.push(now.error);
   if (track?.artist) parts.push(track.artist);
   if (music.tracks.length) parts.push(`${music.index + 1} of ${music.tracks.length}${music.playlist ? ` · ${music.playlist}` : ''}`);
   if (now.ducked) parts.push('ducked while a clip plays');
   if (state.muted) parts.push('the room is muted');
   $('#music-sub').textContent = parts.join(' · ');
+  $('#music-sub').classList.toggle('is-warning', !!now.error);
 
   const pct = now.duration ? Math.min(100, (now.time / now.duration) * 100) : 0;
   $('#music-elapsed').style.width = `${pct}%`;
@@ -2470,7 +2472,9 @@ $('#music-url-form').addEventListener('submit', (ev) => {
   ev.preventDefault();
   const src = $('#music-url').value.trim();
   if (!src) return;
-  const title = decodeURIComponent(src.split('/').pop() || 'Track').replace(/\.[a-z0-9]+$/i, '');
+  // The last path segment, without the query string a signed or cache-busted
+  // URL carries and without the extension: "sonata.mp3?token=…" is "sonata".
+  const title = decodeURIComponent((src.split('/').pop() || 'Track').split(/[?#]/)[0]).replace(/\.[a-z0-9]+$/i, '') || 'Track';
   send({ op: 'music', action: 'add', tracks: [{ src, title }] });
   $('#music-url').value = '';
   $('#music-note').textContent = `Queued “${title}”. It plays from wherever it is hosted; the display fetches it directly.`;
