@@ -20,6 +20,21 @@
           "src": "https://your-server.example/music/track-01.mp3"
         }
       ]
+    },
+    {
+      "name": "Ambient pre-lecture (fill in the blanks)",
+      "tracks": [
+        {
+          "title": "Download a track and drop it here",
+          "artist": "See content/audio/README.md for where to find real ambient tracks",
+          "src": "content/audio/ambient/01-your-track.mp3"
+        },
+        {
+          "title": "Then add as many more lines as you like",
+          "artist": "Same folder, same shape",
+          "src": "content/audio/ambient/02-your-track.mp3"
+        }
+      ]
     }
   ]
 }
