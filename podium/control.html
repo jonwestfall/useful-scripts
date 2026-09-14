@@ -109,6 +109,7 @@
         <button class="tab" data-tab="timer" type="button">Timer</button>
         <button class="tab" data-tab="camera" type="button">Camera</button>
         <button class="tab" data-tab="photos" type="button">Photos</button>
+        <button class="tab" data-tab="music" type="button">Music</button>
       </nav>
 
       <div class="panels">
@@ -349,6 +350,55 @@
           </p>
         </section>
 
+        <!-- Music: heard, never seen -->
+        <section class="panel" data-panel="music" hidden>
+          <p class="hint">
+            Plays through the classroom PC's speakers with nothing on the projector. It keeps going
+            while you teach — picking content, freezing and blanking do not touch it — and ducks to a
+            whisper by itself while a video or a clip with sound is playing.
+          </p>
+          <div class="inline">
+            <select id="music-playlist" aria-label="Playlist"></select>
+            <button id="music-load" type="button">Load</button>
+            <button id="music-add" type="button">Add to queue</button>
+          </div>
+          <form id="music-url-form" class="inline">
+            <input id="music-url" class="grow" type="text" inputmode="url" autocomplete="off"
+                   autocapitalize="off" spellcheck="false" placeholder="…or paste a link to an audio file">
+            <button type="submit">Queue it</button>
+          </form>
+          <div id="music-note" class="hint"></div>
+
+          <div id="music-now" class="music-now">
+            <div id="music-title">Nothing queued</div>
+            <div id="music-sub" class="hint"></div>
+            <div class="music-bar"><div id="music-elapsed"></div></div>
+            <div class="music-times"><span id="music-time">0:00</span><span id="music-length">--:--</span></div>
+          </div>
+
+          <div class="music-transport">
+            <button id="music-prev" class="skip" type="button" title="Previous track">⏮</button>
+            <button id="music-play" type="button">▶ Play</button>
+            <button id="music-next" class="skip" type="button" title="Next track">⏭</button>
+          </div>
+          <div class="inline">
+            <button id="music-fade" type="button">Fade out &amp; stop</button>
+            <button id="music-shuffle" type="button">Shuffle the rest</button>
+            <button id="music-clear" type="button">Clear queue</button>
+          </div>
+          <div class="inline">
+            <label class="grow" for="music-volume">Music level</label>
+            <input id="music-volume" type="range" min="0" max="1" step="0.01" value="0.6" aria-label="Music level">
+          </div>
+
+          <div id="music-queue" class="music-queue"></div>
+          <p class="hint">
+            Tracks come from <code>content/music.json</code> — a list of playlists pointing at audio
+            files anywhere they are reachable, including your own server, so nothing you play has to
+            live in the repository. See <code>content/audio/README.md</code>.
+          </p>
+        </section>
+
         <!-- Camera -->
         <section class="panel" data-panel="camera" hidden>
           <p class="hint">Turns this phone into a document camera: hold it over a book or a student's work and it goes on the projector.</p>
@@ -411,6 +461,7 @@
   </div>
 
   <div class="bottombar">
+    <button id="bar-music" type="button" hidden title="Pause or resume the music">♪</button>
     <button id="bar-play" type="button" hidden>▶</button>
     <button id="freeze" type="button">Freeze</button>
     <button id="blank" type="button">Blank</button>

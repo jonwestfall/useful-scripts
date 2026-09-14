@@ -393,7 +393,9 @@ await display.waitForFunction(()=>{const a=document.querySelector('.layer[data-r
 const after = await audioState();
 ok(`the taken clip starts playing (t=${after.program.t})`, !after.program.paused);
 ok(`it inherits the room volume rather than full blast (${after.program.vol})`, Math.abs(after.program.vol-0.35)<0.02);
-ok(`the clip it replaced was torn down (was at ${programBefore}s)`, await display.evaluate(()=>document.querySelectorAll('audio').length===1));
+// :not(#music) because the display also holds one hidden <audio> of its own
+// for the background music, which is not a clip and is never torn down.
+ok(`the clip it replaced was torn down (was at ${programBefore}s)`, await display.evaluate(()=>document.querySelectorAll('audio:not(#music)').length===1));
 
 // Mute.
 await control.click('#mute');
@@ -1162,6 +1164,138 @@ await pad.waitForFunction(() => {
 ok('and never renders an asset: reference as if it were a URL',
   await pad.evaluate(() => ![...document.querySelectorAll('img')].some((i) => i.getAttribute('src')?.startsWith('asset:'))));
 await ctx.close();
+}
+
+if (want('background music: heard, never seen')) {
+console.log('\n-- background music: heard, never seen --');
+{
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'music-room', passphrase: 'before class' }));
+const screen = await ctx.newPage();
+trap(screen, 'music display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'music pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// What the display's own player is doing, which is the only thing that
+// actually matters - the controller is a remote for it.
+const music = () => screen.evaluate(() => {
+  const el = document.querySelector('audio#music');
+  return el ? { src: (el.currentSrc || '').split('/').pop(), paused: el.paused, vol: Math.round(el.volume * 100) / 100 } : null;
+});
+
+await pad.click('.tab[data-tab="music"]');
+await pad.click('#music-load');
+await screen.waitForFunction(() => {
+  const el = document.querySelector('audio#music');
+  return el && !el.paused && el.currentTime > 0;
+}, null, { timeout: 15000 })
+  .then(() => ok('loading a playlist plays it on the display', true))
+  .catch(() => ok('loading a playlist plays it on the display', false));
+
+ok('and the projector shows nothing at all for it', await screen.evaluate(() => {
+  const el = document.querySelector('audio#music');
+  return el.hidden && el.getBoundingClientRect().height === 0
+    && !document.querySelector('.r-audio')
+    && document.querySelector('.layer[data-role="program"]').textContent.trim() === '';
+}));
+
+// It arrives at a listenable level rather than at full volume.
+const rampedUp = await screen.evaluate(() => new Promise((resolve) => {
+  const el = document.querySelector('audio#music');
+  const first = el.volume;
+  setTimeout(() => resolve({ first, later: el.volume }), 1200);
+}));
+ok(`it fades in rather than banging on (${rampedUp.first.toFixed(2)} -> ${rampedUp.later.toFixed(2)})`,
+  rampedUp.later > rampedUp.first);
+
+// A clip with its own sound ducks it, and it comes back afterwards.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Waiting music"))');
+await screen.waitForSelector('.r-audio', { timeout: 15000 });
+await pad.waitForTimeout(1800);
+const ducked = (await music()).vol;
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await screen.waitForSelector('.r-whiteboard', { timeout: 10000 });
+await pad.waitForTimeout(2200);
+const recovered = (await music()).vol;
+ok(`a clip with sound ducks the music to a whisper (${ducked})`, ducked > 0 && ducked < 0.2);
+ok(`and it comes back up when the clip goes away (${recovered})`, recovered > 0.5);
+
+// Teaching must not disturb it.
+await pad.click('#freeze');
+await pad.waitForTimeout(500);
+await pad.click('#blank');
+await pad.waitForTimeout(700);
+const during = await music();
+ok('freeze and blank leave the music alone', !during.paused && during.vol > 0.5);
+await pad.click('#blank');
+await pad.click('#freeze');
+
+// Mute is the room's silence button, so it covers the music too.
+await pad.click('#mute');
+await pad.waitForTimeout(1200);
+ok('Mute silences the music as well as the content', (await music()).vol < 0.02);
+await pad.click('#mute');
+await pad.waitForTimeout(1600);
+ok('and unmuting brings it back', (await music()).vol > 0.5);
+
+// The queue is shared state: a second controller sees it without asking.
+await pad.click('.tab[data-tab="music"]');
+await pad.fill('#music-url', 'content/audio/waiting-music.wav?second');
+await pad.click('#music-url-form button[type="submit"]');
+await pad.waitForFunction(() => document.querySelectorAll('.music-row').length === 2, null, { timeout: 8000 });
+const phone = await ctx.newPage();
+trap(phone, 'music phone');
+await phone.goto(`${BASE}/control.html`);
+await phone.waitForSelector('.tile');
+await phone.click('.tab[data-tab="music"]');
+await phone.waitForFunction(() => document.querySelectorAll('.music-row').length === 2, null, { timeout: 10000 })
+  .then(() => ok('a second controller sees the same queue and the same track', true))
+  .catch(() => ok('a second controller sees the same queue and the same track', false));
+
+await pad.click('#music-next');
+await screen.waitForFunction(() => (document.querySelector('audio#music').currentSrc || '').includes('second'), null, { timeout: 8000 })
+  .then(() => ok('next moves the display to the next track', true))
+  .catch(() => ok('next moves the display to the next track', false));
+
+// A track running out advances by itself, and everyone follows.
+await screen.evaluate(() => {
+  const el = document.querySelector('audio#music');
+  el.currentTime = Math.max(0, (el.duration || 1) - 0.25);
+});
+await pad.waitForFunction(() => document.querySelector('#music-sub').textContent.includes('1 of 2'), null, { timeout: 15000 })
+  .then(() => ok('a track running out wraps to the next one on its own', true))
+  .catch(() => ok('a track running out wraps to the next one on its own', false));
+
+// The button for the moment class starts. Waited for first: a track change
+// pauses the element for an instant while the next source loads, and
+// measuring a fade that began there would time nothing at all.
+await screen.waitForFunction(() => {
+  const el = document.querySelector('audio#music');
+  return el && !el.paused && el.currentTime > 0.3 && el.volume > 0.3;
+}, null, { timeout: 15000 });
+await pad.click('#music-fade');
+const fade = await screen.evaluate(() => new Promise((resolve) => {
+  const el = document.querySelector('audio#music');
+  const start = el.volume;
+  const began = Date.now();
+  const poll = setInterval(() => {
+    if (el.paused) { clearInterval(poll); resolve({ start, ms: Date.now() - began, end: el.volume }); }
+    else if (Date.now() - began > 8000) { clearInterval(poll); resolve({ start, ms: -1, end: el.volume }); }
+  }, 50);
+}));
+ok(`"fade out and stop" takes the room down gently rather than cutting it (${fade.ms}ms)`,
+  fade.ms > 1500 && fade.ms < 6000 && fade.end < 0.05);
+ok('and leaves the player paused, not silently running', (await music()).paused);
+await ctx.close();
+}
 }
 
 if (want('stills from the camera, one per panel')) {

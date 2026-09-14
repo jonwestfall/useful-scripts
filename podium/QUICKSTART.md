@@ -187,6 +187,12 @@ slide while the class sees only the current one.
 If you wander off to a photo and want to get back, the Library's **Back to** strip
 returns you to the exact slide you left — not the start of the deck.
 
+The **Music** tab plays music through the classroom computer with nothing on the
+projector — for while the room fills up. Put your tracks on your own server, list them
+in `content/music.json`, and press Load. It fades in, ducks itself when you play a
+video, and **Fade out & stop** takes the room quiet over three seconds when class
+begins.
+
 The **Camera** tab makes your phone a document camera — hold it over a book and it is
 on the wall. **Take a photo** freezes a frame and keeps it: tap the thumbnail to put
 it on screen, and since each photo is just a photo, you can split the screen and hold

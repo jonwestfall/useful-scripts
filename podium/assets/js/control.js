@@ -1229,6 +1229,7 @@ function renderLayoutBar() {
 }
 
 function renderAll() {
+  renderMusic();
   renderPhotos();
   renderRecent();
   renderPreview();
@@ -1911,6 +1912,92 @@ function askForShot(target, label) {
   bus.send({ t: 'shot-need', target });
 }
 
+// --- background music ---------------------------------------------------------
+//
+// The controller holds no music: the queue is in the shared state and the
+// sound comes out of the display, so this is a remote for something happening
+// in another room. Which also means a second controller, or one that joins
+// halfway through, sees the same queue and the same track without being told.
+
+const MUSIC_LIST = 'content/music.json';
+let playlists = [];
+let musicDrawn = '';
+
+async function loadPlaylists() {
+  try {
+    const res = await fetch(MUSIC_LIST, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    playlists = (Array.isArray(data) ? data : data.playlists || [])
+      .filter((list) => list && Array.isArray(list.tracks) && list.tracks.length);
+  } catch {
+    // No music.json is a perfectly good state: the tab explains how to add
+    // one, and a pasted link still works without it.
+    playlists = [];
+  }
+  const picker = $('#music-playlist');
+  picker.replaceChildren(...playlists.map((list, i) => el('option', { value: String(i) }, `${list.name || `Playlist ${i + 1}`} · ${list.tracks.length}`)));
+  const none = !playlists.length;
+  picker.hidden = none;
+  $('#music-load').hidden = none;
+  $('#music-add').hidden = none;
+  if (none) $('#music-note').textContent = 'No content/music.json yet — paste a link below, or add that file to keep playlists between lectures.';
+}
+
+function chosenPlaylist() {
+  return playlists[Number($('#music-playlist').value) || 0] || null;
+}
+
+function renderMusic() {
+  const music = state.music || { tracks: [], index: 0, playing: false, volume: 0.6 };
+  const track = music.tracks[music.index] || null;
+  const now = state.musicNow || { time: 0, duration: 0, ducked: false };
+
+  $('#music-play').textContent = music.playing ? '⏸ Pause' : '▶ Play';
+  $('#music-play').disabled = !music.tracks.length;
+  for (const id of ['#music-prev', '#music-next', '#music-shuffle', '#music-clear']) $(id).disabled = !music.tracks.length;
+  $('#music-fade').disabled = !music.playing;
+
+  $('#music-title').textContent = track ? track.title : 'Nothing queued';
+  const parts = [];
+  if (track?.artist) parts.push(track.artist);
+  if (music.tracks.length) parts.push(`${music.index + 1} of ${music.tracks.length}${music.playlist ? ` · ${music.playlist}` : ''}`);
+  if (now.ducked) parts.push('ducked while a clip plays');
+  if (state.muted) parts.push('the room is muted');
+  $('#music-sub').textContent = parts.join(' · ');
+
+  const pct = now.duration ? Math.min(100, (now.time / now.duration) * 100) : 0;
+  $('#music-elapsed').style.width = `${pct}%`;
+  $('#music-time').textContent = fmtTime(now.time);
+  $('#music-length').textContent = now.duration ? fmtTime(now.duration) : '--:--';
+
+  // The bottom bar carries it too, because the moment you want the music
+  // stopped is rarely the moment you are looking at the Music tab.
+  const bar = $('#bar-music');
+  bar.hidden = !music.tracks.length;
+  bar.textContent = music.playing ? '♪ ⏸' : '♪ ▶';
+  bar.classList.toggle('is-on', music.playing);
+
+  if (!musicSliding) $('#music-volume').value = String(music.volume);
+
+  // The queue is rebuilt only when it changes: it is redrawn from a heartbeat
+  // like everything else here.
+  const signature = `${music.tracks.map((t) => t.src).join('|')}::${music.index}::${music.playing}`;
+  if (signature === musicDrawn) return;
+  musicDrawn = signature;
+  $('#music-queue').replaceChildren(...music.tracks.map((t, i) => el('button', {
+    class: `music-row${i === music.index ? ' is-on' : ''}`,
+    type: 'button',
+    title: `${t.title}${t.artist ? ` — ${t.artist}` : ''}`,
+    onclick: () => send({ op: 'music', action: 'select', index: i }),
+  },
+    el('span', { class: 'music-row-n' }, i === music.index && music.playing ? '♪' : String(i + 1)),
+    el('span', { class: 'music-row-title' }, t.title),
+    el('span', { class: 'music-row-artist' }, t.artist || ''))));
+}
+
+let musicSliding = false;
+
 // --- connection -------------------------------------------------------------
 
 let relayStatus = 'connecting';
@@ -2365,6 +2452,42 @@ $('#cam-start').addEventListener('click', async () => {
   await startCamera();
 });
 $('#cam-shot').addEventListener('click', takeCameraPhoto);
+// --- music wiring ------------------------------------------------------------
+
+$('#music-load').addEventListener('click', () => {
+  const list = chosenPlaylist();
+  if (!list) return;
+  send({ op: 'music', action: 'load', tracks: list.tracks, name: list.name, play: true });
+  $('#music-note').textContent = `Playing “${list.name}” — ${list.tracks.length} track${list.tracks.length === 1 ? '' : 's'}.`;
+});
+$('#music-add').addEventListener('click', () => {
+  const list = chosenPlaylist();
+  if (!list) return;
+  send({ op: 'music', action: 'add', tracks: list.tracks });
+  $('#music-note').textContent = `Added “${list.name}” to the end of the queue.`;
+});
+$('#music-url-form').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const src = $('#music-url').value.trim();
+  if (!src) return;
+  const title = decodeURIComponent(src.split('/').pop() || 'Track').replace(/\.[a-z0-9]+$/i, '');
+  send({ op: 'music', action: 'add', tracks: [{ src, title }] });
+  $('#music-url').value = '';
+  $('#music-note').textContent = `Queued “${title}”. It plays from wherever it is hosted; the display fetches it directly.`;
+});
+$('#music-play').addEventListener('click', () => send({ op: 'music', action: 'toggle' }));
+$('#music-prev').addEventListener('click', () => send({ op: 'music', action: 'prev' }));
+$('#music-next').addEventListener('click', () => send({ op: 'music', action: 'next' }));
+$('#music-fade').addEventListener('click', () => send({ op: 'music', action: 'fadeout' }));
+$('#music-shuffle').addEventListener('click', () => send({ op: 'music', action: 'shuffle' }));
+$('#music-clear').addEventListener('click', () => send({ op: 'music', action: 'clear' }));
+$('#bar-music').addEventListener('click', () => send({ op: 'music', action: 'toggle' }));
+// Throttled like the room volume: dragging a slider should not put sixty
+// commands a second on the relay.
+const sendMusicVolume = throttle((value) => send({ op: 'music', action: 'volume', value }), 120);
+$('#music-volume').addEventListener('input', (ev) => { musicSliding = true; sendMusicVolume(Number(ev.target.value)); });
+$('#music-volume').addEventListener('change', () => { musicSliding = false; });
+
 $('#photo-export').addEventListener('click', exportSession);
 // Two taps, like every other irreversible button here. Clearing the strip
 // costs nothing that is on screen - the display keeps what it was sent - but
@@ -2543,6 +2666,7 @@ if (!isConfigured(cfg)) {
   renderPlanBar();
   renderTimerPresets();
   await loadLibrary();
+  await loadPlaylists();
   tab('library');
   renderAll();
 }

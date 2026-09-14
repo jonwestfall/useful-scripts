@@ -42,6 +42,7 @@ full reference; that one is the road in.
 [annotating with ink](#annotating-with-ink) ·
 [splitting the screen](#splitting-the-screen) ·
 [countdowns](#countdowns) ·
+[music before class](#music-before-class) ·
 [the document camera](#the-document-camera-and-photos-taken-with-it) ·
 [keeping what was on screen](#keeping-what-was-on-screen) ·
 [getting back to where you were](#getting-back-to-where-you-were)
@@ -102,7 +103,8 @@ see below. Plus: images · video files · audio (with a now-playing card) · You
 HTML slide decks including reveal.js · PDFs with page-turn buttons · big text cards ·
 a QR code for the class to scan · countdown timers · a whiteboard · your phone's
 camera as a document camera, including stills taken from it that you can hold in
-four panels at once.
+four panels at once. Plus background music the room hears and the projector never
+shows.
 
 Two more that sit on top of anything: **ink**, so you can annotate live over a slide
 with an Apple Pencil, and a **caption** along the bottom of the screen.
@@ -571,6 +573,60 @@ tablet sleeps or you close the controller and reopen it.
 
 A lecture plan defines the set: its saved timers become the four clocks, with their
 names and lengths, and a plan's countdown items say which one they show. See below.
+
+## Music before class
+
+The **Music** tab plays through the classroom PC's speakers with **nothing on the
+projector** — no panel spent on it, no card, no player. It is not content: picking a
+slide, freezing, blanking and taking a cue all leave it alone, so it keeps going while
+you set up and while you teach.
+
+**Where the tracks come from.** `content/music.json` holds named playlists, each a list
+of tracks with a `title`, an `artist` and a `src`. A `src` can be a file next to these
+pages *or a full URL to anything reachable* — including your own server — so the music
+you play never has to live in the repository:
+
+```json
+{ "playlists": [
+  { "name": "Before class",
+    "tracks": [
+      { "title": "…", "artist": "…", "src": "https://your-server.example/music/01.mp3" }
+    ] } ] }
+```
+
+Plain audio URLs need no CORS headers, so a private server works as-is over https.
+**Load** replaces the queue and starts playing, **Add to queue** appends a whole
+playlist, and pasting a link queues one track for this session only.
+
+**The controls.** Previous / play-pause / next, a queue you can tap to jump around,
+**Shuffle the rest** (what is playing keeps playing; the surprise is in what comes
+next), a music level of its own, and a play-pause button in the bottom bar so the
+music is one tap away from every tab. The queue lives in the shared state, so a second
+controller — or one that joins halfway through — sees the same tracks and the same
+position without being told.
+
+**Fades and ducking**, because a room notices both:
+
+- Music fades in over a couple of seconds rather than arriving at full volume.
+- **Fade out & stop** is the button for the moment class begins: the room goes quiet
+  over three seconds instead of being cut off mid-bar. A plain pause is quicker, about
+  a third of a second, so it still feels like pressing a button.
+- A video or audio clip going on screen **ducks the music to a whisper** by itself, and
+  it fades back when the clip finishes. Nothing to remember mid-lecture.
+- **Mute** means the room hears nothing, so it silences the music too. The room volume
+  slider is for content; the music has its own level.
+
+The queue survives a reload of the display — it comes back paused rather than starting
+by itself in a room that had gone quiet.
+
+**What about Apple Music or YouTube?** Neither is here, deliberately. Apple Music needs
+a paid Apple Developer membership, a MusicKit private key and a signed token that
+expires every six months before a browser can play a single subscriber track. YouTube's
+embed terms require the player to be visible, so using it as an invisible audio source
+is against them, and Premium's ad-free playback only applies if the classroom PC is
+signed into your account — a class hearing an advert mid-lecture is exactly the failure
+this app exists to avoid. Files you host yourself have none of those problems and keep
+working when the network does not.
 
 ## The document camera, and photos taken with it
 
@@ -1083,7 +1139,9 @@ theme's own colour, not the black rectangle an unscoped stylesheet produces), th
 holding a layout button does not also rearrange the screen it just photographed,
 and that a controller which reloads mid-lecture gets the photo back from the display
 rather than rendering a broken image, that holding a button does not also fire the tap
-underneath it, and that `Ctrl+P` still belongs to the browser. 296 checks.
+underneath it, that `Ctrl+P` still belongs to the browser, and that the background
+music fades in, ducks under a clip, survives freeze and blank, and shows the projector
+nothing at all. 309 checks.
 
 ## Layout
 
@@ -1113,6 +1171,7 @@ podium/
     vendor/marp.esm.js            Marp renderer, bundled for browsers
   marp-themes/                    your Marp CSS + themes.json
   content/manifest.json           your library
+  content/music.json              playlists for the Music tab
   content/decks/                  markdown decks
   server/                         the self-hosted relay
   vendor-build/                   rebuilds the Marp bundle

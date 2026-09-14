@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 12;
+export const BUILD = 13;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -37,6 +37,19 @@ export const LAYOUTS = {
 };
 
 export const MAX_TIMERS = 4;
+
+// Background music. A queue longer than this is a library, not a lecture's
+// worth of music, and the whole queue rides in every heartbeat.
+export const MAX_TRACKS = 100;
+export const MUSIC_FADE_IN_MS = 2500;
+export const MUSIC_FADE_OUT_MS = 3000;
+// A pause is a different gesture from a fade: it should feel like pressing a
+// button, not like a decision. Short enough to read as immediate, long enough
+// not to click.
+export const MUSIC_PAUSE_MS = 400;
+// What the music drops to while a clip with its own sound is on screen.
+export const MUSIC_DUCK = 0.15;
+export const MUSIC_DUCK_MS = 600;
 
 let timerSeq = 1;
 
@@ -102,6 +115,14 @@ export function initialState() {
     layout: 'single',
     panels: [{ ...BLACK }, { ...BLACK }, { ...BLACK }],
     focus: 0,
+    // Music is deliberately NOT a panel. What plays before class is not
+    // content the room is looking at - it is a thing the room can hear while
+    // the screen shows whatever it shows - so it lives beside the panels
+    // rather than in one, survives every pick, freeze and blank, and never
+    // puts anything on the projector. `fadeMs` is how long the display should
+    // take over the next change in `playing`: a quick dip for a pause, three
+    // unhurried seconds for the "class is starting" fade.
+    music: { tracks: [], index: 0, playing: false, volume: 0.6, fadeMs: MUSIC_FADE_OUT_MS, playlist: '' },
   };
 }
 
@@ -308,6 +329,121 @@ function touchSurface(ink, key) {
  * Apply one controller command to the display's state.
  * Returns true when something changed (and therefore needs broadcasting).
  */
+function cleanTrack(track) {
+  if (!track || typeof track.src !== 'string' || !track.src) return null;
+  return {
+    src: track.src.slice(0, 500),
+    title: String(track.title || track.src.split('/').pop() || 'Track').slice(0, 120),
+    artist: String(track.artist || '').slice(0, 120),
+  };
+}
+
+/**
+ * The background music queue.
+ *
+ * Everything here is state rather than an instruction to a player: what the
+ * queue is, which track it is on, whether it should be sounding, and how long
+ * the display should take over the next change. The display reconciles its one
+ * hidden <audio> against that, which is what makes two controllers agree and a
+ * controller that joins mid-lecture see what is already playing.
+ */
+function applyMusicCommand(state, cmd) {
+  const music = state.music;
+  const last = Math.max(0, music.tracks.length - 1);
+
+  switch (cmd.action) {
+    case 'load': {
+      const tracks = (Array.isArray(cmd.tracks) ? cmd.tracks : []).map(cleanTrack).filter(Boolean).slice(0, MAX_TRACKS);
+      if (!tracks.length) return false;
+      music.tracks = tracks;
+      music.playlist = String(cmd.name || '').slice(0, 80);
+      music.index = 0;
+      music.fadeMs = MUSIC_FADE_IN_MS;
+      music.playing = !!cmd.play;
+      return true;
+    }
+
+    case 'add': {
+      const tracks = (Array.isArray(cmd.tracks) ? cmd.tracks : []).map(cleanTrack).filter(Boolean);
+      if (!tracks.length) return false;
+      music.tracks = [...music.tracks, ...tracks].slice(0, MAX_TRACKS);
+      return true;
+    }
+
+    case 'play':
+    case 'pause':
+    case 'toggle': {
+      if (!music.tracks.length) return false;
+      const playing = cmd.action === 'toggle' ? !music.playing : cmd.action === 'play';
+      if (playing === music.playing) return false;
+      music.playing = playing;
+      music.fadeMs = playing ? MUSIC_FADE_IN_MS : MUSIC_PAUSE_MS;
+      return true;
+    }
+
+    // The one the class beginning is for: the room goes quiet over a few
+    // seconds rather than being cut off mid-bar.
+    case 'fadeout':
+      if (!music.playing) return false;
+      music.playing = false;
+      music.fadeMs = MUSIC_FADE_OUT_MS;
+      return true;
+
+    case 'select': {
+      const index = Number(cmd.index);
+      if (!Number.isInteger(index) || index < 0 || index > last) return false;
+      music.index = index;
+      music.playing = cmd.play ?? true;
+      music.fadeMs = MUSIC_PAUSE_MS;
+      return true;
+    }
+
+    case 'next':
+    case 'prev': {
+      if (!music.tracks.length) return false;
+      const step = cmd.action === 'next' ? 1 : -1;
+      // Wraps rather than stopping at the end: this is music for a room that
+      // is filling up, and nobody wants to notice that it ran out.
+      music.index = (music.index + step + music.tracks.length) % music.tracks.length;
+      music.fadeMs = MUSIC_PAUSE_MS;
+      // `auto` is the display telling us a track ended by itself. It should
+      // not start music that was not already playing.
+      if (!cmd.auto) music.playing = true;
+      return true;
+    }
+
+    case 'shuffle': {
+      if (music.tracks.length < 3) return false;
+      // Everything after the current track, reordered: what is playing now
+      // keeps playing, and the surprise is in what comes next.
+      const head = music.tracks.slice(0, music.index + 1);
+      const tail = music.tracks.slice(music.index + 1);
+      for (let i = tail.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [tail[i], tail[j]] = [tail[j], tail[i]];
+      }
+      music.tracks = [...head, ...tail];
+      return true;
+    }
+
+    case 'clear':
+      if (!music.tracks.length && !music.playing) return false;
+      music.tracks = [];
+      music.index = 0;
+      music.playing = false;
+      music.playlist = '';
+      music.fadeMs = MUSIC_PAUSE_MS;
+      return true;
+
+    case 'volume':
+      music.volume = clamp01(cmd.value);
+      return true;
+
+    default:
+      return false;
+  }
+}
+
 export function applyCommand(state, cmd) {
   switch (cmd.op) {
     case 'stage': {
@@ -383,6 +519,9 @@ export function applyCommand(state, cmd) {
       state.focus = index;
       return true;
     }
+
+    case 'music':
+      return applyMusicCommand(state, cmd);
 
     case 'volume':
       state.volume = clamp01(cmd.value);
