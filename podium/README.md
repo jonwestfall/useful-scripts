@@ -517,6 +517,18 @@ The save is debounced, which leaves the obvious window — the last thing you di
 exactly what a debounce has not written yet — so it is also flushed when the tab is
 hidden, closed or reloaded. Only a hard crash loses anything, and then at most a second.
 
+**A different class is about to use this room.** The arming screen's own
+**Start black instead** only clears what is on screen, next to a session it thinks is
+worth resuming — it leaves the watermark, the music queue, the timers, and any ink
+already on a slide untouched, because those are meant to survive an *accidental*
+reload. A room hosting more than one course is a different situation: **Clear this
+room's saved session**, right below it, is offered every time regardless of whether
+anything looks resumable, and clears all of it — content, watermark, timers, volume,
+the music queue, and ink (which otherwise has no twelve-hour limit of its own: reuse
+the same deck file next term and yesterday's markup would still be sitting on slide 4)
+— and wipes what is saved for this room so a later reload does not bring any of it
+back either.
+
 ## Splitting the screen
 
 The layout picker lives in the topbar (five small icons, next to Settings): **full
@@ -1283,9 +1295,11 @@ and declines a live camera rather than adding it broken, and that tapping a whol
 deck tile while building a set expands it into one entry per slide rather than
 requiring each slide to be added by hand from Recent. It also proves a photo picked
 from Files/Camera Roll goes live the same as any other item, that a non-A panel can
-be promoted to full screen without landing back on whatever A last held, and that a
+be promoted to full screen without landing back on whatever A last held, that a
 layout change made while frozen queues behind TAKE instead of instantly rearranging
-the screen. 392 checks.
+the screen, and that clearing a room's saved session on the arming screen really
+starts black and really persists across a second reload, not just the one right
+after clicking it. 395 checks.
 
 ## Layout
 

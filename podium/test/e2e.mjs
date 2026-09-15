@@ -3325,11 +3325,24 @@ await screen.reload();
 await screen.waitForSelector('#arm:not([hidden])');
 const resumeNote = (await screen.textContent('#arm-resume-what')).trim();
 ok(`the arming screen says what it is coming back to ("${resumeNote}")`, /Weighing the Evidence/.test(resumeNote));
+
+// The room's own reset, offered right there rather than only reachable by
+// waiting out the room's usual 12-hour staleness window - this is for a
+// different class about to use the same room, not a crash to recover from.
+await screen.click('#arm-fresh-session');
+ok('clearing the room hides the "coming back to" banner', await screen.$eval('#arm-resume', (n) => n.hidden));
+ok('and says so', /Cleared/.test(await screen.textContent('#arm-fresh-session-note')));
 await screen.click('#arm-button');
 await screen.waitForSelector('#hud[data-status="online"]');
-await screen.waitForTimeout(3500);
-ok(`and it comes back on the slide it was on, not at the beginning (slide ${(await slideOnWall()) + 1})`,
-  (await slideOnWall()) === 4);
+await screen.waitForTimeout(1500);
+ok('going live after clearing starts black, not on the slide it was on', (await slideOnWall()) === -1);
+
+await screen.reload();
+await screen.waitForSelector('#arm:not([hidden])');
+ok('a second reload has nothing left to offer coming back to either - the clear really persisted',
+  await screen.$eval('#arm-resume', (n) => n.hidden));
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
 
 // --- the offline shell ------------------------------------------------------
 const shell = await pad.evaluate(async () => {

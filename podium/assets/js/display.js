@@ -1613,6 +1613,35 @@ $('#arm-resume-clear').addEventListener('click', () => {
   commit();
 });
 
+// The room's own reset: unlike "Start black instead" above (content only,
+// and only ever shown next to a genuinely resumable session), this clears
+// everything a previous session can leave behind - including the things
+// that are deliberately NOT gated by staleness because they are meant to
+// outlive an accidental reload (a watermark, ink on a slide, the music
+// queue) - and wipes both localStorage keys so a subsequent reload does not
+// bring any of it back either. Offered unconditionally: the first time this
+// room hosts a different class is exactly when "resume where I left off"
+// is the wrong default, and nothing else on this screen catches that case.
+$('#arm-fresh-session').addEventListener('click', () => {
+  const fresh = initialState();
+  state.program = fresh.program;
+  state.panels = fresh.panels;
+  state.layout = fresh.layout;
+  state.focus = fresh.focus;
+  state.overlay = fresh.overlay;
+  state.timers = fresh.timers;
+  state.volume = fresh.volume;
+  state.muted = fresh.muted;
+  state.music = fresh.music;
+  state.watermark = fresh.watermark;
+  state.ink.bySurface = {};
+  try { localStorage.removeItem(stateStorageKey()); } catch { /* private mode */ }
+  try { localStorage.removeItem(inkStorageKey()); } catch { /* private mode */ }
+  $('#arm-resume').hidden = true;
+  $('#arm-fresh-session-note').textContent = 'Cleared.';
+  commit();
+});
+
 if (!isConfigured(cfg)) {
   showSetup();
 } else {
