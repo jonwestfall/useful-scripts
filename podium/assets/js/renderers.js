@@ -30,6 +30,7 @@ export const TYPES = {
   text:       { label: 'Big text',   icon: 'T' },
   qr:         { label: 'QR code',    icon: '⌗' },
   timer:      { label: 'Timer',      icon: '⏱' },
+  trackend:   { label: 'Track countdown', icon: '⏳' },
   whiteboard: { label: 'Whiteboard', icon: '✎' },
   camera:     { label: 'Camera',     icon: '\u{1F4F7}' },
 };
@@ -521,6 +522,51 @@ function renderTimer(item, opts) {
   };
 }
 
+// The room's own clock for "when does the music stop" - driven by the
+// display's actual <audio> position via opts.getMusicNow(), the same way
+// renderTimer above is driven by opts.getTimer(): the item carries only a
+// label, and the number it shows comes from outside it, live.
+function renderTrackEnd(item, opts) {
+  const value = el('div', { class: 'r-timer-value' }, '--:--');
+  const label = el('div', { class: 'r-timer-label' }, item.title || 'We begin in…');
+  const node = el('div', { class: 'r-timer' }, label, value);
+  const tick = () => {
+    label.textContent = item.title || 'We begin in…';
+    const now = opts.getMusicNow?.() || null;
+    // Nothing queued, or a track just switched and its metadata has not
+    // loaded yet: say so rather than counting down from a wrong number.
+    const remainingMs = now?.hasTrack && Number.isFinite(now.duration) && now.duration > 0
+      ? Math.max(0, (now.duration - now.time) * 1000)
+      : NaN;
+    value.textContent = Number.isFinite(remainingMs) ? fmtTime(Math.ceil(remainingMs / 1000)) : '--:--';
+    node.classList.toggle('is-done', remainingMs <= 0);
+    node.classList.toggle('is-urgent', remainingMs > 0 && remainingMs <= 30000);
+  };
+  tick();
+  const handle = setInterval(tick, 200);
+  return {
+    el: node,
+    update(it) { item = it; tick(); },
+    reconcile() {},
+    telemetry: noTelemetry,
+    snapshot(ctx, rect) {
+      paintBackdrop(ctx, rect, node, '#0a0d12');
+      ctx.fillStyle = '#e8ecf1';
+      ctx.textAlign = 'center';
+      const text = label.textContent || '';
+      if (text) {
+        ctx.font = `${Math.max(9, Math.round(rect.h * 0.07))}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        ctx.fillText(text.slice(0, 60), rect.x + rect.w / 2, rect.y + rect.h * 0.34);
+      }
+      ctx.font = `700 ${Math.round(rect.h * 0.3)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+      ctx.fillText(value.textContent || '--:--', rect.x + rect.w / 2, rect.y + rect.h * 0.62);
+      ctx.textAlign = 'start';
+      return true;
+    },
+    destroy() { clearInterval(handle); node.remove(); },
+  };
+}
+
 function renderWhiteboard(item) {
   const node = el('div', { class: 'r-whiteboard' });
   const apply = (it) => { node.style.background = it.bg || '#f7f5ef'; node.dataset.ink = it.bg && it.bg !== '#f7f5ef' ? 'light' : 'dark'; };
@@ -741,6 +787,7 @@ const FACTORIES = {
   text: renderText,
   qr: renderQr,
   timer: renderTimer,
+  trackend: renderTrackEnd,
   whiteboard: renderWhiteboard,
   camera: renderCamera,
 };

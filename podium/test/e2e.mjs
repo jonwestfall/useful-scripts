@@ -29,21 +29,17 @@ async function loadPlaywright() {
   process.exit(2);
 }
 
-// A real PNG, written with nothing but the standard library, big enough that
-// the resize ladder a lecture plan puts photos through has something to do.
-function writeImageFixture() {
-  const file = path.join(HERE, 'fixtures', 'photo.png');
+// The PNG-writing part shared by every fixture below: chunk framing and the
+// CRC32 every chunk needs. `channels` is 3 for plain truecolour or 4 for
+// truecolour+alpha; `fillPixel(x, y)` returns that many byte values.
+function writePng(file, w, h, channels, fillPixel) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  if (fs.existsSync(file)) return file;
-  const w = 1400, h = 900;
-  const raw = Buffer.alloc((w * 3 + 1) * h);
+  const raw = Buffer.alloc((w * channels + 1) * h);
   let o = 0;
   for (let y = 0; y < h; y++) {
     raw[o++] = 0;                       // filter byte: none
     for (let x = 0; x < w; x++) {
-      raw[o++] = Math.round(x * 255 / w);
-      raw[o++] = Math.round(y * 255 / h);
-      raw[o++] = 128;
+      for (const v of fillPixel(x, y)) raw[o++] = v;
     }
   }
   let table = null;
@@ -68,13 +64,37 @@ function writeImageFixture() {
   };
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
-  ihdr[8] = 8; ihdr[9] = 2;             // 8-bit, truecolour
+  ihdr[8] = 8; ihdr[9] = channels === 4 ? 6 : 2;   // 8-bit, truecolour(+alpha)
   fs.writeFileSync(file, Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk('IHDR', ihdr),
     chunk('IDAT', zlib.deflateSync(raw)),
     chunk('IEND', Buffer.alloc(0)),
   ]));
+}
+
+// A real PNG, written with nothing but the standard library, big enough that
+// the resize ladder a lecture plan puts photos through has something to do.
+function writeImageFixture() {
+  const file = path.join(HERE, 'fixtures', 'photo.png');
+  if (fs.existsSync(file)) return file;
+  const w = 1400, h = 900;
+  writePng(file, w, h, 3, (x, y) => [Math.round(x * 255 / w), Math.round(y * 255 / h), 128]);
+  return file;
+}
+
+// A PNG with real alpha: transparent everywhere except an opaque blue block
+// in one corner, so a test can tell "the background survived as transparent"
+// from "it got flattened to a black box", which is what plain JPEG
+// re-encoding would do to a logo.
+function writeAlphaImageFixture() {
+  const file = path.join(HERE, 'fixtures', 'logo.png');
+  if (fs.existsSync(file)) return file;
+  const w = 200, h = 100;
+  writePng(file, w, h, 4, (x, y) => {
+    const opaque = x > w * 0.6 && y > h * 0.35 && y < h * 0.75;
+    return [40, 90, 255, opaque ? 255 : 0];
+  });
   return file;
 }
 
@@ -3449,6 +3469,203 @@ await screen3.waitForTimeout(400);
 ok('and does nothing once the room is already live',
   (await screen3.evaluate(() => window.__fsCalls)).length === 1);
 await c.close();
+}
+
+if (want('a countdown to the end of the track')) {
+console.log('\n-- a countdown to the end of the track --');
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'trackend-room', passphrase: 'we begin in' }));
+const screen = await ctx.newPage();
+trap(screen, 'trackend display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'trackend pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="music"]');
+ok('the button is disabled with nothing queued', await pad.evaluate(() => document.querySelector('#music-countdown').disabled));
+await pad.click('#music-load');
+await screen.waitForFunction(() => {
+  const el = document.querySelector('audio#music');
+  return el && !el.paused && Number.isFinite(el.duration) && el.duration > 0;
+}, null, { timeout: 15000 });
+ok('and enabled once something is', !(await pad.evaluate(() => document.querySelector('#music-countdown').disabled)));
+
+await pad.click('#music-countdown');
+await screen.waitForSelector('.r-timer', { timeout: 8000 });
+ok('shows "We begin in..." by default, not a blank label', /We begin in/.test(await screen.textContent('.r-timer-label')));
+
+// Nudge the track close to its end and watch the number follow it down, then
+// pause - freezing musicNow - so the remaining checks are not racing a track
+// that is a few seconds from wrapping to the next one (or the same one again).
+await screen.evaluate(() => { document.querySelector('audio#music').currentTime = Math.max(0, document.querySelector('audio#music').duration - 6); });
+await pad.waitForTimeout(600);
+const near = await screen.textContent('.r-timer-value');
+ok(`counts down the actual track position, not a fixed number (${near})`, /^0:0[0-6]$/.test(near));
+ok('and turns urgent under 30 seconds left, the same as an ordinary timer',
+  await screen.evaluate(() => document.querySelector('.r-timer').classList.contains('is-urgent')));
+await pad.click('#music-play');
+await screen.waitForFunction(() => document.querySelector('audio#music').paused, null, { timeout: 5000 });
+const frozen = await screen.textContent('.r-timer-value');
+
+// The controller's own preview has no <audio> of its own, so it has to be
+// reading the broadcast musicNow rather than measuring anything locally.
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForSelector('.r-timer', { timeout: 8000 });
+ok(`a controller previews the same real countdown, from musicNow (${frozen})`, (await pad.textContent('.r-timer-value')) === frozen);
+await ctx.close();
+}
+
+if (want('watermark: a name or logo in the corner')) {
+console.log('\n-- watermark: a name or logo in the corner --');
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'watermark-room', passphrase: 'lower right or upper left' }));
+const screen = await ctx.newPage();
+trap(screen, 'watermark display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'watermark pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await pad.click('.tab[data-tab="say"]');
+
+await pad.fill('#watermark-text', 'Dr. Jane Smith');
+await pad.click('#watermark-form button[type=submit]');
+await screen.waitForFunction(() => document.querySelector('#watermark').classList.contains('is-on'), null, { timeout: 8000 });
+ok('the watermark shows on the display', true);
+ok('with the text that was typed', (await screen.textContent('#watermark-text')) === 'Dr. Jane Smith');
+ok('bottom right by default', !await screen.evaluate(() => document.querySelector('#watermark').classList.contains('pos-tl')));
+ok('nothing rendered for it on the controller - display-only chrome', await pad.evaluate(() => !document.querySelector('#watermark')));
+
+// Not content: survives picking something else, freezing, and blanking.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await screen.waitForSelector('.r-whiteboard', { timeout: 8000 });
+ok('survives picking new content', await screen.evaluate(() => document.querySelector('#watermark').classList.contains('is-on')));
+await pad.click('#freeze');
+await pad.click('#blank');
+await pad.waitForTimeout(300);
+ok('and survives blank too, deliberately - it is identity, not content',
+  await screen.evaluate(() => document.querySelector('#watermark').classList.contains('is-on')));
+await pad.click('#blank');
+await pad.click('#freeze');
+
+await pad.click('.tab[data-tab="say"]');
+await pad.selectOption('#watermark-position', 'tl');
+await screen.waitForFunction(() => document.querySelector('#watermark').classList.contains('pos-tl'), null, { timeout: 5000 });
+ok('the position switches to top left', true);
+await pad.click('#watermark-hide');
+await screen.waitForFunction(() => !document.querySelector('#watermark').classList.contains('is-on'), null, { timeout: 5000 });
+ok('Hide turns it off', true);
+ok('without forgetting the text, so Show needs no retyping', /Dr\. Jane Smith/.test(await pad.textContent('#watermark-note')));
+
+// A logo's whole reason to be a PNG rather than the photo ladder's JPEG: a
+// transparent background must not come back as a black box in the corner.
+const logoFile = writeAlphaImageFixture();
+await pad.setInputFiles('#watermark-image', logoFile);
+await screen.waitForFunction(() => {
+  const img = document.querySelector('#watermark-img');
+  return !img.hidden && img.complete && img.naturalWidth > 1;
+}, null, { timeout: 10000 });
+ok('uploading a logo turns the watermark back on, image over text',
+  await screen.evaluate(() => document.querySelector('#watermark').classList.contains('is-on') && document.querySelector('#watermark-text').hidden));
+await pad.waitForFunction(() => !document.querySelector('#watermark-image-clear').hidden, null, { timeout: 5000 });
+ok('and the controller offers a Remove image button once one is set', true);
+
+const pixel = await screen.evaluate(() => new Promise((resolve) => {
+  const img = document.querySelector('#watermark-img');
+  const draw = () => {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0);
+    resolve({
+      mid: Array.from(g.getImageData(Math.round(c.width * 0.2), Math.round(c.height * 0.5), 1, 1).data),
+      corner: Array.from(g.getImageData(Math.round(c.width * 0.9), Math.round(c.height * 0.5), 1, 1).data),
+    });
+  };
+  if (img.complete && img.naturalWidth) draw(); else img.onload = draw;
+}));
+ok('the transparent part stays transparent, not flattened to black', pixel.mid[3] === 0);
+ok('and the opaque part survives re-encoding as PNG', pixel.corner[2] > 180 && pixel.corner[3] === 255);
+
+// It really does end up IN a whole-screen grab, which was the entire point.
+await pad.click('.tab[data-tab="photos"]');
+await pad.click('#photo-screen');
+await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 1, null, { timeout: 15000 });
+const shotSrc = await pad.evaluate(() => document.querySelector('#photo-strip .shot img').src);
+const shotPixel = await screen.evaluate((url) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0);
+    // Scan a grid across the top-left quadrant and report the bluest pixel
+    // found, rather than betting everything on one guessed coordinate.
+    let best = null;
+    for (let fx = 0.01; fx < 0.3; fx += 0.01) {
+      for (let fy = 0.01; fy < 0.3; fy += 0.01) {
+        const p = g.getImageData(Math.round(c.width * fx), Math.round(c.height * fy), 1, 1).data;
+        const blueness = p[2] - p[0] - p[1];
+        if (!best || blueness > best.blueness) best = { fx, fy, p: Array.from(p), blueness };
+      }
+    }
+    resolve({ w: c.width, h: c.height, best });
+  };
+  img.src = url;
+}), shotSrc);
+ok(`the logo shows up in a whole-screen grab, top left as set (${JSON.stringify(shotPixel.best?.p)} at ${shotPixel.best?.fx.toFixed(2)},${shotPixel.best?.fy.toFixed(2)})`,
+  shotPixel.best && shotPixel.best.p[2] > shotPixel.best.p[0] + 40 && shotPixel.best.p[2] > shotPixel.best.p[1] + 40);
+
+// Remove image reverts to the text, which the queue never lost.
+await pad.click('.tab[data-tab="say"]');
+await pad.click('#watermark-image-clear');
+await screen.waitForFunction(() => document.querySelector('#watermark-text').hidden === false, null, { timeout: 5000 });
+ok('Remove image reverts the display back to the remembered text',
+  (await screen.textContent('#watermark-text')) === 'Dr. Jane Smith');
+
+// A second controller sees the same shared state without being told.
+const pad2 = await ctx.newPage();
+trap(pad2, 'watermark pad2');
+await pad2.goto(`${BASE}/control.html`);
+await pad2.waitForSelector('.tile');
+await pad2.click('.tab[data-tab="say"]');
+await pad2.waitForFunction(() => /Dr\. Jane Smith/.test(document.querySelector('#watermark-note').textContent), null, { timeout: 8000 })
+  .then(() => ok('a second controller sees the same watermark state', true))
+  .catch(() => ok('a second controller sees the same watermark state', false));
+
+// A logo's bytes live only on whichever devices have fetched them - unlike
+// every other asset in the app, on purpose (see the comment in
+// saveStateNow): this one is meant to outlive the lecture, so once the
+// display has it, a reload with no controller left to ask must not lose it.
+await pad2.setInputFiles('#watermark-image', logoFile);
+await screen.waitForFunction(() => {
+  const img = document.querySelector('#watermark-img');
+  return !img.hidden && img.complete && img.naturalWidth > 1;
+}, null, { timeout: 10000 });
+await pad.close();
+await pad2.close();
+await screen.waitForTimeout(1200);   // let saveStateSoon's debounce flush
+await screen.reload();
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+await screen.waitForFunction(() => {
+  const img = document.querySelector('#watermark-img');
+  return document.querySelector('#watermark').classList.contains('is-on') && !img.hidden && img.complete && img.naturalWidth > 1;
+}, null, { timeout: 8000 })
+  .then(() => ok('the logo survives a display reload with no controller left to ask for it', true))
+  .catch(() => ok('the logo survives a display reload with no controller left to ask for it', false));
+await ctx.close();
 }
 
 if (want('back to the landing page')) {

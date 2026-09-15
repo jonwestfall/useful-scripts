@@ -30,6 +30,9 @@ const stage = $('#stage');
 const inkCanvas = $('#ink');
 const blankEl = $('#blank');
 const overlayEl = $('#overlay');
+const watermarkEl = $('#watermark');
+const watermarkImgEl = $('#watermark-img');
+const watermarkTextEl = $('#watermark-text');
 const laserEl = $('#laser');
 const hud = $('#hud');
 const standby = $('#standby');
@@ -160,6 +163,14 @@ function mount(layer, item) {
   layer.key = item.key;
   layer.renderer = createRenderer(resolveAssets(item), {
     getTimer: (id) => timerById(state, id),
+    // The real thing, not a broadcast echo of it: this screen owns the
+    // <audio> element, so a track-countdown item reads it directly rather
+    // than waiting a heartbeat to hear its own number back.
+    getMusicNow: () => ({
+      hasTrack: state.music.tracks.length > 0,
+      time: musicEl.currentTime || 0,
+      duration: Number.isFinite(musicEl.duration) ? musicEl.duration : 0,
+    }),
     getStream: () => cameraStream,
     getCameraStatus: () => cameraStatus,
     getFrozen: () => state.frozen,
@@ -567,6 +578,7 @@ async function takeShot(target) {
   // exactly where it was drawn - no re-mapping, at any layout.
   ctx.drawImage(inkCanvas, 0, 0, stageW, stageH);
   drawCaption(ctx, { x: 0, y: 0, w: stageW, h: stageH });
+  drawWatermark(ctx, { x: 0, y: 0, w: stageW, h: stageH });
   ctx.restore();
 
   // Deliberately ignores `blank`: a blanked screen is a moment of "eyes on
@@ -782,6 +794,76 @@ function hideLaser() {
   laserEl.classList.remove('is-on');
 }
 
+// --- watermark ---------------------------------------------------------------
+//
+// A name or a logo pinned to one corner for the whole lecture, meant to end up
+// IN a screen grab (see drawWatermark below) - not content, so it ignores
+// freeze, survives blank deliberately (it sits ABOVE #blank in the stacking
+// order - a station bug outlasts a panic-button cut to black, the same as it
+// outlasts everything else on the stage), and it never takes a panel.
+
+// Resolves the same `asset:<id>` scheme every panel item uses, but called
+// from render() - every heartbeat - rather than once at mount time, so it
+// cannot reuse resolveAssets() as-is: that function unconditionally sends
+// asset-need on every call while unresolved, which here would mean asking
+// once a second for as long as a slow connection takes to answer. Piggybacks
+// on the same assetWanted set and its periodic re-ask loop instead, and only
+// sends the first time a given id goes unresolved.
+function watermarkImageSrc(ref) {
+  if (!ref || !ref.startsWith('asset:')) return ref || '';
+  const id = ref.slice(6);
+  if (assetStore.has(id)) return assetStore.get(id);
+  if (!assetWanted.has(id)) { assetWanted.add(id); bus?.send({ t: 'asset-need', id }); }
+  return BLANK_PIXEL;
+}
+
+function renderWatermark() {
+  const wm = state.watermark;
+  const showing = !!wm?.enabled && !!(wm.image || wm.text);
+  watermarkEl.classList.toggle('is-on', showing);
+  watermarkEl.classList.toggle('pos-tl', wm?.position === 'tl');
+  if (!showing) return;
+  const useImage = !!wm.image;
+  watermarkImgEl.hidden = !useImage;
+  watermarkTextEl.hidden = useImage;
+  if (useImage) watermarkImgEl.src = watermarkImageSrc(wm.image);
+  else watermarkTextEl.textContent = wm.text;
+}
+
+// The whole reason this exists: composited into a shot the same way the
+// caption is (see drawCaption and takeShot), so a name or logo set once
+// actually ends up in a screen grab rather than only ever being something the
+// room sees live.
+function drawWatermark(ctx, rect) {
+  const wm = state.watermark;
+  if (!wm?.enabled || !(wm.image || wm.text)) return;
+  const pad = Math.max(6, Math.round(rect.h * 0.02));
+  const tl = wm.position === 'tl';
+  if (wm.image) {
+    const img = watermarkImgEl.complete && watermarkImgEl.naturalWidth ? watermarkImgEl : null;
+    if (!img) return;   // still loading - the next photo after it lands will carry it
+    const maxH = rect.h * 0.1;
+    const maxW = rect.w * 0.22;
+    const scale = Math.min(maxH / img.naturalHeight, maxW / img.naturalWidth, 1);
+    const w = img.naturalWidth * scale;
+    const h = img.naturalHeight * scale;
+    const x = tl ? rect.x + pad : rect.x + rect.w - pad - w;
+    const y = tl ? rect.y + pad : rect.y + rect.h - pad - h;
+    ctx.drawImage(img, x, y, w, h);
+    return;
+  }
+  const size = Math.max(10, Math.round(rect.h * 0.028));
+  ctx.font = `600 ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+  ctx.fillStyle = 'rgba(255,255,255,.82)';
+  ctx.textAlign = tl ? 'start' : 'end';
+  ctx.textBaseline = tl ? 'top' : 'bottom';
+  const x = tl ? rect.x + pad : rect.x + rect.w - pad;
+  const y = tl ? rect.y + pad : rect.y + rect.h - pad;
+  ctx.fillText(wm.text.slice(0, 120), x, y);
+  ctx.textAlign = 'start';
+  ctx.textBaseline = 'alphabetic';
+}
+
 // --- rendering the rest of the chrome --------------------------------------
 
 function render() {
@@ -790,6 +872,7 @@ function render() {
   overlayEl.textContent = state.overlay.text;
   overlayEl.classList.toggle('is-on', state.overlay.visible && !!state.overlay.text);
   document.body.classList.toggle('is-frozen', state.frozen);
+  renderWatermark();
   syncLayers();
   redrawInk();
   updateStandby();
@@ -915,9 +998,19 @@ function stateStorageKey() {
 function saveStateNow() {
   clearTimeout(stateSaveTimer);
   try {
-    const { program, panels, layout, focus, timers, overlay, volume, muted, music } = state;
+    const { program, panels, layout, focus, timers, overlay, volume, muted, music, watermark } = state;
+    // Everywhere else, only the `asset:<id>` reference goes into state and
+    // the bytes are fetched fresh from whoever still holds them (see
+    // resolveAssets) - deliberately, so a photo of a student's worksheet is
+    // never written to disk. A watermark logo is not that: it is meant to
+    // outlive the lecture, uploaded once and left alone, so if this screen
+    // is the one that holds it, its bytes are worth this exception. Without
+    // it, a reload here would leave the reference intact but nothing able to
+    // answer it - the one controller that uploaded it may be long gone by
+    // the time this screen asks again.
+    const watermarkImageData = watermark.image?.startsWith('asset:') ? assetStore.get(watermark.image.slice(6)) : undefined;
     localStorage.setItem(stateStorageKey(), JSON.stringify({
-      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, muted,
+      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, muted, watermark, watermarkImageData,
       // The queue, not the playing: a reload lands on the arming screen, and
       // music that started itself the moment someone clicked Go live would be
       // a surprise in a room that had gone quiet.
@@ -966,6 +1059,14 @@ function restoreState() {
   state.muted = !!saved.muted;
   if (saved.music && Array.isArray(saved.music.tracks)) {
     state.music = { ...state.music, ...saved.music, playing: false };
+  }
+  if (saved.watermark && typeof saved.watermark === 'object') {
+    state.watermark = { ...state.watermark, ...saved.watermark };
+    // Pre-fill assetStore with the bytes this screen already had rather than
+    // asking a controller for them again - see the comment in saveStateNow.
+    if (typeof saved.watermarkImageData === 'string' && state.watermark.image?.startsWith('asset:')) {
+      assetStore.set(state.watermark.image.slice(6), saved.watermarkImageData);
+    }
   }
 
   // Deliberately NOT restored: frozen, blank and the cued preview. Those are

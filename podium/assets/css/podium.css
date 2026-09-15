@@ -137,6 +137,23 @@ body.display #overlay {
 }
 body.display #overlay.is-on { transform: none; }
 
+/* A name or logo pinned to one corner for the whole lecture, not content - so
+   it sits above everything else on the stage, including blank and ink: a
+   watermark that a stray pen stroke could cover, or that vanished the moment
+   someone hit the panic button, would not do the one job it has, which is to
+   still be there when a screen grab is taken later. */
+body.display #watermark {
+  position: fixed; right: 0; bottom: 0; z-index: 8; pointer-events: none;
+  padding: 1.6vh 1.8vw; max-width: 30vw;
+  font-size: clamp(12px, 1.7vw, 22px); font-weight: 600; color: rgba(255, 255, 255, .82);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .6);
+  opacity: 0; transition: opacity .18s ease;
+}
+body.display #watermark.is-on { opacity: 1; }
+body.display #watermark.pos-tl { right: auto; bottom: auto; left: 0; top: 0; text-align: left; }
+body.display #watermark:not(.pos-tl) { text-align: right; }
+body.display #watermark img { display: block; max-height: 10vh; max-width: 26vw; }
+
 /* The laser's colour is one custom property, set from a data-color attribute,
    so the dot on the projector and the dot on the controller's own preview are
    the same three colours from the same place. Red is what everyone expects;

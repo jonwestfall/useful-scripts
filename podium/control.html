@@ -314,6 +314,27 @@
               <button type="submit">Show</button>
             </div>
           </form>
+          <div class="stack">
+            <label for="watermark-text">Watermark — your name or logo, pinned in a corner for the
+              whole lecture (stays over anything, and is captured in screen grabs)</label>
+            <div class="inline">
+              <select id="watermark-position" aria-label="Corner">
+                <option value="br">Bottom right</option>
+                <option value="tl">Top left</option>
+              </select>
+              <button id="watermark-hide" type="button">Hide</button>
+            </div>
+            <form id="watermark-form" class="inline">
+              <input id="watermark-text" class="grow" type="text" maxlength="120" placeholder="Dr. Jane Smith">
+              <button type="submit">Show text</button>
+            </form>
+            <div class="inline">
+              <label class="filebtn grow" for="watermark-image">Upload a logo…</label>
+              <input id="watermark-image" type="file" accept="image/*" hidden>
+              <button id="watermark-image-clear" type="button" hidden>Remove image</button>
+            </div>
+            <div id="watermark-note" class="hint"></div>
+          </div>
         </section>
 
         <!-- Timer -->
@@ -390,6 +411,10 @@
             <button id="music-shuffle" type="button">Shuffle the rest</button>
             <button id="music-clear" type="button">Clear queue</button>
           </div>
+          <!-- A panel, not a music control - counts down to the end of
+               whichever track is playing when it is put up, for a room that
+               is still filling. See renderTrackEnd in renderers.js. -->
+          <button id="music-countdown" type="button">⏳ Show “We begin in…” on screen</button>
           <div class="inline">
             <label class="grow" for="music-volume">Music level</label>
             <input id="music-volume" type="range" min="0" max="1" step="0.01" value="0.6" aria-label="Music level">

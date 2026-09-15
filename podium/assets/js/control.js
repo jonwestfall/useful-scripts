@@ -218,6 +218,7 @@ const BUILT_INS = [
   { title: 'Chalkboard', type: 'whiteboard', bg: '#12261f' },
   { title: 'Phone camera', type: 'camera' },
   { title: 'Timer', type: 'timer' },
+  { title: 'We begin in…', type: 'trackend' },
 ];
 
 let library = [];
@@ -524,6 +525,14 @@ async function pick(item, where = 'auto') {
   }
 }
 
+// What a track-countdown item's renderer reads for a live number: the
+// controller has no <audio> of its own, so this is state.musicNow (the
+// display's own telemetry, broadcast every heartbeat) rather than anything
+// measured locally - a preview mirror, same as everything else here.
+function getMusicNowPreview() {
+  return { hasTrack: !!state.music?.tracks?.length, time: state.musicNow?.time || 0, duration: state.musicNow?.duration || 0 };
+}
+
 // --- preview pane -----------------------------------------------------------
 
 function renderPreview() {
@@ -537,7 +546,7 @@ function renderPreview() {
     holder.replaceChildren();
     previewKey = key;
     if (item) {
-      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getDeckSource });
+      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource });
       holder.append(previewRenderer.el);
     }
   } else if (previewRenderer && item) {
@@ -1248,6 +1257,7 @@ function renderLayoutBar() {
 
 function renderAll() {
   renderMusic();
+  renderWatermarkPanel();
   renderPhotos();
   renderRecent();
   renderPreview();
@@ -1385,7 +1395,7 @@ function createLiveMirror(container) {
       renderer?.destroy();
       frame.replaceChildren();
       mountedKey = key;
-      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getDeckSource }) : null;
+      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource }) : null;
       if (renderer) frame.append(renderer.el);
     } else {
       renderer?.update(resolveAssets(item));
@@ -1472,7 +1482,7 @@ function updatePadMirror() {
     padMirrorRenderer?.destroy();
     padMirror.replaceChildren();
     padMirrorKey = key;
-    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getDeckSource }) : null;
+    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource }) : null;
     if (padMirrorRenderer) padMirror.append(padMirrorRenderer.el);
   } else {
     padMirrorRenderer?.update(resolveAssets(item));
@@ -2014,6 +2024,7 @@ function renderMusic() {
   $('#music-play').disabled = !music.tracks.length;
   for (const id of ['#music-prev', '#music-next', '#music-shuffle', '#music-clear']) $(id).disabled = !music.tracks.length;
   $('#music-fade').disabled = !music.playing;
+  $('#music-countdown').disabled = !music.tracks.length;
 
   $('#music-title').textContent = track ? track.title : 'Nothing queued';
   const parts = [];
@@ -2415,6 +2426,54 @@ $('#overlay-form').addEventListener('submit', (ev) => {
 });
 $('#overlay-hide').addEventListener('click', () => send({ op: 'overlay', visible: false }));
 
+// --- watermark ---------------------------------------------------------------
+//
+// A name or logo pinned to one corner for the whole lecture, not content - so
+// it is set here once rather than picked and lost the next time the screen
+// changes. Text and image are independent fields: typing new text does not
+// erase an uploaded logo (Remove image is its own button), and the display
+// shows whichever one is actually set, image first.
+
+function renderWatermarkPanel() {
+  const wm = state.watermark || { enabled: false, text: '', image: '', position: 'br' };
+  if (document.activeElement !== $('#watermark-position')) $('#watermark-position').value = wm.position === 'tl' ? 'tl' : 'br';
+  $('#watermark-hide').disabled = !wm.enabled;
+  $('#watermark-image-clear').hidden = !wm.image;
+  const parts = [wm.enabled ? 'showing' : 'hidden'];
+  if (wm.image) parts.push('a logo');
+  else if (wm.text) parts.push(`“${wm.text}”`);
+  else parts.push('nothing set yet');
+  $('#watermark-note').textContent = parts.join(' · ');
+}
+
+$('#watermark-position').addEventListener('change', () => send({ op: 'watermark', position: $('#watermark-position').value }));
+$('#watermark-hide').addEventListener('click', () => send({ op: 'watermark', enabled: false }));
+$('#watermark-form').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const text = $('#watermark-text').value.trim();
+  if (!text) return;
+  send({ op: 'watermark', text, enabled: true });
+});
+$('#watermark-image').addEventListener('change', async (ev) => {
+  const file = ev.target.files?.[0];
+  ev.target.value = '';
+  if (!file) return;
+  $('#watermark-note').textContent = `Resizing ${file.name}…`;
+  try {
+    // PNG rather than the photo ladder's JPEG: a logo's transparent
+    // background needs an alpha channel, or it comes out as a black box in
+    // the corner. Small dimensions and a single-entry `qualities` (PNG
+    // ignores it) keep this from wastefully re-encoding four times over.
+    const shrunk = await downscaleImage(file, MAX_ASSET_CHARS, { widths: [480, 320, 200, 120], qualities: [1], mime: 'image/png' });
+    const id = uid(10);
+    assetStore.set(id, shrunk.dataUrl);
+    send({ op: 'watermark', image: assetRef(id), enabled: true });
+  } catch (err) {
+    $('#watermark-note').textContent = `That did not load: ${err.message}`;
+  }
+});
+$('#watermark-image-clear').addEventListener('click', () => send({ op: 'watermark', image: '' }));
+
 $('#timer-start').addEventListener('click', () => {
   const timer = currentTimer();
   const id = timer?.id;
@@ -2543,6 +2602,11 @@ $('#music-fade').addEventListener('click', () => send({ op: 'music', action: 'fa
 $('#music-shuffle').addEventListener('click', () => send({ op: 'music', action: 'shuffle' }));
 $('#music-clear').addEventListener('click', () => send({ op: 'music', action: 'clear' }));
 $('#bar-music').addEventListener('click', () => send({ op: 'music', action: 'toggle' }));
+// A panel, staged like anything else from the Library - see stage() - so it
+// goes through the usual freeze/cue/take pipeline rather than jumping
+// straight to the screen. Its own number comes from the queue, not from
+// anything this click needs to know.
+$('#music-countdown').addEventListener('click', () => stage({ type: 'trackend', title: 'We begin in…' }));
 // Throttled like the room volume: dragging a slider should not put sixty
 // commands a second on the relay.
 const sendMusicVolume = throttle((value) => send({ op: 'music', action: 'volume', value }), 120);
