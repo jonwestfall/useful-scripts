@@ -448,6 +448,13 @@ body.control.is-frozen { background: #171006; }
   position: absolute; top: 4px; right: 6px; font-size: 18px; color: var(--dim);
   width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px;
 }
+/* Bottom-right rather than top-right, so a custom audio tile can carry this
+   and its own delete button (top-right) at once without the two colliding. */
+.tile-music {
+  position: absolute; bottom: 4px; right: 6px; font-size: 12px; font-weight: 600;
+  color: var(--dim); padding: 3px 7px; display: grid; place-items: center; border-radius: 8px;
+}
+.tile-music:active { background: var(--panel-2); }
 .empty { color: var(--dim); }
 
 /* Where you just were. A single scrolling row rather than a group in the
@@ -654,6 +661,14 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
    A remote for something happening in another room, so it leans on saying what
    is true right now: which track, how far in, and whether it is currently
    ducked under something else. */
+#music-quick-bar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.music-quick-chip {
+  flex: none; max-width: 46vw; padding: 8px 12px; font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.music-quick-chip.is-on { border-color: var(--accent); background: #16202c; color: var(--ink); }
+.music-quick-chip.is-on::before { content: '\266a '; }
+
 .music-now {
   padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--panel);

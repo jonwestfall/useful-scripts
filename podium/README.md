@@ -598,6 +598,15 @@ Plain audio URLs need no CORS headers, so a private server works as-is over http
 **Load** replaces the queue and starts playing, **Add to queue** appends a whole
 playlist, and pasting a link queues one track for this session only.
 
+**Or reuse what is already in the lecture.** Audio does not have to be one thing or
+the other. An audio item from your Library or lecture plan — the kind that shows a
+title card on the projector when picked normally — can also just be background music:
+its tile carries a small **♪+** that adds it to the queue without putting it on
+screen, and the Music tab shows the same items again as one-tap **quick-push**
+buttons above the playlist picker. Tap one and it plays immediately; tap it again from
+the Library later and it still works as the on-screen item it always was, without
+disturbing whatever is playing behind it.
+
 **The controls.** Previous / play-pause / next, a queue you can tap to jump around,
 **Shuffle the rest** (what is playing keeps playing; the surprise is in what comes
 next), a music level of its own, and a play-pause button in the bottom bar so the
@@ -1146,7 +1155,9 @@ and that a controller which reloads mid-lecture gets the photo back from the dis
 rather than rendering a broken image, that holding a button does not also fire the tap
 underneath it, that `Ctrl+P` still belongs to the browser, and that the background
 music fades in, ducks under a clip, survives freeze and blank, and shows the projector
-nothing at all. 316 checks.
+nothing at all — and that the same audio resource works as an on-screen item from the
+Library and as background music from a quick-push button without either one disturbing
+the other. 325 checks.
 
 ## Layout
 
