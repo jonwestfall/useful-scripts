@@ -4034,6 +4034,136 @@ await screen.waitForFunction(() => {
 await ctx.close();
 }
 
+if (want('audience polls: a room full of phones answering')) {
+console.log('\n-- audience polls: a room full of phones answering --');
+// The relay is the only part of Podium that ever sees an answer in the clear,
+// so this drives its endpoints directly, and drives join.html in real browser
+// contexts - one per student, because a "student" here is really just a
+// separate localStorage, which is what one answer each is keyed by.
+const created = await fetch(`${BASE}/poll`, { method: 'POST' }).then((r) => r.json());
+ok(`the relay hands back a code and a host token (${created.code})`,
+  /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/.test(created.code) && created.token?.length >= 20);
+
+const host = (path, init = {}) => fetch(`${BASE}/poll/${created.code}${path}`, {
+  ...init,
+  headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}`, ...(init.headers || {}) },
+});
+const results = () => host('/results').then((r) => r.json());
+
+const ask = (body) => host('', { method: 'PUT', body: JSON.stringify(body) });
+await ask({ kind: 'choice', question: 'Which bias is this?', open: true,
+  options: ['Construct', 'Method', 'Norming', 'Access'] });
+
+// Three phones. Separate contexts: same browser, different storage, which is
+// exactly the distinction "one answer each" rests on.
+const phones = [];
+for (let i = 0; i < 3; i++) {
+  const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const phone = await phoneCtx.newPage();
+  trap(phone, `student ${i + 1}`);
+  await phone.goto(`${BASE}/join.html?c=${created.code}`);
+  await phone.waitForFunction(() => document.querySelectorAll('.choice').length === 4, null, { timeout: 8000 });
+  phones.push({ ctx: phoneCtx, page: phone });
+}
+ok('a QR link drops a phone straight onto the question, no code to type',
+  (await phones[0].page.textContent('#question')) === 'Which bias is this?');
+ok('and the options arrive with it', (await phones[0].page.textContent('.choice:nth-child(3)')).includes('Norming'));
+
+await phones[0].page.click('.choice:nth-child(3)');
+await phones[1].page.click('.choice:nth-child(3)');
+await phones[2].page.click('.choice:nth-child(1)');
+await phones[0].page.waitForFunction(() => /Answer sent/.test(document.querySelector('#note')?.textContent || ''), null, { timeout: 5000 });
+let tally = await results();
+ok(`three phones, three answers, counted where they were meant to go (${JSON.stringify(tally.counts)})`,
+  tally.voters === 3 && tally.counts[2] === 2 && tally.counts[0] === 1);
+ok('and the phone that answered shows which one it picked',
+  await phones[0].page.evaluate(() => document.querySelector('.choice:nth-child(3)')?.getAttribute('aria-pressed') === 'true'));
+
+// Changing your mind before the question closes is not cheating.
+await phones[2].page.click('.choice:nth-child(3)');
+await phones[2].page.waitForTimeout(400);
+tally = await results();
+ok(`changing an answer replaces it rather than adding one (${JSON.stringify(tally.counts)})`,
+  tally.voters === 3 && tally.counts[2] === 3 && tally.counts[0] === 0);
+
+// A double tap is the same phone saying the same thing twice, not two votes.
+await phones[1].page.click('.choice:nth-child(3)');
+await phones[1].page.waitForTimeout(300);
+ok('and answering twice still counts once', (await results()).voters === 3);
+
+// A new question reaches every phone already holding the page open, with no
+// reload and nothing to re-scan - the whole reason the phones hold a stream.
+await ask({ kind: 'choice', question: 'And now?', open: true, options: ['Yes', 'No'] });
+await phones[0].page.waitForFunction(() => document.querySelector('#question')?.textContent === 'And now?', null, { timeout: 8000 });
+ok('a new question arrives on the phones already holding the page open', true);
+ok('with the old question\'s options gone', (await phones[0].page.$$('.choice')).length === 2);
+tally = await results();
+ok('and its own count, not the last question\'s', tally.voters === 0 && tally.counts.join() === '0,0');
+ok('while the phone forgets what it picked last time',
+  await phones[0].page.evaluate(() => Array.from(document.querySelectorAll('.choice')).every((b) => b.getAttribute('aria-pressed') === 'false')));
+
+// Short typed answers: the same pipeline, a different shape of answer.
+await ask({ kind: 'text', question: 'One word for how that felt?', open: true, options: [] });
+await phones[0].page.waitForFunction(() => !document.querySelector('#typed')?.hidden, null, { timeout: 8000 });
+await phones[0].page.fill('#answer', 'exposed');
+await phones[0].page.click('#send');
+await phones[1].page.waitForFunction(() => !document.querySelector('#typed')?.hidden, null, { timeout: 8000 });
+await phones[1].page.fill('#answer', 'seen');
+await phones[1].page.click('#send');
+await phones[0].page.waitForFunction(() => /Answer sent/.test(document.querySelector('#note')?.textContent || ''), null, { timeout: 5000 });
+tally = await results();
+ok(`typed answers come back as the answers themselves (${JSON.stringify(tally.answers)})`,
+  tally.answers.length === 2 && tally.answers.includes('exposed') && tally.answers.includes('seen'));
+
+// Closing it stops the room answering, on the phones and at the door alike.
+await ask({ kind: 'text', question: 'One word for how that felt?', open: false, options: [] });
+await phones[2].page.waitForFunction(() => document.querySelector('#send')?.disabled === true, null, { timeout: 8000 });
+ok('closing a question greys it out on every phone still holding it', true);
+const refused = await fetch(`${BASE}/poll/${created.code}/vote`, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ voter: 'someone-with-curl', answer: 'sneaked in' }),
+});
+ok('and a closed question refuses an answer sent straight at the relay', refused.status === 409);
+
+// The code is on a projector in front of everyone; the token is not. That
+// split is the only thing making "results the room has not seen yet" mean
+// anything at all.
+const peeking = await fetch(`${BASE}/poll/${created.code}/results`);
+ok('the code alone cannot read the answers - that needs the host token', peeking.status === 401);
+const rewriting = await fetch(`${BASE}/poll/${created.code}`, {
+  method: 'PUT', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ question: 'Free marks for everyone?', options: ['Yes'], open: true }),
+});
+ok('nor can it rewrite the question', rewriting.status === 401);
+ok('a wrong code is simply not a poll', (await fetch(`${BASE}/poll/ZZZZ/results`)).status === 404);
+
+// Typing the code by hand, for the phone whose camera would not focus.
+const typedCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+const typedPhone = await typedCtx.newPage();
+trap(typedPhone, 'student typing the code');
+await typedPhone.goto(`${BASE}/join.html`);
+await typedPhone.fill('#code', created.code.toLowerCase());
+await typedPhone.click('#enter button[type="submit"]');
+await typedPhone.waitForFunction(() => !document.querySelector('#live')?.hidden, null, { timeout: 8000 });
+ok('typing the code in lower case joins the same poll', (await typedPhone.textContent('#question')) === 'One word for how that felt?');
+await typedCtx.close();
+
+// A code nobody is running. Deliberately untrapped: the 404 that teaches the
+// page to say so is the thing being tested, and a trapped page would report
+// it as though something had gone wrong.
+const lostCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+const lostPhone = await lostCtx.newPage();
+await lostPhone.goto(`${BASE}/join.html?c=ZZZZ`);
+await lostPhone.waitForFunction(() => !document.querySelector('#enter')?.hidden, null, { timeout: 8000 });
+ok('and a code nobody is running says so instead of hanging',
+  /No question is running/.test(await lostPhone.textContent('#enter-note')));
+await lostCtx.close();
+
+await host('', { method: 'DELETE' });
+ok('ending a poll takes the code with it', (await fetch(`${BASE}/poll/${created.code}/results`)).status === 404);
+for (const phone of phones) await phone.ctx.close();
+}
+
 if (want('back to the landing page')) {
 console.log('\n-- back to the landing page --');
 const ctx = await browser.newContext();

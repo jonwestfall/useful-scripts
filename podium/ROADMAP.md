@@ -158,16 +158,34 @@ is: pure state-machine tests for the protocol, and end-to-end tests driving
 real browsers — including, for the first time, a third kind of page, which
 the harness can open as many of as a class has phones.
 
-## Still to settle
+## Settled
 
-- **Anonymous, or named?** Export implies keeping something; participation
-  credit implies knowing who. Anonymous is simpler, safer and matches the
-  rest of Podium — but if the point is credit, students need to identify
-  themselves and that changes the privacy story considerably.
-- **One answer each, or can they change their mind?** Dedupe by a random id
-  in the phone's `sessionStorage` is the honest limit here: it stops double
-  taps and casual mischief, not a determined student with a private window.
-  Worth stating plainly rather than implying a guarantee.
-- **Where do the pages get served from**, and does the relay have TLS and a
-  hostname? Students' phones need an https URL, and an https page cannot POST
-  to a plain-http relay.
+- **Anonymous.** Nobody types a name. The export is counts and a list of
+  answers, and nothing anywhere ties one to a student.
+- **No right answers.** A question is a question; results are a distribution,
+  not a score. Marking a correct option is a later question, and one that
+  only really makes sense alongside named responses.
+- **The relay serves the pages**, so everything is one origin and students
+  get one hostname. The poll routes send CORS headers anyway, because a
+  display on GitHub Pages talking to its own relay is a configuration the
+  README has always described.
+- **One answer each, changeable until the question closes.** Keyed by a
+  random id the phone keeps in `localStorage`. That stops a double tap
+  counting twice and stops casual mischief; it does not stop a private
+  window, and the docs should say so rather than implying a guarantee.
+
+## Where it has got to
+
+**Step 1 is done** (the relay endpoints and `join.html`). A poll can be
+created, asked, answered from real phones, changed, closed and read back,
+and none of it goes near the room's own encrypted channel.
+
+Measured rather than assumed, at the size this has to work at: **120 phones
+each holding an event stream open, 120 answers counted in 65 ms**, on the
+same ~200-line relay. Tallies came back exactly right. Scale is not the
+constraint here.
+
+Steps 2–4 (the `poll` item and renderer, the Polls tab, typed-answer
+moderation, export) are still to build. Until step 2 lands there is no way
+to start a poll from the iPad — the endpoints work, but only a script can
+drive them.

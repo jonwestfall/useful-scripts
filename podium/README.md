@@ -1337,6 +1337,7 @@ full screen, rather than the promoted panel and its ink both silently vanishing.
 ```
 podium/
   display.html  control.html  plan.html  index.html
+  join.html                       audience polls, opened by students (see ROADMAP.md)
   sw.js                           offline shell (network-first; see the file)
   manifest-control.webmanifest    Add to Home Screen, as the controller
   manifest-display.webmanifest    ...and as the display
