@@ -1827,6 +1827,49 @@ ok('the dot tracks the drag', dot2.x > dot1.x && dot2.y < dot1.y);
 await pad.mouse.up();
 await screen.waitForFunction(() => !document.querySelector('#laser').classList.contains('is-on'), null, { timeout: 3000 });
 ok('releasing hides the dot - nothing is left behind, nothing was saved', true);
+
+// Hiding the cue bar gives the Now/Next boxes more room, and remembers the
+// choice per device rather than resetting on every visit.
+const widthBefore = await pad.$eval('#deck-now-preview', (n) => n.getBoundingClientRect().width);
+ok('the cue bar is visible by default', await pad.isVisible('#preview-pane'));
+await pad.click('#preview-toggle');
+ok('hiding it removes it from the layout', !(await pad.isVisible('#preview-pane')));
+const widthAfter = await pad.$eval('#deck-now-preview', (n) => n.getBoundingClientRect().width);
+ok(`the Now/Next boxes actually get the extra room (${Math.round(widthBefore)} -> ${Math.round(widthAfter)})`, widthAfter > widthBefore);
+await pad.reload();
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+ok('the choice survives a reload of the controller', !(await pad.isVisible('#preview-pane')));
+await pad.click('#preview-toggle');
+ok('and toggling it back shows it again', await pad.isVisible('#preview-pane'));
+
+// The Now/Next split cycles 50/50 -> 75/25 -> 25/75 -> back, and remembers
+// the choice the same way the cue-bar visibility does.
+await pad.click('.tab[data-tab="slides"]');
+ok('the split starts even', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'even'));
+const widthsAt = async () => pad.evaluate(() => {
+  const [now, next] = document.querySelectorAll('.confidence-box');
+  return { now: now.getBoundingClientRect().width, next: next.getBoundingClientRect().width };
+});
+const evenWidths = await widthsAt();
+await pad.click('#confidence-split');
+ok('one tap leans it toward Now', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'now'));
+const nowWidths = await widthsAt();
+ok(`and Now is actually wider than Next now (${Math.round(nowWidths.now)} vs ${Math.round(nowWidths.next)})`,
+  nowWidths.now > evenWidths.now && nowWidths.now > nowWidths.next);
+await pad.click('#confidence-split');
+ok('a second tap leans it toward Next instead', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'next'));
+const nextWidths = await widthsAt();
+ok(`and Next is actually wider than Now now (${Math.round(nextWidths.next)} vs ${Math.round(nextWidths.now)})`,
+  nextWidths.next > evenWidths.next && nextWidths.next > nextWidths.now);
+await pad.click('#confidence-split');
+ok('a third tap cycles back to even', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'even'));
+await pad.click('#confidence-split');
+await pad.reload();
+await pad.waitForSelector('.tile');
+await pad.click('.tab[data-tab="slides"]');
+ok('and a non-default split choice survives a reload too', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'now'));
+
 await ctx.close();
 }
 

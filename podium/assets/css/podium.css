@@ -354,6 +354,7 @@ body.control.is-frozen { background: #171006; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .workspace { display: flex; flex: 1; min-height: 0; }
+.workspace.no-preview #preview-pane { display: none; }
 
 .layout-picker { display: flex; gap: 4px; }
 .layout-btn {
@@ -507,12 +508,16 @@ body.control.is-frozen { background: #171006; }
 .filebtn:active { transform: translateY(1px); }
 .deck-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 #deck-title { font-size: 19px; font-weight: 650; }
+.deck-head-right { display: flex; align-items: center; gap: 10px; flex: none; }
 #deck-count { font-size: 15px; color: var(--dim); white-space: nowrap; }
 #deck-theme.is-warning { color: var(--cue); }
+#confidence-split { min-height: 30px; padding: 0 10px; font-size: 13px; white-space: nowrap; }
 .deck-nav button { flex: 1; min-height: 58px; font-size: 17px; font-weight: 600; }
 
 /* Now / Next confidence monitor */
 .confidence-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.confidence-row[data-split="now"] { grid-template-columns: 3fr 1fr; }
+.confidence-row[data-split="next"] { grid-template-columns: 1fr 3fr; }
 .confidence-box { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .confidence-label {
   font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);

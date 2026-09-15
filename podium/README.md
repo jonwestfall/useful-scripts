@@ -250,6 +250,16 @@ iPad, the thumbnails, and the PNG export all shrink a slide by the same amount,
 so what you rehearse is what the room sees. The Slides tab says so — *Slide 9 /
 13 · fit 74%* — rather than leaving you wondering why the type looks small.
 
+That measurement now also applies Marp's own Safari layout fix before taking it
+(Safari lays a slide's `<foreignObject>` content out more generously than every
+other engine does, which is exactly why decks need that fix applied at all -
+see `applyPolyfill` in `deck.js`). Skipping it during measurement, as Podium
+used to, meant the number computed on an iPad could be too generous for what
+the iPad's own corrected layout actually rendered - the tail of a wide line
+(a `$$…$$` block chaining several arrows together was what surfaced it)
+clipped on the iPad while the exact same slide, measured and shown by a
+browser that never needed the fix, was intact on the projector.
+
 Shrinking never changes a slide's shape, only the size of what is on it, so ink
 and the laser still land exactly where they were aimed.
 
@@ -297,6 +307,11 @@ Two things live on the Now box:
 
 - **✎ Markup** jumps to the Ink tab, already lined up on the slide you are looking
   at — no separate step to pick the right surface.
+- **50 / 50** (next to the slide count, top right) cycles the row's own split —
+  **75 / 25** leans on Now, **25 / 75** leans on Next, and a third tap goes back to
+  even. Useful either direction: more of Now to actually read a dense slide, or more
+  of Next when Now is one you already know cold and it is the slide coming up you
+  need to see clearly. Remembered per device.
 - **Laser** turns the Now box itself into a pointer. Drag on it and a dot follows
   your finger on the real screen, mapped onto the slide's own bounds the same way
   ink is; lift your finger and it is gone. Nothing about it is saved or undoable —
@@ -308,6 +323,15 @@ Two things live on the Now box:
   button itself wears the colour, so you can see what the class is about to see
   without pressing it first, and the choice is remembered on that device — whoever
   needs green today needs it for the rest of the term.
+
+**⟨ Hide cue bar**, in the topbar, hides the preview rail (the thumbnail plus
+Take/Swap/Clear cue) that otherwise runs down the left of every tab — a fixed
+320px that is wasted room whenever nothing is cued, and the thing most worth
+getting back on an iPad where the Now/Next boxes are already tight. One tap
+hides it, one tap (now reading **⟩ Show cue bar**) brings it back; nothing it
+controls stops working, TAKE included — there is just nowhere to see it happen
+until you show it again. The choice is remembered per device, the same as the
+laser colour.
 
 ### Themes
 
@@ -1299,7 +1323,10 @@ be promoted to full screen without landing back on whatever A last held, that a
 layout change made while frozen queues behind TAKE instead of instantly rearranging
 the screen, and that clearing a room's saved session on the arming screen really
 starts black and really persists across a second reload, not just the one right
-after clicking it. 395 checks.
+after clicking it. It also proves hiding the cue bar actually gives the Now/Next
+boxes more room and remembers the choice across a reload, and that the Now/Next
+split cycles through 50/50, 75/25 and 25/75 and keeps a non-default choice too.
+407 checks.
 
 ## Layout
 

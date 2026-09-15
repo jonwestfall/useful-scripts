@@ -2639,6 +2639,28 @@ $('#panel-promote').addEventListener('click', () => {
   send({ op: 'layout', mode: 'single' });
   send({ op: 'focus', index: 0 });
 });
+
+// Per device, like every other preference on this page - hiding the cue bar
+// says nothing about the room, and does not stop Take/Swap/Clear cue from
+// working, only from being reachable until it is shown again.
+const PREVIEW_HIDDEN_KEY = 'podium.previewHidden.v1';
+let previewHidden = false;
+try { previewHidden = localStorage.getItem(PREVIEW_HIDDEN_KEY) === '1'; } catch { /* private browsing: shown it is */ }
+
+function applyPreviewVisibility() {
+  $('.workspace').classList.toggle('no-preview', previewHidden);
+  $('#preview-toggle').textContent = previewHidden ? '⟩ Show cue bar' : '⟨ Hide cue bar';
+  $('#preview-toggle').title = previewHidden
+    ? 'Show the cue bar (Take/Swap/Clear cue)'
+    : 'Hide the cue bar for more room to see slides';
+}
+applyPreviewVisibility();
+$('#preview-toggle').addEventListener('click', () => {
+  previewHidden = !previewHidden;
+  try { localStorage.setItem(PREVIEW_HIDDEN_KEY, previewHidden ? '1' : '0'); } catch { /* nothing to do */ }
+  applyPreviewVisibility();
+});
+
 $('#take').addEventListener('click', () => send({ op: 'take' }));
 $('#swap').addEventListener('click', () => send({ op: 'swap' }));
 $('#preview-mode').addEventListener('click', () => send({ op: 'previewMode' }));
@@ -2658,6 +2680,30 @@ $('#scrub').addEventListener('change', (ev) => {
 $('#deck-prev').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
 $('#deck-next').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
 $('#deck-export').addEventListener('click', exportDeck);
+
+// How the Now/Next row splits its width - 50/50 by default, but not always
+// the more useful split: leaning on Now to actually read a dense slide, or
+// on Next when Now is one you already know cold. Per device, like the laser
+// colour - it says nothing about what is on screen.
+const SPLIT_KEY = 'podium.confidenceSplit.v1';
+const SPLITS = { even: '50 / 50', now: '75 / 25', next: '25 / 75' };
+const SPLIT_ORDER = ['even', 'now', 'next'];
+let confidenceSplit = 'even';
+try {
+  const saved = localStorage.getItem(SPLIT_KEY);
+  if (SPLITS[saved]) confidenceSplit = saved;
+} catch { /* private browsing: even it is */ }
+
+function applyConfidenceSplit() {
+  $('.confidence-row').dataset.split = confidenceSplit;
+  $('#confidence-split').textContent = SPLITS[confidenceSplit];
+}
+applyConfidenceSplit();
+$('#confidence-split').addEventListener('click', () => {
+  confidenceSplit = SPLIT_ORDER[(SPLIT_ORDER.indexOf(confidenceSplit) + 1) % SPLIT_ORDER.length];
+  try { localStorage.setItem(SPLIT_KEY, confidenceSplit); } catch { /* nothing to do */ }
+  applyConfidenceSplit();
+});
 
 // --- laser pointer -----------------------------------------------------------
 //

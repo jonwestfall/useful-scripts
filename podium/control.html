@@ -54,6 +54,13 @@
          only when a B/C/D panel is actually focused - promoting A to A is
          not a button anyone needs. -->
     <button id="panel-promote" type="button" title="Make this panel full screen" hidden>⛶ Full screen this</button>
+    <!-- The cue bar (preview thumbnail + Take/Swap/Clear cue) costs a fixed
+         320px down the left of every tab, slides included - worth it when
+         something is cued, wasted width otherwise, most of all on an iPad
+         where the Now/Next boxes are already tight. One tap hides it, one
+         tap gets it back; nothing it does stops working, there is just
+         nowhere to see it happen until you show it again. -->
+    <button id="preview-toggle" type="button" title="Hide the cue bar for more room to see slides">⟨ Hide cue bar</button>
     <span class="room-info">room <b id="room-name" class="mono"></b> · <b id="fingerprint" class="mono">····</b></span>
     <button id="open-settings" type="button">Settings</button>
   </div>
@@ -177,7 +184,15 @@
                 <div id="deck-title"></div>
                 <div id="deck-theme" class="hint"></div>
               </div>
-              <div id="deck-count" class="mono"></div>
+              <div class="deck-head-right">
+                <div id="deck-count" class="mono"></div>
+                <!-- Which of Now/Next gets more of the row - a fixed 50/50 is
+                     not always the more useful split, e.g. leaning on Now
+                     when Next is just a heading you already know is coming.
+                     Cycles 50/50 -> 75/25 -> 25/75 -> back, remembered per
+                     device. -->
+                <button id="confidence-split" type="button" title="Change how Now/Next share this row">50 / 50</button>
+              </div>
             </div>
 
             <div class="confidence-row">
