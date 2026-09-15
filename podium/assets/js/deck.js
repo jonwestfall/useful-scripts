@@ -320,7 +320,25 @@ async function measureFits(html, css) {
     svg[data-marpit-svg] { display: block; width: 1280px; height: auto; }
   </style><style>${css}</style>${html}`;
   document.body.append(host);
+  let polyfill;
   try {
+    // Same polyfill applyFits' real callers apply before ever measuring
+    // anything (see renderDeck in renderers.js) - without it, Safari lays
+    // foreignObject content out by its own, more permissive rules, so a
+    // scale measured here against THAT layout can be too generous once the
+    // real render corrects it with this same polyfill afterward: text that
+    // fit the unfixed measurement overflows, silently, past wherever it is
+    // that clips a slide's box. Chrome never needed the polyfill in the
+    // first place, so this mismatch is invisible there - which is exactly
+    // why it reads as "the iPad cuts this off and the projector does not."
+    polyfill = await applyPolyfill(shadow);
+    // applyPolyfill's own promise resolves once it has registered its
+    // Safari-detection check and started an ongoing requestAnimationFrame
+    // loop, not once that check has actually run and corrected anything -
+    // the correction itself lands a frame or two later, asynchronously.
+    // Two frames is what it takes to be safely on the other side of that,
+    // the same margin any "wait for an observer's first pass" needs.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     await contentSettled(shadow);
     return Array.from(shadow.querySelectorAll('svg[data-marpit-svg]')).map((svg) => {
       const section = contentSection(svg);
@@ -333,6 +351,12 @@ async function measureFits(html, css) {
   } catch {
     return [];  // a deck that renders is worth showing even if fitting failed
   } finally {
+    // The polyfill's own correction loop runs on requestAnimationFrame for
+    // as long as it thinks there is a target worth correcting - it has no
+    // idea this host is about to be thrown away, so left running it is one
+    // more rAF callback forever, per deck ever measured. cleanup() is its
+    // own way of saying "stop".
+    polyfill?.cleanup?.();
     host.remove();
   }
 }
