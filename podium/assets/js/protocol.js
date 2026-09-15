@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 20;
+export const BUILD = 21;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -285,6 +285,30 @@ export function inkSurfaceKey(item) {
     // Two panels can hold two different countdowns; drawing on one must not
     // put the same marks on the other.
     case 'timer': return `timer:${item.timerId || ''}`;
+    // Content-derived, the same reason image and whiteboard are: re-picking
+    // the identical message or code should find its own ink again, and
+    // there is nothing else stable to key it by - both types carry no src
+    // or deckId, so falling through to the default case below would key
+    // them by the item's own `key` instead, which is reassigned every time
+    // the SAME text/QR is re-staged (including by "Full screen this" -
+    // see the black case right below for what that actually does).
+    case 'text': return `text:${item.body || ''}`;
+    case 'qr': return `qr:${item.data || ''}`;
+    // One surface, not one per instance: unlike every case above, "black"
+    // carries no content of its own to distinguish one from another, so it
+    // needs an identity that isn't the item's own `key` at all. The default
+    // case below falls back to `key` for exactly this reason (nothing else
+    // to go on) - which is fine for an item that is never re-staged, but a
+    // panel showing the untouched default black item has no key yet
+    // (state.panels starts as plain {...BLACK} literals, never normalized),
+    // so drawing on it computes "black:" - and the instant that panel's
+    // content is re-staged for ANY reason, including "Full screen this"
+    // promoting it, normalizeItem() hands it a fresh random key and the
+    // surface becomes "black:<newkey>": a new, empty one. The promoted
+    // panel then shows literally nothing (black has no content of its own
+    // to render) with an ink layer that has nothing to paint either -
+    // indistinguishable from the screen having simply gone black.
+    case 'black': return 'black';
     // Scoped by position, not just by the set: drawing on entry 2 must not
     // show up when the rotation comes back around to entry 5, the same
     // reason a deck keys ink by slide rather than by the deck as a whole.

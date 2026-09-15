@@ -93,6 +93,15 @@ chk('but never the first - everything with no id falls back to it',
   applyCommand(s, {op:'timer', action:'remove', id:s.timers[0].id}) === false && s.timers.length === MAX_TIMERS - 1);
 chk('two panels showing two countdowns are two ink surfaces',
   inkSurfaceKey({type:'timer', timerId:'a'}) !== inkSurfaceKey({type:'timer', timerId:'b'}));
+chk('a black panel keeps its own ink surface, not one keyed by the item\'s own (re-assignable) key',
+  inkSurfaceKey({type:'black', title:'Black'}) === inkSurfaceKey({type:'black', title:'Black', key:'k1'})
+  && inkSurfaceKey({type:'black'}) === inkSurfaceKey({type:'black', key:'k2'}));
+chk('the same text sign keeps its ink across being re-staged with a new key',
+  inkSurfaceKey({type:'text', body:'Back in 5'}) === inkSurfaceKey({type:'text', body:'Back in 5', key:'k1'})
+  && inkSurfaceKey({type:'text', body:'Back in 5'}) !== inkSurfaceKey({type:'text', body:'Different message'}));
+chk('the same QR code keeps its ink across being re-staged with a new key',
+  inkSurfaceKey({type:'qr', data:'https://a'}) === inkSurfaceKey({type:'qr', data:'https://a', key:'k1'})
+  && inkSurfaceKey({type:'qr', data:'https://a'}) !== inkSurfaceKey({type:'qr', data:'https://b'}));
 applyCommand(s, {op:'timer', action:'define', timers:[{id:'grp', label:'Group work', seconds:480}, {id:'brk2', label:'Break', seconds:300}]});
 chk('loading a lecture plan replaces the whole set, keeping the ids it names',
   s.timers.length === 2 && s.timers[0].id === 'grp' && s.timers[1].label === 'Break'

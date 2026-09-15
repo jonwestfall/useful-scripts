@@ -1325,8 +1325,11 @@ the screen, and that clearing a room's saved session on the arming screen really
 starts black and really persists across a second reload, not just the one right
 after clicking it. It also proves hiding the cue bar actually gives the Now/Next
 boxes more room and remembers the choice across a reload, and that the Now/Next
-split cycles through 50/50, 75/25 and 25/75 and keeps a non-default choice too.
-407 checks.
+split cycles through 50/50, 75/25 and 25/75 and keeps a non-default choice too. And
+it proves that drawing on a panel nobody has staged anything into yet — still
+showing the plain default black every panel starts as — survives being promoted to
+full screen, rather than the promoted panel and its ink both silently vanishing.
+410 checks.
 
 ## Layout
 

@@ -3635,6 +3635,63 @@ ok('and TAKE still applies content with no layout change involved', true);
 await ctx.close();
 }
 
+if (want('drawing on an untouched panel and promoting it does not go black')) {
+console.log('\n-- drawing on an untouched panel and promoting it does not go black --');
+// The exact class report: a deck on A, split to side-by-side, focus B
+// WITHOUT ever picking anything into it (so it is still the untouched
+// default "Black" every panel starts as), draw on the Ink tab, then
+// "Full screen this". inkSurfaceKey used to fall back to the item's own
+// `key` for a type with no src/deckId of its own - and the untouched
+// default panels are plain {...BLACK} literals with no key at all, so
+// drawing there computed surface "black:". Promoting re-stages that same
+// conceptual item through normalizeItem(), which hands it a brand new
+// random key - so the promoted program's surface became "black:<newkey>",
+// a different, empty one: the promoted panel then had nothing of its own
+// to render (black has no content) and an ink layer with nothing to
+// paint either, indistinguishable from the screen having simply gone black.
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'black-panel-room', passphrase: 'draw on B first' }));
+const screen = await ctx.newPage();
+trap(screen, 'black-panel display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'black-panel pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await screen.waitForFunction(() => (document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length || 0) > 0, null, { timeout: 20000 });
+await pad.click('.layout-btn[data-layout="2h"]');
+await pad.click('.panel-btn:nth-child(2)');
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'B', null, { timeout: 5000 });
+ok('panel B is focused, and nothing has ever been staged into it', await pad.evaluate(() => document.querySelector('#panel-promote') !== null));
+
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad');
+const bBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(bBox.x + bBox.w * 0.25, bBox.y + bBox.h * 0.25);
+await pad.mouse.down();
+for (let i = 1; i <= 10; i++) await pad.mouse.move(bBox.x + bBox.w * (0.25 + i * 0.05), bBox.y + bBox.h * (0.25 + i * 0.05));
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+ok('ink on the untouched panel B reaches the display', true);
+
+await pad.click('#panel-promote');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 8000 });
+const paintedAfter = await screen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+ok(`the ink drawn on the untouched panel survives promoting it (${paintedAfter} px), the screen is not just black`, paintedAfter > 100);
+await ctx.close();
+}
+
 if (want('uploading a photo from the device rather than a URL')) {
 console.log('\n-- uploading a photo from the device rather than a URL --');
 const ctx = await browser.newContext();
