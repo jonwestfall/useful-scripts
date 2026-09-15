@@ -267,6 +267,16 @@ function renderAudio(item, opts) {
 
 // YouTube without the IFrame API library: the embed accepts the same commands
 // over postMessage, and reports playhead back through "infoDelivery" events.
+//
+// This uses www.youtube.com rather than www.youtube-nocookie.com. The two
+// serve the same player, but nocookie embeds have a real history of dropping
+// setVolume/unMute commands sent over postMessage - Chrome specifically was
+// seen doing this in a classroom (audio played, but the room's volume slider
+// had no effect on it, only the TV's own remote did), while the same page
+// controlled a nocookie embed correctly in Safari. youtube.com is the domain
+// Google's own IFrame API docs use for JS-API-controlled embeds; the cost is
+// that YouTube can set its ordinary cookies once the frame loads, rather than
+// only after playback starts.
 function renderYouTube(item, opts) {
   const origin = location.origin.startsWith('http') ? location.origin : '';
   const params = new URLSearchParams({
@@ -277,7 +287,7 @@ function renderYouTube(item, opts) {
   });
   if (origin) params.set('origin', origin);
 
-  const HOST = 'https://www.youtube-nocookie.com';
+  const HOST = 'https://www.youtube.com';
   const frame = el('iframe', {
     class: 'r-frame',
     src: `${HOST}/embed/${encodeURIComponent(item.videoId)}?${params}`,
@@ -291,6 +301,13 @@ function renderYouTube(item, opts) {
   let lastSeek = item.seekNonce || 0;
   const queue = [];
   const state = { time: 0, duration: 0, playing: false };
+  // What we last told the player to be, vs. what it last reported back -
+  // if a command is silently dropped (the failure mode this domain switch
+  // targets) these drift apart instead of the room just going quiet with no
+  // clue why. One warning per drift, not one per reconcile.
+  let wantVolume = null;
+  let wantMuted = null;
+  let volumeWarned = false;
 
   const post = (func, args = []) => {
     const msg = JSON.stringify({ event: 'command', func, args });
@@ -315,6 +332,14 @@ function renderYouTube(item, opts) {
     if (typeof info.currentTime === 'number') state.time = info.currentTime;
     if (typeof info.duration === 'number') state.duration = info.duration;
     if (typeof info.playerState === 'number') state.playing = info.playerState === 1;
+    if (!volumeWarned && wantVolume !== null && typeof info.volume === 'number' && typeof info.muted === 'boolean') {
+      const appliedVolume = info.muted ? 0 : info.volume;
+      const wantedVolume = wantMuted ? 0 : wantVolume;
+      if (Math.abs(appliedVolume - wantedVolume) > 5) {
+        volumeWarned = true;
+        console.warn(`[podium] YouTube embed ignored a volume command: asked for ${wantedVolume}, player reports ${appliedVolume}. The room's volume control will not reach this video.`);
+      }
+    }
   };
   window.addEventListener('message', onMessage);
 
@@ -328,8 +353,10 @@ function renderYouTube(item, opts) {
     },
     reconcile(it, audio) {
       if (opts.preview) { post('mute'); post('pauseVideo'); return; }
+      wantMuted = !!audio.muted;
+      wantVolume = Math.round((audio.muted ? 0 : audio.volume) * 100);
       post('unMute');
-      post('setVolume', [Math.round((audio.muted ? 0 : audio.volume) * 100)]);
+      post('setVolume', [wantVolume]);
       if ((it.seekNonce || 0) !== lastSeek) {
         lastSeek = it.seekNonce || 0;
         if (it.seekTo !== undefined) post('seekTo', [it.seekTo, true]);

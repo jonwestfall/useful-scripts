@@ -992,6 +992,19 @@ next tap or key press anywhere on the display retries the blocked clip once, so 
 stuck Waiting Music tile clears itself rather than requiring you to find the "leave
 and re-enter fullscreen" workaround.
 
+**If the room's volume slider stops reaching a YouTube video.** A plain
+`<video>`/`<audio>` element (Library video, Music tab) always obeys the volume
+slider — that is a same-page DOM property, nothing to go wrong. A YouTube embed is
+different: volume has to be sent to it as a command over `postMessage`, and one
+classroom's Chrome was seen simply dropping those commands for a
+`youtube-nocookie.com` embed — audio kept playing, but only the TV's own remote
+changed how loud it was, while the identical page controlled the same video
+correctly in Safari. Podium now embeds from `www.youtube.com` instead, which does
+not have that history; if a dropped command ever happens again regardless, the
+browser's own console gets a warning (`YouTube embed ignored a volume command…`)
+naming what was asked for and what the player actually reports, since "it just
+didn't work" is otherwise very hard to debug from the podium mid-class.
+
 **Some sites refuse to be embedded.** `X-Frame-Options` and CSP mean many news sites,
 most LMSes and Google Docs will show a blank frame — the display says so rather than
 leaving you guessing. Anything you host yourself, YouTube's embed, and most slide
