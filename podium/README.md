@@ -18,7 +18,9 @@ disk. There is no build step and no framework.
 **New to this, or not especially technical?** [QUICKSTART.md](QUICKSTART.md) explains
 the whole thing in plain English and walks through putting it online free on GitHub
 Pages in about twenty minutes — no terminal, no server, no card. This file is the
-full reference; that one is the road in.
+full reference; that one is the road in. [ROADMAP.md](ROADMAP.md) is where a
+longer-term idea (audience participation — polls, word clouds) is being thought
+through before it becomes code.
 
 <details>
 <summary><b>What is in this file</b> (it is long; this is the map)</summary>
