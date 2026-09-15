@@ -824,7 +824,13 @@ const contentBox = await screen.evaluate(() => {
 });
 ok(`the 16:9 slide is genuinely pillarboxed in this window (dead margin ${Math.round(contentBox.x)}px each side)`, contentBox.x > 50);
 
+// Every tab shares one scrolling container - scrolled deep into a long
+// Library, switching tabs must not carry that scroll position into the
+// next one, or a tall panel (Ink, here) starts measured from a viewport
+// rect shifted up off the top of the screen.
+await pad.evaluate(() => { document.querySelector('.panels').scrollTop = 400; });
 await pad.click('.tab[data-tab="ink"]');
+ok('switching tabs resets the shared scroll position', await pad.evaluate(() => document.querySelector('.panels').scrollTop === 0));
 await pad.waitForTimeout(300);
 const padBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
 // Draw right near the pad's own left edge - if the pad is correctly shaped to
@@ -1821,6 +1827,49 @@ ok('the dot tracks the drag', dot2.x > dot1.x && dot2.y < dot1.y);
 await pad.mouse.up();
 await screen.waitForFunction(() => !document.querySelector('#laser').classList.contains('is-on'), null, { timeout: 3000 });
 ok('releasing hides the dot - nothing is left behind, nothing was saved', true);
+
+// Hiding the cue bar gives the Now/Next boxes more room, and remembers the
+// choice per device rather than resetting on every visit.
+const widthBefore = await pad.$eval('#deck-now-preview', (n) => n.getBoundingClientRect().width);
+ok('the cue bar is visible by default', await pad.isVisible('#preview-pane'));
+await pad.click('#preview-toggle');
+ok('hiding it removes it from the layout', !(await pad.isVisible('#preview-pane')));
+const widthAfter = await pad.$eval('#deck-now-preview', (n) => n.getBoundingClientRect().width);
+ok(`the Now/Next boxes actually get the extra room (${Math.round(widthBefore)} -> ${Math.round(widthAfter)})`, widthAfter > widthBefore);
+await pad.reload();
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+ok('the choice survives a reload of the controller', !(await pad.isVisible('#preview-pane')));
+await pad.click('#preview-toggle');
+ok('and toggling it back shows it again', await pad.isVisible('#preview-pane'));
+
+// The Now/Next split cycles 50/50 -> 75/25 -> 25/75 -> back, and remembers
+// the choice the same way the cue-bar visibility does.
+await pad.click('.tab[data-tab="slides"]');
+ok('the split starts even', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'even'));
+const widthsAt = async () => pad.evaluate(() => {
+  const [now, next] = document.querySelectorAll('.confidence-box');
+  return { now: now.getBoundingClientRect().width, next: next.getBoundingClientRect().width };
+});
+const evenWidths = await widthsAt();
+await pad.click('#confidence-split');
+ok('one tap leans it toward Now', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'now'));
+const nowWidths = await widthsAt();
+ok(`and Now is actually wider than Next now (${Math.round(nowWidths.now)} vs ${Math.round(nowWidths.next)})`,
+  nowWidths.now > evenWidths.now && nowWidths.now > nowWidths.next);
+await pad.click('#confidence-split');
+ok('a second tap leans it toward Next instead', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'next'));
+const nextWidths = await widthsAt();
+ok(`and Next is actually wider than Now now (${Math.round(nextWidths.next)} vs ${Math.round(nextWidths.now)})`,
+  nextWidths.next > evenWidths.next && nextWidths.next > nextWidths.now);
+await pad.click('#confidence-split');
+ok('a third tap cycles back to even', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'even'));
+await pad.click('#confidence-split');
+await pad.reload();
+await pad.waitForSelector('.tile');
+await pad.click('.tab[data-tab="slides"]');
+ok('and a non-default split choice survives a reload too', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'now'));
+
 await ctx.close();
 }
 
@@ -3319,11 +3368,24 @@ await screen.reload();
 await screen.waitForSelector('#arm:not([hidden])');
 const resumeNote = (await screen.textContent('#arm-resume-what')).trim();
 ok(`the arming screen says what it is coming back to ("${resumeNote}")`, /Weighing the Evidence/.test(resumeNote));
+
+// The room's own reset, offered right there rather than only reachable by
+// waiting out the room's usual 12-hour staleness window - this is for a
+// different class about to use the same room, not a crash to recover from.
+await screen.click('#arm-fresh-session');
+ok('clearing the room hides the "coming back to" banner', await screen.$eval('#arm-resume', (n) => n.hidden));
+ok('and says so', /Cleared/.test(await screen.textContent('#arm-fresh-session-note')));
 await screen.click('#arm-button');
 await screen.waitForSelector('#hud[data-status="online"]');
-await screen.waitForTimeout(3500);
-ok(`and it comes back on the slide it was on, not at the beginning (slide ${(await slideOnWall()) + 1})`,
-  (await slideOnWall()) === 4);
+await screen.waitForTimeout(1500);
+ok('going live after clearing starts black, not on the slide it was on', (await slideOnWall()) === -1);
+
+await screen.reload();
+await screen.waitForSelector('#arm:not([hidden])');
+ok('a second reload has nothing left to offer coming back to either - the clear really persisted',
+  await screen.$eval('#arm-resume', (n) => n.hidden));
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
 
 // --- the offline shell ------------------------------------------------------
 const shell = await pad.evaluate(async () => {
@@ -3471,6 +3533,192 @@ ok('and does nothing once the room is already live',
 await c.close();
 }
 
+if (want('full screen this panel, and layout respects freeze')) {
+console.log('\n-- full screen this panel, and layout respects freeze --');
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'layout-room', passphrase: 'panel C full screen' }));
+const screen = await ctx.newPage();
+trap(screen, 'layout display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'layout pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// "Full screen this": panel C's content becomes panel A, in single layout,
+// in one tap - the actual complaint being "I switch back to one panel and
+// get A, not the C I was just looking at".
+await pad.click('.layout-btn[data-layout="4"]');
+await pad.click('.panel-btn:nth-child(3)');
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'C', null, { timeout: 5000 });
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
+await screen.waitForFunction(() => document.querySelectorAll('.panel-slot.is-on').length === 4, null, { timeout: 8000 });
+ok('the "Full screen this" button appears once a non-A panel is focused', await pad.isVisible('#panel-promote'));
+
+// Draw on panel C before promoting it - the actual class complaint was that
+// promoting a panel with ink on it goes black, not just that the ink is lost.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad');
+const cBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(cBox.x + cBox.w * 0.2, cBox.y + cBox.h * 0.3);
+await pad.mouse.down();
+for (let i = 1; i <= 12; i++) await pad.mouse.move(cBox.x + cBox.w * (0.2 + i * 0.045), cBox.y + cBox.h * (0.3 + i * 0.03));
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+const paintedBefore = await screen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+ok(`ink on panel C reaches the display before promoting (${paintedBefore})`, paintedBefore > 200);
+
+await pad.click('#panel-promote');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 8000 });
+ok('promoting switches to single layout', true);
+ok('with panel A now showing what was in C, not black', await screen.evaluate(() => !!document.querySelector('.r-whiteboard')));
+const paintedAfter = await screen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+ok(`the ink drawn on C is still there once it is full screen (${paintedAfter})`, paintedAfter > 200);
+
+// A layout change while frozen queues behind TAKE, the same as content -
+// see the 'layout'/'take'/'clear' cases in protocol.js.
+await pad.click('#freeze');
+await pad.click('.layout-btn[data-layout="2h"]');
+await pad.waitForTimeout(500);
+ok('a layout change while frozen does not apply immediately', await screen.evaluate(() => document.querySelector('#stage').classList.contains('layout-single')));
+ok('the cued layout button shows cued rather than live',
+  await pad.evaluate(() => document.querySelector('.layout-btn[data-layout="2h"]').classList.contains('is-cued')
+    && !document.querySelector('.layout-btn[data-layout="2h"]').classList.contains('is-on')));
+ok('and the preview pane says a layout is cued', /Layout cued/.test(await pad.textContent('#preview-label')));
+ok('TAKE is armed by a cued layout alone, with no content change pending', !(await pad.evaluate(() => document.querySelector('#take').disabled)));
+
+await pad.click('#take');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-2h'), null, { timeout: 8000 });
+ok('TAKE applies the cued layout', true);
+await pad.waitForFunction(() => !document.querySelector('#freeze').classList.contains('is-on'), null, { timeout: 5000 })
+  .then(() => ok('and releases freeze the same as any other take', true))
+  .catch(() => ok('and releases freeze the same as any other take', false));
+
+// Clear cue abandons a cued layout, not just cued content.
+await pad.click('#freeze');
+await pad.click('.layout-btn[data-layout="4"]');
+await pad.waitForFunction(() => document.querySelector('.layout-btn[data-layout="4"]').classList.contains('is-cued'), null, { timeout: 5000 });
+await pad.click('#clear-preview');
+await pad.waitForTimeout(300);
+ok('Clear cue abandons a cued layout too',
+  !(await pad.evaluate(() => document.querySelector('.layout-btn[data-layout="4"]').classList.contains('is-cued'))));
+await pad.click('#freeze');
+await screen.waitForTimeout(300);
+ok('and the display never saw it', await screen.evaluate(() => document.querySelector('#stage').classList.contains('layout-2h')));
+
+// Regression guard: plain content cueing while frozen is unaffected by the
+// layout-cueing rewrite of take()/clear().
+await pad.click('#freeze');
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await pad.waitForTimeout(400);
+ok('plain content cueing while frozen still works', /^Cued$/.test(await pad.textContent('#preview-label')));
+await pad.click('#take');
+await screen.waitForSelector('.r-whiteboard', { timeout: 8000 });
+ok('and TAKE still applies content with no layout change involved', true);
+
+await ctx.close();
+}
+
+if (want('drawing on an untouched panel and promoting it does not go black')) {
+console.log('\n-- drawing on an untouched panel and promoting it does not go black --');
+// The exact class report: a deck on A, split to side-by-side, focus B
+// WITHOUT ever picking anything into it (so it is still the untouched
+// default "Black" every panel starts as), draw on the Ink tab, then
+// "Full screen this". inkSurfaceKey used to fall back to the item's own
+// `key` for a type with no src/deckId of its own - and the untouched
+// default panels are plain {...BLACK} literals with no key at all, so
+// drawing there computed surface "black:". Promoting re-stages that same
+// conceptual item through normalizeItem(), which hands it a brand new
+// random key - so the promoted program's surface became "black:<newkey>",
+// a different, empty one: the promoted panel then had nothing of its own
+// to render (black has no content) and an ink layer with nothing to
+// paint either, indistinguishable from the screen having simply gone black.
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'black-panel-room', passphrase: 'draw on B first' }));
+const screen = await ctx.newPage();
+trap(screen, 'black-panel display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'black-panel pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await screen.waitForFunction(() => (document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length || 0) > 0, null, { timeout: 20000 });
+await pad.click('.layout-btn[data-layout="2h"]');
+await pad.click('.panel-btn:nth-child(2)');
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'B', null, { timeout: 5000 });
+ok('panel B is focused, and nothing has ever been staged into it', await pad.evaluate(() => document.querySelector('#panel-promote') !== null));
+
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad');
+const bBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(bBox.x + bBox.w * 0.25, bBox.y + bBox.h * 0.25);
+await pad.mouse.down();
+for (let i = 1; i <= 10; i++) await pad.mouse.move(bBox.x + bBox.w * (0.25 + i * 0.05), bBox.y + bBox.h * (0.25 + i * 0.05));
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+ok('ink on the untouched panel B reaches the display', true);
+
+await pad.click('#panel-promote');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 8000 });
+const paintedAfter = await screen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+ok(`the ink drawn on the untouched panel survives promoting it (${paintedAfter} px), the screen is not just black`, paintedAfter > 100);
+await ctx.close();
+}
+
+if (want('uploading a photo from the device rather than a URL')) {
+console.log('\n-- uploading a photo from the device rather than a URL --');
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'photo-upload-room', passphrase: 'the meme I wanted' }));
+const screen = await ctx.newPage();
+trap(screen, 'upload display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'upload pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.setInputFiles('#photo-upload', writeImageFixture());
+await screen.waitForFunction(() => {
+  const img = document.querySelector('.layer[data-role="program"] img');
+  return img && img.complete && img.naturalWidth > 1;
+}, null, { timeout: 10000 })
+  .then(() => ok('a photo picked from Files/Camera Roll goes live on the display', true))
+  .catch(() => ok('a photo picked from Files/Camera Roll goes live on the display', false));
+
+await ctx.close();
+}
+
 if (want('a countdown to the end of the track')) {
 console.log('\n-- a countdown to the end of the track --');
 const ctx = await browser.newContext();
@@ -3518,6 +3766,124 @@ const frozen = await screen.textContent('.r-timer-value');
 await pad.click('.tab[data-tab="now"]');
 await pad.waitForSelector('.r-timer', { timeout: 8000 });
 ok(`a controller previews the same real countdown, from musicNow (${frozen})`, (await pad.textContent('.r-timer-value')) === frozen);
+await ctx.close();
+}
+
+if (want('automated sets: a rotation that runs itself')) {
+console.log('\n-- automated sets: a rotation that runs itself --');
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'sets-room', passphrase: 'we begin in twenty seconds' }));
+const screen = await ctx.newPage();
+trap(screen, 'sets display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'sets pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Building one: every Library tap goes into the draft instead of going live.
+await pad.click('.tab[data-tab="sets"]');
+await pad.click('#sets-new');
+await pad.fill('#sets-build-name', 'Throwaway');
+await pad.click('#sets-build-add');
+ok('Add items switches to the Library tab', await pad.evaluate(() => document.querySelector('.tab[data-tab="library"]').classList.contains('is-on')));
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
+await screen.waitForTimeout(400);
+ok('nothing goes live while building', await screen.evaluate(() => !document.querySelector('.r-whiteboard')));
+
+// A live camera is declined rather than added broken (see the /code-review
+// note in control.js: it never gets the async WebRTC setup pick() normally
+// gives it, so it would sit there forever unresolved).
+await pad.click('.tile:has(.tile-title:text-is("Phone camera"))');
+await pad.click('.tab[data-tab="sets"]');
+ok('a live camera is declined, not added broken', (await pad.$$('#sets-build-entries .set-row')).length === 2);
+
+// Tapping a whole deck tile (as opposed to one specific slide pulled from
+// Recent) fetches it and adds every one of its slides as its own entry - the
+// actual class complaint was "I could only add individual slides, not a
+// whole deck".
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await pad.waitForFunction(() => document.querySelector('#sets-add-note')?.textContent.includes('Added all 13 slides'), null, { timeout: 15000 });
+await pad.click('.tab[data-tab="sets"]');
+ok('the whole deck landed as 13 separate entries', (await pad.$$('#sets-build-entries .set-row')).length === 2 + 13);
+ok('each entry is its own slide of the deck, in order', await pad.evaluate(() => {
+  const rows = Array.from(document.querySelectorAll('#sets-build-entries .set-row .set-row-title'));
+  const deckRows = rows.slice(2).map((r) => r.textContent);
+  return deckRows.length === 13 && deckRows[0].includes('Weighing the Evidence') && deckRows[0] !== deckRows[12];
+}));
+await pad.click('#sets-build-cancel');
+ok('cancelling the throwaway draft discards it', !/Throwaway/.test(await pad.textContent('#sets-list')));
+
+// Now build the set the rest of this section actually exercises.
+await pad.click('#sets-new');
+await pad.fill('#sets-build-name', 'Pre-show');
+await pad.click('#sets-build-add');
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
+await pad.click('.tab[data-tab="sets"]');
+ok('the real draft starts clean with just the two tiles picked for it', (await pad.$$('#sets-build-entries .set-row')).length === 2);
+
+const secInputs = await pad.$$('#sets-build-entries .set-row-secs');
+await secInputs[0].fill('2'); await secInputs[0].dispatchEvent('change');
+await secInputs[1].fill('3'); await secInputs[1].dispatchEvent('change');
+await pad.click('#sets-build-save');
+ok('saving closes the builder and lists it', await pad.isHidden('#sets-build') && /Pre-show/.test(await pad.textContent('#sets-list')));
+
+// Start it on Panel A - staged like any other item.
+await pad.click('.set-saved-row:has(.set-saved-title:text-is("Pre-show")) .set-start-btn:text-is("A")');
+await screen.waitForSelector('.r-whiteboard', { timeout: 8000 });
+ok('starting it puts the first entry up', true);
+
+const firstBg = await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background);
+await pad.waitForTimeout(3500);
+const secondBg = await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background);
+ok('it advances itself on schedule, with no controller action', firstBg !== secondBg);
+
+// The running-set remote: jump, pause, resume. These specifically exercise
+// a real bug found while building this - the buttons were built once and
+// closed over that render's `item`, which state replacement (a fresh object
+// every broadcast) made stale after the very next heartbeat.
+await pad.click('.tab[data-tab="sets"]');
+await pad.waitForSelector('#set-now-title', { timeout: 8000 });
+await pad.click('#set-now-next');
+await screen.waitForTimeout(500);
+const thirdBg = await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background);
+ok('Next jumps forward too, not just the auto-advance', thirdBg !== secondBg);
+
+await pad.click('#set-now-pause');
+await pad.waitForFunction(() => /paused/.test(document.querySelector('#set-now-title').textContent), null, { timeout: 5000 });
+ok('Pause freezes the readout', true);
+ok('and flips the button to a play glyph', (await pad.textContent('#set-now-pause')) === '▶');
+const heldBg = await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background);
+await pad.waitForTimeout(3500);
+ok('and genuinely holds - no auto-advance while paused',
+  (await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background)) === heldBg);
+await pad.click('#set-now-pause');
+await pad.waitForFunction(() => !/paused/.test(document.querySelector('#set-now-title').textContent), null, { timeout: 5000 });
+ok('pressing it again resumes', true);
+
+// The same saved set can run independently on a second pane at once.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.layout-btn[data-layout="2h"]');
+await pad.click('.tab[data-tab="sets"]');
+await pad.click('.set-saved-row:has(.set-saved-title:text-is("Pre-show")) .set-start-btn:text-is("B")');
+await screen.waitForFunction(() => document.querySelectorAll('.panel-slot.is-on').length === 2, null, { timeout: 8000 });
+ok('the same saved set can run on a second pane too, independently', true);
+
+// Editing, reordering, and deleting a saved set.
+await pad.click('.set-saved-row:has(.set-saved-title:text-is("Pre-show")) button:text-is("Edit")');
+await pad.click('#sets-build-entries .set-row:nth-child(2) .set-row-del');
+ok('editing a saved set and removing an entry drops it to one', (await pad.$$('#sets-build-entries .set-row')).length === 1);
+await pad.click('#sets-build-cancel');
+ok('cancel leaves the saved set exactly as it was (still two entries)', /2 items/.test(await pad.textContent('#sets-list')));
+await pad.click('.set-saved-row:has(.set-saved-title:text-is("Pre-show")) button:text-is("Delete")');
+ok('Delete removes it from the saved list', !/Pre-show/.test(await pad.textContent('#sets-list')));
 await ctx.close();
 }
 

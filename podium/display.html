@@ -73,6 +73,14 @@
       <span id="arm-resume-what"></span>
       <button id="arm-resume-clear" type="button">Start black instead</button>
     </p>
+    <!-- Always offered, not just when something is resumable: ink, a
+         watermark, timers and the music queue all outlive a reload on
+         purpose (see restoreInk/restoreState), which is exactly wrong the
+         first time this room is used for a different class. -->
+    <p class="hint">
+      <button id="arm-fresh-session" type="button">Clear this room’s saved session</button>
+      <span id="arm-fresh-session-note"></span>
+    </p>
     <p class="hint mono relay-target"></p>
     <p class="hint stale-note" id="arm-build" hidden></p>
     <pre class="relay-log" hidden></pre>

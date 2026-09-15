@@ -18,7 +18,9 @@ disk. There is no build step and no framework.
 **New to this, or not especially technical?** [QUICKSTART.md](QUICKSTART.md) explains
 the whole thing in plain English and walks through putting it online free on GitHub
 Pages in about twenty minutes — no terminal, no server, no card. This file is the
-full reference; that one is the road in.
+full reference; that one is the road in. [ROADMAP.md](ROADMAP.md) is where a
+longer-term idea (audience participation — polls, word clouds) is being thought
+through before it becomes code.
 
 <details>
 <summary><b>What is in this file</b> (it is long; this is the map)</summary>
@@ -43,6 +45,7 @@ full reference; that one is the road in.
 [splitting the screen](#splitting-the-screen) ·
 [watermark](#watermark) ·
 [countdowns](#countdowns) ·
+[automated sets](#automated-sets) ·
 [music before class](#music-before-class) ·
 [the document camera](#the-document-camera-and-photos-taken-with-it) ·
 [keeping what was on screen](#keeping-what-was-on-screen) ·
@@ -105,7 +108,7 @@ HTML slide decks including reveal.js · PDFs with page-turn buttons · big text 
 a QR code for the class to scan · countdown timers · a whiteboard · your phone's
 camera as a document camera, including stills taken from it that you can hold in
 four panels at once. Plus background music the room hears and the projector never
-shows.
+shows, and automated sets — a rotation of any of the above that advances itself.
 
 A few more that sit on top of anything: **ink**, so you can annotate live over a
 slide with an Apple Pencil, a **caption** along the bottom of the screen, and a
@@ -247,6 +250,16 @@ iPad, the thumbnails, and the PNG export all shrink a slide by the same amount,
 so what you rehearse is what the room sees. The Slides tab says so — *Slide 9 /
 13 · fit 74%* — rather than leaving you wondering why the type looks small.
 
+That measurement now also applies Marp's own Safari layout fix before taking it
+(Safari lays a slide's `<foreignObject>` content out more generously than every
+other engine does, which is exactly why decks need that fix applied at all -
+see `applyPolyfill` in `deck.js`). Skipping it during measurement, as Podium
+used to, meant the number computed on an iPad could be too generous for what
+the iPad's own corrected layout actually rendered - the tail of a wide line
+(a `$$…$$` block chaining several arrows together was what surfaced it)
+clipped on the iPad while the exact same slide, measured and shown by a
+browser that never needed the fix, was intact on the projector.
+
 Shrinking never changes a slide's shape, only the size of what is on it, so ink
 and the laser still land exactly where they were aimed.
 
@@ -294,6 +307,11 @@ Two things live on the Now box:
 
 - **✎ Markup** jumps to the Ink tab, already lined up on the slide you are looking
   at — no separate step to pick the right surface.
+- **50 / 50** (next to the slide count, top right) cycles the row's own split —
+  **75 / 25** leans on Now, **25 / 75** leans on Next, and a third tap goes back to
+  even. Useful either direction: more of Now to actually read a dense slide, or more
+  of Next when Now is one you already know cold and it is the slide coming up you
+  need to see clearly. Remembered per device.
 - **Laser** turns the Now box itself into a pointer. Drag on it and a dot follows
   your finger on the real screen, mapped onto the slide's own bounds the same way
   ink is; lift your finger and it is gone. Nothing about it is saved or undoable —
@@ -305,6 +323,15 @@ Two things live on the Now box:
   button itself wears the colour, so you can see what the class is about to see
   without pressing it first, and the choice is remembered on that device — whoever
   needs green today needs it for the rest of the term.
+
+**⟨ Hide cue bar**, in the topbar, hides the preview rail (the thumbnail plus
+Take/Swap/Clear cue) that otherwise runs down the left of every tab — a fixed
+320px that is wasted room whenever nothing is cued, and the thing most worth
+getting back on an iPad where the Now/Next boxes are already tight. One tap
+hides it, one tap (now reading **⟩ Show cue bar**) brings it back; nothing it
+controls stops working, TAKE included — there is just nowhere to see it happen
+until you show it again. The choice is remembered per device, the same as the
+laser colour.
 
 ### Themes
 
@@ -514,6 +541,18 @@ The save is debounced, which leaves the obvious window — the last thing you di
 exactly what a debounce has not written yet — so it is also flushed when the tab is
 hidden, closed or reloaded. Only a hard crash loses anything, and then at most a second.
 
+**A different class is about to use this room.** The arming screen's own
+**Start black instead** only clears what is on screen, next to a session it thinks is
+worth resuming — it leaves the watermark, the music queue, the timers, and any ink
+already on a slide untouched, because those are meant to survive an *accidental*
+reload. A room hosting more than one course is a different situation: **Clear this
+room's saved session**, right below it, is offered every time regardless of whether
+anything looks resumable, and clears all of it — content, watermark, timers, volume,
+the music queue, and ink (which otherwise has no twelve-hour limit of its own: reuse
+the same deck file next term and yesterday's markup would still be sitting on slide 4)
+— and wipes what is saved for this room so a later reload does not bring any of it
+back either.
+
 ## Splitting the screen
 
 The layout picker lives in the topbar (five small icons, next to Settings): **full
@@ -529,6 +568,12 @@ would switch tabs — tap **A**, **B**, **C**, or **D** — and everything else 
 panel, ink included; hold a layout icon and you get the whole screen. See
 [keeping what was on screen](#keeping-what-was-on-screen).
 
+Want whatever's in B, C, or D to take over the whole screen instead of dropping back
+to A? Focus that panel and press **⛶ Full screen this**, next to the panel buttons
+(it only shows once a non-A panel is focused). It carries that panel's content into
+A and switches to full-screen layout in one tap — no re-picking the same item out of
+Recent, no ending up back at whatever A last held.
+
 Panel **A** is exactly what Podium has always been: TAKE, freeze, cue, Swap all
 still work on it precisely as before, just confined to its own region of the screen
 once a layout splits it. **B**, **C**, and **D** are deliberately simpler and have
@@ -538,6 +583,12 @@ panel was never going to change in front of the class without you choosing to ch
 it right then. Think of A as "what I am presenting" and B/C/D as "what's also up" —
 a countdown for group work, a slide of instructions, a photo — set once and left
 alone rather than cued and revealed.
+
+The layout itself is a different matter: freeze holds back the whole stage, not just
+panel A's content, so switching layouts while frozen cues the switch instead of
+instantly rearranging what the class is looking at — the preview strip reads "Layout
+cued" and TAKE applies it (together with any cued content), Clear cue abandons it.
+Unfrozen, a layout switch still happens the instant you tap it, same as always.
 
 This is for laying a screen out, not for a fast during-class reveal: project your
 slides, split to add a countdown and an instruction panel for group work, then drop
@@ -597,6 +648,44 @@ tablet sleeps or you close the controller and reopen it.
 
 A lecture plan defines the set: its saved timers become the four clocks, with their
 names and lengths, and a plan's countdown items say which one they show. See below.
+
+## Automated sets
+
+The **Sets** tab builds a rotation — a QR code, then a photo, then a text sign, each
+held for its own number of seconds — and once started it advances itself: no tablet
+has to stay connected, or even stay on the right tab, for a pre-show loop to keep
+running before class starts.
+
+**Building one.** Press **+ New set**, name it, and **Add items — go to Library**:
+every tile you tap there while a set is open goes into it (at 15s, adjustable
+afterward) instead of going live. Tapping a deck tile adds the *whole deck* — it is
+fetched, counted, and every one of its slides joins the rotation as its own entry,
+titled with its own slide number so the list reads as N different things rather than
+the deck's name N times over. Want just one specific slide instead of the whole
+deck? Open it normally first, then add that one slide from **Recent**. Come back to
+the Sets tab to reorder, edit durations, or remove any entry, then **Save set**. A
+live camera feed declines politely rather than being added broken — add a still in
+its place.
+
+**Running one.** Each saved set has four buttons — **A / B / C / D** — start it on
+any pane the same way you would stage anything else; the same set can run on two
+panes at once, each its own independent rotation. **In order** steps through the
+list and wraps; **Random** shuffles through every item once before any repeat, and
+never repeats the one just shown. Whichever pane is focused shows a remote for its
+set on the Sets tab: **⏮ / ⏸ / ⏭**, and the full list to jump straight to any item.
+
+Once running, a set behaves like a video's own playhead rather than like content
+being cued: it keeps advancing on its own clock through freeze and blank alike (both
+only hold back what the room *sees*, never what is actually running), and only
+pauses when you tell it to, or while it sits cued and un-taken. It survives a
+reload of the display the same way everything else on screen does.
+
+Sets you build are saved on that device, the same as a custom Library item — nothing
+about a *saved* set is shared between controllers, but the moment you *start* one it
+is a staged item like any other, and every connected controller sees it and can
+drive it. Each deck-slide entry holds its own fixed slide rather than stepping
+through the rest of that deck on its own timer — a whole deck in a set means "these
+N slides, each for its own turn," not one entry quietly advancing pages by itself.
 
 ## Music before class
 
@@ -886,6 +975,12 @@ Types: `image` `video` `audio` `youtube` `web` `slides` `pdf` `text` `qr` `timer
 `whiteboard` `camera` `black`. You can also paste any link straight into the
 controller — it works out what it is — and tick **Save** to keep it.
 
+For a photo that only exists on the iPad itself — a meme, a screenshot, something
+from Camera Roll rather than a URL — the Library tab's **Upload a photo…** button
+opens the device's own file/camera picker, downscales whatever comes back, and puts
+it straight on screen; tick **Save** to keep it in the library as a regular tile
+(the image itself is kept, not just a link to it, so it is still there next time).
+
 Large videos do not belong in a git repo. Host them on the VPS, or use an unlisted
 YouTube link.
 
@@ -937,6 +1032,19 @@ landing before the page finished wiring up — Podium does not just give up: the
 next tap or key press anywhere on the display retries the blocked clip once, so a
 stuck Waiting Music tile clears itself rather than requiring you to find the "leave
 and re-enter fullscreen" workaround.
+
+**If the room's volume slider stops reaching a YouTube video.** A plain
+`<video>`/`<audio>` element (Library video, Music tab) always obeys the volume
+slider — that is a same-page DOM property, nothing to go wrong. A YouTube embed is
+different: volume has to be sent to it as a command over `postMessage`, and one
+classroom's Chrome was seen simply dropping those commands for a
+`youtube-nocookie.com` embed — audio kept playing, but only the TV's own remote
+changed how loud it was, while the identical page controlled the same video
+correctly in Safari. Podium now embeds from `www.youtube.com` instead, which does
+not have that history; if a dropped command ever happens again regardless, the
+browser's own console gets a warning (`YouTube embed ignored a volume command…`)
+naming what was asked for and what the player actually reports, since "it just
+didn't work" is otherwise very hard to debug from the podium mid-class.
 
 **Some sites refuse to be embedded.** `X-Frame-Options` and CSP mean many news sites,
 most LMSes and Google Docs will show a blank frame — the display says so rather than
@@ -1204,7 +1312,24 @@ all actually reach index.html. It also proves a "We begin in…" panel counts do
 actual position of whatever is playing rather than a fixed number, and that a
 watermark survives everything up to and including a display reload with no
 controller left to answer for it - text or a logo, alpha channel intact rather than
-flattened to a black box, and genuinely inside a whole-screen grab. 356 checks.
+flattened to a black box, and genuinely inside a whole-screen grab. It also proves an
+automated set advances itself on schedule, holds while paused rather than racing
+ahead, runs two independent instances of the same saved set on two panes at once,
+and declines a live camera rather than adding it broken, and that tapping a whole
+deck tile while building a set expands it into one entry per slide rather than
+requiring each slide to be added by hand from Recent. It also proves a photo picked
+from Files/Camera Roll goes live the same as any other item, that a non-A panel can
+be promoted to full screen without landing back on whatever A last held, that a
+layout change made while frozen queues behind TAKE instead of instantly rearranging
+the screen, and that clearing a room's saved session on the arming screen really
+starts black and really persists across a second reload, not just the one right
+after clicking it. It also proves hiding the cue bar actually gives the Now/Next
+boxes more room and remembers the choice across a reload, and that the Now/Next
+split cycles through 50/50, 75/25 and 25/75 and keeps a non-default choice too. And
+it proves that drawing on a panel nobody has staged anything into yet — still
+showing the plain default black every panel starts as — survives being promoted to
+full screen, rather than the promoted panel and its ink both silently vanishing.
+410 checks.
 
 ## Layout
 

@@ -48,6 +48,19 @@
       </button>
     </div>
     <div id="panel-picker" class="panel-picker" hidden></div>
+    <!-- The fast way out of "I wanted C full screen and switching to single
+         layout just showed A again": takes whatever is in the focused
+         panel and makes IT panel A, in single layout, in one tap. Shown
+         only when a B/C/D panel is actually focused - promoting A to A is
+         not a button anyone needs. -->
+    <button id="panel-promote" type="button" title="Make this panel full screen" hidden>⛶ Full screen this</button>
+    <!-- The cue bar (preview thumbnail + Take/Swap/Clear cue) costs a fixed
+         320px down the left of every tab, slides included - worth it when
+         something is cued, wasted width otherwise, most of all on an iPad
+         where the Now/Next boxes are already tight. One tap hides it, one
+         tap gets it back; nothing it does stops working, there is just
+         nowhere to see it happen until you show it again. -->
+    <button id="preview-toggle" type="button" title="Hide the cue bar for more room to see slides">⟨ Hide cue bar</button>
     <span class="room-info">room <b id="room-name" class="mono"></b> · <b id="fingerprint" class="mono">····</b></span>
     <button id="open-settings" type="button">Settings</button>
   </div>
@@ -110,6 +123,7 @@
         <button class="tab" data-tab="camera" type="button">Camera</button>
         <button class="tab" data-tab="photos" type="button">Photos</button>
         <button class="tab" data-tab="music" type="button">Music</button>
+        <button class="tab" data-tab="sets" type="button">Sets</button>
       </nav>
 
       <div class="panels">
@@ -129,6 +143,17 @@
             <button type="submit">Show</button>
             <label class="check"><input id="url-save" type="checkbox"> Save</label>
           </form>
+          <!-- A photo already on this device - a meme, a screenshot, anything
+               in Photos or Files - rather than something reachable by URL.
+               Camera Roll and Files both show up in the OS's own picker
+               behind "Upload a photo…" on an iPad; nothing here talks to the
+               phone's live camera, which is the Camera tab's job. -->
+          <div class="inline">
+            <label class="filebtn grow" for="photo-upload">Upload a photo…</label>
+            <input id="photo-upload" type="file" accept="image/*" hidden>
+            <label class="check"><input id="photo-upload-save" type="checkbox"> Save</label>
+          </div>
+          <div id="photo-upload-note" class="hint"></div>
           <div class="inline">
             <label class="filebtn" for="deck-file">Open a Marp deck…</label>
             <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
@@ -159,7 +184,15 @@
                 <div id="deck-title"></div>
                 <div id="deck-theme" class="hint"></div>
               </div>
-              <div id="deck-count" class="mono"></div>
+              <div class="deck-head-right">
+                <div id="deck-count" class="mono"></div>
+                <!-- Which of Now/Next gets more of the row - a fixed 50/50 is
+                     not always the more useful split, e.g. leaning on Now
+                     when Next is just a heading you already know is coming.
+                     Cycles 50/50 -> 75/25 -> 25/75 -> back, remembered per
+                     device. -->
+                <button id="confidence-split" type="button" title="Change how Now/Next share this row">50 / 50</button>
+              </div>
             </div>
 
             <div class="confidence-row">
@@ -426,6 +459,42 @@
             files anywhere they are reachable, including your own server, so nothing you play has to
             live in the repository. See <code>content/audio/README.md</code>.
           </p>
+        </section>
+
+        <!-- Automated Sets -->
+        <section class="panel" data-panel="sets" hidden>
+          <p class="hint">
+            A rotation that advances itself — a QR code, then a photo, then a slide, each
+            held for its own number of seconds — and keeps going on the display even if
+            this tab closes. Start one on any pane the same way you would stage anything
+            else.
+          </p>
+
+          <div id="sets-running"></div>
+          <div id="sets-list"></div>
+          <button id="sets-new" type="button">+ New set</button>
+
+          <div id="sets-build" class="stack" hidden>
+            <div class="inline">
+              <input id="sets-build-name" class="grow" type="text" placeholder="Set name" maxlength="60">
+              <select id="sets-build-mode" aria-label="Order">
+                <option value="sequential">In order</option>
+                <option value="random">Random</option>
+              </select>
+            </div>
+            <div id="sets-build-entries" class="set-entries"></div>
+            <div class="inline">
+              <button id="sets-build-add" type="button">Add items — go to Library</button>
+            </div>
+            <div class="inline">
+              <button id="sets-build-save" type="button">Save set</button>
+              <button id="sets-build-cancel" type="button">Cancel</button>
+            </div>
+            <p id="sets-build-hint" class="hint" hidden>
+              Adding to “<span id="sets-build-hint-name"></span>” — tap tiles in the Library to add
+              them, each starting at 15s. Come back here and adjust durations, then <b>Save set</b>.
+            </p>
+          </div>
         </section>
 
         <!-- Camera -->

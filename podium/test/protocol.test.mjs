@@ -19,6 +19,36 @@ applyCommand(s, {op:'take'});
 chk('take promotes preview', s.program.type === 'text' && s.preview === null);
 chk('take clears freeze', s.frozen === false);
 
+{
+  // A layout change is cued the same way content is, while frozen - and
+  // TAKE has to apply it even when nothing else is cued alongside it.
+  applyCommand(s, {op:'layout', mode:'2h'});
+  chk('unfrozen layout applies immediately', s.layout === '2h' && s.previewLayout === null);
+
+  applyCommand(s, {op:'freeze', on:true});
+  applyCommand(s, {op:'layout', mode:'4'});
+  chk('frozen layout change is cued, not applied', s.layout === '2h' && s.previewLayout === '4');
+
+  applyCommand(s, {op:'take'});
+  chk('take applies a cued layout with no content change pending', s.layout === '4' && s.previewLayout === null);
+  chk('and clears freeze the same as any other take', s.frozen === false);
+
+  applyCommand(s, {op:'freeze', on:true});
+  applyCommand(s, {op:'layout', mode:'2h'});
+  applyCommand(s, {op:'clear'});
+  chk('clearing the cue abandons a cued layout too', s.previewLayout === null);
+  chk('and the live layout never moved', s.layout === '4');
+
+  applyCommand(s, {op:'stage', item:{type:'image', src:'b.png'}});
+  applyCommand(s, {op:'layout', mode:'3'});
+  chk('content and a layout change can be cued together', s.preview?.src === 'b.png' && s.previewLayout === '3');
+  applyCommand(s, {op:'take'});
+  chk('one take applies both at once', s.program.src === 'b.png' && s.layout === '3');
+
+  applyCommand(s, {op:'freeze', on:false});
+  applyCommand(s, {op:'layout', mode:'single'});
+}
+
 applyCommand(s, {op:'stage', item:{type:'video', src:'v.mp4'}});
 chk('video defaults to playing', s.program.playing === true);
 applyCommand(s, {op:'media', action:'toggle'});
@@ -63,6 +93,15 @@ chk('but never the first - everything with no id falls back to it',
   applyCommand(s, {op:'timer', action:'remove', id:s.timers[0].id}) === false && s.timers.length === MAX_TIMERS - 1);
 chk('two panels showing two countdowns are two ink surfaces',
   inkSurfaceKey({type:'timer', timerId:'a'}) !== inkSurfaceKey({type:'timer', timerId:'b'}));
+chk('a black panel keeps its own ink surface, not one keyed by the item\'s own (re-assignable) key',
+  inkSurfaceKey({type:'black', title:'Black'}) === inkSurfaceKey({type:'black', title:'Black', key:'k1'})
+  && inkSurfaceKey({type:'black'}) === inkSurfaceKey({type:'black', key:'k2'}));
+chk('the same text sign keeps its ink across being re-staged with a new key',
+  inkSurfaceKey({type:'text', body:'Back in 5'}) === inkSurfaceKey({type:'text', body:'Back in 5', key:'k1'})
+  && inkSurfaceKey({type:'text', body:'Back in 5'}) !== inkSurfaceKey({type:'text', body:'Different message'}));
+chk('the same QR code keeps its ink across being re-staged with a new key',
+  inkSurfaceKey({type:'qr', data:'https://a'}) === inkSurfaceKey({type:'qr', data:'https://a', key:'k1'})
+  && inkSurfaceKey({type:'qr', data:'https://a'}) !== inkSurfaceKey({type:'qr', data:'https://b'}));
 applyCommand(s, {op:'timer', action:'define', timers:[{id:'grp', label:'Group work', seconds:480}, {id:'brk2', label:'Break', seconds:300}]});
 chk('loading a lecture plan replaces the whole set, keeping the ids it names',
   s.timers.length === 2 && s.timers[0].id === 'grp' && s.timers[1].label === 'Break'
@@ -262,6 +301,54 @@ chk('shrinking the layout falls focus back to A rather than pointing at a panel 
   applyInkAction(mine, {action:'clear'});
   chk('clear empties in place rather than replacing the array', mine.length === 0);
   chk('an unknown ink action changes nothing', applyInkAction(mine, {action:'sneeze'}) === false);
+}
+
+{
+  // An automated set: staged like any other item, then advanced, jumped and
+  // paused on its own, independent of everything above.
+  const entries = [
+    {item:{type:'text', body:'1'}, seconds:20},
+    {item:{type:'text', body:'2'}, seconds:5},
+    {item:{type:'text', body:'3'}, seconds:100},
+  ];
+  applyCommand(s, {op:'stage', item:{type:'set', title:'My set', mode:'sequential', entries}});
+  chk('a set stages onto program like any other item', s.program.type === 'set' && s.program.entries.length === 3);
+  chk('starts on entry 0, not paused', s.program.index === 0 && s.program.paused === false);
+
+  applyCommand(s, {op:'set', action:'advance', panel:0});
+  applyCommand(s, {op:'set', action:'advance', panel:0});
+  applyCommand(s, {op:'set', action:'advance', panel:0});
+  chk('sequential advance steps forward and wraps', s.program.index === 0);
+
+  applyCommand(s, {op:'set', action:'select', index:2});
+  chk('select jumps directly', s.program.index === 2);
+  const key2 = inkSurfaceKey(s.program);
+  applyCommand(s, {op:'set', action:'select', index:0});
+  chk('ink is scoped per entry, not per set', inkSurfaceKey(s.program) !== key2);
+
+  applyCommand(s, {op:'set', action:'pause'});
+  chk('pause freezes it and records the time left', s.program.paused && s.program.remainingMs > 0);
+  applyCommand(s, {op:'set', action:'advance', panel:0});
+  chk('advance is a no-op while paused', s.program.index === 0 && s.program.paused);
+  applyCommand(s, {op:'set', action:'resume'});
+  chk('resume clears paused', s.program.paused === false);
+
+  applyCommand(s, {op:'stage', item:{
+    type:'set', mode:'random',
+    entries: Array.from({length:5}, (_, i) => ({item:{type:'text', body:String(i)}, seconds:5})),
+  }});
+  const seen = [s.program.index];
+  for (let i = 0; i < 4; i++) { applyCommand(s, {op:'set', action:'advance', panel:0}); seen.push(s.program.index); }
+  chk('random mode covers every entry before repeating', new Set(seen).size === 5);
+  chk('and never repeats back to back', seen.every((v, i) => i === 0 || v !== seen[i - 1]));
+
+  applyCommand(s, {op:'stage', item:{
+    type:'set', entries: Array.from({length:80}, (_, i) => ({item:{type:'text', body:String(i)}, seconds:5})),
+  }});
+  chk('entries are capped rather than growing without bound', s.program.entries.length === 50);
+
+  chk('advance on an empty panel is a no-op, not a throw', applyCommand(s, {op:'set', action:'advance', panel:3}) === false);
+  chk('select out of range is rejected', applyCommand(s, {op:'set', action:'select', index:999}) === false);
 }
 
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
