@@ -1411,6 +1411,15 @@ document.addEventListener('keydown', (ev) => {
       ev.preventDefault();
       standDown();
       break;
+    case 'b':
+    case 'B':
+      // A real navigation, not a toggle - but nothing is lost by it: the
+      // pagehide listener (see flushPersistence) saves state and ink before
+      // the browser leaves, the same safety net that covers a reload or a
+      // crash, so coming back to this room picks up exactly where this left.
+      ev.preventDefault();
+      location.href = 'index.html';
+      break;
     case 'p':
     case 'P':
       ev.preventDefault();

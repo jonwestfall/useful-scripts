@@ -325,7 +325,8 @@ body.control.is-frozen { background: #171006; }
   display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-bottom: 1px solid var(--line); font-size: 13px; color: var(--dim); flex-wrap: wrap;
 }
-.topbar .brand { font-weight: 700; color: var(--ink); letter-spacing: .04em; }
+.topbar .brand { font-weight: 700; color: var(--ink); letter-spacing: .04em; text-decoration: none; }
+.topbar .brand:hover { text-decoration: underline; }
 .topbar .spacer { flex: 1; }
 #status::before { content: '●'; margin-right: 6px; color: var(--dim); }
 #status[data-status='online']::before { color: var(--ok); }

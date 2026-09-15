@@ -3451,6 +3451,42 @@ ok('and does nothing once the room is already live',
 await c.close();
 }
 
+if (want('back to the landing page')) {
+console.log('\n-- back to the landing page --');
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'landing', passphrase: 'find the way back' }));
+
+// The controller's own PODIUM wordmark is a real link now, not just a label.
+const pad = await ctx.newPage();
+trap(pad, 'landing control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.topbar .brand');
+ok('the controller\'s PODIUM wordmark points at the landing page',
+  await pad.getAttribute('.topbar .brand', 'href') === 'index.html');
+await Promise.all([pad.waitForURL(/index\.html/), pad.click('.topbar .brand')]);
+ok('and following it actually gets there', /index\.html$/.test(pad.url()));
+
+// So does the planning page's.
+const desk = await ctx.newPage();
+trap(desk, 'landing plan');
+await desk.goto(`${BASE}/plan.html`);
+await desk.waitForSelector('.topbar .brand');
+ok('the planning page\'s PODIUM wordmark points at the landing page',
+  await desk.getAttribute('.topbar .brand', 'href') === 'index.html');
+
+// The display has no wordmark to click once it is on the projector - just a
+// key, the same as every other way out of it.
+const screen = await ctx.newPage();
+trap(screen, 'landing display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+await Promise.all([screen.waitForURL(/index\.html/), screen.keyboard.press('b')]);
+ok('and B does the same job on the display', /index\.html$/.test(screen.url()));
+await ctx.close();
+}
+
 if (skipped.length) console.log(`\nskipped ${skipped.length} section${skipped.length === 1 ? '' : 's'} (--only)`);
 console.log('\nconsole/page errors: ' + (errors.length ? '\n  - ' + errors.join('\n  - ') : 'none'));
 } finally {

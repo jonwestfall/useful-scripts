@@ -965,8 +965,10 @@ one worth remembering, because it shows you the rest:
 | Key | What it does |
 | :-- | :-- |
 | `?` | Show or hide the shortcut card |
+| `G` | **Go live** — same as clicking the button, before you start |
 | `F` | Go fullscreen, or leave it |
 | `E` | Leave fullscreen and go back to the **Go live** screen |
+| `B` | Back to the Podium landing page (`index.html`) |
 | `P` | Show or hide the pairing QR |
 | `S` | Open Settings |
 | `Esc` | Close whatever is open |
@@ -975,6 +977,13 @@ one worth remembering, because it shows you the rest:
 screen back up with the lecture still loaded behind it, so **Go live** picks up
 exactly where you were. The controller sees it too, and says *"Display open —
 click Go live on it"* rather than reporting the screen as missing.
+
+`B` is a real navigation rather than a toggle, for when you are setting the room
+up and want back to the landing page without hunting for the browser's own
+controls — but nothing is lost by it: the same save that survives a reload or a
+crash runs first, so opening this room again picks up exactly where `B` left it.
+The controller and planning pages have the same way back — click the **PODIUM**
+wordmark in their own top bar.
 
 None of these fire while you are typing in Settings, so a room called
 `seminar-f` is just a room name.
@@ -1158,7 +1167,9 @@ music fades in, ducks under a clip, survives freeze and blank, and shows the pro
 nothing at all — and that the same audio resource works as an on-screen item from the
 Library and as background music from a quick-push button without either one disturbing
 the other, and that `G` goes live the same as the button - fullscreen requested
-inside the keypress itself, exactly like the click it stands in for. 329 checks.
+inside the keypress itself, exactly like the click it stands in for, and that the
+PODIUM wordmark on the controller and the planning page, and `B` on the display,
+all actually reach index.html. 333 checks.
 
 ## Layout
 
