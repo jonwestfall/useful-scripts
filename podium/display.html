@@ -19,6 +19,14 @@
 <canvas id="ink"></canvas>
 <div id="blank"></div>
 <div id="overlay"></div>
+<!-- A name or logo pinned to one corner for the whole lecture - not content,
+     so it survives every pick, freeze and blank, and is meant to end up IN a
+     screen grab rather than only ever being something the room sees live
+     (see drawWatermark in display.js). -->
+<div id="watermark">
+  <span id="watermark-text" hidden></span>
+  <img id="watermark-img" alt="" hidden>
+</div>
 <div id="laser"></div>
 <div id="hud" data-status="connecting">Not connected</div>
 

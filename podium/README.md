@@ -41,6 +41,7 @@ full reference; that one is the road in.
 [the slide the class sees](#the-slide-the-class-sees) ·
 [annotating with ink](#annotating-with-ink) ·
 [splitting the screen](#splitting-the-screen) ·
+[watermark](#watermark) ·
 [countdowns](#countdowns) ·
 [music before class](#music-before-class) ·
 [the document camera](#the-document-camera-and-photos-taken-with-it) ·
@@ -106,8 +107,10 @@ camera as a document camera, including stills taken from it that you can hold in
 four panels at once. Plus background music the room hears and the projector never
 shows.
 
-Two more that sit on top of anything: **ink**, so you can annotate live over a slide
-with an Apple Pencil, and a **caption** along the bottom of the screen.
+A few more that sit on top of anything: **ink**, so you can annotate live over a
+slide with an Apple Pencil, a **caption** along the bottom of the screen, and a
+**watermark** — a name or logo pinned to one corner for the whole lecture, and
+captured in a screen grab.
 
 ## Setup
 
@@ -547,6 +550,27 @@ just be noise, and there is no cue step on those to decide which one meant to be
 heard. **Export marked-up slides** (Slides tab) only ever exports whichever deck the
 focused panel is currently showing.
 
+## Watermark
+
+The **Say** tab's watermark pins a name or a logo to one corner of the screen — bottom
+right or top left — for the whole lecture. It is not content: picking something else,
+freezing, blanking, none of it touches it, because the point of it is to still be
+there afterwards. Text or an uploaded image, one or the other; uploading a logo does
+not throw away typed text, and **Remove image** brings it straight back.
+
+It is deliberately in every **whole-screen** photo and export (see
+[keeping what was on screen](#keeping-what-was-on-screen)) — a name or a course logo
+that ends up in the screen grabs students actually keep, not just something the room
+happened to see live. A single-panel photo does not carry it; it lives on the stage
+itself, not inside any one panel.
+
+**Hide** turns it off without forgetting what was set, so putting it back needs no
+retyping. Text and a logo travel differently once set: the text is small enough to
+ride in the shared state itself, while an uploaded image is an asset like a photo or a
+deck, fetched once by the display and kept for the rest of the session — including a
+reload, which is the one exception to "nothing is written to disk" in this app: a
+name or logo is meant to outlast the tab, unlike a photo of someone's worksheet.
+
 ## Countdowns
 
 A class runs more than one clock. Eight minutes of group work sit inside a
@@ -632,6 +656,13 @@ by itself in a room that had gone quiet.
 leaving you in a quiet room checking cables: a bad path, a file that is not there, or
 an `http://` link inside an `https://` page, which browsers block silently as mixed
 content. The message clears itself as soon as something does play.
+
+**⏳ Show "We begin in…" on screen** puts up a panel counting down to the end of
+whatever track is currently playing — the room's own clock for when the video, the
+slide, or you, actually start. It is a live number, not a fixed one: pause the music
+and it holds; let the queue wrap to the next track and it re-bases on that one's
+length. It also shows up as a plain **We begin in…** tile in the Library, for the same
+panel without a trip to the Music tab.
 
 **What about Apple Music or YouTube?** Neither is here, deliberately. Apple Music needs
 a paid Apple Developer membership, a MusicKit private key and a signed token that
@@ -1169,7 +1200,11 @@ Library and as background music from a quick-push button without either one dist
 the other, and that `G` goes live the same as the button - fullscreen requested
 inside the keypress itself, exactly like the click it stands in for, and that the
 PODIUM wordmark on the controller and the planning page, and `B` on the display,
-all actually reach index.html. 333 checks.
+all actually reach index.html. It also proves a "We begin in…" panel counts down the
+actual position of whatever is playing rather than a fixed number, and that a
+watermark survives everything up to and including a display reload with no
+controller left to answer for it - text or a logo, alpha channel intact rather than
+flattened to a black box, and genuinely inside a whole-screen grab. 356 checks.
 
 ## Layout
 

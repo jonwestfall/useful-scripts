@@ -192,7 +192,12 @@ The **Music** tab plays music through the classroom computer with nothing on the
 projector — for while the room fills up. Put your tracks on your own server, list them
 in `content/music.json`, and press Load. It fades in, ducks itself when you play a
 video, and **Fade out & stop** takes the room quiet over three seconds when class
-begins.
+begins. **⏳ Show "We begin in…"** puts up a panel counting down to the end of
+whatever is playing, so the room can see when you are actually starting.
+
+The **Say** tab's watermark pins your name or a logo to a corner of the screen for
+the whole lecture — it survives everything you pick, and ends up in a whole-screen
+photo too, which is the point of it.
 
 The **Camera** tab makes your phone a document camera — hold it over a book and it is
 on the wall. **Take a photo** freezes a frame and keeps it: tap the thumbnail to put

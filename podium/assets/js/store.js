@@ -95,7 +95,7 @@ export async function downscaleImage(file, maxChars, options = {}) {
  * The ladder itself, for anything already drawable: a decoded photo, or a
  * canvas the display has just painted a panel into.
  */
-export function encodeToFit(source, maxChars, { widths = [1920, 1600, 1280, 1024, 800], qualities = [0.85, 0.75, 0.62, 0.5] } = {}) {
+export function encodeToFit(source, maxChars, { widths = [1920, 1600, 1280, 1024, 800], qualities = [0.85, 0.75, 0.62, 0.5], mime = 'image/jpeg' } = {}) {
   const long = Math.max(source.width, source.height);
   let smallest = null;
   for (const width of widths) {
@@ -113,7 +113,11 @@ export function encodeToFit(source, maxChars, { widths = [1920, 1600, 1280, 1024
       // Throws (rather than returning something unusable) when the source
       // canvas is tainted - a photo or video from another site, drawn in by a
       // renderer - which is a real failure the caller has to be able to report.
-      const url = canvas.toDataURL('image/jpeg', quality);
+      // PNG (a logo watermark, so a transparent background survives rather
+      // than flattening to black) ignores the quality argument entirely, so a
+      // caller asking for one passes a single-entry `qualities` to avoid
+      // re-encoding the same bytes for nothing.
+      const url = canvas.toDataURL(mime, quality);
       if (!smallest || url.length < smallest.url.length) smallest = { url, w, h, quality };
       if (url.length <= maxChars) return { dataUrl: url, width: w, height: h, quality, bytes: url.length };
     }

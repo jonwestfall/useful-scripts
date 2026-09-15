@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 17;
+export const BUILD = 18;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -123,6 +123,11 @@ export function initialState() {
     // take over the next change in `playing`: a quick dip for a pause, three
     // unhurried seconds for the "class is starting" fade.
     music: { tracks: [], index: 0, playing: false, volume: 0.6, fadeMs: MUSIC_FADE_OUT_MS, playlist: '' },
+    // A name or a logo pinned to one corner for the whole lecture - the thing
+    // that should be IN a screen grab, not something you pick and lose the
+    // next time you change what is on screen. So it lives beside program and
+    // panels rather than inside any of them, the same reason music does.
+    watermark: { enabled: false, text: '', image: '', position: 'br' },
   };
 }
 
@@ -620,6 +625,17 @@ export function applyCommand(state, cmd) {
     case 'overlay':
       if (cmd.text !== undefined) state.overlay.text = String(cmd.text).slice(0, 500);
       state.overlay.visible = cmd.visible ?? !!state.overlay.text;
+      return true;
+
+    // A corner watermark, set field by field like overlay above: whichever
+    // of text/image/position/enabled the caller names changes, the rest is
+    // left exactly as it was, so "Hide" does not throw away what was typed
+    // and uploading a logo does not touch a position someone already chose.
+    case 'watermark':
+      if (cmd.text !== undefined) state.watermark.text = String(cmd.text).slice(0, 120);
+      if (cmd.image !== undefined) state.watermark.image = String(cmd.image).slice(0, 200);
+      if (cmd.position !== undefined) state.watermark.position = cmd.position === 'tl' ? 'tl' : 'br';
+      if (cmd.enabled !== undefined) state.watermark.enabled = !!cmd.enabled;
       return true;
 
     case 'timer': {
