@@ -33,6 +33,7 @@ export const TYPES = {
   trackend:   { label: 'Track countdown', icon: '⏳' },
   whiteboard: { label: 'Whiteboard', icon: '✎' },
   camera:     { label: 'Camera',     icon: '\u{1F4F7}' },
+  set:        { label: 'Automated set', icon: '\u{1F501}' },
 };
 
 export function itemTitle(item) {
@@ -567,6 +568,58 @@ function renderTrackEnd(item, opts) {
   };
 }
 
+// An automated set: whatever entry is currently up, rendered by ITS OWN
+// factory - a photo is the image renderer, a slide is the deck renderer, a
+// QR code the QR renderer. This is a thin shell that mounts and tears down
+// one child renderer as `item.index` moves, and otherwise gets out of the
+// way: reconcile, telemetry and snapshot all just forward to whichever child
+// is currently up, so a set holding a video still plays audio correctly and
+// a set holding a whiteboard can still be photographed.
+//
+// `opts.resolveAssets` is the one opt this needs that nothing else does: the
+// outer item (the set itself) never carries a `src`, so display.js/control.js
+// resolving assets on the item they hand to createRenderer never reaches an
+// `asset:<id>` sitting on an ENTRY. Each child gets resolved here instead,
+// the same call the top level already makes for everything else.
+function renderSet(item, opts) {
+  const node = el('div', { class: 'r-set' });
+  let child = null;
+  let childKey = '';
+
+  const currentSub = (it) => {
+    const entry = it.entries?.[it.index];
+    if (!entry) return null;
+    return opts.resolveAssets ? opts.resolveAssets(entry.item) : entry.item;
+  };
+
+  const mountChild = (it) => {
+    child?.destroy();
+    node.replaceChildren();
+    child = createRenderer(currentSub(it) || { type: 'black' }, opts);
+    node.append(child.el);
+    childKey = `${it.key}:${it.index}`;
+  };
+  mountChild(item);
+
+  return {
+    el: node,
+    update(it) {
+      item = it;
+      const key = `${it.key}:${it.index}`;
+      if (key !== childKey) mountChild(it);
+      else child?.update(currentSub(it) || { type: 'black' });
+    },
+    reconcile(it, av) { child?.reconcile(currentSub(it) || { type: 'black' }, av); },
+    telemetry: () => child?.telemetry?.() ?? noTelemetry(),
+    // Delegates entirely: a set holding a whiteboard or an image can be
+    // photographed exactly as if that were staged directly, and one holding
+    // an embedded page or a YouTube player honestly can't be - same as
+    // everywhere else in the app, nothing new to teach whyNot() about it.
+    snapshot(ctx, rect) { return child?.snapshot ? child.snapshot(ctx, rect) : false; },
+    destroy() { child?.destroy(); node.remove(); },
+  };
+}
+
 function renderWhiteboard(item) {
   const node = el('div', { class: 'r-whiteboard' });
   const apply = (it) => { node.style.background = it.bg || '#f7f5ef'; node.dataset.ink = it.bg && it.bg !== '#f7f5ef' ? 'light' : 'dark'; };
@@ -790,6 +843,7 @@ const FACTORIES = {
   trackend: renderTrackEnd,
   whiteboard: renderWhiteboard,
   camera: renderCamera,
+  set: renderSet,
 };
 
 export function createRenderer(item, opts = {}) {

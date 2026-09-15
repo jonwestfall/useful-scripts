@@ -6,7 +6,7 @@ import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, 
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
-  inkDigest, inkDigestsAgree, applyInkAction, BUILD } from './protocol.js';
+  inkDigest, inkDigestsAgree, applyInkAction, BUILD, MAX_SET_ENTRIES } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide } from './deck.js';
@@ -419,10 +419,21 @@ let lastProgram = null;
 // to slide 4 is not leaving the deck.
 function itemIdentity(item) {
   if (!item) return null;
+  // A set has none of src/deckId/timerId/body/data, so every one of them
+  // fell back to the same bare "set:" and looked identical to every other
+  // set - which broke the point of this function twice over: two DIFFERENT
+  // sets on screen one after another looked like the same thing twice (no
+  // "back to" chip for the first one), and going back to a set B while set A
+  // sat in Recent removed A from the strip too, matched by A's own identity.
+  // `key` is unique per staged instance, which is also the right answer here
+  // for a reason nothing else needed: "back to" a specific run of a set,
+  // mid-rotation, is not the same as starting that same saved set over.
+  if (item.type === 'set') return `set:${item.key}`;
   return `${item.type}:${item.deckId || item.src || item.timerId || item.body || item.data || ''}`;
 }
 
 function recentWhere(item) {
+  if (item.type === 'set') return `${(item.index || 0) + 1} of ${item.entries?.length || 0}`;
   if (item.type === 'deck') return `slide ${(item.slide || 0) + 1}${item.slideCount ? ` of ${item.slideCount}` : ''}`;
   if (item.type === 'pdf') return `page ${item.page || 1}`;
   if (item.type === 'slides') return `slide ${(item.slide || 0) + 1}`;
@@ -443,9 +454,13 @@ function withPosition(item) {
 function trackRecent() {
   const leaving = lastProgram;
   // `key` is the identity protocol.js reissues on every stage, so it is
-  // meaningless on the way back in.
+  // meaningless on the way back in for everything with a real content
+  // identifier (src/deckId/...) - except a set, which has none of those and
+  // whose itemIdentity() falls back to key for exactly that reason. Strip it
+  // for everything else, keep it for a set, or every set collapses into one
+  // shared "set:undefined" identity and Recent cannot tell any two apart.
   const { key: _k, ...now } = state.program || {};
-  lastProgram = state.program ? withPosition(now) : null;
+  lastProgram = state.program ? withPosition(state.program.type === 'set' ? { ...now, key: state.program.key } : now) : null;
 
   if (!leaving || itemIdentity(leaving) === itemIdentity(lastProgram)) return;
   if (leaving.type === 'black' || leaving.type === 'camera') return;
@@ -471,6 +486,17 @@ function renderRecent() {
 // B/C/D panel has none of that - see "layout" in protocol.js's
 // initialState() - so it is set directly and immediately via 'panel'
 // instead, and `where` (an explicit program/preview target) does not apply.
+// Push the bytes ahead of an item that refers to them, so the projector does
+// not have to notice and ask. Once each: a photo is ~120 KB and re-picking
+// it is common, while a display that reloaded and lost it asks for it by
+// name (see 'asset-need').
+function pushAssetIfHeld(src) {
+  const assetId = assetIdOf(src);
+  if (assetId && assetStore.has(assetId) && !assetsSent.has(assetId)) {
+    if (bus?.send({ t: 'asset', id: assetId, data: assetStore.get(assetId) }) !== false) assetsSent.add(assetId);
+  }
+}
+
 function stage(item, where = 'auto') {
   // Only a deck needs this: it is the only type whose pad shape depends on
   // content that has to be parsed, so it is the only one that can be picked
@@ -479,14 +505,7 @@ function stage(item, where = 'auto') {
   // group/custom/order/note/planRow are library bookkeeping; the display has no
   // use for them.
   const { group: _g, custom: _c, order: _o, note: _n, planRow: _p, ...clean } = item;
-  // Same courtesy the deck path extends: push the bytes ahead of the item that
-  // refers to them, so the projector does not have to notice and ask. Once
-  // each: a photo is ~120 KB and re-picking it is common, while a display that
-  // reloaded and lost it asks for it by name (see 'asset-need').
-  const assetId = assetIdOf(clean.src);
-  if (assetId && assetStore.has(assetId) && !assetsSent.has(assetId)) {
-    if (bus?.send({ t: 'asset', id: assetId, data: assetStore.get(assetId) }) !== false) assetsSent.add(assetId);
-  }
+  pushAssetIfHeld(clean.src);
   if (state.focus === 0) send({ op: 'stage', item: clean, where });
   else send({ op: 'panel', index: state.focus - 1, item: clean });
 }
@@ -498,6 +517,10 @@ function stage(item, where = 'auto') {
 // display saying "waiting" forever - picking it now actually starts the feed,
 // the same as the button on the Camera tab.
 async function pick(item, where = 'auto') {
+  // Building a set redirects every tap in the Library into it instead of
+  // staging live - checked first, ahead of camera/deck's own special
+  // handling, since this applies to a tap on absolutely anything.
+  if (addToDraftSet(item)) return;
   if (item.type === 'camera') { await startCamera(where); return; }
   if (item.type !== 'deck' || item.slideCount) { stage(item, where); return; }
   // A click handler can't be awaited by whatever dispatched it, so the
@@ -546,7 +569,7 @@ function renderPreview() {
     holder.replaceChildren();
     previewKey = key;
     if (item) {
-      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource });
+      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets });
       holder.append(previewRenderer.el);
     }
   } else if (previewRenderer && item) {
@@ -1258,6 +1281,7 @@ function renderLayoutBar() {
 function renderAll() {
   renderMusic();
   renderWatermarkPanel();
+  renderSetsPanel();
   renderPhotos();
   renderRecent();
   renderPreview();
@@ -1395,7 +1419,7 @@ function createLiveMirror(container) {
       renderer?.destroy();
       frame.replaceChildren();
       mountedKey = key;
-      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource }) : null;
+      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets }) : null;
       if (renderer) frame.append(renderer.el);
     } else {
       renderer?.update(resolveAssets(item));
@@ -1482,7 +1506,7 @@ function updatePadMirror() {
     padMirrorRenderer?.destroy();
     padMirror.replaceChildren();
     padMirrorKey = key;
-    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource }) : null;
+    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets }) : null;
     if (padMirrorRenderer) padMirror.append(padMirrorRenderer.el);
   } else {
     padMirrorRenderer?.update(resolveAssets(item));
@@ -2067,6 +2091,259 @@ function renderMusic() {
 }
 
 let musicSliding = false;
+
+// --- automated sets -----------------------------------------------------------
+//
+// A rotation of items that advances itself once started - the whole engine
+// lives on the display (see tickSets in display.js) and in applySetCommand
+// (protocol.js), so this is purely the authoring UI plus a remote for
+// whichever running set the currently focused panel holds. Saved sets are
+// a device-local library, the same as your custom library items: nothing
+// here is shared state until you actually START one, at which point it
+// becomes a plain staged item like any other and every controller sees it.
+
+const SET_KEY = 'podium.sets.v1';
+const DEFAULT_ENTRY_SECONDS = 15;
+const SET_PANEL_LABELS = ['A', 'B', 'C', 'D'];
+
+function loadSavedSets() {
+  try { return JSON.parse(localStorage.getItem(SET_KEY) || '[]'); } catch { return []; }
+}
+function saveSavedSets(list) {
+  try { localStorage.setItem(SET_KEY, JSON.stringify(list)); } catch { /* private mode */ }
+}
+let savedSets = loadSavedSets();
+// The set being built or edited right now, or null. Editing works on a copy
+// so cancelling a change to a saved set leaves the saved one untouched.
+let draftSet = null;
+
+function entryLabel(item) {
+  return `${TYPES[item.type]?.icon || '?'} ${item.title || itemLabel(item)}`;
+}
+
+// Called first thing from pick(), for every Library tap: while a draft is
+// open, taps build the set instead of going live. Returns whether it
+// handled the tap at all (even when the draft was already full), which is
+// what pick() uses to short-circuit its own type-specific handling.
+function addToDraftSet(item) {
+  if (!draftSet) return false;
+  // A live camera feed cannot be "held for 20 seconds" - it would sit there
+  // never having been started, since starting one is a whole WebRTC
+  // handshake pick() normally runs and this path skips entirely. An
+  // unresolved deck (fetched by path, not yet parsed - most of the
+  // Library's own deck tiles) is the same problem: pick()'s async
+  // fetch-and-count never runs here either, so it would show "waiting for
+  // the deck" forever. Both are declined with a reason rather than added
+  // broken - see the code-review note this fix came from.
+  if (item.type === 'camera') {
+    flashSetNote('A live camera feed can’t be automated this way — add a still instead.');
+    return true;
+  }
+  if (item.type === 'deck' && !item.slideCount) {
+    flashSetNote('This deck needs to be opened once before it can join a set — pick it normally first, then add it from Recent.');
+    return true;
+  }
+  if (draftSet.entries.length >= MAX_SET_ENTRIES) {
+    $('#sets-build-hint-name').textContent = draftSet.title || 'this set';
+    flashSetNote(`That set already holds the most this app allows (${MAX_SET_ENTRIES}).`);
+    return true;
+  }
+  draftSet.entries.push({ item, seconds: DEFAULT_ENTRY_SECONDS });
+  flashSetNote(`Added “${item.title || itemLabel(item)}”.`);
+  renderSetsPanel();
+  return true;
+}
+
+// A brief note wherever the tap actually landed - the Library tab, not the
+// Sets tab the user just left - so adding five items in a row is visible
+// without switching back and forth to check.
+let setNoteTimer = null;
+function flashSetNote(text) {
+  const note = $('#sets-add-note') || (() => {
+    const n = el('p', { id: 'sets-add-note', class: 'hint toast' });
+    $('#library').before(n);
+    return n;
+  })();
+  note.textContent = text;
+  note.classList.add('is-on');
+  clearTimeout(setNoteTimer);
+  setNoteTimer = setTimeout(() => note.classList.remove('is-on'), 1600);
+}
+
+function newDraftSet() {
+  draftSet = { id: uid(8), title: '', mode: 'sequential', entries: [] };
+  renderSetsPanel();
+}
+function editDraftSet(id) {
+  const found = savedSets.find((s) => s.id === id);
+  if (!found) return;
+  draftSet = JSON.parse(JSON.stringify(found));
+  renderSetsPanel();
+}
+function cancelDraftSet() {
+  draftSet = null;
+  renderSetsPanel();
+}
+function saveDraftSet() {
+  if (!draftSet || !draftSet.entries.length) return;
+  draftSet.title = (draftSet.title || '').trim() || 'Untitled set';
+  const i = savedSets.findIndex((s) => s.id === draftSet.id);
+  if (i === -1) savedSets.push(draftSet); else savedSets[i] = draftSet;
+  saveSavedSets(savedSets);
+  draftSet = null;
+  renderSetsPanel();
+}
+function deleteSavedSet(id) {
+  savedSets = savedSets.filter((s) => s.id !== id);
+  saveSavedSets(savedSets);
+  renderSetsPanel();
+}
+
+// Sends the placement directly (stage for A, panel for B/C/D) rather than
+// going through stage() itself: stage() decides that by reading state.focus,
+// and the focus command sent alongside this one has not round-tripped back
+// yet, so reading it locally here would still see the OLD focus.
+function startSet(setDef, panelIndex) {
+  const item = {
+    type: 'set', title: setDef.title, mode: setDef.mode,
+    entries: setDef.entries.map((e) => ({ item: e.item, seconds: e.seconds })),
+  };
+  // stage()'s own push only ever looks at the OUTER item's src, which a set
+  // never has - its photos are nested inside `entries`, out of reach of
+  // that one check, so every one of them needs the same push here.
+  for (const e of item.entries) pushAssetIfHeld(e.item.src);
+  send({ op: 'focus', index: panelIndex });
+  if (panelIndex === 0) send({ op: 'stage', item, where: 'auto' });
+  else send({ op: 'panel', index: panelIndex - 1, item });
+}
+
+function renderSavedSetsList() {
+  const list = $('#sets-list');
+  if (!savedSets.length) {
+    list.replaceChildren(el('p', { class: 'empty' }, 'No saved sets yet — press "+ New set" below.'));
+    return;
+  }
+  list.replaceChildren(...savedSets.map((setDef) => {
+    const row = el('div', { class: 'set-saved-row' },
+      el('div', { class: 'set-saved-info' },
+        el('span', { class: 'set-saved-title' }, setDef.title || 'Untitled set'),
+        el('span', { class: 'hint' }, `${setDef.mode === 'random' ? 'Random' : 'In order'} · ${setDef.entries.length} item${setDef.entries.length === 1 ? '' : 's'}`)),
+      el('div', { class: 'set-saved-starts' },
+        ...SET_PANEL_LABELS.map((label, i) => el('button', {
+          type: 'button', class: 'set-start-btn', title: `Start on panel ${label}`,
+          onclick: () => startSet(setDef, i),
+        }, label))),
+      el('button', { type: 'button', class: 'linkish', onclick: () => editDraftSet(setDef.id) }, 'Edit'),
+      el('button', { type: 'button', class: 'linkish danger-outline', onclick: () => deleteSavedSet(setDef.id) }, 'Delete'));
+    return row;
+  }));
+}
+
+function renderDraftSetBuilder() {
+  const build = $('#sets-build');
+  build.hidden = !draftSet;
+  if (!draftSet) return;
+  if (document.activeElement !== $('#sets-build-name')) $('#sets-build-name').value = draftSet.title;
+  $('#sets-build-mode').value = draftSet.mode;
+  $('#sets-build-hint').hidden = false;
+  $('#sets-build-hint-name').textContent = draftSet.title || 'this set';
+  $('#sets-build-save').disabled = !draftSet.entries.length;
+  // Rebuilding this list wholesale is fine between heartbeats, and has to
+  // happen right after a remove/move button click (each is inside this same
+  // container, so it is what document.activeElement now IS) - but not while
+  // a duration field in it is mid-edit, where a rebuild would steal focus
+  // out from under a still-being-typed number every second or two.
+  if (document.activeElement?.tagName === 'INPUT' && $('#sets-build-entries').contains(document.activeElement)) return;
+  $('#sets-build-entries').replaceChildren(...draftSet.entries.map((entry, i) => el('div', { class: 'set-row' },
+    el('span', { class: 'set-row-n' }, String(i + 1)),
+    el('span', { class: 'set-row-title' }, entryLabel(entry.item)),
+    el('input', {
+      type: 'number', min: '1', max: '3600', class: 'set-row-secs', value: String(entry.seconds),
+      onchange: (ev) => { entry.seconds = Math.max(1, Math.min(3600, Math.round(Number(ev.target.value)) || DEFAULT_ENTRY_SECONDS)); },
+    }),
+    el('span', { class: 'hint' }, 's'),
+    el('button', { type: 'button', class: 'set-row-move', title: 'Move up', disabled: i === 0,
+      onclick: () => { [draftSet.entries[i - 1], draftSet.entries[i]] = [draftSet.entries[i], draftSet.entries[i - 1]]; renderSetsPanel(); } }, '↑'),
+    el('button', { type: 'button', class: 'set-row-move', title: 'Move down', disabled: i === draftSet.entries.length - 1,
+      onclick: () => { [draftSet.entries[i + 1], draftSet.entries[i]] = [draftSet.entries[i], draftSet.entries[i + 1]]; renderSetsPanel(); } }, '↓'),
+    el('button', { type: 'button', class: 'set-row-del', title: 'Remove',
+      onclick: () => { draftSet.entries.splice(i, 1); renderSetsPanel(); } }, '×'))));
+}
+
+let setsRunningDrawn = '';
+
+function renderRunningSet() {
+  const holder = $('#sets-running');
+  const item = focusedItem(state);
+  if (!item || item.type !== 'set') {
+    holder.replaceChildren();
+    setsRunningDrawn = '';
+    return;
+  }
+  const entry = item.entries[item.index];
+  const total = Math.max(1, Number(entry?.seconds) || 1) * 1000;
+  const elapsed = item.paused ? total - item.remainingMs : Date.now() - item.startedAt;
+  const remaining = Math.max(0, Math.ceil((total - elapsed) / 1000));
+
+  const signature = `${item.key}:${item.entries.length}`;
+  if (signature !== setsRunningDrawn) {
+    setsRunningDrawn = signature;
+    holder.replaceChildren(
+      el('div', { class: 'set-now' },
+        el('div', { id: 'set-now-title' }),
+        el('div', { class: 'set-now-list', id: 'set-now-list' }),
+        el('div', { class: 'set-now-transport' },
+          el('button', { type: 'button', id: 'set-now-prev' }, '⏮'),
+          el('button', { type: 'button', id: 'set-now-pause' }, '⏸'),
+          el('button', { type: 'button', id: 'set-now-next' }, '⏭'))));
+    // Each broadcast replaces `state` wholesale (see the message handler
+    // near the bottom of this file), so `item` itself goes stale the moment
+    // the next heartbeat arrives - these buttons are built once per
+    // signature but clicked arbitrarily later, so each has to look up the
+    // CURRENT item fresh rather than close over this one.
+    const current = () => focusedItem(state);
+    $('#set-now-prev').addEventListener('click', () => {
+      const it = current();
+      if (it) send({ op: 'set', action: 'select', index: (it.index - 1 + it.entries.length) % it.entries.length });
+    });
+    $('#set-now-next').addEventListener('click', () => {
+      const it = current();
+      if (it) send({ op: 'set', action: 'select', index: (it.index + 1) % it.entries.length });
+    });
+    $('#set-now-pause').addEventListener('click', () => {
+      const it = current();
+      if (it) send({ op: 'set', action: it.paused ? 'resume' : 'pause' });
+    });
+    $('#set-now-list').replaceChildren(...item.entries.map((e, i) => el('button', {
+      type: 'button', class: 'set-row', onclick: () => send({ op: 'set', action: 'select', index: i }),
+    }, el('span', { class: 'set-row-n' }, String(i + 1)), el('span', { class: 'set-row-title' }, entryLabel(e.item)))));
+  }
+  $('#set-now-title').textContent = `${item.title || 'Automated set'} — ${item.index + 1} of ${item.entries.length} · ${item.paused ? 'paused' : `${remaining}s left`}`;
+  $('#set-now-pause').textContent = item.paused ? '▶' : '⏸';
+  $$('#set-now-list .set-row').forEach((row, i) => row.classList.toggle('is-on', i === item.index));
+}
+
+function renderSetsPanel() {
+  renderSavedSetsList();
+  renderDraftSetBuilder();
+  renderRunningSet();
+}
+
+$('#sets-new').addEventListener('click', newDraftSet);
+// Written straight into the draft on every change, not just read at Save:
+// renderSetsPanel() runs on every heartbeat and syncs this input FROM
+// draftSet.title (so a second device editing the same... well, a draft is
+// local, but the pattern is shared with everything else that heartbeat-
+// redraws), and without this a typed name surviving only in the DOM would
+// be overwritten the moment the field loses focus - switching to the
+// Library to add items included.
+$('#sets-build-name').addEventListener('input', () => { if (draftSet) draftSet.title = $('#sets-build-name').value; });
+$('#sets-build-mode').addEventListener('change', () => { if (draftSet) draftSet.mode = $('#sets-build-mode').value === 'random' ? 'random' : 'sequential'; });
+$('#sets-build-save').addEventListener('click', saveDraftSet);
+$('#sets-build-cancel').addEventListener('click', cancelDraftSet);
+$('#sets-build-add').addEventListener('click', () => {
+  document.querySelector('.tab[data-tab="library"]').click();
+});
 
 // --- connection -------------------------------------------------------------
 

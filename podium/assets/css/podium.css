@@ -270,7 +270,7 @@ dl.keys dd { margin: 0; color: var(--dim); }
    content far outside a 300px preview. */
 
 .layer, #preview-stage, #item-preview { container-type: size; }
-.r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio { position: absolute; inset: 0; }
+.r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set { position: absolute; inset: 0; }
 .r-black { background: #000; }
 .r-image, .r-video { width: 100%; height: 100%; display: block; background: #000; }
 .r-frame { width: 100%; height: 100%; border: 0; background: #fff; }
@@ -722,6 +722,45 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .music-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .music-row-artist { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
 #bar-music.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
+
+/* --- automated sets ----------------------------------------------------------
+   A saved set (name, and four buttons to start it somewhere) and a build-time
+   entry (one step, with its own duration to edit) are different enough shapes
+   to want their own rows rather than reusing the music queue's. */
+.set-saved-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); margin-bottom: 8px;
+}
+.set-saved-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 140px; }
+.set-saved-title { font-weight: 600; font-size: 15px; }
+.set-saved-starts { display: flex; gap: 4px; }
+.set-start-btn { min-width: 40px; min-height: 40px; padding: 0; font-weight: 700; }
+
+.set-entries { display: flex; flex-direction: column; gap: 4px; max-height: 40vh; overflow: auto; }
+.set-row {
+  display: grid; grid-template-columns: 22px 1fr auto auto auto auto auto; gap: 8px; align-items: center;
+  min-height: 42px; padding: 4px 8px; border-radius: 10px;
+}
+.set-row-n { color: var(--dim); font-size: 12px; text-align: center; }
+.set-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.set-row-secs { width: 56px; min-height: 36px; padding: 0 6px; text-align: center; }
+.set-row-move, .set-row-del { min-width: 32px; min-height: 32px; padding: 0; font-size: 14px; }
+.set-row-del { color: var(--live); }
+/* The running set's jump-list reuses .set-row as a plain tappable button -
+   just a number and a title, so the 5-column build layout above does not
+   apply to it. */
+button.set-row { width: 100%; text-align: left; grid-template-columns: 22px 1fr; cursor: pointer; }
+button.set-row.is-on { border-color: var(--accent); background: #16202c; }
+
+.set-now { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); margin-bottom: 10px; }
+#set-now-title { font-weight: 600; margin-bottom: 8px; }
+.set-now-list { display: flex; flex-direction: column; gap: 4px; max-height: 30vh; overflow: auto; margin-bottom: 8px; }
+.set-now-transport { display: flex; gap: 8px; }
+.set-now-transport button { flex: 1; min-height: 46px; }
+
+.toast { transition: opacity .2s ease; opacity: 0; pointer-events: none; }
+.toast.is-on { opacity: 1; }
 
 /* The set of countdowns, each showing its own clock: you can see all four at
    a glance, and the controls below drive whichever is selected. */

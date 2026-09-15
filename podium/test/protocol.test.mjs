@@ -264,6 +264,54 @@ chk('shrinking the layout falls focus back to A rather than pointing at a panel 
   chk('an unknown ink action changes nothing', applyInkAction(mine, {action:'sneeze'}) === false);
 }
 
+{
+  // An automated set: staged like any other item, then advanced, jumped and
+  // paused on its own, independent of everything above.
+  const entries = [
+    {item:{type:'text', body:'1'}, seconds:20},
+    {item:{type:'text', body:'2'}, seconds:5},
+    {item:{type:'text', body:'3'}, seconds:100},
+  ];
+  applyCommand(s, {op:'stage', item:{type:'set', title:'My set', mode:'sequential', entries}});
+  chk('a set stages onto program like any other item', s.program.type === 'set' && s.program.entries.length === 3);
+  chk('starts on entry 0, not paused', s.program.index === 0 && s.program.paused === false);
+
+  applyCommand(s, {op:'set', action:'advance', panel:0});
+  applyCommand(s, {op:'set', action:'advance', panel:0});
+  applyCommand(s, {op:'set', action:'advance', panel:0});
+  chk('sequential advance steps forward and wraps', s.program.index === 0);
+
+  applyCommand(s, {op:'set', action:'select', index:2});
+  chk('select jumps directly', s.program.index === 2);
+  const key2 = inkSurfaceKey(s.program);
+  applyCommand(s, {op:'set', action:'select', index:0});
+  chk('ink is scoped per entry, not per set', inkSurfaceKey(s.program) !== key2);
+
+  applyCommand(s, {op:'set', action:'pause'});
+  chk('pause freezes it and records the time left', s.program.paused && s.program.remainingMs > 0);
+  applyCommand(s, {op:'set', action:'advance', panel:0});
+  chk('advance is a no-op while paused', s.program.index === 0 && s.program.paused);
+  applyCommand(s, {op:'set', action:'resume'});
+  chk('resume clears paused', s.program.paused === false);
+
+  applyCommand(s, {op:'stage', item:{
+    type:'set', mode:'random',
+    entries: Array.from({length:5}, (_, i) => ({item:{type:'text', body:String(i)}, seconds:5})),
+  }});
+  const seen = [s.program.index];
+  for (let i = 0; i < 4; i++) { applyCommand(s, {op:'set', action:'advance', panel:0}); seen.push(s.program.index); }
+  chk('random mode covers every entry before repeating', new Set(seen).size === 5);
+  chk('and never repeats back to back', seen.every((v, i) => i === 0 || v !== seen[i - 1]));
+
+  applyCommand(s, {op:'stage', item:{
+    type:'set', entries: Array.from({length:80}, (_, i) => ({item:{type:'text', body:String(i)}, seconds:5})),
+  }});
+  chk('entries are capped rather than growing without bound', s.program.entries.length === 50);
+
+  chk('advance on an empty panel is a no-op, not a throw', applyCommand(s, {op:'set', action:'advance', panel:3}) === false);
+  chk('select out of range is rejected', applyCommand(s, {op:'set', action:'select', index:999}) === false);
+}
+
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

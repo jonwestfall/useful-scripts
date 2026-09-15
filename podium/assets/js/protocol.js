@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 18;
+export const BUILD = 19;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -50,6 +50,15 @@ export const MUSIC_PAUSE_MS = 400;
 // What the music drops to while a clip with its own sound is on screen.
 export const MUSIC_DUCK = 0.15;
 export const MUSIC_DUCK_MS = 600;
+
+// An automated set that rotates on its own: a QR code, a photo, a text sign,
+// each held for its own number of seconds, sequential or shuffled. Modelled
+// as an item like any other - staged onto a panel with `stage`/`panel` the
+// normal way - so freeze/cue/take and B/C/D's direct-set both already work
+// for it without a line of special-casing. Only advancing itself, and the
+// handful of things you do to a running one (jump, pause, resume), are new.
+export const MAX_SET_ENTRIES = 50;
+export const SET_TICK_MS = 500;
 
 let timerSeq = 1;
 
@@ -173,7 +182,64 @@ function normalizeItem(item) {
     // reveal. Absent or short arrays just mean "no fragments on this slide".
     copy.fragments = Array.isArray(copy.fragments) ? copy.fragments.map((n) => Math.max(0, Number(n) || 0)) : [];
   }
+  if (copy.type === 'set') {
+    copy.mode = copy.mode === 'random' ? 'random' : 'sequential';
+    copy.entries = (Array.isArray(copy.entries) ? copy.entries : [])
+      .slice(0, MAX_SET_ENTRIES)
+      .map((e) => {
+        const sub = normalizeItem(e?.item);
+        if (!sub) return null;
+        // A minute cap, not because a longer hold is unreasonable, but
+        // because a typo (2000 instead of 20) should not leave one slide up
+        // for half an hour with nothing on screen to say why.
+        return { item: sub, seconds: Math.max(1, Math.min(3600, Math.round(Number(e?.seconds)) || 10)) };
+      })
+      .filter(Boolean);
+    copy.index = copy.entries.length ? Math.min(Math.max(0, Math.round(Number(copy.index)) || 0), copy.entries.length - 1) : 0;
+    // Always a fresh clock on (re)staging, the same reason a re-picked video
+    // starts from startAt rather than wherever an old copy's seek left off.
+    copy.startedAt = Date.now();
+    copy.paused = false;
+    copy.remainingMs = 0;
+    copy.cycle = [];
+    copy.cyclePos = 0;
+  }
   return copy;
+}
+
+// Fisher-Yates over every entry except the one just shown, so a shuffled
+// rotation never immediately repeats itself - the same reasoning as the
+// music queue's "Shuffle the rest".
+function shuffledIndices(count, excludeIndex) {
+  const arr = [];
+  for (let i = 0; i < count; i++) if (i !== excludeIndex) arr.push(i);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Moves a set on to its next entry - sequential just steps forward and
+// wraps; random draws from a shuffled bag of "not shown yet this lap",
+// refilling the bag (minus whatever is showing right now) once it is spent,
+// so every entry is seen once before any repeats and the same one never
+// shows twice in a row.
+function advanceSet(item) {
+  if (!item.entries.length) return;
+  if (item.entries.length === 1) { item.startedAt = Date.now(); item.remainingMs = 0; return; }
+  if (item.mode === 'random') {
+    if (!item.cycle?.length || item.cyclePos >= item.cycle.length) {
+      item.cycle = shuffledIndices(item.entries.length, item.index);
+      item.cyclePos = 0;
+    }
+    item.index = item.cycle[item.cyclePos];
+    item.cyclePos += 1;
+  } else {
+    item.index = (item.index + 1) % item.entries.length;
+  }
+  item.startedAt = Date.now();
+  item.remainingMs = 0;
 }
 
 // A snapshot of the on-screen item, given a new identity so the two content
@@ -214,6 +280,10 @@ export function inkSurfaceKey(item) {
     // Two panels can hold two different countdowns; drawing on one must not
     // put the same marks on the other.
     case 'timer': return `timer:${item.timerId || ''}`;
+    // Scoped by position, not just by the set: drawing on entry 2 must not
+    // show up when the rotation comes back around to entry 5, the same
+    // reason a deck keys ink by slide rather than by the deck as a whole.
+    case 'set': return `set:${item.key}:${item.index}`;
     default: return `${item.type}:${item.src || item.deckId || item.key || ''}`;
   }
 }
@@ -620,6 +690,48 @@ export function applyCommand(state, cmd) {
       if (!item) return false;
       item.fit = cmd.value === 'cover' ? 'cover' : 'contain';
       return true;
+    }
+
+    // A running set's own clock is "what is actually showing", the same
+    // category as media's play/pause/seek above rather than a visual reveal
+    // - so, like media, it is deliberately not frozen-aware for anything a
+    // person asks for. `advance` is the one exception: the display's own
+    // tick loop calls it, independent of what is focused, once per panel
+    // that actually has a running set - see SET_TICK_MS in display.js.
+    case 'set': {
+      if (cmd.action === 'advance') {
+        const item = Number(cmd.panel) === 0 ? state.program : state.panels[Number(cmd.panel) - 1];
+        if (!item || item.type !== 'set' || item.paused) return false;
+        advanceSet(item);
+        return true;
+      }
+      const item = state.focus === 0 ? state[cmd.where === 'preview' ? 'preview' : 'program'] : state.panels[state.focus - 1];
+      if (!item || item.type !== 'set') return false;
+      const entrySeconds = () => Math.max(1, Number(item.entries[item.index]?.seconds) || 1) * 1000;
+      switch (cmd.action) {
+        case 'select': {
+          const index = Number(cmd.index);
+          if (!Number.isInteger(index) || index < 0 || index >= item.entries.length) return false;
+          item.index = index;
+          item.startedAt = Date.now();
+          item.paused = false;
+          item.remainingMs = 0;
+          return true;
+        }
+        case 'pause':
+          if (item.paused || !item.entries.length) return false;
+          item.remainingMs = Math.max(0, entrySeconds() - (Date.now() - item.startedAt));
+          item.paused = true;
+          return true;
+        case 'resume':
+          if (!item.paused) return false;
+          item.startedAt = Date.now() - (entrySeconds() - item.remainingMs);
+          item.paused = false;
+          item.remainingMs = 0;
+          return true;
+        default:
+          return false;
+      }
     }
 
     case 'overlay':

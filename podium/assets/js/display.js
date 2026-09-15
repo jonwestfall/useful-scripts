@@ -16,7 +16,7 @@ import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDev
 import { createBus } from './bus.js';
 import {
   initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD,
-  MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS,
+  MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { encodeToFit } from './store.js';
@@ -163,6 +163,10 @@ function mount(layer, item) {
   layer.key = item.key;
   layer.renderer = createRenderer(resolveAssets(item), {
     getTimer: (id) => timerById(state, id),
+    // Only renderSet actually calls this - resolveAssets is applied to
+    // everything else's item right here, but a set's own entries are nested
+    // inside it, out of reach of this one call.
+    resolveAssets,
     // The real thing, not a broadcast echo of it: this screen owns the
     // <audio> element, so a track-countdown item reads it directly rather
     // than waiting a heartbeat to hear its own number back.
@@ -863,6 +867,46 @@ function drawWatermark(ctx, rect) {
   ctx.textAlign = 'start';
   ctx.textBaseline = 'alphabetic';
 }
+
+// --- automated sets ----------------------------------------------------------
+//
+// A running set advances itself: no controller has to stay connected, let
+// alone stay on the right tab, for a pre-show rotation to keep going. Ticks
+// program and each of panels B/C/D independently - a set can run in more
+// than one pane at once, each on its own clock - and deliberately never
+// looks at `preview`: a cued item is parked exactly like a cued video is (see
+// syncLayers' `playing:false` override), not secretly burning through its
+// rotation while nobody can see it.
+//
+// `lastSeenKey` is what makes TAKE, swap and a fresh stage all "just work"
+// with no special-casing in any of those commands: the first tick that finds
+// a DIFFERENT item's key sitting in a slot resets that set's clock right
+// there, so a set that sat cued for five minutes starts its current entry's
+// timer fresh the moment it actually becomes what the room is looking at,
+// rather than immediately skipping ahead to make up for lost time.
+const lastSeenSetKey = new Map();   // panel index (0=A) -> item.key last ticked there
+
+function tickSets() {
+  let changed = false;
+  for (let panel = 0; panel < 4; panel++) {
+    const item = panel === 0 ? state.program : state.panels[panel - 1];
+    if (!item || item.type !== 'set') { lastSeenSetKey.delete(panel); continue; }
+    if (lastSeenSetKey.get(panel) !== item.key) {
+      lastSeenSetKey.set(panel, item.key);
+      item.startedAt = Date.now();
+      item.remainingMs = 0;
+      changed = true;
+      continue;
+    }
+    if (item.paused || !item.entries.length) continue;
+    const seconds = Math.max(1, Number(item.entries[item.index]?.seconds) || 1);
+    if (Date.now() - item.startedAt >= seconds * 1000) {
+      if (applyCommand(state, { op: 'set', action: 'advance', panel })) changed = true;
+    }
+  }
+  if (changed) commit();
+}
+setInterval(tickSets, SET_TICK_MS);
 
 // --- rendering the rest of the chrome --------------------------------------
 

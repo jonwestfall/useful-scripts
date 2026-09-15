@@ -110,6 +110,7 @@
         <button class="tab" data-tab="camera" type="button">Camera</button>
         <button class="tab" data-tab="photos" type="button">Photos</button>
         <button class="tab" data-tab="music" type="button">Music</button>
+        <button class="tab" data-tab="sets" type="button">Sets</button>
       </nav>
 
       <div class="panels">
@@ -426,6 +427,42 @@
             files anywhere they are reachable, including your own server, so nothing you play has to
             live in the repository. See <code>content/audio/README.md</code>.
           </p>
+        </section>
+
+        <!-- Automated Sets -->
+        <section class="panel" data-panel="sets" hidden>
+          <p class="hint">
+            A rotation that advances itself — a QR code, then a photo, then a slide, each
+            held for its own number of seconds — and keeps going on the display even if
+            this tab closes. Start one on any pane the same way you would stage anything
+            else.
+          </p>
+
+          <div id="sets-running"></div>
+          <div id="sets-list"></div>
+          <button id="sets-new" type="button">+ New set</button>
+
+          <div id="sets-build" class="stack" hidden>
+            <div class="inline">
+              <input id="sets-build-name" class="grow" type="text" placeholder="Set name" maxlength="60">
+              <select id="sets-build-mode" aria-label="Order">
+                <option value="sequential">In order</option>
+                <option value="random">Random</option>
+              </select>
+            </div>
+            <div id="sets-build-entries" class="set-entries"></div>
+            <div class="inline">
+              <button id="sets-build-add" type="button">Add items — go to Library</button>
+            </div>
+            <div class="inline">
+              <button id="sets-build-save" type="button">Save set</button>
+              <button id="sets-build-cancel" type="button">Cancel</button>
+            </div>
+            <p id="sets-build-hint" class="hint" hidden>
+              Adding to “<span id="sets-build-hint-name"></span>” — tap tiles in the Library to add
+              them, each starting at 15s. Come back here and adjust durations, then <b>Save set</b>.
+            </p>
+          </div>
         </section>
 
         <!-- Camera -->

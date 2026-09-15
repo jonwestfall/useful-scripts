@@ -43,6 +43,7 @@ full reference; that one is the road in.
 [splitting the screen](#splitting-the-screen) ·
 [watermark](#watermark) ·
 [countdowns](#countdowns) ·
+[automated sets](#automated-sets) ·
 [music before class](#music-before-class) ·
 [the document camera](#the-document-camera-and-photos-taken-with-it) ·
 [keeping what was on screen](#keeping-what-was-on-screen) ·
@@ -105,7 +106,7 @@ HTML slide decks including reveal.js · PDFs with page-turn buttons · big text 
 a QR code for the class to scan · countdown timers · a whiteboard · your phone's
 camera as a document camera, including stills taken from it that you can hold in
 four panels at once. Plus background music the room hears and the projector never
-shows.
+shows, and automated sets — a rotation of any of the above that advances itself.
 
 A few more that sit on top of anything: **ink**, so you can annotate live over a
 slide with an Apple Pencil, a **caption** along the bottom of the screen, and a
@@ -597,6 +598,41 @@ tablet sleeps or you close the controller and reopen it.
 
 A lecture plan defines the set: its saved timers become the four clocks, with their
 names and lengths, and a plan's countdown items say which one they show. See below.
+
+## Automated sets
+
+The **Sets** tab builds a rotation — a QR code, then a photo, then a text sign, each
+held for its own number of seconds — and once started it advances itself: no tablet
+has to stay connected, or even stay on the right tab, for a pre-show loop to keep
+running before class starts.
+
+**Building one.** Press **+ New set**, name it, and **Add items — go to Library**:
+every tile you tap there while a set is open goes into it (at 15s, adjustable
+afterward) instead of going live. Come back to the Sets tab to reorder, edit
+durations, or remove one, then **Save set**. A live camera feed and a deck you have
+never opened in this session both decline politely rather than being added broken —
+open the deck once first (it will then be pickable from **Recent**), and add a still
+in the camera's place.
+
+**Running one.** Each saved set has four buttons — **A / B / C / D** — start it on
+any pane the same way you would stage anything else; the same set can run on two
+panes at once, each its own independent rotation. **In order** steps through the
+list and wraps; **Random** shuffles through every item once before any repeat, and
+never repeats the one just shown. Whichever pane is focused shows a remote for its
+set on the Sets tab: **⏮ / ⏸ / ⏭**, and the full list to jump straight to any item.
+
+Once running, a set behaves like a video's own playhead rather than like content
+being cued: it keeps advancing on its own clock through freeze and blank alike (both
+only hold back what the room *sees*, never what is actually running), and only
+pauses when you tell it to, or while it sits cued and un-taken. It survives a
+reload of the display the same way everything else on screen does.
+
+Sets you build are saved on that device, the same as a custom Library item — nothing
+about a *saved* set is shared between controllers, but the moment you *start* one it
+is a staged item like any other, and every connected controller sees it and can
+drive it. A deck entry currently holds its position rather than stepping through its
+own slides on its own timer — a set with slides in it means "this slide, for its
+turn" today, with full slide-by-slide rotation a likely follow-up.
 
 ## Music before class
 
@@ -1204,7 +1240,11 @@ all actually reach index.html. It also proves a "We begin in…" panel counts do
 actual position of whatever is playing rather than a fixed number, and that a
 watermark survives everything up to and including a display reload with no
 controller left to answer for it - text or a logo, alpha channel intact rather than
-flattened to a black box, and genuinely inside a whole-screen grab. 356 checks.
+flattened to a black box, and genuinely inside a whole-screen grab. It also proves an
+automated set advances itself on schedule, holds while paused rather than racing
+ahead, runs two independent instances of the same saved set on two panes at once,
+and declines a live camera or an unopened deck rather than adding either one broken.
+371 checks.
 
 ## Layout
 

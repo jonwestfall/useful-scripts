@@ -199,6 +199,12 @@ The **Say** tab's watermark pins your name or a logo to a corner of the screen f
 the whole lecture — it survives everything you pick, and ends up in a whole-screen
 photo too, which is the point of it.
 
+The **Sets** tab builds a rotation that runs itself before class — a QR code, a
+photo, a text sign, each held for its own number of seconds. **+ New set**, then
+**Add items — go to Library** and tap tiles to add them; come back to name it, set
+durations and order, and **Save set**. Each saved set has an A/B/C/D button — start
+it on any pane, and it keeps advancing even if you close the tab.
+
 The **Camera** tab makes your phone a document camera — hold it over a book and it is
 on the wall. **Take a photo** freezes a frame and keeps it: tap the thumbnail to put
 it on screen, and since each photo is just a photo, you can split the screen and hold

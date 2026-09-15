@@ -3521,6 +3521,99 @@ ok(`a controller previews the same real countdown, from musicNow (${frozen})`, (
 await ctx.close();
 }
 
+if (want('automated sets: a rotation that runs itself')) {
+console.log('\n-- automated sets: a rotation that runs itself --');
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'sets-room', passphrase: 'we begin in twenty seconds' }));
+const screen = await ctx.newPage();
+trap(screen, 'sets display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'sets pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Building one: every Library tap goes into the draft instead of going live.
+await pad.click('.tab[data-tab="sets"]');
+await pad.click('#sets-new');
+await pad.fill('#sets-build-name', 'Pre-show');
+await pad.click('#sets-build-add');
+ok('Add items switches to the Library tab', await pad.evaluate(() => document.querySelector('.tab[data-tab="library"]').classList.contains('is-on')));
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
+await screen.waitForTimeout(400);
+ok('nothing goes live while building', await screen.evaluate(() => !document.querySelector('.r-whiteboard')));
+
+// A live camera and an unresolved deck are declined rather than added broken
+// (see the /code-review note in control.js: neither gets the async setup
+// pick() normally gives it, so both would sit there forever unresolved).
+await pad.click('.tile:has(.tile-title:text-is("Phone camera"))');
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await pad.click('.tab[data-tab="sets"]');
+ok('camera and an unresolved deck are declined, not added broken', (await pad.$$('#sets-build-entries .set-row')).length === 2);
+
+const secInputs = await pad.$$('#sets-build-entries .set-row-secs');
+await secInputs[0].fill('2'); await secInputs[0].dispatchEvent('change');
+await secInputs[1].fill('3'); await secInputs[1].dispatchEvent('change');
+await pad.click('#sets-build-save');
+ok('saving closes the builder and lists it', await pad.isHidden('#sets-build') && /Pre-show/.test(await pad.textContent('#sets-list')));
+
+// Start it on Panel A - staged like any other item.
+await pad.click('.set-saved-row:has(.set-saved-title:text-is("Pre-show")) .set-start-btn:text-is("A")');
+await screen.waitForSelector('.r-whiteboard', { timeout: 8000 });
+ok('starting it puts the first entry up', true);
+
+const firstBg = await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background);
+await pad.waitForTimeout(3500);
+const secondBg = await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background);
+ok('it advances itself on schedule, with no controller action', firstBg !== secondBg);
+
+// The running-set remote: jump, pause, resume. These specifically exercise
+// a real bug found while building this - the buttons were built once and
+// closed over that render's `item`, which state replacement (a fresh object
+// every broadcast) made stale after the very next heartbeat.
+await pad.click('.tab[data-tab="sets"]');
+await pad.waitForSelector('#set-now-title', { timeout: 8000 });
+await pad.click('#set-now-next');
+await screen.waitForTimeout(500);
+const thirdBg = await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background);
+ok('Next jumps forward too, not just the auto-advance', thirdBg !== secondBg);
+
+await pad.click('#set-now-pause');
+await pad.waitForFunction(() => /paused/.test(document.querySelector('#set-now-title').textContent), null, { timeout: 5000 });
+ok('Pause freezes the readout', true);
+ok('and flips the button to a play glyph', (await pad.textContent('#set-now-pause')) === '▶');
+const heldBg = await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background);
+await pad.waitForTimeout(3500);
+ok('and genuinely holds - no auto-advance while paused',
+  (await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background)) === heldBg);
+await pad.click('#set-now-pause');
+await pad.waitForFunction(() => !/paused/.test(document.querySelector('#set-now-title').textContent), null, { timeout: 5000 });
+ok('pressing it again resumes', true);
+
+// The same saved set can run independently on a second pane at once.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.layout-btn[data-layout="2h"]');
+await pad.click('.tab[data-tab="sets"]');
+await pad.click('.set-saved-row:has(.set-saved-title:text-is("Pre-show")) .set-start-btn:text-is("B")');
+await screen.waitForFunction(() => document.querySelectorAll('.panel-slot.is-on').length === 2, null, { timeout: 8000 });
+ok('the same saved set can run on a second pane too, independently', true);
+
+// Editing, reordering, and deleting a saved set.
+await pad.click('.set-saved-row:has(.set-saved-title:text-is("Pre-show")) button:text-is("Edit")');
+await pad.click('#sets-build-entries .set-row:nth-child(2) .set-row-del');
+ok('editing a saved set and removing an entry drops it to one', (await pad.$$('#sets-build-entries .set-row')).length === 1);
+await pad.click('#sets-build-cancel');
+ok('cancel leaves the saved set exactly as it was (still two entries)', /2 items/.test(await pad.textContent('#sets-list')));
+await pad.click('.set-saved-row:has(.set-saved-title:text-is("Pre-show")) button:text-is("Delete")');
+ok('Delete removes it from the saved list', !/Pre-show/.test(await pad.textContent('#sets-list')));
+await ctx.close();
+}
+
 if (want('watermark: a name or logo in the corner')) {
 console.log('\n-- watermark: a name or logo in the corner --');
 const ctx = await browser.newContext();
