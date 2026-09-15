@@ -151,10 +151,10 @@ browsers only expose in a secure context. GitHub Pages is https by default.
 
 ### 3. Set up the classroom PC once
 
-Open `display.html`, fill in the connection settings, and click **Go live**.
-That click is what grants the page fullscreen, sound and the wake lock — the
-browser will not hand those to a page that did not ask for them inside a real
-click. Settings are stored in that browser, so you do this once per machine.
+Open `display.html`, fill in the connection settings, and click **Go live** — or
+press `G`. Either is what grants the page fullscreen, sound and the wake lock — the
+browser will not hand those to a page that did not ask for them inside a real click
+or keypress. Settings are stored in that browser, so you do this once per machine.
 Press `?` on that machine for the keys it understands; `E` is the one that
 leaves fullscreen and puts the **Go live** screen back at the end of class.
 
@@ -1157,7 +1157,8 @@ underneath it, that `Ctrl+P` still belongs to the browser, and that the backgrou
 music fades in, ducks under a clip, survives freeze and blank, and shows the projector
 nothing at all — and that the same audio resource works as an on-screen item from the
 Library and as background music from a quick-push button without either one disturbing
-the other. 325 checks.
+the other, and that `G` goes live the same as the button - fullscreen requested
+inside the keypress itself, exactly like the click it stands in for. 329 checks.
 
 ## Layout
 

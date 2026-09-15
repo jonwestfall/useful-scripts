@@ -3413,6 +3413,41 @@ await screen2.type('#d-room', 'seminar-f');
 ok('and the same keys typed into Settings are just text',
   (await screen2.inputValue('#d-room')).endsWith('seminar-f')
   && await screen2.isHidden('#pair') && await screen2.isHidden('#keys'));
+
+// G is a second door onto the same goLive() as the button - a fresh page,
+// because the one above has already left the arm screen behind.
+const screen3 = await c.newPage();
+trap(screen3, 'keys display (G)');
+await screen3.addInitScript(() => {
+  window.__fsCalls = [];
+  const real = Element.prototype.requestFullscreen;
+  Element.prototype.requestFullscreen = function patched(...args) {
+    window.__fsCalls.push(window.event?.type || null);
+    return real.apply(this, args);
+  };
+});
+await screen3.goto(`${BASE}/display.html`);
+await screen3.waitForSelector('#arm:not([hidden])');
+ok('the shortcut card mentions it', (await screen3.evaluate(() => {
+  document.querySelector('#keys').hidden = false;
+  const text = document.querySelector('#keys').textContent;
+  document.querySelector('#keys').hidden = true;
+  return text;
+})).includes('Go live'));
+
+await screen3.keyboard.press('g');
+await screen3.waitForFunction(() => !!document.fullscreenElement, null, { timeout: 5000 });
+ok('G goes live, the same as the button', await screen3.evaluate(() => document.querySelector('#arm').hidden));
+const fsCallsG = await screen3.evaluate(() => window.__fsCalls);
+ok(`asking for fullscreen inside the keypress itself, not after an await (${JSON.stringify(fsCallsG)})`,
+  fsCallsG.length === 1 && fsCallsG[0] === 'keydown');
+
+// Once live, G has nothing left to do - pressing it again must not re-request
+// fullscreen or re-run the wake lock/audio unlock for no reason.
+await screen3.keyboard.press('g');
+await screen3.waitForTimeout(400);
+ok('and does nothing once the room is already live',
+  (await screen3.evaluate(() => window.__fsCalls)).length === 1);
 await c.close();
 }
 
