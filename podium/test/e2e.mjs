@@ -824,7 +824,13 @@ const contentBox = await screen.evaluate(() => {
 });
 ok(`the 16:9 slide is genuinely pillarboxed in this window (dead margin ${Math.round(contentBox.x)}px each side)`, contentBox.x > 50);
 
+// Every tab shares one scrolling container - scrolled deep into a long
+// Library, switching tabs must not carry that scroll position into the
+// next one, or a tall panel (Ink, here) starts measured from a viewport
+// rect shifted up off the top of the screen.
+await pad.evaluate(() => { document.querySelector('.panels').scrollTop = 400; });
 await pad.click('.tab[data-tab="ink"]');
+ok('switching tabs resets the shared scroll position', await pad.evaluate(() => document.querySelector('.panels').scrollTop === 0));
 await pad.waitForTimeout(300);
 const padBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
 // Draw right near the pad's own left edge - if the pad is correctly shaped to
@@ -3469,6 +3475,107 @@ await screen3.waitForTimeout(400);
 ok('and does nothing once the room is already live',
   (await screen3.evaluate(() => window.__fsCalls)).length === 1);
 await c.close();
+}
+
+if (want('full screen this panel, and layout respects freeze')) {
+console.log('\n-- full screen this panel, and layout respects freeze --');
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'layout-room', passphrase: 'panel C full screen' }));
+const screen = await ctx.newPage();
+trap(screen, 'layout display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'layout pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// "Full screen this": panel C's content becomes panel A, in single layout,
+// in one tap - the actual complaint being "I switch back to one panel and
+// get A, not the C I was just looking at".
+await pad.click('.layout-btn[data-layout="4"]');
+await pad.click('.panel-btn:nth-child(3)');
+await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'C', null, { timeout: 5000 });
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
+await screen.waitForFunction(() => document.querySelectorAll('.panel-slot.is-on').length === 4, null, { timeout: 8000 });
+ok('the "Full screen this" button appears once a non-A panel is focused', await pad.isVisible('#panel-promote'));
+await pad.click('#panel-promote');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 8000 });
+ok('promoting switches to single layout', true);
+ok('with panel A now showing what was in C, not black', await screen.evaluate(() => !!document.querySelector('.r-whiteboard')));
+
+// A layout change while frozen queues behind TAKE, the same as content -
+// see the 'layout'/'take'/'clear' cases in protocol.js.
+await pad.click('#freeze');
+await pad.click('.layout-btn[data-layout="2h"]');
+await pad.waitForTimeout(500);
+ok('a layout change while frozen does not apply immediately', await screen.evaluate(() => document.querySelector('#stage').classList.contains('layout-single')));
+ok('the cued layout button shows cued rather than live',
+  await pad.evaluate(() => document.querySelector('.layout-btn[data-layout="2h"]').classList.contains('is-cued')
+    && !document.querySelector('.layout-btn[data-layout="2h"]').classList.contains('is-on')));
+ok('and the preview pane says a layout is cued', /Layout cued/.test(await pad.textContent('#preview-label')));
+ok('TAKE is armed by a cued layout alone, with no content change pending', !(await pad.evaluate(() => document.querySelector('#take').disabled)));
+
+await pad.click('#take');
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-2h'), null, { timeout: 8000 });
+ok('TAKE applies the cued layout', true);
+await pad.waitForFunction(() => !document.querySelector('#freeze').classList.contains('is-on'), null, { timeout: 5000 })
+  .then(() => ok('and releases freeze the same as any other take', true))
+  .catch(() => ok('and releases freeze the same as any other take', false));
+
+// Clear cue abandons a cued layout, not just cued content.
+await pad.click('#freeze');
+await pad.click('.layout-btn[data-layout="4"]');
+await pad.waitForFunction(() => document.querySelector('.layout-btn[data-layout="4"]').classList.contains('is-cued'), null, { timeout: 5000 });
+await pad.click('#clear-preview');
+await pad.waitForTimeout(300);
+ok('Clear cue abandons a cued layout too',
+  !(await pad.evaluate(() => document.querySelector('.layout-btn[data-layout="4"]').classList.contains('is-cued'))));
+await pad.click('#freeze');
+await screen.waitForTimeout(300);
+ok('and the display never saw it', await screen.evaluate(() => document.querySelector('#stage').classList.contains('layout-2h')));
+
+// Regression guard: plain content cueing while frozen is unaffected by the
+// layout-cueing rewrite of take()/clear().
+await pad.click('#freeze');
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await pad.waitForTimeout(400);
+ok('plain content cueing while frozen still works', /^Cued$/.test(await pad.textContent('#preview-label')));
+await pad.click('#take');
+await screen.waitForSelector('.r-whiteboard', { timeout: 8000 });
+ok('and TAKE still applies content with no layout change involved', true);
+await ctx.close();
+}
+
+if (want('uploading a photo from the device rather than a URL')) {
+console.log('\n-- uploading a photo from the device rather than a URL --');
+const ctx = await browser.newContext();
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'photo-upload-room', passphrase: 'the meme I wanted' }));
+const screen = await ctx.newPage();
+trap(screen, 'upload display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'upload pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.setInputFiles('#photo-upload', writeImageFixture());
+await screen.waitForFunction(() => {
+  const img = document.querySelector('.layer[data-role="program"] img');
+  return img && img.complete && img.naturalWidth > 1;
+}, null, { timeout: 10000 })
+  .then(() => ok('a photo picked from Files/Camera Roll goes live on the display', true))
+  .catch(() => ok('a photo picked from Files/Camera Roll goes live on the display', false));
+
+await ctx.close();
 }
 
 if (want('a countdown to the end of the track')) {

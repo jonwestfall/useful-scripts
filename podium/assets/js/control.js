@@ -223,12 +223,35 @@ const BUILT_INS = [
 
 let library = [];
 
+// A saved custom item referencing an uploaded asset (a photo, say) needs its
+// bytes to survive too, not just the asset:<id> reference - assetStore is
+// memory-only, so without this a "Saved" photo tile works for exactly the
+// session it was uploaded in and shows a blank screen every time after,
+// forever, with nothing left anywhere holding the bytes to answer for it.
+// Carried as an extra field on the way to and from localStorage only; every
+// caller elsewhere in the app still sees a plain item with a plain src.
 function loadCustom() {
-  try { return JSON.parse(localStorage.getItem(LIB_KEY) || '[]'); } catch { return []; }
+  let items;
+  try { items = JSON.parse(localStorage.getItem(LIB_KEY) || '[]'); } catch { return []; }
+  if (!Array.isArray(items)) return [];
+  return items.map((item) => {
+    const { _assetData, ...clean } = item;
+    if (_assetData && typeof clean.src === 'string' && clean.src.startsWith('asset:')) {
+      assetStore.set(clean.src.slice(6), _assetData);
+    }
+    return clean;
+  });
 }
 
 function saveCustom(items) {
-  try { localStorage.setItem(LIB_KEY, JSON.stringify(items)); } catch { /* private mode */ }
+  try {
+    const withBytes = items.map((item) => {
+      if (typeof item.src !== 'string' || !item.src.startsWith('asset:')) return item;
+      const data = assetStore.get(item.src.slice(6));
+      return data ? { ...item, _assetData: data } : item;
+    });
+    localStorage.setItem(LIB_KEY, JSON.stringify(withBytes));
+  } catch { /* private mode, or enough saved photos to run into the quota */ }
 }
 
 // The running order, as library items. Numbered, because the whole point of a
@@ -577,9 +600,9 @@ function renderPreview() {
     previewRenderer.reconcile({ ...item, playing: false }, { volume: 0, muted: true });
   }
 
-  $('#preview-label').textContent = state.preview ? 'Cued' : 'On screen';
+  $('#preview-label').textContent = state.preview ? 'Cued' : (state.previewLayout !== null ? 'Layout cued' : 'On screen');
   $('#preview-title').textContent = itemTitle(item);
-  $('#preview-pane').classList.toggle('is-cued', !!state.preview);
+  $('#preview-pane').classList.toggle('is-cued', !!state.preview || state.previewLayout !== null);
 }
 
 // --- Marp deck panel --------------------------------------------------------
@@ -1171,10 +1194,14 @@ function renderNow() {
   $('#freeze').classList.toggle('is-on', state.frozen);
   $('#freeze').textContent = state.frozen ? 'Frozen' : 'Freeze';
   $('#blank').classList.toggle('is-on', state.blank);
-  $('#take').disabled = !state.preview;
-  $('#take').classList.toggle('is-armed', !!state.preview);
+  // A cued layout with no content change (you only touched the layout
+  // picker while frozen) still needs TAKE to apply it, and Clear cue to
+  // abandon it - see the 'take'/'clear' cases in protocol.js.
+  const cued = !!state.preview || state.previewLayout !== null;
+  $('#take').disabled = !cued;
+  $('#take').classList.toggle('is-armed', cued);
   $('#swap').disabled = !state.preview;
-  $('#clear-preview').disabled = !state.preview;
+  $('#clear-preview').disabled = !cued;
   $('#preview-mode').classList.toggle('is-on', state.previewMode);
   $('#mute').classList.toggle('is-on', state.muted);
   $('#mute').textContent = state.muted ? '\u{1F507}' : '\u{1F50A}';
@@ -1255,7 +1282,12 @@ const PANEL_LABELS = ['A', 'B', 'C', 'D'];
 // appears once there is more than one to choose between, and shows which
 // one Library taps, deck nav, transport, and Ink currently address.
 function renderLayoutBar() {
-  $$('.layout-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.layout === state.layout));
+  $$('.layout-btn').forEach((b) => {
+    b.classList.toggle('is-on', b.dataset.layout === state.layout);
+    // Frozen and waiting on TAKE - see the 'layout' case in protocol.js.
+    b.classList.toggle('is-cued', state.previewLayout !== null && b.dataset.layout === state.previewLayout);
+  });
+  $('#panel-promote').hidden = state.focus === 0;
   const count = LAYOUTS[state.layout] || 1;
   const picker = $('#panel-picker');
   picker.hidden = count <= 1;
@@ -2518,6 +2550,13 @@ async function connect() {
 function tab(name) {
   $$('.tab').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
   $$('.panel').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+  // Every panel shares one scrolling container (.panels), so a tab switch
+  // alone does not reset it - scrolled halfway down a long Library before
+  // tapping Ink lands the Ink tab starting from that same halfway point,
+  // and Ink's own content is tall enough that fitBox() then measures the
+  // pad against a viewport rect shifted up off the top of the screen. A
+  // fresh tab starts scrolled to its own top, always.
+  $('.panels').scrollTop = 0;
   // A box measured while its panel is [hidden] gets 0x0 back from
   // getBoundingClientRect() and fitBox() quietly declines to size anything
   // from that, so every "contain"-fit surface needs a nudge the moment its
@@ -2539,6 +2578,22 @@ $$('.layout-btn').forEach((b) => {
   // accident far more easily, and taking a screenshot instead of splitting the
   // screen mid-lecture would be a genuine surprise.
   onLongPress(b, HOLD_SCREEN_MS, () => askForShot('screen', 'the whole screen'));
+});
+// Composes two commands that already know how to cue themselves while
+// frozen (stage() via stageTarget, layout via its own freeze check in
+// protocol.js) rather than being its own special case: staging the
+// focused panel's content into A, sent directly rather than through
+// stage() itself - stage() would route by the CURRENT focus (still B/C/D
+// here) and re-stage it right back into the panel it is leaving.
+$('#panel-promote').addEventListener('click', () => {
+  if (state.focus === 0) return;
+  const item = state.panels[state.focus - 1];
+  if (!item) return;
+  const { key: _k, ...clean } = item;
+  pushAssetIfHeld(clean.src);
+  send({ op: 'stage', item: clean, where: 'auto' });
+  send({ op: 'layout', mode: 'single' });
+  send({ op: 'focus', index: 0 });
 });
 $('#take').addEventListener('click', () => send({ op: 'take' }));
 $('#swap').addEventListener('click', () => send({ op: 'swap' }));
@@ -2687,6 +2742,34 @@ $('#url-form').addEventListener('submit', (ev) => {
   }
   stage(item);
   input.value = '';
+});
+
+// A photo already on the device, not one reachable by URL - the meme you
+// have saved, the screenshot you just took, a student's work photographed
+// earlier and dropped into Files. Same asset pipeline as everything else
+// that starts as a local file (the watermark logo, a plan's photo field):
+// downscale to fit one relay message, hand it an id, stage the reference.
+$('#photo-upload').addEventListener('change', async (ev) => {
+  const file = ev.target.files?.[0];
+  ev.target.value = '';
+  if (!file) return;
+  $('#photo-upload-note').textContent = `Resizing ${file.name}…`;
+  try {
+    const shrunk = await downscaleImage(file, MAX_ASSET_CHARS);
+    const id = uid(10);
+    assetStore.set(id, shrunk.dataUrl);
+    const item = { type: 'image', src: assetRef(id), fit: 'contain', title: file.name.replace(/\.[^.]+$/, '') || 'Photo' };
+    if ($('#photo-upload-save').checked) {
+      saveCustom([...loadCustom(), item]);
+      loadLibrary();
+    }
+    stage(item);
+    $('#photo-upload-note').textContent = shrunk.tooBig
+      ? `“${file.name}” is still large after resizing and may not reach the projector reliably.`
+      : '';
+  } catch (err) {
+    $('#photo-upload-note').textContent = `That did not load: ${err.message}`;
+  }
 });
 
 $('#text-form').addEventListener('submit', (ev) => {

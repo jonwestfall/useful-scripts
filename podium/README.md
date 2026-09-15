@@ -530,6 +530,12 @@ would switch tabs — tap **A**, **B**, **C**, or **D** — and everything else 
 panel, ink included; hold a layout icon and you get the whole screen. See
 [keeping what was on screen](#keeping-what-was-on-screen).
 
+Want whatever's in B, C, or D to take over the whole screen instead of dropping back
+to A? Focus that panel and press **⛶ Full screen this**, next to the panel buttons
+(it only shows once a non-A panel is focused). It carries that panel's content into
+A and switches to full-screen layout in one tap — no re-picking the same item out of
+Recent, no ending up back at whatever A last held.
+
 Panel **A** is exactly what Podium has always been: TAKE, freeze, cue, Swap all
 still work on it precisely as before, just confined to its own region of the screen
 once a layout splits it. **B**, **C**, and **D** are deliberately simpler and have
@@ -539,6 +545,12 @@ panel was never going to change in front of the class without you choosing to ch
 it right then. Think of A as "what I am presenting" and B/C/D as "what's also up" —
 a countdown for group work, a slide of instructions, a photo — set once and left
 alone rather than cued and revealed.
+
+The layout itself is a different matter: freeze holds back the whole stage, not just
+panel A's content, so switching layouts while frozen cues the switch instead of
+instantly rearranging what the class is looking at — the preview strip reads "Layout
+cued" and TAKE applies it (together with any cued content), Clear cue abandons it.
+Unfrozen, a layout switch still happens the instant you tap it, same as always.
 
 This is for laying a screen out, not for a fast during-class reveal: project your
 slides, split to add a countdown and an instruction panel for group work, then drop
@@ -922,6 +934,12 @@ Types: `image` `video` `audio` `youtube` `web` `slides` `pdf` `text` `qr` `timer
 `whiteboard` `camera` `black`. You can also paste any link straight into the
 controller — it works out what it is — and tick **Save** to keep it.
 
+For a photo that only exists on the iPad itself — a meme, a screenshot, something
+from Camera Roll rather than a URL — the Library tab's **Upload a photo…** button
+opens the device's own file/camera picker, downscales whatever comes back, and puts
+it straight on screen; tick **Save** to keep it in the library as a regular tile
+(the image itself is kept, not just a link to it, so it is still there next time).
+
 Large videos do not belong in a git repo. Host them on the VPS, or use an unlisted
 YouTube link.
 
@@ -1244,7 +1262,10 @@ flattened to a black box, and genuinely inside a whole-screen grab. It also prov
 automated set advances itself on schedule, holds while paused rather than racing
 ahead, runs two independent instances of the same saved set on two panes at once,
 and declines a live camera or an unopened deck rather than adding either one broken.
-371 checks.
+It also proves a photo picked from Files/Camera Roll goes live the same as any other
+item, that a non-A panel can be promoted to full screen without landing back on
+whatever A last held, and that a layout change made while frozen queues behind TAKE
+instead of instantly rearranging the screen. 386 checks.
 
 ## Layout
 

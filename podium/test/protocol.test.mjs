@@ -19,6 +19,36 @@ applyCommand(s, {op:'take'});
 chk('take promotes preview', s.program.type === 'text' && s.preview === null);
 chk('take clears freeze', s.frozen === false);
 
+{
+  // A layout change is cued the same way content is, while frozen - and
+  // TAKE has to apply it even when nothing else is cued alongside it.
+  applyCommand(s, {op:'layout', mode:'2h'});
+  chk('unfrozen layout applies immediately', s.layout === '2h' && s.previewLayout === null);
+
+  applyCommand(s, {op:'freeze', on:true});
+  applyCommand(s, {op:'layout', mode:'4'});
+  chk('frozen layout change is cued, not applied', s.layout === '2h' && s.previewLayout === '4');
+
+  applyCommand(s, {op:'take'});
+  chk('take applies a cued layout with no content change pending', s.layout === '4' && s.previewLayout === null);
+  chk('and clears freeze the same as any other take', s.frozen === false);
+
+  applyCommand(s, {op:'freeze', on:true});
+  applyCommand(s, {op:'layout', mode:'2h'});
+  applyCommand(s, {op:'clear'});
+  chk('clearing the cue abandons a cued layout too', s.previewLayout === null);
+  chk('and the live layout never moved', s.layout === '4');
+
+  applyCommand(s, {op:'stage', item:{type:'image', src:'b.png'}});
+  applyCommand(s, {op:'layout', mode:'3'});
+  chk('content and a layout change can be cued together', s.preview?.src === 'b.png' && s.previewLayout === '3');
+  applyCommand(s, {op:'take'});
+  chk('one take applies both at once', s.program.src === 'b.png' && s.layout === '3');
+
+  applyCommand(s, {op:'freeze', on:false});
+  applyCommand(s, {op:'layout', mode:'single'});
+}
+
 applyCommand(s, {op:'stage', item:{type:'video', src:'v.mp4'}});
 chk('video defaults to playing', s.program.playing === true);
 applyCommand(s, {op:'media', action:'toggle'});

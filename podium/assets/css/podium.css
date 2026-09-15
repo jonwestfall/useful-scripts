@@ -361,6 +361,9 @@ body.control.is-frozen { background: #171006; }
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
 }
 .layout-btn.is-on { border-color: var(--accent); background: #16202c; }
+/* Frozen and waiting on TAKE, the same colour the preview pane's own cued
+   border already uses - a layout change is cued the same way content is. */
+.layout-btn.is-cued { border-color: var(--cue); box-shadow: inset 0 0 0 1px var(--cue); }
 /* Each icon is a tiny CSS-drawn copy of the actual on-screen grid (see
    #stage.layout-* in the display rules) - what you tap is what you get. */
 .layout-icon { display: grid; width: 18px; height: 13px; gap: 2px; }

@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 19;
+export const BUILD = 20;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -92,6 +92,11 @@ export function initialState() {
     armed: false,          // has someone clicked "Go live" on the display yet
     program: { ...BLACK },
     preview: null,
+    // The layout's own cue, on the same principle as preview above: while
+    // frozen, a layout change is a change to what the room is about to see
+    // (fewer or differently-arranged panels), not to what it is looking at
+    // right now, so it waits for TAKE exactly like a content pick does.
+    previewLayout: null,
     frozen: false,          // hold the program layer; new picks land in preview
     blank: false,           // hard cut to black, keeps program loaded underneath
     previewMode: false,     // always cue before going live, even when not frozen
@@ -554,10 +559,23 @@ export function applyCommand(state, cmd) {
     }
 
     case 'take': {
-      if (!state.preview) return false;
-      state.program = state.preview;
-      state.preview = null;
-      state.blank = false;
+      // A cued layout can arrive with no cued content at all (you only
+      // changed panels while frozen), so this can no longer refuse just
+      // because state.preview is empty - only when NEITHER is pending.
+      if (!state.preview && state.previewLayout === null) return false;
+      if (state.preview) {
+        state.program = state.preview;
+        state.preview = null;
+        // A deliberate blank is "eyes on me", and only new CONTENT is worth
+        // interrupting that for - a bare rearrangement of empty structure
+        // (see below) has nothing to reveal and must not undo it by itself.
+        state.blank = false;
+      }
+      if (state.previewLayout !== null) {
+        state.layout = state.previewLayout;
+        state.previewLayout = null;
+        if (state.focus >= LAYOUTS[state.layout]) state.focus = 0;
+      }
       state.frozen = false;
       return true;
     }
@@ -571,7 +589,10 @@ export function applyCommand(state, cmd) {
     case 'clear': {
       const where = cmd.where === 'program' ? 'program' : 'preview';
       if (where === 'program') state.program = { ...BLACK };
-      else state.preview = null;
+      // Abandoning the cue abandons a cued layout with it - "Clear cue"
+      // means throw away everything queued up for the next TAKE, not just
+      // whichever half of it happens to be content.
+      else { state.preview = null; state.previewLayout = null; }
       return true;
     }
 
@@ -591,6 +612,14 @@ export function applyCommand(state, cmd) {
 
     case 'layout': {
       if (!Object.prototype.hasOwnProperty.call(LAYOUTS, cmd.mode)) return false;
+      // Frozen is "hold what the room sees" for the whole stage, not just
+      // panel A - a layout change is exactly that, so it queues the same way
+      // a new pick does, and TAKE (above) is what actually applies it.
+      if (state.frozen) {
+        if (cmd.mode === (state.previewLayout ?? state.layout)) return false;
+        state.previewLayout = cmd.mode;
+        return true;
+      }
       state.layout = cmd.mode;
       // A focus the new layout does not have (going from 4 panels down to 2,
       // say) falls back to A rather than pointing at a panel that is no
