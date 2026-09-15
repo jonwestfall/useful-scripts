@@ -140,14 +140,15 @@ Because this device has never been set up, it shows a settings form:
 - **Passphrase** — three or four random words, e.g. `lantern shovel pear anvil`.
   This is the real lock; see [below](#so-the-passphrase-is-the-whole-lock).
 
-Click **Save**, then **Go live**. That one click is what grants the page fullscreen,
-sound, and permission to keep the screen awake — browsers require a real click for
-those, which is the only reason the button exists.
+Click **Save**, then **Go live** — or just press `G`. That one click or keypress is
+what grants the page fullscreen, sound, and permission to keep the screen awake —
+browsers require a real click or keypress for those, which is the only reason the
+button exists.
 
 Press `?` on that machine at any point for the handful of keys it understands. The
-two worth knowing now: `F` toggles fullscreen, and `E` leaves fullscreen and puts the
-**Go live** screen back up — which is how you get out at the end of class without
-hunting for the browser's own controls.
+ones worth knowing now: `G` is **Go live** itself, `F` toggles fullscreen, and `E`
+leaves fullscreen and puts the **Go live** screen back up — which is how you get out
+at the end of class without hunting for the browser's own controls.
 
 ### 6. Pair the iPad — 3 minutes
 

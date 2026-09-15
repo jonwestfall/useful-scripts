@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 14;
+export const BUILD = 17;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -367,6 +367,29 @@ function applyMusicCommand(state, cmd) {
       const tracks = (Array.isArray(cmd.tracks) ? cmd.tracks : []).map(cleanTrack).filter(Boolean);
       if (!tracks.length) return false;
       music.tracks = [...music.tracks, ...tracks].slice(0, MAX_TRACKS);
+      return true;
+    }
+
+    // A resource that is also on screen somewhere - a library tile, a plan
+    // item - offered as background music with one tap: queue it if it is not
+    // already there, then jump to it and play, rather than making a chip
+    // press be "add, then go find it in the queue and select it".
+    case 'playnow': {
+      const track = cleanTrack(cmd.track);
+      if (!track) return false;
+      let index = music.tracks.findIndex((t) => t.src === track.src);
+      if (index === -1) {
+        const tracks = [...music.tracks, track];
+        // Dropping from the head rather than the tail when the queue is
+        // already full, unlike `add`'s cap: this command exists to play the
+        // NEW track, and trimming from the end would silently drop it and
+        // play whatever used to be last instead.
+        music.tracks = tracks.length > MAX_TRACKS ? tracks.slice(tracks.length - MAX_TRACKS) : tracks;
+        index = music.tracks.length - 1;
+      }
+      music.index = index;
+      music.playing = true;
+      music.fadeMs = MUSIC_PAUSE_MS;
       return true;
     }
 

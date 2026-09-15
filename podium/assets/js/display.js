@@ -1393,6 +1393,14 @@ document.addEventListener('keydown', (ev) => {
       ev.preventDefault();
       toggleShortcuts();
       break;
+    case 'g':
+    case 'G':
+      // Only before the room has gone live: the arm screen is the one thing
+      // this key does, so once it is gone there is nothing left for G to do -
+      // firing goLive() again would be a harmless but pointless re-request of
+      // fullscreen and the wake lock.
+      if (!armEl.hidden) { ev.preventDefault(); goLive(); }
+      break;
     case 'f':
     case 'F':
       ev.preventDefault();
@@ -1402,6 +1410,15 @@ document.addEventListener('keydown', (ev) => {
     case 'E':
       ev.preventDefault();
       standDown();
+      break;
+    case 'b':
+    case 'B':
+      // A real navigation, not a toggle - but nothing is lost by it: the
+      // pagehide listener (see flushPersistence) saves state and ink before
+      // the browser leaves, the same safety net that covers a reload or a
+      // crash, so coming back to this room picks up exactly where this left.
+      ev.preventDefault();
+      location.href = 'index.html';
       break;
     case 'p':
     case 'P':

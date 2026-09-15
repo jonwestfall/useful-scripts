@@ -151,10 +151,10 @@ browsers only expose in a secure context. GitHub Pages is https by default.
 
 ### 3. Set up the classroom PC once
 
-Open `display.html`, fill in the connection settings, and click **Go live**.
-That click is what grants the page fullscreen, sound and the wake lock — the
-browser will not hand those to a page that did not ask for them inside a real
-click. Settings are stored in that browser, so you do this once per machine.
+Open `display.html`, fill in the connection settings, and click **Go live** — or
+press `G`. Either is what grants the page fullscreen, sound and the wake lock — the
+browser will not hand those to a page that did not ask for them inside a real click
+or keypress. Settings are stored in that browser, so you do this once per machine.
 Press `?` on that machine for the keys it understands; `E` is the one that
 leaves fullscreen and puts the **Go live** screen back at the end of class.
 
@@ -598,6 +598,15 @@ Plain audio URLs need no CORS headers, so a private server works as-is over http
 **Load** replaces the queue and starts playing, **Add to queue** appends a whole
 playlist, and pasting a link queues one track for this session only.
 
+**Or reuse what is already in the lecture.** Audio does not have to be one thing or
+the other. An audio item from your Library or lecture plan — the kind that shows a
+title card on the projector when picked normally — can also just be background music:
+its tile carries a small **♪+** that adds it to the queue without putting it on
+screen, and the Music tab shows the same items again as one-tap **quick-push**
+buttons above the playlist picker. Tap one and it plays immediately; tap it again from
+the Library later and it still works as the on-screen item it always was, without
+disturbing whatever is playing behind it.
+
 **The controls.** Previous / play-pause / next, a queue you can tap to jump around,
 **Shuffle the rest** (what is playing keeps playing; the surprise is in what comes
 next), a music level of its own, and a play-pause button in the bottom bar so the
@@ -956,8 +965,10 @@ one worth remembering, because it shows you the rest:
 | Key | What it does |
 | :-- | :-- |
 | `?` | Show or hide the shortcut card |
+| `G` | **Go live** — same as clicking the button, before you start |
 | `F` | Go fullscreen, or leave it |
 | `E` | Leave fullscreen and go back to the **Go live** screen |
+| `B` | Back to the Podium landing page (`index.html`) |
 | `P` | Show or hide the pairing QR |
 | `S` | Open Settings |
 | `Esc` | Close whatever is open |
@@ -966,6 +977,13 @@ one worth remembering, because it shows you the rest:
 screen back up with the lecture still loaded behind it, so **Go live** picks up
 exactly where you were. The controller sees it too, and says *"Display open —
 click Go live on it"* rather than reporting the screen as missing.
+
+`B` is a real navigation rather than a toggle, for when you are setting the room
+up and want back to the landing page without hunting for the browser's own
+controls — but nothing is lost by it: the same save that survives a reload or a
+crash runs first, so opening this room again picks up exactly where `B` left it.
+The controller and planning pages have the same way back — click the **PODIUM**
+wordmark in their own top bar.
 
 None of these fire while you are typing in Settings, so a room called
 `seminar-f` is just a room name.
@@ -1146,7 +1164,12 @@ and that a controller which reloads mid-lecture gets the photo back from the dis
 rather than rendering a broken image, that holding a button does not also fire the tap
 underneath it, that `Ctrl+P` still belongs to the browser, and that the background
 music fades in, ducks under a clip, survives freeze and blank, and shows the projector
-nothing at all. 316 checks.
+nothing at all — and that the same audio resource works as an on-screen item from the
+Library and as background music from a quick-push button without either one disturbing
+the other, and that `G` goes live the same as the button - fullscreen requested
+inside the keypress itself, exactly like the click it stands in for, and that the
+PODIUM wordmark on the controller and the planning page, and `B` on the display,
+all actually reach index.html. 333 checks.
 
 ## Layout
 

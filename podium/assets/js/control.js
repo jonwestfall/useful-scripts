@@ -301,6 +301,24 @@ function renderLibrary() {
           },
         }, '×'));
       }
+      // Audio is the one type that can honestly be two different things: a
+      // title card the room sees, or something playing behind everything
+      // else that it never does. This is the second one, without leaving
+      // the tab - the queue and the bottom bar pick it up on the next beat.
+      if (item.type === 'audio' && item.src) {
+        const musicBtn = el('span', {
+          class: 'tile-music',
+          title: 'Add to background music queue',
+          onclick: (ev) => {
+            ev.stopPropagation();
+            send({ op: 'music', action: 'add', tracks: [{ src: item.src, title: item.title, artist: item.artist }] });
+            musicBtn.textContent = '✓';
+            clearTimeout(musicBtn._resetTimer);
+            musicBtn._resetTimer = setTimeout(() => { musicBtn.textContent = '♪+'; }, 1400);
+          },
+        }, '♪+');
+        tile.append(musicBtn);
+      }
       row.append(tile);
     }
     grid.append(row);
@@ -1948,7 +1966,46 @@ function chosenPlaylist() {
   return playlists[Number($('#music-playlist').value) || 0] || null;
 }
 
+let musicQuickDrawn = '';
+
+// Whatever is in the library right now - plan items and manifest entries
+// both flow through the same `library` array - is what this offers as
+// one-tap background music. It reflects `library` live, so a plan loading
+// or clearing is enough to change the row; no separate hook needed, since
+// this redraws on the same heartbeat as everything else.
+function renderMusicQuick() {
+  const seen = new Set();
+  const items = library.filter((item) => {
+    if (item.type !== 'audio' || !item.src || seen.has(item.src)) return false;
+    seen.add(item.src);
+    return true;
+  });
+  const bar = $('#music-quick-bar');
+  bar.hidden = !items.length;
+  if (!items.length) return;
+
+  const signature = items.map((i) => i.src).join('|');
+  if (signature !== musicQuickDrawn) {
+    musicQuickDrawn = signature;
+    $('#music-quick').replaceChildren(...items.map((item) => el('button', {
+      class: 'music-quick-chip', type: 'button',
+      title: `Play “${item.title || itemLabel(item)}” as background music`,
+      dataset: { src: item.src },
+      onclick: () => send({
+        op: 'music', action: 'playnow',
+        track: { src: item.src, title: item.title, artist: item.artist },
+      }),
+    }, el('span', {}, item.title || itemLabel(item)))));
+  }
+
+  // Which chip (if any) is the one actually sounding right now - drawn fresh
+  // every beat since this alone tracks state.music, not just the library.
+  const current = state.music?.playing ? state.music.tracks[state.music.index]?.src : null;
+  for (const chip of $('#music-quick').children) chip.classList.toggle('is-on', chip.dataset.src === current);
+}
+
 function renderMusic() {
+  renderMusicQuick();
   const music = state.music || { tracks: [], index: 0, playing: false, volume: 0.6 };
   const track = music.tracks[music.index] || null;
   const now = state.musicNow || { time: 0, duration: 0, ducked: false };
