@@ -622,11 +622,14 @@ running before class starts.
 
 **Building one.** Press **+ New set**, name it, and **Add items — go to Library**:
 every tile you tap there while a set is open goes into it (at 15s, adjustable
-afterward) instead of going live. Come back to the Sets tab to reorder, edit
-durations, or remove one, then **Save set**. A live camera feed and a deck you have
-never opened in this session both decline politely rather than being added broken —
-open the deck once first (it will then be pickable from **Recent**), and add a still
-in the camera's place.
+afterward) instead of going live. Tapping a deck tile adds the *whole deck* — it is
+fetched, counted, and every one of its slides joins the rotation as its own entry,
+titled with its own slide number so the list reads as N different things rather than
+the deck's name N times over. Want just one specific slide instead of the whole
+deck? Open it normally first, then add that one slide from **Recent**. Come back to
+the Sets tab to reorder, edit durations, or remove any entry, then **Save set**. A
+live camera feed declines politely rather than being added broken — add a still in
+its place.
 
 **Running one.** Each saved set has four buttons — **A / B / C / D** — start it on
 any pane the same way you would stage anything else; the same set can run on two
@@ -644,9 +647,9 @@ reload of the display the same way everything else on screen does.
 Sets you build are saved on that device, the same as a custom Library item — nothing
 about a *saved* set is shared between controllers, but the moment you *start* one it
 is a staged item like any other, and every connected controller sees it and can
-drive it. A deck entry currently holds its position rather than stepping through its
-own slides on its own timer — a set with slides in it means "this slide, for its
-turn" today, with full slide-by-slide rotation a likely follow-up.
+drive it. Each deck-slide entry holds its own fixed slide rather than stepping
+through the rest of that deck on its own timer — a whole deck in a set means "these
+N slides, each for its own turn," not one entry quietly advancing pages by itself.
 
 ## Music before class
 
@@ -1276,11 +1279,13 @@ controller left to answer for it - text or a logo, alpha channel intact rather t
 flattened to a black box, and genuinely inside a whole-screen grab. It also proves an
 automated set advances itself on schedule, holds while paused rather than racing
 ahead, runs two independent instances of the same saved set on two panes at once,
-and declines a live camera or an unopened deck rather than adding either one broken.
-It also proves a photo picked from Files/Camera Roll goes live the same as any other
-item, that a non-A panel can be promoted to full screen without landing back on
-whatever A last held, and that a layout change made while frozen queues behind TAKE
-instead of instantly rearranging the screen. 386 checks.
+and declines a live camera rather than adding it broken, and that tapping a whole
+deck tile while building a set expands it into one entry per slide rather than
+requiring each slide to be added by hand from Recent. It also proves a photo picked
+from Files/Camera Roll goes live the same as any other item, that a non-A panel can
+be promoted to full screen without landing back on whatever A last held, and that a
+layout change made while frozen queues behind TAKE instead of instantly rearranging
+the screen. 392 checks.
 
 ## Layout
 

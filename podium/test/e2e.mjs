@@ -3675,7 +3675,7 @@ await pad.waitForFunction(() => document.querySelector('#display-state')?.textCo
 // Building one: every Library tap goes into the draft instead of going live.
 await pad.click('.tab[data-tab="sets"]');
 await pad.click('#sets-new');
-await pad.fill('#sets-build-name', 'Pre-show');
+await pad.fill('#sets-build-name', 'Throwaway');
 await pad.click('#sets-build-add');
 ok('Add items switches to the Library tab', await pad.evaluate(() => document.querySelector('.tab[data-tab="library"]').classList.contains('is-on')));
 await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
@@ -3683,13 +3683,38 @@ await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
 await screen.waitForTimeout(400);
 ok('nothing goes live while building', await screen.evaluate(() => !document.querySelector('.r-whiteboard')));
 
-// A live camera and an unresolved deck are declined rather than added broken
-// (see the /code-review note in control.js: neither gets the async setup
-// pick() normally gives it, so both would sit there forever unresolved).
+// A live camera is declined rather than added broken (see the /code-review
+// note in control.js: it never gets the async WebRTC setup pick() normally
+// gives it, so it would sit there forever unresolved).
 await pad.click('.tile:has(.tile-title:text-is("Phone camera"))');
-await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
 await pad.click('.tab[data-tab="sets"]');
-ok('camera and an unresolved deck are declined, not added broken', (await pad.$$('#sets-build-entries .set-row')).length === 2);
+ok('a live camera is declined, not added broken', (await pad.$$('#sets-build-entries .set-row')).length === 2);
+
+// Tapping a whole deck tile (as opposed to one specific slide pulled from
+// Recent) fetches it and adds every one of its slides as its own entry - the
+// actual class complaint was "I could only add individual slides, not a
+// whole deck".
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await pad.waitForFunction(() => document.querySelector('#sets-add-note')?.textContent.includes('Added all 13 slides'), null, { timeout: 15000 });
+await pad.click('.tab[data-tab="sets"]');
+ok('the whole deck landed as 13 separate entries', (await pad.$$('#sets-build-entries .set-row')).length === 2 + 13);
+ok('each entry is its own slide of the deck, in order', await pad.evaluate(() => {
+  const rows = Array.from(document.querySelectorAll('#sets-build-entries .set-row .set-row-title'));
+  const deckRows = rows.slice(2).map((r) => r.textContent);
+  return deckRows.length === 13 && deckRows[0].includes('Weighing the Evidence') && deckRows[0] !== deckRows[12];
+}));
+await pad.click('#sets-build-cancel');
+ok('cancelling the throwaway draft discards it', !/Throwaway/.test(await pad.textContent('#sets-list')));
+
+// Now build the set the rest of this section actually exercises.
+await pad.click('#sets-new');
+await pad.fill('#sets-build-name', 'Pre-show');
+await pad.click('#sets-build-add');
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
+await pad.click('.tab[data-tab="sets"]');
+ok('the real draft starts clean with just the two tiles picked for it', (await pad.$$('#sets-build-entries .set-row')).length === 2);
 
 const secInputs = await pad.$$('#sets-build-entries .set-row-secs');
 await secInputs[0].fill('2'); await secInputs[0].dispatchEvent('change');

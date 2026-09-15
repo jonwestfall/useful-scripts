@@ -2161,18 +2161,19 @@ function addToDraftSet(item) {
   if (!draftSet) return false;
   // A live camera feed cannot be "held for 20 seconds" - it would sit there
   // never having been started, since starting one is a whole WebRTC
-  // handshake pick() normally runs and this path skips entirely. An
-  // unresolved deck (fetched by path, not yet parsed - most of the
-  // Library's own deck tiles) is the same problem: pick()'s async
-  // fetch-and-count never runs here either, so it would show "waiting for
-  // the deck" forever. Both are declined with a reason rather than added
-  // broken - see the code-review note this fix came from.
+  // handshake pick() normally runs and this path skips entirely, so it is
+  // declined with a reason rather than added broken.
   if (item.type === 'camera') {
     flashSetNote('A live camera feed can’t be automated this way — add a still instead.');
     return true;
   }
+  // A Library deck tile (as opposed to one specific slide pulled from Recent,
+  // which already carries slideCount) means "the deck", not one slide of it -
+  // fetching, counting and expanding it into one entry per slide happens off
+  // to the side so a rotation can hold a whole deck without tapping through
+  // it slide by slide first.
   if (item.type === 'deck' && !item.slideCount) {
-    flashSetNote('This deck needs to be opened once before it can join a set — pick it normally first, then add it from Recent.');
+    addWholeDeckToDraft(item);
     return true;
   }
   if (draftSet.entries.length >= MAX_SET_ENTRIES) {
@@ -2184,6 +2185,49 @@ function addToDraftSet(item) {
   flashSetNote(`Added “${item.title || itemLabel(item)}”.`);
   renderSetsPanel();
   return true;
+}
+
+// Fetches and parses a deck exactly the way picking it normally would, then
+// adds every one of its slides as its own entry, in order - a rotation
+// treats a 12-slide deck as 12 items with their own durations, the same as
+// if you had tapped each one from Recent, just without actually doing that.
+async function addWholeDeckToDraft(item) {
+  const targetSet = draftSet;
+  flashSetNote(`Opening “${item.title || 'deck'}”…`);
+  let deck; let source; let deckIdRef;
+  try {
+    deckIdRef = item.deckId || `src:${item.src}`;
+    source = await getDeckSource(item.deckId ? item : { deckId: deckIdRef, src: item.src });
+    if (source == null) throw new Error('could not load that deck');
+    deck = await renderDeckSource(source, deckIdRef);
+  } catch (err) {
+    flashSetNote(`Could not open “${item.title || 'deck'}” — ${err.message}`);
+    return;
+  }
+  // The draft could have been cancelled, saved, or swapped for a different
+  // one while the fetch was in flight - add to whichever one was open then,
+  // not whatever (if anything) is open now.
+  if (draftSet !== targetSet) return;
+  const room = MAX_SET_ENTRIES - targetSet.entries.length;
+  if (room <= 0) {
+    flashSetNote(`That set already holds the most this app allows (${MAX_SET_ENTRIES}).`);
+    return;
+  }
+  const title = frontMatterTitle(source, item.title || 'Deck');
+  const n = Math.min(deck.count, room);
+  for (let slide = 0; slide < n; slide++) {
+    targetSet.entries.push({
+      // Every entry's own title names its slide, not just the deck - so the
+      // builder's list (thirteen rows, one per slide) reads as thirteen
+      // different things rather than the same label thirteen times over.
+      item: { type: 'deck', deckId: deckIdRef, src: item.src, title: `${title} — slide ${slide + 1}/${deck.count}`, slide, slideCount: deck.count },
+      seconds: DEFAULT_ENTRY_SECONDS,
+    });
+  }
+  flashSetNote(n < deck.count
+    ? `Added ${n} of ${deck.count} slides from “${title}” — the set is full.`
+    : `Added all ${deck.count} slides from “${title}”.`);
+  renderSetsPanel();
 }
 
 // A brief note wherever the tap actually landed - the Library tab, not the
