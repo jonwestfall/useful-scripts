@@ -3503,10 +3503,36 @@ await pad.click('.tab[data-tab="library"]');
 await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
 await screen.waitForFunction(() => document.querySelectorAll('.panel-slot.is-on').length === 4, null, { timeout: 8000 });
 ok('the "Full screen this" button appears once a non-A panel is focused', await pad.isVisible('#panel-promote'));
+
+// Draw on panel C before promoting it - the actual class complaint was that
+// promoting a panel with ink on it goes black, not just that the ink is lost.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad');
+const cBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(cBox.x + cBox.w * 0.2, cBox.y + cBox.h * 0.3);
+await pad.mouse.down();
+for (let i = 1; i <= 12; i++) await pad.mouse.move(cBox.x + cBox.w * (0.2 + i * 0.045), cBox.y + cBox.h * (0.3 + i * 0.03));
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+const paintedBefore = await screen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+ok(`ink on panel C reaches the display before promoting (${paintedBefore})`, paintedBefore > 200);
+
 await pad.click('#panel-promote');
 await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 8000 });
 ok('promoting switches to single layout', true);
 ok('with panel A now showing what was in C, not black', await screen.evaluate(() => !!document.querySelector('.r-whiteboard')));
+const paintedAfter = await screen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+ok(`the ink drawn on C is still there once it is full screen (${paintedAfter})`, paintedAfter > 200);
 
 // A layout change while frozen queues behind TAKE, the same as content -
 // see the 'layout'/'take'/'clear' cases in protocol.js.
@@ -3542,12 +3568,14 @@ ok('and the display never saw it', await screen.evaluate(() => document.querySel
 // Regression guard: plain content cueing while frozen is unaffected by the
 // layout-cueing rewrite of take()/clear().
 await pad.click('#freeze');
+await pad.click('.tab[data-tab="library"]');
 await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
 await pad.waitForTimeout(400);
 ok('plain content cueing while frozen still works', /^Cued$/.test(await pad.textContent('#preview-label')));
 await pad.click('#take');
 await screen.waitForSelector('.r-whiteboard', { timeout: 8000 });
 ok('and TAKE still applies content with no layout change involved', true);
+
 await ctx.close();
 }
 
