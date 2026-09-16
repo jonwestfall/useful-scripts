@@ -2160,7 +2160,9 @@ const heading = await pad.evaluate(() => {
   return h ? { thumb, h } : null;
 });
 ok(`a slide's heading renders inside its own thumbnail, not spilling past it (heading ${Math.round(heading?.h.width)}x${Math.round(heading?.h.height)} in a ${Math.round(heading?.thumb.width)}x${Math.round(heading?.thumb.height)} box)`,
-  !!heading && heading.h.width <= heading.thumb.width + 1 && heading.h.height <= heading.thumb.height + 1);
+  !!heading
+  && heading.h.left >= heading.thumb.left - 1 && heading.h.top >= heading.thumb.top - 1
+  && heading.h.right <= heading.thumb.right + 1 && heading.h.bottom <= heading.thumb.bottom + 1);
 
 await pad.fill('#deck-grid-filter', 'calibration');
 await pad.waitForTimeout(150);
