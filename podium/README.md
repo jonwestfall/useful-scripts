@@ -740,15 +740,35 @@ typing the code at the join page) drops a phone straight onto the question, noth
 to type but an answer. Only one poll runs at a time; starting a new one before
 ending the last one is not something the tab offers.
 
-**While it runs.** Responses land within a second or two of being cast, both on the
-projector and back on the Polls tab, but nobody — you included — sees which way it's
-going until you choose to: **Reveal results** is its own separate button, so a poll
-you meant to run silent stays silent, and closing voting does not show anything by
-itself. **Close voting** stops the room answering without revealing anything; you
-can **Reopen voting** the same way. **Export CSV** saves the question and its tally
-(or its list of typed answers) to a file. **End poll** — like other things here that
-throw work away, it takes a second tap — clears it from the screen and invalidates
-the code, so a phone still holding the join page can't answer late.
+**While it runs.** Responses land within a second or two of being cast — and you see
+them arrive immediately, right there on the Polls tab. The room does not: **Reveal to
+room** is its own separate button, so watching the numbers come in while you decide
+how to frame them never means the projector shows anything early, and closing voting
+does not reveal by itself either. For a short-answer poll, each response gets its own
+**Hide** button — pull one out before anyone else sees it, without having to hide the
+whole poll to buy the time to read it; **Unhide** puts it back. **Close voting** stops
+the room answering without revealing anything; **Reopen voting** the same way. **Export
+CSV** saves the question and its tally (or its answers, each marked whether the room
+ever saw it) to a file — the same rows also ride along automatically in **Export this
+session**'s zip (Photos tab), one CSV per poll, whatever is currently running plus
+everything already ended. **End poll** — like other things here that throw work
+away, it takes a second tap — clears it from the screen and invalidates the code, so
+a phone still holding the join page can't answer late.
+
+**This session's history.** Every poll you end stays listed at the bottom of the
+Polls tab for the rest of this browser tab's session — not saved to disk, not shared
+with other controllers, gone the moment the tab closes. **Reopen** loads the same
+question back into the composer, ready to ask again from zero: a new code, votes
+starting over. **Redisplay** puts the exact final numbers back on the projector,
+already revealed, with no new votes possible — for when a discussion circles back to
+a question you already asked. Neither is offered while a poll is currently running.
+
+**Planning ahead.** The planning page (see "Planning a lecture" below) can compose a
+poll's wording in advance — kind, question, options — and save it into the plan file
+like anything else. It is a question, not yet a poll: picking it from the Library in
+class opens the Polls tab with the composer already filled in, rather than putting
+anything on the projector, since starting it for real — creating the actual code on
+the relay — only makes sense once you are in the room.
 
 **What the relay does and doesn't know.** The four-letter code is public and meant to
 be; a private token, handed to whichever controller started the poll and never shown
@@ -980,7 +1000,11 @@ The workflow it is for:
    notes on the tiles and your timers on the Timer tab.
 
 Nothing else about the controller changes. It is still the same tabs, the same
-freeze-and-take, the same everything — the plan only decides what is *in* it.
+freeze-and-take, the same everything — the plan only decides what is *in* it. One
+type behaves differently: a **poll** in a plan is only ever the wording — kind,
+question, options — since nothing has talked to a relay yet to give it a real code.
+Picking its tile opens the Polls tab with the composer already filled in rather than
+putting anything on the projector; see "Audience polls" above.
 
 ### Why a file, and not a login
 
@@ -1432,8 +1456,15 @@ the relay's own endpoints directly (three phones answering, changing an answer,
 a closed question refusing a vote, the host token gating results), and separately
 the Polls tab itself — composing a poll, staging it, watching a vote cast straight
 at the relay reach both the projector and the controller, closing voting, and that
-reveal is genuinely its own step rather than something closing does for you.
-463 checks.
+reveal is genuinely its own step rather than something closing does for you. It
+proves results are visible to the presenter before any reveal and that hiding one
+typed answer keeps it off the projector without pulling it from the presenter's own
+list; that ending a poll drops it into this session's history, that Redisplay puts
+the final numbers back up with no join code left to scan, and that Reopen loads the
+same question into a genuinely fresh draft; that a plan can compose a poll's wording
+in the office and picking its tile in class opens the Polls tab pre-filled rather
+than staging a half-formed item; and that a poll — running or already ended — rides
+along inside the session export zip. 483 checks.
 
 ## Layout
 

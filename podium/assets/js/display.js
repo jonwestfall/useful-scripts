@@ -955,7 +955,10 @@ function pollItems() {
 async function tickPolls() {
   const base = pollBaseUrl(cfg);
   if (!base) return;
-  for (const item of pollItems()) {
+  // A redisplayed poll from history carries a pollId (for a stable ink key)
+  // but no token - it is a frozen snapshot of a question that finished, not a
+  // live one, and has nothing on the relay left to fetch.
+  for (const item of pollItems().filter((it) => it.token)) {
     if (pollFetchInFlight.has(item.pollId)) continue;
     pollFetchInFlight.add(item.pollId);
     const key = item.key;

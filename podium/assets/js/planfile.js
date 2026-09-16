@@ -131,6 +131,18 @@ export const PLAN_TYPES = {
   },
   black: { label: 'Black', icon: '●', blurb: 'Nothing on screen. The polite way to pause.', fields: [] },
   camera: { label: 'Phone camera', icon: '\u{1F4F7}', blurb: 'Your phone’s camera on the projector, for a document or a demo.', fields: [] },
+  poll: {
+    label: 'Poll', icon: '\u{1F4CA}',
+    blurb: 'A question the room answers on their own phones. Write it now; starting it - creating the actual join code on the relay - happens from the Polls tab in class.',
+    fields: [
+      { key: 'kind', label: 'Type', kind: 'select', def: 'choice',
+        options: [['choice', 'Multiple choice'], ['text', 'Short answer']] },
+      { key: 'question', label: 'Question', kind: 'textarea', placeholder: 'Which bias is this?' },
+      { key: 'options', label: 'Options, one per line (multiple choice only)', kind: 'textarea',
+        placeholder: 'Construct\nMethod\nNorming\nAccess',
+        hint: 'Ignored for a short-answer poll.' },
+    ],
+  },
 };
 
 export const PLANNABLE = Object.keys(PLAN_TYPES);
@@ -191,6 +203,7 @@ export function itemLabel(item, plan = null) {
     return name || 'Countdown';
   }
   if (item.type === 'qr' && item.caption) return item.caption;
+  if (item.type === 'poll' && item.question) return item.question.split('\n')[0].slice(0, 60);
   if (typeof item.src === 'string' && item.src && !isAssetRef(item.src)) return item.src.split('/').pop();
   return spec?.label || item.type;
 }

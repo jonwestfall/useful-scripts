@@ -380,6 +380,28 @@ chk('re-staging the identical question still keys ink by pollId, not by the fres
   inkSurfaceKey({type:'poll', pollId:'ABCD'}) === inkSurfaceKey({type:'poll', pollId:'ABCD', key:s.program.key})
   && s.program.key !== beforeReask);
 
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'WXYZ', token:'secret2', kind:'text', question:'One word for how that felt?',
+  answers:['exposed', 'seen', 'fine actually'],
+}});
+chk('a fresh text poll starts with nothing hidden', s.program.hiddenAnswers.length === 0);
+chk('hiding one answer by index is accepted', applyCommand(s, {op:'poll', pollId:'WXYZ', action:'hideAnswer', index:1, value:true}));
+chk('and only that index is hidden', s.program.hiddenAnswers.length === 1 && s.program.hiddenAnswers[0] === 1);
+chk('hiding it again is a no-op, not a duplicate', applyCommand(s, {op:'poll', pollId:'WXYZ', action:'hideAnswer', index:1, value:true})
+  && s.program.hiddenAnswers.length === 1);
+chk('unhiding clears it', applyCommand(s, {op:'poll', pollId:'WXYZ', action:'hideAnswer', index:1, value:false})
+  && s.program.hiddenAnswers.length === 0);
+chk('an out-of-range index is rejected', applyCommand(s, {op:'poll', pollId:'WXYZ', action:'hideAnswer', index:99, value:true}) === false);
+chk('a negative index is rejected too', applyCommand(s, {op:'poll', pollId:'WXYZ', action:'hideAnswer', index:-1, value:true}) === false);
+chk('a choice poll has nothing to hide - hideAnswer on ABCD is rejected', applyCommand(s, {op:'poll', pollId:'ABCD', action:'hideAnswer', index:0, value:true}) === false);
+
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'WXYZ', token:'secret2', kind:'text', question:'One word for how that felt?',
+  answers:['exposed'], hiddenAnswers:[0, 5, -1],
+}});
+chk('normalizing drops a hiddenAnswers index that does not fit the answers it arrived with',
+  s.program.hiddenAnswers.length === 1 && s.program.hiddenAnswers[0] === 0);
+
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

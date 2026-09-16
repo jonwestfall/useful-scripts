@@ -554,8 +554,9 @@
           <p class="hint">
             A question the room answers on their own phones — no app, no
             login. Stage it like anything else, on A or any of B/C/D; only
-            one poll runs at a time. Reveal is its own step: closing voting
-            does not show results until you choose to.
+            one poll runs at a time. Results are visible here as they arrive —
+            <b>Reveal to room</b> is the separate step that puts them on the
+            projector.
           </p>
 
           <p id="poll-unsupported" class="hint" hidden>
@@ -574,7 +575,7 @@
             <p id="poll-action-error" class="hint" hidden></p>
             <div class="inline">
               <button id="poll-toggle-open" type="button">Close voting</button>
-              <button id="poll-toggle-reveal" type="button">Reveal results</button>
+              <button id="poll-toggle-reveal" type="button">Reveal to room</button>
               <button id="poll-export" type="button">Export CSV</button>
             </div>
             <button id="poll-end" class="danger-outline" type="button">End poll</button>
@@ -595,6 +596,17 @@
             <p id="poll-error" class="hint" hidden></p>
             <button id="poll-start" type="submit">Start poll</button>
           </form>
+
+          <h3>This session</h3>
+          <p class="hint">
+            Polls you have ended since this tab loaded. <b>Reopen</b> loads the
+            same question back into the composer above, fresh — new code, new
+            votes from zero. <b>Redisplay</b> puts the final results back on
+            the projector exactly as they ended, with no new votes possible.
+            Neither is offered while a poll is currently running.
+          </p>
+          <div id="poll-history" class="stack"></div>
+          <p class="empty" id="poll-history-empty">No polls ended yet this session.</p>
         </section>
 
         <!-- Camera -->

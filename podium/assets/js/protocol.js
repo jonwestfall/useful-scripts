@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 21;
+export const BUILD = 22;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -240,6 +240,14 @@ function normalizeItem(item) {
       : [];
     copy.answers = copy.kind === 'text' && Array.isArray(copy.answers)
       ? copy.answers.map((a) => String(a).slice(0, 200)).slice(0, 500)
+      : [];
+    // Indices into `answers`, not the strings themselves - the relay's answer
+    // order is stable per voter (a Map keeps an existing key's position when
+    // its value changes; only a genuinely new voter appends), so an index a
+    // presenter hid stays pointing at the same answer across tickPolls'
+    // refetches. Only meaningful for 'text'; a choice poll has nothing to hide.
+    copy.hiddenAnswers = copy.kind === 'text' && Array.isArray(copy.hiddenAnswers)
+      ? [...new Set(copy.hiddenAnswers.map((i) => Math.trunc(Number(i))).filter((i) => i >= 0 && i < copy.answers.length))]
       : [];
   }
   return copy;
@@ -761,8 +769,17 @@ export function applyCommand(state, cmd) {
     case 'poll': {
       const item = [state.program, state.preview, ...state.panels].find((it) => it?.type === 'poll' && it.pollId === cmd.pollId);
       if (!item) return false;
-      if (cmd.action === 'reveal') item.revealed = !!cmd.value;
-      else return false;
+      if (cmd.action === 'reveal') {
+        item.revealed = !!cmd.value;
+      } else if (cmd.action === 'hideAnswer') {
+        const index = Math.trunc(Number(cmd.index));
+        if (!Number.isInteger(index) || index < 0 || index >= item.answers.length) return false;
+        const hidden = new Set(item.hiddenAnswers || []);
+        if (cmd.value) hidden.add(index); else hidden.delete(index);
+        item.hiddenAnswers = [...hidden];
+      } else {
+        return false;
+      }
       return true;
     }
 

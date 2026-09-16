@@ -546,7 +546,10 @@ function renderPoll(item, opts) {
 
   const drawResults = (it) => {
     if (it.kind === 'text') {
-      const answers = it.answers || [];
+      // Hidden-by-index, not filtered out of `answers` itself - the room
+      // simply never gets a row for one, same as if it had never arrived.
+      const hidden = new Set(it.hiddenAnswers || []);
+      const answers = (it.answers || []).filter((_, i) => !hidden.has(i));
       results.replaceChildren(...(answers.length
         ? answers.map((a) => el('div', { class: 'r-poll-answer' }, a))
         : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No answers yet')]));
@@ -565,9 +568,25 @@ function renderPoll(item, opts) {
   };
 
   const draw = (it) => {
+    // A redisplay from history (see control.js's redisplayFromHistory) has a
+    // pollId, for a stable ink key, but no token - there is no relay poll
+    // behind it any more, so a join card would be a QR to a dead code. A plan
+    // item previewed in the office (planfile.js's PLAN_TYPES.poll) has
+    // neither - it is not a poll yet, just the question for one.
+    const archived = !it.token && !!it.pollId;
     question.textContent = it.question || '';
     code.textContent = it.pollId || '';
-    drawQr(opts.getPollJoinUrl?.(it.pollId) || '');
+    joinCard.classList.toggle('is-archived', archived);
+    if (!it.pollId) {
+      qrHolder.replaceChildren();
+      hint.textContent = 'Not started yet.';
+    } else if (archived) {
+      qrHolder.replaceChildren();
+      hint.textContent = 'This poll has ended — results only, no new votes.';
+    } else {
+      drawQr(opts.getPollJoinUrl?.(it.pollId) || '');
+      hint.textContent = 'Scan, or join and enter the code';
+    }
     node.classList.toggle('is-revealed', !!it.revealed);
     node.classList.toggle('is-closed', it.open === false);
     status.textContent = it.revealed

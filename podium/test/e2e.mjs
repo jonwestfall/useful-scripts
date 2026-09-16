@@ -4421,6 +4421,195 @@ ok('while the relay drops the code at the same time, not left dangling', goneToo
 await ctx.close();
 }
 
+if (want('Polls tab: live results before reveal, hiding an answer, and history')) {
+console.log('\n-- Polls tab: live results before reveal, hiding an answer, and history --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-history-room', passphrase: 'visible to you only' }));
+const screen = await ctx.newPage();
+trap(screen, 'poll-history display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'poll-history pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="polls"]');
+await pad.selectOption('#poll-kind', 'text');
+await pad.fill('#poll-question', 'One word for how that felt?');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+const code = (await pad.textContent('#poll-running-code')).trim();
+
+await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's1', answer: 'exposed' }) });
+await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's2', answer: 'seen' }) });
+await pad.waitForFunction(() => document.querySelectorAll('#poll-running-results .poll-answer-row').length === 2, null, { timeout: 5000 });
+ok('the presenter sees answers arrive before ever revealing anything', true);
+ok('and the projector shows nothing yet - watching them arrive privately does not leak to the room',
+  await screen.evaluate(() => document.querySelector('.r-poll-results').children.length === 0)
+  && await screen.evaluate(() => !document.querySelector('.r-poll').classList.contains('is-revealed')));
+
+// Hide whichever row is "exposed" - answer order matches vote order, but
+// asserting by content rather than position keeps this from being fragile.
+await pad.evaluate(() => {
+  const row = Array.from(document.querySelectorAll('#poll-running-results .poll-answer-row')).find((r) => r.textContent.includes('exposed'));
+  row.querySelector('.poll-answer-hide').click();
+});
+// hideAnswer is a protocol command, not a local UI toggle - it has to make a
+// round trip to the display and back before the pad's own view reflects it.
+await pad.waitForFunction(() => document.querySelector('#poll-running-results .poll-answer-row.is-hidden'), null, { timeout: 5000 });
+ok('hiding one answer marks it on the presenter\'s own list without removing it',
+  await pad.evaluate(() => document.querySelector('#poll-running-results .poll-answer-row.is-hidden')?.textContent.includes('exposed')));
+
+await pad.click('#poll-toggle-reveal');
+await screen.waitForFunction(() => document.querySelector('.r-poll')?.classList.contains('is-revealed'), null, { timeout: 5000 });
+const shown = await screen.$$eval('.r-poll-answer', (els) => els.map((e) => e.textContent));
+ok(`the hidden answer never reaches the room (shown: ${shown.join(',')})`, shown.length === 1 && shown[0] === 'seen');
+
+await pad.click('#poll-end');
+await pad.click('#poll-end');
+await pad.waitForSelector('#poll-history .poll-history-row', { timeout: 5000 });
+ok('ending it drops it into this session\'s history, question and all',
+  /One word for how that felt/.test(await pad.textContent('.poll-history-question')));
+
+await pad.click('.poll-history-row button:has-text("Redisplay")');
+await screen.waitForFunction(() => document.querySelector('.r-poll')?.classList.contains('is-revealed'), null, { timeout: 5000 });
+ok('redisplay puts the final results straight back up, already revealed', true);
+ok('with no QR to scan - the code does not exist on the relay any more',
+  await screen.evaluate(() => !document.querySelector('.r-poll-qr svg')));
+const stillHidden = await screen.$$eval('.r-poll-answer', (els) => els.map((e) => e.textContent));
+ok('and the redisplay still honours which answer was hidden', stillHidden.length === 1 && stillHidden[0] === 'seen');
+
+const historyBefore = await pad.$$eval('.poll-history-row', (n) => n.length);
+await pad.click('#poll-end');
+await pad.click('#poll-end');
+await pad.waitForFunction(() => !document.querySelector('.r-poll'), { timeout: 5000 }).catch(() => {});
+await screen.waitForFunction(() => !document.querySelector('.r-poll'), null, { timeout: 5000 });
+const historyAfter = await pad.$$eval('.poll-history-row', (n) => n.length);
+ok('dismissing a redisplay does not touch the relay or duplicate the history entry', historyAfter === historyBefore);
+
+await pad.click('.poll-history-row button:has-text("Reopen")');
+ok('reopen loads the same question back into the composer, ready to run again fresh',
+  (await pad.inputValue('#poll-question')) === 'One word for how that felt?');
+ok('as a new draft, not the old (deleted) poll', await pad.evaluate(() => document.querySelector('#poll-running').hidden));
+
+await ctx.close();
+}
+
+if (want('planning a poll: compose it now, run it later')) {
+console.log('\n-- planning a poll: compose it now, run it later --');
+const planFile = path.join(HERE, 'fixtures', 'e2e-poll-plan.podium.json');
+
+const office = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+const desk = await office.newPage();
+trap(desk, 'poll plan');
+await desk.goto(`${BASE}/plan.html`);
+await desk.waitForSelector('#type-picker .type-btn');
+await desk.fill('#plan-title', 'Poll day');
+await desk.click('#type-picker .type-btn:has-text("Poll")');
+await desk.fill('#item-fields textarea >> nth=0', 'Which bias is this?');
+await desk.fill('#item-fields textarea >> nth=1', 'Construct\nMethod\nNorming');
+const previewQuestion = await desk.textContent('.r-poll-question');
+ok(`the planning page previews a poll with the projector's own renderer ("${previewQuestion.trim()}")`, previewQuestion.trim() === 'Which bias is this?');
+await desk.waitForFunction(() => /^Saved/.test(document.querySelector('#save-state').textContent), null, { timeout: 10000 });
+const planJson = await desk.evaluate(async () => {
+  const file = await import('./assets/js/planfile.js');
+  const store = await import('./assets/js/store.js');
+  const rows = await store.allPlans();
+  return file.planToJson(rows.find((r) => r.title === 'Poll day') || rows[0]);
+});
+fs.writeFileSync(planFile, planJson);
+await office.close();
+
+const room = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await room.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-plan-room', passphrase: 'set up in advance' }));
+const screen = await room.newPage();
+trap(screen, 'poll plan display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await room.newPage();
+trap(pad, 'poll plan pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.setInputFiles('#plan-file', planFile);
+await pad.waitForFunction(() => document.querySelector('#library h3.group')?.textContent === 'Poll day', null, { timeout: 20000 });
+
+await pad.click('#library .tile:has(.tile-title:text-is("Which bias is this?"))');
+await pad.waitForFunction(() => document.querySelector('.tab[data-tab="polls"]')?.classList.contains('is-on'), null, { timeout: 5000 });
+ok('picking a planned poll switches straight to the Polls tab', true);
+ok('with the composer open, not a half-formed item on the projector',
+  await pad.evaluate(() => !document.querySelector('#poll-build').hidden && document.querySelector('#poll-running').hidden));
+ok('and the question carried over from the plan', (await pad.inputValue('#poll-question')) === 'Which bias is this?');
+ok('with its options split back out of the one text field the plan stored them in',
+  (await pad.$$eval('#poll-options input', (n) => n.map((i) => i.value))).join(',') === 'Construct,Method,Norming');
+ok('nothing is actually staged on the projector yet - a plan is a question, not a poll',
+  await screen.evaluate(() => !document.querySelector('.r-poll')));
+
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+await screen.waitForFunction(() => document.querySelector('.r-poll-question')?.textContent === 'Which bias is this?', null, { timeout: 5000 });
+ok('and starting it from there really does create a live poll on the relay', true);
+
+await room.close();
+}
+
+if (want('exporting a session includes its polls')) {
+console.log('\n-- exporting a session includes its polls --');
+// The full "photos, ink, boards" export is covered elsewhere; this only has
+// to prove a poll - running or already ended - rides along in the same zip.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-export-room', passphrase: 'polls ride along' }));
+const screen = await ctx.newPage();
+trap(screen, 'poll-export display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'poll-export pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="polls"]');
+await pad.fill('#poll-question', 'Which bias is this?');
+await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'Construct');
+await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'Method');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+
+const download = pad.waitForEvent('download', { timeout: 20000 });
+await pad.click('.tab[data-tab="photos"]');
+await pad.click('#photo-export');
+const file = await download;
+const zipPath = path.join(HERE, 'fixtures', 'poll-export.zip');
+await file.saveAs(zipPath);
+const names = [];
+{
+  const buf = fs.readFileSync(zipPath);
+  let at = 0;
+  while (at + 30 <= buf.length && buf.readUInt32LE(at) === 0x04034b50) {
+    const nameLen = buf.readUInt16LE(at + 26);
+    const extraLen = buf.readUInt16LE(at + 28);
+    const size = buf.readUInt32LE(at + 18);
+    names.push(buf.toString('utf8', at + 30, at + 30 + nameLen));
+    at += 30 + nameLen + extraLen + size;
+  }
+}
+ok(`a poll with nothing else running still produces an exportable zip (${names.join(', ')})`,
+  names.some((n) => n.startsWith('polls/') && n.endsWith('.csv')) && names.includes('session.txt'));
+
+const csvEntry = names.find((n) => n.startsWith('polls/'));
+ok(`named for its question (${csvEntry})`, /which-bias-is-this/i.test(csvEntry));
+
+await ctx.close();
+}
+
 if (want('back to the landing page')) {
 console.log('\n-- back to the landing page --');
 const ctx = await browser.newContext();

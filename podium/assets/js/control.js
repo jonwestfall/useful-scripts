@@ -545,6 +545,11 @@ async function pick(item, where = 'auto') {
   // handling, since this applies to a tap on absolutely anything.
   if (addToDraftSet(item)) return;
   if (item.type === 'camera') { await startCamera(where); return; }
+  // A planned poll is a question, not yet a poll - it has no pollId or token
+  // until something actually creates it on the relay, which is what the Polls
+  // tab's composer does. Tapping it in the Library loads that composer rather
+  // than trying to stage an item protocol.js would reject for missing fields.
+  if (item.type === 'poll') { openPollDraftFromPlan(item); return; }
   if (item.type !== 'deck' || item.slideCount) { stage(item, where); return; }
   // A click handler can't be awaited by whatever dispatched it, so the
   // moment this returns control (at the first await below), the pad's own
@@ -1094,8 +1099,23 @@ async function exportSession() {
     }
     if (others.length) lines.push('');
 
+    // 5. Polls: whatever is currently on screen (a live snapshot - the
+    // display's own poll loop keeps it within a second of the relay) plus
+    // everything already ended and sitting in this session's history.
+    const currentPoll = findPollItem();
+    const pollRows = [...(currentPoll ? [{ ...currentPoll, endedAt: null }] : []), ...pollHistory];
+    if (pollRows.length) {
+      lines.push(`Polls (${pollRows.length}):`);
+      pollRows.forEach((row, i) => {
+        const name = `polls/${String(i + 1).padStart(2, '0')}-${safeName(row.question, row.pollId || 'poll')}.csv`;
+        files.push({ name, data: new TextEncoder().encode(csvText(pollResultRows(row))) });
+        lines.push(`  ${name}${row.endedAt ? `  —  ended ${new Date(row.endedAt).toLocaleTimeString()}` : '  —  still running when this was built'}`);
+      });
+      lines.push('');
+    }
+
     if (!files.length) {
-      status.textContent = 'Nothing to export yet — take a photo, or annotate something.';
+      status.textContent = 'Nothing to export yet — take a photo, annotate something, or run a poll.';
       return;
     }
 
@@ -1372,9 +1392,34 @@ let pollDraft = null;    // { kind, question, options } while composing, else nu
 let pollBusy = false;    // a relay call is in flight - disable the buttons that would race it
 let pollError = '';      // composer-side validation/relay error
 let pollActionError = ''; // running-poll-side relay error (close/reopen/end)
+let pollEndButton = null; // the wireDangerButton handle for #poll-end, wired further down
 
 function findPollItem() {
   return [state.program, state.preview, ...state.panels].find((it) => it?.type === 'poll') || null;
+}
+
+// Polls this device has ended since the tab loaded - localStorage rather than
+// the plan or the relay, because neither is the right owner: a plan is
+// written in the office before any votes exist, and the relay forgets a poll
+// the moment it is deleted (see endPoll). This is purely "what did *I* just
+// run", the same shelf life as the Saved library.
+const POLL_HISTORY_KEY = 'podium.pollHistory.v1';
+const MAX_POLL_HISTORY = 20;
+
+function loadPollHistory() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(POLL_HISTORY_KEY) || '[]');
+    return Array.isArray(rows) ? rows : [];
+  } catch { return []; }
+}
+function savePollHistory() {
+  try { localStorage.setItem(POLL_HISTORY_KEY, JSON.stringify(pollHistory.slice(0, MAX_POLL_HISTORY))); } catch { /* private mode, or quota */ }
+}
+let pollHistory = loadPollHistory();
+
+function addToPollHistory(entry) {
+  pollHistory = [{ id: uid(8), ...entry }, ...pollHistory].slice(0, MAX_POLL_HISTORY);
+  savePollHistory();
 }
 
 async function pollApi(suffix, opts = {}) {
@@ -1391,6 +1436,23 @@ function newPollDraft() {
   pollDraft = { kind: 'choice', question: '', options: ['', ''] };
   pollError = '';
   pollOptionsDrawn = -1;
+}
+
+// A poll written into a lecture plan (planfile.js's PLAN_TYPES.poll) carries
+// its options as one newline-separated field, since the planning page's
+// field editor only knows scalar kinds - split back into the array shape the
+// composer already works in.
+function openPollDraftFromPlan(item) {
+  const options = String(item.options || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  pollDraft = {
+    kind: item.kind === 'text' ? 'text' : 'choice',
+    question: item.question || '',
+    options: options.length ? options : ['', ''],
+  };
+  pollError = '';
+  pollOptionsDrawn = -1;
+  tab('polls');
+  renderPollsPanel();
 }
 
 async function startPoll() {
@@ -1430,7 +1492,7 @@ async function startPoll() {
 
 async function setPollOpen(open) {
   const item = findPollItem();
-  if (!item || pollBusy) return;
+  if (!item || !item.token || pollBusy) return;
   pollBusy = true;
   pollActionError = '';
   renderPollsPanel();
@@ -1454,33 +1516,39 @@ function togglePollReveal() {
   send({ op: 'poll', pollId: item.pollId, action: 'reveal', value: !item.revealed });
 }
 
-async function exportPollCsv() {
+// Poll CSVs (this one, and the ones exportSession() folds into the session
+// zip - see there) are built from the item's own counts/answers rather than
+// a fresh relay fetch: tickPolls already keeps those within a second of the
+// relay's own numbers for a live poll, and it is the only data a redisplayed
+// (archived, token-less) poll has left at all. One code path for both.
+function pollResultRows(item) {
+  const rows = [['question', item.question]];
+  if (item.kind === 'text') {
+    const hidden = new Set(item.hiddenAnswers || []);
+    rows.push(['answer', 'shown to room']);
+    (item.answers || []).forEach((a, i) => rows.push([a, hidden.has(i) ? 'no' : 'yes']));
+  } else {
+    rows.push(['option', 'votes']);
+    (item.options || []).forEach((opt, i) => rows.push([opt, String(item.counts?.[i] || 0)]));
+  }
+  return rows;
+}
+
+function csvText(rows) {
+  return rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+}
+
+function exportPollCsv() {
   const item = findPollItem();
   if (!item) return;
-  pollActionError = '';
-  try {
-    const results = await pollApi(`/${item.pollId}/results`, { headers: { authorization: `Bearer ${item.token}` } });
-    const rows = [['question', item.question]];
-    if (item.kind === 'text') {
-      rows.push(['answer']);
-      for (const answer of results.answers || []) rows.push([answer]);
-    } else {
-      rows.push(['option', 'votes']);
-      (item.options || []).forEach((opt, i) => rows.push([opt, String(results.counts?.[i] || 0)]));
-    }
-    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `poll-${safeName(item.question, item.pollId)}.csv`;
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
-  } catch (err) {
-    pollActionError = err.message || 'Could not export results.';
-    renderPollsPanel();
-  }
+  const blob = new Blob([csvText(pollResultRows(item))], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `poll-${safeName(item.question, item.pollId)}.csv`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
 }
 
 async function endPoll() {
@@ -1488,9 +1556,19 @@ async function endPoll() {
   if (!item) return;
   pollBusy = true;
   renderPollsPanel();
-  try {
-    await pollApi(`/${item.pollId}`, { method: 'DELETE', headers: { authorization: `Bearer ${item.token}` } });
-  } catch { /* relay may already be gone - clear it from the screen regardless */ }
+  // A redisplayed (archived) poll has no token and nothing on the relay left
+  // to delete - it is already in history, and ending it again would only
+  // duplicate the entry. Only a poll that actually ran gets archived.
+  if (item.token) {
+    addToPollHistory({
+      pollId: item.pollId, kind: item.kind, question: item.question, options: item.options,
+      counts: item.counts || [], answers: item.answers || [], voters: item.voters || 0,
+      hiddenAnswers: item.hiddenAnswers || [], endedAt: Date.now(),
+    });
+    try {
+      await pollApi(`/${item.pollId}`, { method: 'DELETE', headers: { authorization: `Bearer ${item.token}` } });
+    } catch { /* relay may already be gone - clear it from the screen regardless */ }
+  }
   if (state.program?.pollId === item.pollId) send({ op: 'clear', where: 'program' });
   else if (state.preview?.pollId === item.pollId) send({ op: 'clear', where: 'preview' });
   else {
@@ -1499,6 +1577,33 @@ async function endPoll() {
   }
   pollBusy = false;
   newPollDraft();
+  renderPollsPanel();
+  $('#poll-end').disabled = false;
+  pollEndButton?.disarm();
+}
+
+// Reopen: the same question, asked again from zero - a new relay poll, new
+// code, nothing carried over but the wording. Redisplay: the opposite - no
+// new relay poll at all, just the final snapshot staged back up, frozen.
+// Both would queue silently behind a poll that is currently running rather
+// than refusing outright (setting pollDraft here has no visible effect while
+// findPollItem() still finds something, per renderPollsPanel below), so the
+// history list itself disables them then instead, to keep a tap from
+// looking like a dead click.
+function reopenFromHistory(row) {
+  pollDraft = { kind: row.kind, question: row.question, options: row.kind === 'choice' ? [...row.options] : ['', ''] };
+  pollError = '';
+  pollOptionsDrawn = -1;
+  renderPollsPanel();
+}
+
+function redisplayFromHistory(row) {
+  stage({
+    type: 'poll', title: 'Poll', pollId: row.pollId, token: '',
+    kind: row.kind, question: row.question, options: row.options,
+    open: false, revealed: true, voters: row.voters, counts: row.counts, answers: row.answers,
+    hiddenAnswers: row.hiddenAnswers || [],
+  });
 }
 
 let pollOptionsDrawn = -1;
@@ -1535,29 +1640,43 @@ function renderPollBuilder() {
 
 let pollRunningDrawn = '';
 
+// Results render here unconditionally, live, whether or not the room has
+// seen them yet - only the projector's own renderer gates on `revealed`.
+// The presenter is the one person who should never have to wait for their
+// own Reveal tap to find out what the room said.
 function renderRunningPoll(item) {
+  const archived = !item.token;
   $('#poll-running-question').textContent = item.question;
   $('#poll-running-code').textContent = item.pollId;
-  const link = pollJoinUrl(cfg, item.pollId);
+  const link = archived ? null : pollJoinUrl(cfg, item.pollId);
   $('#poll-copy-link').disabled = !link;
-  $('#poll-running-status').textContent = item.revealed
-    ? `${item.voters} response${item.voters === 1 ? '' : 's'} · results revealed`
-    : `${item.voters} response${item.voters === 1 ? '' : 's'}${item.open === false ? ' · voting closed' : ' · voting open'}`;
+  $('#poll-copy-link').hidden = archived;
+  $('#poll-toggle-open').hidden = archived;
+  $('#poll-running-status').textContent = archived
+    ? `Redisplayed from history — ${item.voters} response${item.voters === 1 ? '' : 's'}, not accepting new votes`
+    : `${item.voters} response${item.voters === 1 ? '' : 's'}${item.open === false ? ' · voting closed' : ' · voting open'}`
+      + (item.revealed ? ' · shown to the room' : ' · visible to you only');
   $('#poll-toggle-open').textContent = item.open === false ? 'Reopen voting' : 'Close voting';
   $('#poll-toggle-open').disabled = pollBusy;
-  $('#poll-toggle-reveal').textContent = item.revealed ? 'Hide results' : 'Reveal results';
+  $('#poll-toggle-reveal').textContent = item.revealed ? 'Hide from room' : 'Reveal to room';
   $('#poll-action-error').hidden = !pollActionError;
   $('#poll-action-error').textContent = pollActionError;
 
-  const signature = `${item.kind}:${item.revealed}:${JSON.stringify(item.counts)}:${JSON.stringify(item.answers)}`;
+  const signature = `${item.kind}:${JSON.stringify(item.counts)}:${JSON.stringify(item.answers)}:${JSON.stringify(item.hiddenAnswers)}`;
   if (signature !== pollRunningDrawn) {
     pollRunningDrawn = signature;
     const results = $('#poll-running-results');
-    if (!item.revealed) { results.replaceChildren(); }
-    else if (item.kind === 'text') {
+    if (item.kind === 'text') {
       const answers = item.answers || [];
+      const hidden = new Set(item.hiddenAnswers || []);
       results.replaceChildren(...(answers.length
-        ? answers.map((a) => el('div', { class: 'poll-answer-row' }, a))
+        ? answers.map((a, i) => el('div', { class: `poll-answer-row${hidden.has(i) ? ' is-hidden' : ''}` },
+            el('span', { class: 'grow' }, a),
+            el('button', {
+              type: 'button', class: 'poll-answer-hide',
+              title: hidden.has(i) ? 'Hidden from the room — tap to show it' : 'Hide this one answer from the room',
+              onclick: () => send({ op: 'poll', pollId: item.pollId, action: 'hideAnswer', index: i, value: !hidden.has(i) }),
+            }, hidden.has(i) ? 'Unhide' : 'Hide')))
         : [el('div', { class: 'poll-answer-row' }, 'No answers yet')]));
     } else {
       const counts = item.counts || [];
@@ -1572,6 +1691,33 @@ function renderRunningPoll(item) {
       }));
     }
   }
+}
+
+function renderPollHistory() {
+  const holder = $('#poll-history');
+  const busy = !!findPollItem();
+  holder.replaceChildren(...pollHistory.map((row) => {
+    const summary = row.kind === 'text'
+      ? `${row.voters} response${row.voters === 1 ? '' : 's'}`
+      : `${row.voters} response${row.voters === 1 ? '' : 's'} — ${(row.options || []).map((o, i) => `${o}: ${row.counts?.[i] || 0}`).join(', ')}`;
+    return el('div', { class: 'poll-history-row' },
+      el('div', { class: 'poll-history-question' }, row.question || '(no question)'),
+      el('div', { class: 'hint' }, summary),
+      el('div', { class: 'inline' },
+        el('button', {
+          type: 'button', disabled: busy, title: busy ? 'End the current poll first' : 'Ask this question again, fresh',
+          onclick: () => reopenFromHistory(row),
+        }, 'Reopen'),
+        el('button', {
+          type: 'button', disabled: busy, title: busy ? 'End the current poll first' : 'Show these final results again',
+          onclick: () => redisplayFromHistory(row),
+        }, 'Redisplay'),
+        el('button', {
+          type: 'button', class: 'poll-history-del', title: 'Remove from history',
+          onclick: () => { pollHistory = pollHistory.filter((r) => r.id !== row.id); savePollHistory(); renderPollHistory(); },
+        }, '×')));
+  }));
+  $('#poll-history-empty').hidden = pollHistory.length > 0;
 }
 
 // Right after starting a poll, findPollItem() still comes up empty for a
@@ -1591,6 +1737,7 @@ function renderPollsPanel() {
     if (!pollDraft) newPollDraft();
     renderPollBuilder();
   }
+  renderPollHistory();
 }
 
 function renderAll() {
@@ -2452,6 +2599,13 @@ function addToDraftSet(item) {
     flashSetNote('A live camera feed can’t be automated this way — add a still instead.');
     return true;
   }
+  // A poll needs a relay round-trip to even become a poll (see pick()), and
+  // "hold it for 20 seconds then move on" has no sensible meaning for a
+  // question the room is still answering.
+  if (item.type === 'poll') {
+    flashSetNote('A poll isn’t automated this way — start it from the Polls tab.');
+    return true;
+  }
   // A Library deck tile (as opposed to one specific slide pulled from Recent,
   // which already carries slideCount) means "the deck", not one slide of it -
   // fetching, counting and expanding it into one entry per slide happens off
@@ -3012,7 +3166,11 @@ $('#poll-toggle-open').addEventListener('click', () => {
 });
 $('#poll-toggle-reveal').addEventListener('click', togglePollReveal);
 $('#poll-export').addEventListener('click', exportPollCsv);
-wireDangerButton($('#poll-end'), 'End poll', endPoll);
+// wireDangerButton leaves a button disabled after a successful action - right
+// for the settings reset it was written for, wrong here: a session with
+// history and Redisplay/Reopen expects to end more than one poll, and a
+// button stuck reading "Clearing…" would silently break the second one.
+pollEndButton = wireDangerButton($('#poll-end'), 'End poll', endPoll);
 $('#scrub').addEventListener('pointerdown', () => { scrubbing = true; });
 $('#scrub').addEventListener('change', (ev) => {
   scrubbing = false;
