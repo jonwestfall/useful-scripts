@@ -60,3 +60,15 @@ room slider again, the display's console now says so in plain language.
 here (the bottom bar showing both channels) shipped as the **Mixer tab**:
 Master, Content, and Music now each have their own labelled fader, and the
 master multiplies into both channels rather than competing with either.
+
+**Oversized slide-grid thumbnail text** — `buildGrid()` in `control.js` (the
+Slides tab's "Jump to a slide" thumbnail grid) was the one place in the
+codebase that moved a slide's real `<svg data-marpit-svg>` into the page
+without also calling Marp's `applyPolyfill()`, which is what makes
+`<foreignObject>` content lay out and scale correctly on Safari/WebKit.
+Every other slide-rendering path (`renderDeck()`, used by the projector and
+the Now/Next mirrors) already called it. Confirmed on the reporter's actual
+device: `h1` title slides looked fine since they never needed the polyfill's
+correction, but every other heading level rendered at full, unscaled size
+and overflowed its thumbnail. Fixed by calling `applyPolyfill()` in
+`buildGrid()` too, after its slides are wired into the shadow root.

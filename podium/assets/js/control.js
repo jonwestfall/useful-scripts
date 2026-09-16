@@ -9,7 +9,7 @@ import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedIt
   inkDigest, inkDigestsAgree, applyInkAction, BUILD, MAX_SET_ENTRIES } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
-import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide } from './deck.js';
+import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
 import { createZip } from './zip.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
@@ -620,7 +620,13 @@ const nowMirror = createLiveMirror($('#deck-now-preview'));
 const nextMirror = createLiveMirror($('#deck-next-preview'));
 
 let gridShadow = null;
-let gridDeckId = null;
+// Keyed by deck id rather than a plain "is it built" flag, so a second call
+// for the SAME deck that arrives while the first is still running (the
+// fire-and-forget call from the deck-view update, immediately followed by
+// Export) reuses that one in-flight build instead of either racing it or
+// skipping the wait entirely - see buildGrid() below.
+let gridBuildId = null;
+let gridBuildPromise = null;
 
 function ensureGridShadow() {
   gridShadow ??= $('#deck-grid').attachShadow({ mode: 'open' });
@@ -628,6 +634,13 @@ function ensureGridShadow() {
 }
 
 function buildGrid(deck) {
+  if (gridBuildId === deck.id) return gridBuildPromise;
+  gridBuildId = deck.id;
+  gridBuildPromise = buildGridNow(deck);
+  return gridBuildPromise;
+}
+
+async function buildGridNow(deck) {
   const shadow = ensureGridShadow();
   shadow.innerHTML = `<style>
     :host { display: block; }
@@ -695,8 +708,24 @@ function buildGrid(deck) {
     cell.addEventListener('click', () => send({ op: 'nav', dir: 'goto', value: i }));
     grid.append(cell);
   });
-  gridDeckId = deck.id;
   filterGrid();
+  // Marp needs its own DOM polyfill for inline-SVG slides or WebKit (every
+  // iPad, which is where this grid actually gets used) lays foreignObject
+  // content out wrong - the exact bug renderDeck() already works around for
+  // the live projector and the Now/Next mirrors. Run after the slides are
+  // connected to the real document (inside this shadow root), which is what
+  // the polyfill's own measurements need to be looking at.
+  await applyPolyfill(shadow);
+  // applyPolyfill()'s own promise resolves once it has registered its
+  // Safari-detection check and started an ongoing requestAnimationFrame loop,
+  // not once that check has actually run and corrected anything - the
+  // correction itself lands a frame or two later (see the identical wait in
+  // measureFits(), deck.js). renderDeck() can get away without this because
+  // its slides stay mounted and the correction catches up unnoticed a frame
+  // later; buildGrid() cannot, because Export rasterizes these exact SVGs the
+  // moment this promise resolves, and an early snapshot would still bake in
+  // the oversized, uncorrected layout.
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 }
 
 function filterGrid() {
@@ -796,7 +825,7 @@ function renderSlides() {
   themeEl.textContent = problems.length ? problems[0] : (deck ? `theme: ${deck.theme}` : 'Rendering…');
   themeEl.classList.toggle('is-warning', problems.length > 0);
 
-  if (deck && gridDeckId !== deck.id) buildGrid(deck);
+  if (deck) buildGrid(deck);
   highlightGrid(index);
   $('#deck-export').disabled = !deck;
 }
@@ -1158,7 +1187,7 @@ async function exportDeck() {
       if (source == null) throw new Error('This deck’s markdown is not available on this device.');
       deck = await renderDeckSource(source, item.deckId);
     }
-    if (gridDeckId !== deck.id) buildGrid(deck);
+    await buildGrid(deck);
     const svgs = Array.from(ensureGridShadow().querySelectorAll('.cell svg[data-marpit-svg]'));
     if (!svgs.length) throw new Error('This deck has no slides to export.');
 

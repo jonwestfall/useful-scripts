@@ -2144,6 +2144,26 @@ const captions = await pad.evaluate(() => Array.from(document.querySelector('#de
 ok(`every thumbnail carries a readable caption, not just a hover tooltip (${captions.length})`,
   captions.length === 13 && captions.every((c) => c.length > 0) && captions[4].toLowerCase().includes('calibration'));
 
+// buildGrid() moves each slide's real <svg> into the grid rather than
+// rasterizing a copy, so it depends on the exact same Marp DOM polyfill
+// renderDeck() already needs for foreignObject content to lay out
+// correctly - missing here, a heading rendered at its full, unscaled size
+// spills out of the thumbnail instead of shrinking to fit it. Chromium (all
+// this suite ever runs against) does not actually exhibit that bug, so this
+// cannot reproduce it the way it shows up on WebKit - it only guards against
+// a future regression in the bound it can check: nothing about to draw
+// outside its own thumbnail.
+const heading = await pad.evaluate(() => {
+  const cell = document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')[1];
+  const thumb = cell.querySelector('.thumb').getBoundingClientRect();
+  const h = cell.querySelector('h1, h2, h3')?.getBoundingClientRect();
+  return h ? { thumb, h } : null;
+});
+ok(`a slide's heading renders inside its own thumbnail, not spilling past it (heading ${Math.round(heading?.h.width)}x${Math.round(heading?.h.height)} in a ${Math.round(heading?.thumb.width)}x${Math.round(heading?.thumb.height)} box)`,
+  !!heading
+  && heading.h.left >= heading.thumb.left - 1 && heading.h.top >= heading.thumb.top - 1
+  && heading.h.right <= heading.thumb.right + 1 && heading.h.bottom <= heading.thumb.bottom + 1);
+
 await pad.fill('#deck-grid-filter', 'calibration');
 await pad.waitForTimeout(150);
 const visible = await pad.evaluate(() => Array.from(document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')).filter((c) => !c.hidden).map((c) => c.dataset.search));
