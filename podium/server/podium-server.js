@@ -238,7 +238,7 @@ async function handlePoll(req, res, url) {
     // what can be answered, starts the tally again rather than blending two
     // questions' answers into one set of numbers.
     const changed = kind !== poll.kind || question !== poll.question
-      || options.join(' ') !== poll.options.join(' ');
+      || options.join(' ') !== poll.options.join(' ');
     if (changed) { poll.votes.clear(); poll.seq += 1; }
     poll.kind = kind;
     poll.question = question;

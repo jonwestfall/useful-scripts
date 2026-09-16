@@ -12,7 +12,7 @@ import {
   $, $$, el, uid, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell,
   enterFullscreen, exitFullscreen, toggleFullscreen, isFullscreen, onFullscreenChange,
 } from './util.js';
-import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
+import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl } from './config.js';
 import { createBus } from './bus.js';
 import {
   initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD,
@@ -206,6 +206,7 @@ function mount(layer, item) {
     // wrong for the rest of the item's time on screen.
     onReady: () => redrawInk(true),
     onEnded: () => handleMediaEnded(key),
+    getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId),
   });
   layer.node.append(layer.renderer.el);
 }
@@ -935,6 +936,56 @@ function tickSets() {
   if (changed) commit();
 }
 setInterval(tickSets, SET_TICK_MS);
+
+// --- audience polls ----------------------------------------------------------
+//
+// The display is the one device that fetches a poll's tally, the same
+// ownership tickSets already has over a running set's clock: one source of
+// truth polling the relay, broadcasting what it learns to every controller,
+// rather than every controller polling independently and disagreeing. A
+// controller only ever reads counts/answers/open off the broadcast state,
+// same as it reads a set's current entry.
+const POLL_TICK_MS = 1000;
+const pollFetchInFlight = new Set();   // pollId -> true, while its own fetch is out
+
+function pollItems() {
+  return [state.program, state.preview, ...state.panels].filter((it) => it?.type === 'poll');
+}
+
+async function tickPolls() {
+  const base = pollBaseUrl(cfg);
+  if (!base) return;
+  for (const item of pollItems()) {
+    if (pollFetchInFlight.has(item.pollId)) continue;
+    pollFetchInFlight.add(item.pollId);
+    const key = item.key;
+    fetch(`${base}poll/${encodeURIComponent(item.pollId)}/results`, {
+      headers: { authorization: `Bearer ${item.token}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((tally) => {
+        if (!tally) return;
+        // The item this key names may have moved (TAKE, a fresh stage with
+        // the same pollId re-asking the question) or left the screen
+        // entirely by the time this resolves - find it fresh rather than
+        // trust the reference captured before the fetch went out.
+        const current = pollItems().find((it) => it.key === key);
+        if (!current) return;
+        const changed = current.open !== tally.open || current.voters !== tally.voters
+          || JSON.stringify(current.counts) !== JSON.stringify(tally.counts)
+          || JSON.stringify(current.answers) !== JSON.stringify(tally.answers);
+        if (!changed) return;
+        current.open = !!tally.open;
+        current.voters = tally.voters || 0;
+        if (current.kind === 'choice') current.counts = tally.counts || [];
+        else current.answers = tally.answers || [];
+        commit();
+      })
+      .catch(() => { /* one missed tick is not worth a warning - the next one retries */ })
+      .finally(() => pollFetchInFlight.delete(item.pollId));
+  }
+}
+setInterval(tickPolls, POLL_TICK_MS);
 
 // --- rendering the rest of the chrome --------------------------------------
 

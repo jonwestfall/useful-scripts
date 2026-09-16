@@ -3,7 +3,7 @@
 // send commands and render whatever the display echoes back.
 
 import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress } from './util.js';
-import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
+import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
   inkDigest, inkDigestsAgree, applyInkAction, BUILD, MAX_SET_ENTRIES } from './protocol.js';
@@ -592,7 +592,7 @@ function renderPreview() {
     holder.replaceChildren();
     previewKey = key;
     if (item) {
-      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets });
+      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) });
       holder.append(previewRenderer.el);
     }
   } else if (previewRenderer && item) {
@@ -1362,11 +1362,243 @@ function renderMixer() {
   }
 }
 
+// Audience polls: a normal item once staged, but composing and running one
+// needs its own tab because the relay call (create/open/close/delete a poll
+// row, keyed by a token this tab is the only place that ever sees) is not
+// part of the stage/cue/take protocol the rest of Podium runs on. "One at a
+// time" is a UX rule, not something the protocol enforces, so this tab just
+// looks for whichever single poll item is staged anywhere right now.
+let pollDraft = null;    // { kind, question, options } while composing, else null
+let pollBusy = false;    // a relay call is in flight - disable the buttons that would race it
+let pollError = '';      // composer-side validation/relay error
+let pollActionError = ''; // running-poll-side relay error (close/reopen/end)
+
+function findPollItem() {
+  return [state.program, state.preview, ...state.panels].find((it) => it?.type === 'poll') || null;
+}
+
+async function pollApi(suffix, opts = {}) {
+  const base = pollBaseUrl(cfg);
+  if (!base) throw new Error('This relay does not run polls.');
+  const res = await fetch(`${base}poll${suffix}`, opts);
+  let body = null;
+  try { body = await res.json(); } catch { /* no body */ }
+  if (!res.ok) throw new Error(body?.error || `poll request failed (${res.status})`);
+  return body;
+}
+
+function newPollDraft() {
+  pollDraft = { kind: 'choice', question: '', options: ['', ''] };
+  pollError = '';
+  pollOptionsDrawn = -1;
+}
+
+async function startPoll() {
+  if (!pollDraft || pollBusy) return;
+  const question = pollDraft.question.trim();
+  if (!question) { pollError = 'Add a question first.'; renderPollsPanel(); return; }
+  const options = pollDraft.kind === 'choice'
+    ? pollDraft.options.map((o) => o.trim()).filter(Boolean)
+    : [];
+  if (pollDraft.kind === 'choice' && options.length < 2) {
+    pollError = 'Add at least two options.';
+    renderPollsPanel();
+    return;
+  }
+  pollBusy = true;
+  pollError = '';
+  renderPollsPanel();
+  try {
+    const created = await pollApi('', { method: 'POST' });
+    await pollApi(`/${created.code}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}` },
+      body: JSON.stringify({ kind: pollDraft.kind, question, options, open: true }),
+    });
+    stage({
+      type: 'poll', title: 'Poll', pollId: created.code, token: created.token,
+      kind: pollDraft.kind, question, options, open: true, revealed: false,
+    });
+    pollDraft = null;
+  } catch (err) {
+    pollError = err.message || 'Could not start the poll.';
+  } finally {
+    pollBusy = false;
+    renderPollsPanel();
+  }
+}
+
+async function setPollOpen(open) {
+  const item = findPollItem();
+  if (!item || pollBusy) return;
+  pollBusy = true;
+  pollActionError = '';
+  renderPollsPanel();
+  try {
+    await pollApi(`/${item.pollId}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${item.token}` },
+      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, open }),
+    });
+  } catch (err) {
+    pollActionError = err.message || 'Could not reach the poll.';
+  } finally {
+    pollBusy = false;
+    renderPollsPanel();
+  }
+}
+
+function togglePollReveal() {
+  const item = findPollItem();
+  if (!item) return;
+  send({ op: 'poll', pollId: item.pollId, action: 'reveal', value: !item.revealed });
+}
+
+async function exportPollCsv() {
+  const item = findPollItem();
+  if (!item) return;
+  pollActionError = '';
+  try {
+    const results = await pollApi(`/${item.pollId}/results`, { headers: { authorization: `Bearer ${item.token}` } });
+    const rows = [['question', item.question]];
+    if (item.kind === 'text') {
+      rows.push(['answer']);
+      for (const answer of results.answers || []) rows.push([answer]);
+    } else {
+      rows.push(['option', 'votes']);
+      (item.options || []).forEach((opt, i) => rows.push([opt, String(results.counts?.[i] || 0)]));
+    }
+    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `poll-${safeName(item.question, item.pollId)}.csv`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  } catch (err) {
+    pollActionError = err.message || 'Could not export results.';
+    renderPollsPanel();
+  }
+}
+
+async function endPoll() {
+  const item = findPollItem();
+  if (!item) return;
+  pollBusy = true;
+  renderPollsPanel();
+  try {
+    await pollApi(`/${item.pollId}`, { method: 'DELETE', headers: { authorization: `Bearer ${item.token}` } });
+  } catch { /* relay may already be gone - clear it from the screen regardless */ }
+  if (state.program?.pollId === item.pollId) send({ op: 'clear', where: 'program' });
+  else if (state.preview?.pollId === item.pollId) send({ op: 'clear', where: 'preview' });
+  else {
+    const idx = state.panels.findIndex((p) => p?.pollId === item.pollId);
+    if (idx !== -1) send({ op: 'panel', index: idx, item: { type: 'black' } });
+  }
+  pollBusy = false;
+  newPollDraft();
+}
+
+let pollOptionsDrawn = -1;
+
+// Visibility between the two halves is decided once, by renderPollsPanel,
+// from whether a poll is currently staged anywhere - neither half toggles
+// the other's .hidden itself, which is what let them fight over it and get
+// stuck on whichever ran last (see the comment on renderPollsPanel).
+function renderPollBuilder() {
+  if (!pollDraft) return;
+  $('#poll-kind').value = pollDraft.kind;
+  if (document.activeElement !== $('#poll-question')) $('#poll-question').value = pollDraft.question;
+  const showOptions = pollDraft.kind === 'choice';
+  $('#poll-options').hidden = !showOptions;
+  $('#poll-option-add').closest('.inline').hidden = !showOptions;
+  if (showOptions && pollOptionsDrawn !== pollDraft.options.length) {
+    pollOptionsDrawn = pollDraft.options.length;
+    $('#poll-options').replaceChildren(...pollDraft.options.map((_, i) => el('div', { class: 'poll-option-row' },
+      el('input', {
+        type: 'text', placeholder: `Option ${i + 1}`, maxlength: '200',
+        oninput: (ev) => { pollDraft.options[i] = ev.target.value; },
+      }),
+      el('button', {
+        type: 'button', title: 'Remove', disabled: pollDraft.options.length <= 2,
+        onclick: () => { pollDraft.options.splice(i, 1); pollOptionsDrawn = -1; renderPollsPanel(); },
+      }, '×'))));
+    pollDraft.options.forEach((v, i) => { $$('#poll-options input')[i].value = v; });
+  }
+  $('#poll-option-add').disabled = pollDraft.options.length >= 8;
+  $('#poll-error').hidden = !pollError;
+  $('#poll-error').textContent = pollError;
+  $('#poll-start').disabled = pollBusy;
+}
+
+let pollRunningDrawn = '';
+
+function renderRunningPoll(item) {
+  $('#poll-running-question').textContent = item.question;
+  $('#poll-running-code').textContent = item.pollId;
+  const link = pollJoinUrl(cfg, item.pollId);
+  $('#poll-copy-link').disabled = !link;
+  $('#poll-running-status').textContent = item.revealed
+    ? `${item.voters} response${item.voters === 1 ? '' : 's'} · results revealed`
+    : `${item.voters} response${item.voters === 1 ? '' : 's'}${item.open === false ? ' · voting closed' : ' · voting open'}`;
+  $('#poll-toggle-open').textContent = item.open === false ? 'Reopen voting' : 'Close voting';
+  $('#poll-toggle-open').disabled = pollBusy;
+  $('#poll-toggle-reveal').textContent = item.revealed ? 'Hide results' : 'Reveal results';
+  $('#poll-action-error').hidden = !pollActionError;
+  $('#poll-action-error').textContent = pollActionError;
+
+  const signature = `${item.kind}:${item.revealed}:${JSON.stringify(item.counts)}:${JSON.stringify(item.answers)}`;
+  if (signature !== pollRunningDrawn) {
+    pollRunningDrawn = signature;
+    const results = $('#poll-running-results');
+    if (!item.revealed) { results.replaceChildren(); }
+    else if (item.kind === 'text') {
+      const answers = item.answers || [];
+      results.replaceChildren(...(answers.length
+        ? answers.map((a) => el('div', { class: 'poll-answer-row' }, a))
+        : [el('div', { class: 'poll-answer-row' }, 'No answers yet')]));
+    } else {
+      const counts = item.counts || [];
+      const max = Math.max(1, ...counts, 0);
+      results.replaceChildren(...(item.options || []).map((opt, i) => {
+        const count = counts[i] || 0;
+        const fill = el('div', { class: 'poll-bar-fill' });
+        fill.style.width = `${Math.round((count / max) * 100)}%`;
+        return el('div', { class: 'poll-bar-row' },
+          el('div', { class: 'poll-bar-label' }, el('span', {}, opt), el('span', { class: 'mono' }, String(count))),
+          el('div', { class: 'poll-bar-track' }, fill));
+      }));
+    }
+  }
+}
+
+// Right after starting a poll, findPollItem() still comes up empty for a
+// moment - stage() only sends the command, and this pad's own `state` does
+// not have the new item until the display's broadcast echoes it back (see
+// the file-header comment: neither pad holds state, both render the echo).
+// Deciding show-build-or-show-running here, once, from that same lookup is
+// what keeps the two halves from arguing about it below.
+function renderPollsPanel() {
+  $('#poll-unsupported').hidden = !!pollBaseUrl(cfg);
+  const item = findPollItem();
+  $('#poll-running').hidden = !item;
+  $('#poll-build').hidden = !!item;
+  if (item) {
+    renderRunningPoll(item);
+  } else {
+    if (!pollDraft) newPollDraft();
+    renderPollBuilder();
+  }
+}
+
 function renderAll() {
   renderMusic();
   renderMixer();
   renderWatermarkPanel();
   renderSetsPanel();
+  renderPollsPanel();
   renderPhotos();
   renderRecent();
   renderPreview();
@@ -1504,7 +1736,7 @@ function createLiveMirror(container) {
       renderer?.destroy();
       frame.replaceChildren();
       mountedKey = key;
-      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets }) : null;
+      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) }) : null;
       if (renderer) frame.append(renderer.el);
     } else {
       renderer?.update(resolveAssets(item));
@@ -1591,7 +1823,7 @@ function updatePadMirror() {
     padMirrorRenderer?.destroy();
     padMirror.replaceChildren();
     padMirrorKey = key;
-    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets }) : null;
+    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) }) : null;
     if (padMirrorRenderer) padMirror.append(padMirrorRenderer.el);
   } else {
     padMirrorRenderer?.update(resolveAssets(item));
@@ -2747,6 +2979,40 @@ $('#back10').addEventListener('click', () => send({ op: 'media', action: 'nudge'
 $('#fwd10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: 10 }));
 $('#restart-media').addEventListener('click', () => send({ op: 'media', action: 'restart' }));
 $('#media-loop').addEventListener('change', (ev) => send({ op: 'media', action: 'setLoop', value: ev.target.checked }));
+
+$('#poll-kind').addEventListener('change', (ev) => {
+  if (!pollDraft) return;
+  pollDraft.kind = ev.target.value === 'text' ? 'text' : 'choice';
+  renderPollsPanel();
+});
+$('#poll-question').addEventListener('input', (ev) => { if (pollDraft) pollDraft.question = ev.target.value; });
+$('#poll-option-add').addEventListener('click', () => {
+  if (!pollDraft || pollDraft.options.length >= 8) return;
+  pollDraft.options.push('');
+  pollOptionsDrawn = -1;
+  renderPollsPanel();
+});
+$('#poll-build').addEventListener('submit', (ev) => { ev.preventDefault(); startPoll(); });
+$('#poll-copy-link').addEventListener('click', async () => {
+  const item = findPollItem();
+  const link = item && pollJoinUrl(cfg, item.pollId);
+  if (!link) return;
+  const button = $('#poll-copy-link');
+  try {
+    await navigator.clipboard.writeText(link);
+    button.textContent = 'Copied!';
+  } catch {
+    button.textContent = link;
+  }
+  setTimeout(() => { button.textContent = 'Copy join link'; }, 2000);
+});
+$('#poll-toggle-open').addEventListener('click', () => {
+  const item = findPollItem();
+  if (item) setPollOpen(item.open === false);
+});
+$('#poll-toggle-reveal').addEventListener('click', togglePollReveal);
+$('#poll-export').addEventListener('click', exportPollCsv);
+wireDangerButton($('#poll-end'), 'End poll', endPoll);
 $('#scrub').addEventListener('pointerdown', () => { scrubbing = true; });
 $('#scrub').addEventListener('change', (ev) => {
   scrubbing = false;

@@ -34,6 +34,7 @@ export const TYPES = {
   whiteboard: { label: 'Whiteboard', icon: '✎' },
   camera:     { label: 'Camera',     icon: '\u{1F4F7}' },
   set:        { label: 'Automated set', icon: '\u{1F501}' },
+  poll:       { label: 'Poll',       icon: '\u{1F4CA}' },
 };
 
 export function itemTitle(item) {
@@ -520,6 +521,72 @@ function renderQr(item) {
   };
 }
 
+// The join card (QR + code) is what's on screen while a poll is collecting
+// answers; opts.getPollJoinUrl(pollId) supplies the URL since the renderer
+// itself has no access to cfg. Reveal is a separate, explicit action (never
+// automatic on close), so results only replace the join card once
+// item.revealed is true.
+function renderPoll(item, opts) {
+  const question = el('div', { class: 'r-poll-question' }, item.question || '');
+  const qrHolder = el('div', { class: 'r-poll-qr' });
+  const code = el('div', { class: 'r-poll-code' }, item.pollId || '');
+  const hint = el('div', { class: 'r-poll-hint' }, 'Scan, or join and enter the code');
+  const joinCard = el('div', { class: 'r-poll-join' }, qrHolder, code, hint);
+  const status = el('div', { class: 'r-poll-status' }, '');
+  const results = el('div', { class: 'r-poll-results' });
+  const node = el('div', { class: 'r-poll' }, question, joinCard, status, results);
+
+  const drawQr = (url) => {
+    if (!url || typeof window.qrcode !== 'function') { qrHolder.replaceChildren(); return; }
+    const qr = window.qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    qrHolder.innerHTML = qr.createSvgTag({ cellSize: 8, margin: 2, scalable: true });
+  };
+
+  const drawResults = (it) => {
+    if (it.kind === 'text') {
+      const answers = it.answers || [];
+      results.replaceChildren(...(answers.length
+        ? answers.map((a) => el('div', { class: 'r-poll-answer' }, a))
+        : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No answers yet')]));
+      return;
+    }
+    const counts = it.counts || [];
+    const max = Math.max(1, ...counts, 0);
+    results.replaceChildren(...(it.options || []).map((opt, i) => {
+      const count = counts[i] || 0;
+      const fill = el('div', { class: 'r-poll-bar-fill' });
+      fill.style.width = `${Math.round((count / max) * 100)}%`;
+      return el('div', { class: 'r-poll-bar-row' },
+        el('div', { class: 'r-poll-bar-label' }, el('span', {}, opt), el('span', { class: 'mono' }, String(count))),
+        el('div', { class: 'r-poll-bar-track' }, fill));
+    }));
+  };
+
+  const draw = (it) => {
+    question.textContent = it.question || '';
+    code.textContent = it.pollId || '';
+    drawQr(opts.getPollJoinUrl?.(it.pollId) || '');
+    node.classList.toggle('is-revealed', !!it.revealed);
+    node.classList.toggle('is-closed', it.open === false);
+    status.textContent = it.revealed
+      ? ''
+      : `${it.voters || 0} response${it.voters === 1 ? '' : 's'}${it.open === false ? ' · closed' : ''}`;
+    if (it.revealed) drawResults(it);
+    else results.replaceChildren();
+  };
+  draw(item);
+
+  return {
+    el: node,
+    update: draw,
+    reconcile() {},
+    telemetry: noTelemetry,
+    destroy() { node.remove(); },
+  };
+}
+
 function renderTimer(item, opts) {
   const value = el('div', { class: 'r-timer-value' }, '0:00');
   const label = el('div', { class: 'r-timer-label' }, item.label || '');
@@ -882,6 +949,7 @@ const FACTORIES = {
   whiteboard: renderWhiteboard,
   camera: renderCamera,
   set: renderSet,
+  poll: renderPoll,
 };
 
 export function createRenderer(item, opts = {}) {

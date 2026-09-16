@@ -125,6 +125,7 @@
         <button class="tab" data-tab="music" type="button">Music</button>
         <button class="tab" data-tab="mixer" type="button">Mixer</button>
         <button class="tab" data-tab="sets" type="button">Sets</button>
+        <button class="tab" data-tab="polls" type="button">Polls</button>
       </nav>
 
       <div class="panels">
@@ -546,6 +547,54 @@
               them, each starting at 15s. Come back here and adjust durations, then <b>Save set</b>.
             </p>
           </div>
+        </section>
+
+        <!-- Audience polls -->
+        <section class="panel" data-panel="polls" hidden>
+          <p class="hint">
+            A question the room answers on their own phones — no app, no
+            login. Stage it like anything else, on A or any of B/C/D; only
+            one poll runs at a time. Reveal is its own step: closing voting
+            does not show results until you choose to.
+          </p>
+
+          <p id="poll-unsupported" class="hint" hidden>
+            This relay does not run polls — audience participation needs the
+            self-hosted server (server/podium-server.js), not Supabase or MQTT.
+          </p>
+
+          <div id="poll-running" hidden class="stack">
+            <div id="poll-running-question" class="poll-running-question"></div>
+            <div class="inline">
+              <span id="poll-running-code" class="mono"></span>
+              <button id="poll-copy-link" type="button">Copy join link</button>
+            </div>
+            <div id="poll-running-status" class="hint"></div>
+            <div id="poll-running-results"></div>
+            <p id="poll-action-error" class="hint" hidden></p>
+            <div class="inline">
+              <button id="poll-toggle-open" type="button">Close voting</button>
+              <button id="poll-toggle-reveal" type="button">Reveal results</button>
+              <button id="poll-export" type="button">Export CSV</button>
+            </div>
+            <button id="poll-end" class="danger-outline" type="button">End poll</button>
+          </div>
+
+          <form id="poll-build" class="stack">
+            <div class="inline">
+              <select id="poll-kind" aria-label="Poll type" class="grow">
+                <option value="choice">Multiple choice</option>
+                <option value="text">Short answer</option>
+              </select>
+            </div>
+            <textarea id="poll-question" placeholder="Question" maxlength="500" rows="2"></textarea>
+            <div id="poll-options" class="stack"></div>
+            <div class="inline">
+              <button id="poll-option-add" type="button">+ Option</button>
+            </div>
+            <p id="poll-error" class="hint" hidden></p>
+            <button id="poll-start" type="submit">Start poll</button>
+          </form>
         </section>
 
         <!-- Camera -->

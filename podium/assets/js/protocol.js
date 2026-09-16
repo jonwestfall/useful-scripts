@@ -220,6 +220,28 @@ function normalizeItem(item) {
     copy.cycle = [];
     copy.cyclePos = 0;
   }
+  if (copy.type === 'poll') {
+    // pollId and token identify the poll on the relay (see server/podium-
+    // server.js's /poll routes) and are set once, at creation, by whoever
+    // composed it - never regenerated here. Everything else is either what
+    // was asked (kind/question/options, editable by re-staging) or a tally
+    // the display fills in on its own polling tick (open/revealed/counts/
+    // answers) and this normalization must not clobber on every re-stage.
+    copy.kind = copy.kind === 'text' ? 'text' : 'choice';
+    copy.question = String(copy.question || '').slice(0, 500);
+    copy.options = copy.kind === 'choice'
+      ? (Array.isArray(copy.options) ? copy.options : []).slice(0, 8).map((o) => String(o).slice(0, 200))
+      : [];
+    copy.open = copy.open !== false;
+    copy.revealed = !!copy.revealed;
+    copy.voters = Math.max(0, Number(copy.voters) || 0);
+    copy.counts = copy.kind === 'choice'
+      ? copy.options.map((_, i) => Math.max(0, Number(copy.counts?.[i]) || 0))
+      : [];
+    copy.answers = copy.kind === 'text' && Array.isArray(copy.answers)
+      ? copy.answers.map((a) => String(a).slice(0, 200)).slice(0, 500)
+      : [];
+  }
   return copy;
 }
 
@@ -324,6 +346,11 @@ export function inkSurfaceKey(item) {
     // show up when the rotation comes back around to entry 5, the same
     // reason a deck keys ink by slide rather than by the deck as a whole.
     case 'set': return `set:${item.key}:${item.index}`;
+    // pollId, not item.key, for the same reason black/text/qr use their own
+    // content above rather than falling to the default case: re-asking the
+    // same question (re-staging with the same pollId) must not orphan
+    // whatever was circled on it a moment ago.
+    case 'poll': return `poll:${item.pollId}`;
     default: return `${item.type}:${item.src || item.deckId || item.key || ''}`;
   }
 }
@@ -719,6 +746,22 @@ export function applyCommand(state, cmd) {
       // move where it is paused.
       else if (cmd.action === 'restart') { item.seekTo = 0; item.seekNonce = (item.seekNonce || 0) + 1; item.playing = true; }
       else if (cmd.action === 'setLoop') item.loop = !!cmd.value;
+      else return false;
+      return true;
+    }
+
+    // Found by pollId rather than focus/where: the Polls tab controls
+    // whichever poll is actually live regardless of which panel happens to
+    // be focused right now, the same reason a poll's ink is keyed by pollId
+    // rather than by panel. open/voters/counts/answers are the display's own
+    // to fill in (see tickPolls in display.js) - revealed is the only thing
+    // a controller ever sets directly, since "does the room see this yet"
+    // was the one thing asked to stay a deliberate, separate action rather
+    // than a side effect of asking a question or closing one.
+    case 'poll': {
+      const item = [state.program, state.preview, ...state.panels].find((it) => it?.type === 'poll' && it.pollId === cmd.pollId);
+      if (!item) return false;
+      if (cmd.action === 'reveal') item.revealed = !!cmd.value;
       else return false;
       return true;
     }

@@ -360,6 +360,26 @@ chk('shrinking the layout falls focus back to A rather than pointing at a panel 
   chk('select out of range is rejected', applyCommand(s, {op:'set', action:'select', index:999}) === false);
 }
 
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'ABCD', token:'secret', kind:'choice',
+  question:'Which bias is this?', options:['Construct','Method','Norming','Access'],
+}});
+chk('a fresh poll starts open, not yet revealed, with a zeroed tally',
+  s.program.open === true && s.program.revealed === false && s.program.voters === 0
+  && s.program.counts.length === 4 && s.program.counts.every((c) => c === 0));
+chk('reveal is found by pollId, not by focus or where', applyCommand(s, {op:'poll', pollId:'ABCD', action:'reveal', value:true}));
+chk('and it actually set revealed', s.program.revealed === true);
+chk('a pollId nobody is running is simply rejected', applyCommand(s, {op:'poll', pollId:'ZZZZ', action:'reveal', value:true}) === false);
+chk('an unknown poll action is rejected too', applyCommand(s, {op:'poll', pollId:'ABCD', action:'nope'}) === false);
+const beforeReask = s.program.key;
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'ABCD', token:'secret', kind:'choice',
+  question:'Which bias is this?', options:['Construct','Method','Norming','Access'],
+}});
+chk('re-staging the identical question still keys ink by pollId, not by the fresh key a re-stage always gets',
+  inkSurfaceKey({type:'poll', pollId:'ABCD'}) === inkSurfaceKey({type:'poll', pollId:'ABCD', key:s.program.key})
+  && s.program.key !== beforeReask);
+
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

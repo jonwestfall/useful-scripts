@@ -109,7 +109,8 @@ HTML slide decks including reveal.js · PDFs with page-turn buttons · big text 
 a QR code for the class to scan · countdown timers · a whiteboard · your phone's
 camera as a document camera, including stills taken from it that you can hold in
 four panels at once. Plus background music the room hears and the projector never
-shows, and automated sets — a rotation of any of the above that advances itself.
+shows, automated sets — a rotation of any of the above that advances itself — and
+audience polls, answered on the room's own phones with no app to install.
 
 A few more that sit on top of anything: **ink**, so you can annotate live over a
 slide with an Apple Pencil, a **caption** along the bottom of the screen, and a
@@ -722,6 +723,40 @@ is a staged item like any other, and every connected controller sees it and can
 drive it. Each deck-slide entry holds its own fixed slide rather than stepping
 through the rest of that deck on its own timer — a whole deck in a set means "these
 N slides, each for its own turn," not one entry quietly advancing pages by itself.
+
+## Audience polls
+
+The **Polls** tab asks the room a question they answer on their own phones — no app,
+no login, and no account of theirs to create. It only works with the self-hosted
+relay (`server/podium-server.js` — see ROADMAP.md for why): that server also runs
+the poll itself, alongside relaying the room's connections, so there is nothing
+extra to stand up. Supabase and MQTT setups don't have a server behind them for this
+and the tab says so instead of pretending.
+
+**Asking one.** Pick **Multiple choice** (2–8 options) or **Short answer**, write the
+question, and **Start poll**. That stages it like anything else — on A, or on any of
+B/C/D — and puts a QR code and a four-letter code up for the room: scanning it (or
+typing the code at the join page) drops a phone straight onto the question, nothing
+to type but an answer. Only one poll runs at a time; starting a new one before
+ending the last one is not something the tab offers.
+
+**While it runs.** Responses land within a second or two of being cast, both on the
+projector and back on the Polls tab, but nobody — you included — sees which way it's
+going until you choose to: **Reveal results** is its own separate button, so a poll
+you meant to run silent stays silent, and closing voting does not show anything by
+itself. **Close voting** stops the room answering without revealing anything; you
+can **Reopen voting** the same way. **Export CSV** saves the question and its tally
+(or its list of typed answers) to a file. **End poll** — like other things here that
+throw work away, it takes a second tap — clears it from the screen and invalidates
+the code, so a phone still holding the join page can't answer late.
+
+**What the relay does and doesn't know.** The four-letter code is public and meant to
+be; a private token, handed to whichever controller started the poll and never shown
+on screen, is what the relay checks before it will read results, change the
+question, or delete it. Answers themselves sit in the relay's memory in the clear —
+there's no student login worth encrypting them against and nothing is written to
+disk — while the poll exists, and for up to 12 hours after the last activity on it
+even if nobody deletes it.
 
 ## Music before class
 
@@ -1392,7 +1427,13 @@ restarting, that Restart genuinely resumes a paused clip rather than just seekin
 and that Loop actually keeps a clip going past where it would otherwise have ended;
 and that the Mixer's three faders multiply against each other correctly (master ×
 channel) for both the content channel and the music channel, and that mute silences
-both regardless of where either fader sits. 437 checks.
+both regardless of where either fader sits. It drives audience polls end to end too:
+the relay's own endpoints directly (three phones answering, changing an answer,
+a closed question refusing a vote, the host token gating results), and separately
+the Polls tab itself — composing a poll, staging it, watching a vote cast straight
+at the relay reach both the projector and the controller, closing voting, and that
+reveal is genuinely its own step rather than something closing does for you.
+463 checks.
 
 ## Layout
 

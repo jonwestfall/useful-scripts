@@ -4332,6 +4332,95 @@ ok('ending a poll takes the code with it', (await fetch(`${BASE}/poll/${created.
 for (const phone of phones) await phone.ctx.close();
 }
 
+if (want('the Polls tab: composing and running a poll from the controller')) {
+console.log('\n-- the Polls tab: composing and running a poll from the controller --');
+// The relay side is covered above; this drives the actual UI a presenter
+// uses - compose, stage, watch votes arrive, close, reveal, export, end -
+// with "a phone" standing in as a direct call to the relay, same as the
+// section above.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-ui-room', passphrase: 'one at a time wherever staged' }));
+const screen = await ctx.newPage();
+trap(screen, 'poll-tab display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'poll-tab pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="polls"]');
+ok('with nothing running yet, the Polls tab opens straight on the composer',
+  await pad.evaluate(() => !document.querySelector('#poll-build').hidden && document.querySelector('#poll-running').hidden));
+
+await pad.fill('#poll-question', 'Which bias is this?');
+await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'Construct');
+await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'Method');
+await pad.click('#poll-option-add');
+await pad.fill('#poll-options .poll-option-row:nth-child(3) input', 'Norming');
+await pad.click('#poll-start');
+
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+ok('starting a poll stages it and the tab switches to the running view',
+  (await pad.textContent('#poll-running-question')) === 'Which bias is this?');
+const code = (await pad.textContent('#poll-running-code')).trim();
+ok(`the running card shows the same join code the relay handed back (${code})`,
+  /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/.test(code));
+
+await screen.waitForFunction(() => document.querySelector('.r-poll-question')?.textContent === 'Which bias is this?', null, { timeout: 5000 });
+ok('and it is really staged on the display, not just claimed by the pad',
+  await screen.evaluate((c) => document.querySelector('.r-poll-code')?.textContent === c, code));
+ok('with a QR code up so a phone never has to type the code',
+  await screen.evaluate(() => !!document.querySelector('.r-poll-qr svg')));
+
+// Three "phones" - direct relay calls, exactly what join.html itself would send.
+await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's1', answer: 0 }) });
+await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's2', answer: 0 }) });
+await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's3', answer: 1 }) });
+await screen.waitForFunction(() => document.querySelector('.r-poll-status')?.textContent.includes('3 responses'), null, { timeout: 5000 });
+ok('the display\'s own polling loop picks up votes cast straight at the relay', true);
+await pad.waitForFunction(() => document.querySelector('#poll-running-status')?.textContent.includes('3 responses'), null, { timeout: 5000 });
+ok('and the same count reaches the controller a heartbeat later', true);
+
+await pad.click('#poll-toggle-open');
+await screen.waitForFunction(() => document.querySelector('.r-poll')?.classList.contains('is-closed'), null, { timeout: 5000 });
+ok('closing voting from the controller reaches the display', true);
+await pad.waitForFunction(() => document.querySelector('#poll-toggle-open')?.textContent === 'Reopen voting', null, { timeout: 5000 });
+const lateVote = await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's4', answer: 0 }) });
+ok('and the relay itself is actually closed, not just the label', lateVote.status === 409);
+
+ok('closing voting does not reveal anything by itself - reveal is its own step',
+  await screen.evaluate(() => !document.querySelector('.r-poll').classList.contains('is-revealed')));
+await pad.click('#poll-toggle-reveal');
+await screen.waitForFunction(() => document.querySelector('.r-poll')?.classList.contains('is-revealed'), null, { timeout: 5000 });
+const barCounts = await screen.$$eval('.r-poll-bar-label .mono', (els) => els.map((e) => e.textContent));
+ok(`revealing shows the real tally on the display (${barCounts.join(',')})`, barCounts.join(',') === '2,1,0');
+const padBarCounts = await pad.waitForFunction(() => {
+  const spans = document.querySelectorAll('#poll-running-results .poll-bar-label .mono');
+  return spans.length === 3 ? Array.from(spans, (e) => e.textContent) : null;
+}, null, { timeout: 5000 }).then((h) => h.jsonValue());
+ok(`and the controller's own compact results match (${padBarCounts.join(',')})`, padBarCounts.join(',') === '2,1,0');
+
+const [download] = await Promise.all([pad.waitForEvent('download'), pad.click('#poll-export')]);
+ok('exporting a poll downloads a CSV', download.suggestedFilename().endsWith('.csv'));
+
+await pad.click('#poll-end');
+ok('ending a poll needs a second tap, like other destructive buttons here',
+  (await pad.textContent('#poll-end')) !== 'End poll');
+await pad.click('#poll-end');
+await screen.waitForFunction(() => !document.querySelector('.r-poll'), null, { timeout: 5000 });
+ok('the second tap actually clears it off the screen', true);
+await pad.waitForSelector('#poll-build:not([hidden])', { timeout: 5000 });
+ok('and the composer comes back for the next question', true);
+const goneToo = await fetch(`${BASE}/poll/${code}/results`);
+ok('while the relay drops the code at the same time, not left dangling', goneToo.status === 404);
+
+await ctx.close();
+}
+
 if (want('back to the landing page')) {
 console.log('\n-- back to the landing page --');
 const ctx = await browser.newContext();

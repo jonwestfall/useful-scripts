@@ -270,7 +270,7 @@ dl.keys dd { margin: 0; color: var(--dim); }
    content far outside a 300px preview. */
 
 .layer, #preview-stage, #item-preview { container-type: size; }
-.r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set { position: absolute; inset: 0; }
+.r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set, .r-poll { position: absolute; inset: 0; }
 .r-black { background: #000; }
 .r-image, .r-video { width: 100%; height: 100%; display: block; background: #000; }
 .r-frame { width: 100%; height: 100%; border: 0; background: #fff; }
@@ -316,6 +316,26 @@ dl.keys dd { margin: 0; color: var(--dim); }
 .r-timer.is-urgent .r-timer-value { color: var(--cue); }
 .r-timer.is-done .r-timer-value { color: var(--live); animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
+
+.r-poll {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3cqh; background: #0a0d12; padding: 5cqh 6cqw; text-align: center;
+}
+.r-poll-question { font-size: clamp(12px, 6cqw, 92px); font-weight: 700; line-height: 1.15; }
+.r-poll-join { display: grid; place-items: center; gap: 1.4cqh; background: #fff; color: #111; border-radius: 2cqh; padding: 3cqh 4cqw; }
+.r-poll.is-revealed .r-poll-join { display: none; }
+.r-poll-qr svg { width: min(30cqh, 30cqw); height: auto; display: block; }
+.r-poll-code { font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: clamp(14px, 5cqw, 64px); letter-spacing: 0.12em; }
+.r-poll-hint { font-size: clamp(7px, 1.8cqw, 22px); color: #555; }
+.r-poll-status { font-size: clamp(8px, 2.2cqw, 30px); color: var(--dim); }
+.r-poll-results { width: min(90cqw, 900px); display: flex; flex-direction: column; gap: 1.6cqh; }
+.r-poll-bar-row { display: flex; flex-direction: column; gap: .6cqh; }
+.r-poll-bar-label { display: flex; justify-content: space-between; font-size: clamp(9px, 2.6cqw, 36px); font-weight: 600; }
+.r-poll-bar-track { height: 3.2cqh; background: #1b222c; border-radius: 999px; overflow: hidden; }
+.r-poll-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s ease; }
+.r-poll-answers { display: flex; flex-direction: column; gap: 1cqh; max-height: 70cqh; overflow: auto; }
+.r-poll-answer { font-size: clamp(9px, 2.6cqw, 34px); background: #151b23; border-radius: 1.2cqh; padding: 1.2cqh 1.8cqw; text-align: left; }
+.r-poll-answer.r-poll-empty { color: var(--dim); text-align: center; }
 
 .r-camera { background: #000; }
 .r-camera-hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: clamp(9px, 2.2cqw, 22px); text-align: center; padding: 0 4cqw; }
@@ -771,6 +791,18 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 .set-now-list { display: flex; flex-direction: column; gap: 4px; max-height: 30vh; overflow: auto; margin-bottom: 8px; }
 .set-now-transport { display: flex; gap: 8px; }
 .set-now-transport button { flex: 1; min-height: 46px; }
+
+.poll-option-row { display: flex; gap: 8px; align-items: center; }
+.poll-option-row input { flex: 1; }
+.poll-option-row button { min-width: 32px; min-height: 32px; padding: 0; font-size: 14px; color: var(--live); }
+.poll-running-question { font-weight: 650; font-size: 16px; }
+#poll-running-code { font-family: ui-monospace, Menlo, monospace; font-weight: 700; letter-spacing: 0.08em; font-size: 15px; }
+.poll-bar-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.poll-bar-label { display: flex; justify-content: space-between; font-size: 13px; }
+.poll-bar-track { height: 10px; background: var(--panel-2); border-radius: 999px; overflow: hidden; }
+.poll-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+.poll-answer-row { background: var(--panel-2); border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; font-size: 13px; }
+#poll-action-error { color: var(--live); }
 
 .toast { transition: opacity .2s ease; opacity: 0; pointer-events: none; }
 .toast.is-on { opacity: 1; }

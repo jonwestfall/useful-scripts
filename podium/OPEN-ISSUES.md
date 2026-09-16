@@ -54,18 +54,9 @@ than API reliability does.
 **What to look for:** nothing specific. If a video's volume ever ignores the
 room slider again, the display's console now says so in plain language.
 
-## Noticed, not acted on
+## Resolved since this file was written
 
-### Two volume sliders, neither of them labelled
-
-There are two, and which is which is not visible anywhere:
-
-- the slider in the controller's bottom bar is the **room volume** — content
-  audio only (a video, a YouTube clip, an audio item on a panel)
-- the slider on the **Music tab** is background music, and nothing else
-
-This is a deliberate split — music ducks under a clip rather than competing
-with it, so they genuinely are two levels — but nothing on screen says so,
-and reaching for the wrong one looks exactly like a bug in the right one.
-Cheapest fix is a label or an icon on each; the fuller fix is for the bottom
-bar to show both when music is playing.
+**Two volume sliders, neither of them labelled** — the fuller fix mentioned
+here (the bottom bar showing both channels) shipped as the **Mixer tab**:
+Master, Content, and Music now each have their own labelled fader, and the
+master multiplies into both channels rather than competing with either.
