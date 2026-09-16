@@ -13,6 +13,9 @@ Environment=PORT=8080
 #Environment=STATIC=../
 # Lock the relay to your own site:
 #Environment=ORIGIN=https://jonwestfall.github.io
+# Put the pages behind a login (join.html stays open) - see README's Security section:
+#Environment=AUTH_PASSWORD=something-long-and-random
+#Environment=AUTH_USER=podium
 ExecStart=/usr/bin/node podium-server.js
 Restart=always
 RestartSec=3

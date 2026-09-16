@@ -4761,6 +4761,53 @@ ok(`named for its question (${csvEntry})`, /which-bias-is-this/i.test(csvEntry))
 await ctx.close();
 }
 
+if (want('self-hosted authentication gate')) {
+console.log('\n-- self-hosted authentication gate --');
+// AUTH_PASSWORD is off for the shared server every other section in this
+// file talks to - turning it on there would make every other page load in
+// this suite need credentials too. A second, disposable instance instead.
+const authPort = await freePort();
+const authBase = `http://127.0.0.1:${authPort}`;
+const authServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(authPort), STATIC: '../', AUTH_USER: 'podium', AUTH_PASSWORD: 'let-me-in' },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+authServer.stderr.on('data', (d) => process.stderr.write(`[auth-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('auth relay did not start')), 10000);
+  authServer.stdout.on('data', (d) => { if (String(d).includes('podium relay')) { clearTimeout(timer); resolve(); } });
+  authServer.on('exit', (code) => reject(new Error(`auth relay exited with ${code}`)));
+});
+
+const basic = (user, pass) => ({ headers: { authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}` } });
+
+const gated = ['/', '/index.html', '/display.html', '/control.html', '/plan.html', '/assets/js/control.js', '/config.json'];
+for (const p of gated) {
+  const res = await fetch(`${authBase}${p}`);
+  ok(`${p} is gated without credentials (${res.status})`, res.status === 401);
+}
+
+// join.html is the one page a room full of strangers loads - it, what it
+// needs to run, and the relay routes it talks to must stay reachable with no
+// credentials at all, AUTH_PASSWORD notwithstanding.
+const alwaysOpen = ['/join.html', '/assets/js/join.js', '/favicon.ico', '/healthz'];
+for (const p of alwaysOpen) {
+  const res = await fetch(`${authBase}${p}`);
+  ok(`${p} stays reachable with no credentials (${res.status})`, res.status !== 401);
+}
+ok('a poll can still be created with no credentials, same as join.html needs',
+  (await fetch(`${authBase}/poll`, { method: 'POST' })).status === 200);
+
+ok('the wrong password is refused, not just any Basic header',
+  (await fetch(`${authBase}/control.html`, basic('podium', 'nope'))).status === 401);
+ok('the right username and password get the page through',
+  (await fetch(`${authBase}/control.html`, basic('podium', 'let-me-in'))).status === 200);
+
+authServer.kill();
+await new Promise((resolve) => authServer.on('exit', resolve));
+}
+
 if (want('back to the landing page')) {
 console.log('\n-- back to the landing page --');
 const ctx = await browser.newContext();
