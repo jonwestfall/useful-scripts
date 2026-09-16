@@ -55,6 +55,13 @@ applyCommand(s, {op:'media', action:'toggle'});
 chk('toggle pauses', s.program.playing === false);
 applyCommand(s, {op:'media', action:'seek', value:42});
 chk('seek records nonce', s.program.seekTo === 42 && s.program.seekNonce === 1);
+applyCommand(s, {op:'media', action:'setLoop', value:true});
+chk('loop can be turned on', s.program.loop === true);
+applyCommand(s, {op:'media', action:'setLoop', value:false});
+chk('and back off', s.program.loop === false);
+applyCommand(s, {op:'media', action:'restart'});
+chk('restart seeks to zero and resumes playing, not just seeks a paused clip',
+  s.program.seekTo === 0 && s.program.seekNonce === 2 && s.program.playing === true);
 
 applyCommand(s, {op:'stage', item:{type:'pdf', src:'x.pdf'}});
 applyCommand(s, {op:'nav', dir:'next'});
@@ -161,6 +168,8 @@ applyCommand(s, {op:'freeze', on:false});
 
 applyCommand(s, {op:'volume', value:0.5});
 chk('volume', s.volume === 0.5);
+applyCommand(s, {op:'contentVolume', value:0.3});
+chk('the Mixer\'s content channel is its own field, not the master', s.contentVolume === 0.3 && s.volume === 0.5);
 applyCommand(s, {op:'blank', on:true});
 chk('blank on', s.blank === true);
 applyCommand(s, {op:'stage', item:{type:'image', src:'b.png'}});
@@ -350,6 +359,55 @@ chk('shrinking the layout falls focus back to A rather than pointing at a panel 
   chk('advance on an empty panel is a no-op, not a throw', applyCommand(s, {op:'set', action:'advance', panel:3}) === false);
   chk('select out of range is rejected', applyCommand(s, {op:'set', action:'select', index:999}) === false);
 }
+
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'ABCD', token:'secret', kind:'choice',
+  question:'Which bias is this?', options:['Construct','Method','Norming','Access'],
+}});
+chk('a fresh poll starts open, not yet revealed, with a zeroed tally',
+  s.program.open === true && s.program.revealed === false && s.program.voters === 0
+  && s.program.counts.length === 4 && s.program.counts.every((c) => c === 0));
+chk('and shows its URL by default - showUrl defaults true unless explicitly turned off',
+  s.program.showUrl === true);
+chk('reveal is found by pollId, not by focus or where', applyCommand(s, {op:'poll', pollId:'ABCD', action:'reveal', value:true}));
+chk('and it actually set revealed', s.program.revealed === true);
+chk('a pollId nobody is running is simply rejected', applyCommand(s, {op:'poll', pollId:'ZZZZ', action:'reveal', value:true}) === false);
+chk('an unknown poll action is rejected too', applyCommand(s, {op:'poll', pollId:'ABCD', action:'nope'}) === false);
+const beforeReask = s.program.key;
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'ABCD', token:'secret', kind:'choice',
+  question:'Which bias is this?', options:['Construct','Method','Norming','Access'],
+}});
+chk('re-staging the identical question still keys ink by pollId, not by the fresh key a re-stage always gets',
+  inkSurfaceKey({type:'poll', pollId:'ABCD'}) === inkSurfaceKey({type:'poll', pollId:'ABCD', key:s.program.key})
+  && s.program.key !== beforeReask);
+
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'WXYZ', token:'secret2', kind:'text', question:'One word for how that felt?',
+  answers:['exposed', 'seen', 'fine actually'],
+}});
+chk('a fresh text poll starts with nothing hidden', s.program.hiddenAnswers.length === 0);
+chk('hiding one answer by index is accepted', applyCommand(s, {op:'poll', pollId:'WXYZ', action:'hideAnswer', index:1, value:true}));
+chk('and only that index is hidden', s.program.hiddenAnswers.length === 1 && s.program.hiddenAnswers[0] === 1);
+chk('hiding it again is a no-op, not a duplicate', applyCommand(s, {op:'poll', pollId:'WXYZ', action:'hideAnswer', index:1, value:true})
+  && s.program.hiddenAnswers.length === 1);
+chk('unhiding clears it', applyCommand(s, {op:'poll', pollId:'WXYZ', action:'hideAnswer', index:1, value:false})
+  && s.program.hiddenAnswers.length === 0);
+chk('an out-of-range index is rejected', applyCommand(s, {op:'poll', pollId:'WXYZ', action:'hideAnswer', index:99, value:true}) === false);
+chk('a negative index is rejected too', applyCommand(s, {op:'poll', pollId:'WXYZ', action:'hideAnswer', index:-1, value:true}) === false);
+chk('a choice poll has nothing to hide - hideAnswer on ABCD is rejected', applyCommand(s, {op:'poll', pollId:'ABCD', action:'hideAnswer', index:0, value:true}) === false);
+
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'WXYZ', token:'secret2', kind:'text', question:'One word for how that felt?',
+  answers:['exposed'], hiddenAnswers:[0, 5, -1],
+}});
+chk('normalizing drops a hiddenAnswers index that does not fit the answers it arrived with',
+  s.program.hiddenAnswers.length === 1 && s.program.hiddenAnswers[0] === 0);
+
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'QRST', token:'secret3', kind:'choice', question:'Show the URL?', options:['Yes','No'], showUrl:false,
+}});
+chk('an explicit showUrl:false is honoured, not overridden by the default', s.program.showUrl === false);
 
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');

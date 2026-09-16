@@ -149,5 +149,23 @@ chk('a lecture cannot define more timers than the display can hold',
     timers: [1, 2, 3, 4, 5, 6].map((n) => ({ id: `t${n}`, label: `T${n}`, mins: n })),
   })).plan.timers.length === 4);
 
+// A poll written into a plan is a question, not yet a poll - see PLAN_TYPES.poll
+// and control.js's openPollDraftFromPlan. Its options travel as one
+// newline-separated field (the field editor only knows scalar kinds), not an
+// array, and it carries no pollId or token: those only exist once the Polls
+// tab actually creates it on the relay.
+chk('a poll defaults to multiple choice', newItem('poll').kind === 'choice');
+chk('an untitled poll shows its question, first line only',
+  itemLabel({ type: 'poll', question: 'Which bias is this?\n(pick one)' }) === 'Which bias is this?');
+const polled = readPlan(JSON.stringify({
+  podium: 'plan', v: 1,
+  items: [{ type: 'poll', kind: 'choice', question: 'Which bias?', options: 'Construct\nMethod\nNorming' }],
+}));
+chk('a poll round-trips through a plan file with its options intact',
+  polled.plan.items[0].kind === 'choice' && polled.plan.items[0].question === 'Which bias?'
+  && polled.plan.items[0].options === 'Construct\nMethod\nNorming');
+chk('a poll item carries no pollId or token - a plan cannot pre-create one on a relay it has not talked to',
+  !('pollId' in polled.plan.items[0]) && !('token' in polled.plan.items[0]));
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

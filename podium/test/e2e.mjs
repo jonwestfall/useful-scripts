@@ -98,6 +98,38 @@ function writeAlphaImageFixture() {
   return file;
 }
 
+// A 1.2-second tone: short enough to actually reach its own end inside a test
+// timeout, for exercising what happens once a clip runs out rather than
+// what happens while it is playing.
+function writeShortFixture() {
+  const file = path.join(HERE, 'fixtures', 'short-tone.wav');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (fs.existsSync(file)) return file;
+  const rate = 8000;
+  const seconds = 1.2;
+  const samples = Math.round(rate * seconds);
+  const data = Buffer.alloc(samples * 2);
+  for (let i = 0; i < samples; i++) {
+    const t = i / rate;
+    data.writeInt16LE(Math.round(6000 * Math.sin(2 * Math.PI * 440 * t)), i * 2);
+  }
+  const head = Buffer.alloc(44);
+  head.write('RIFF', 0);
+  head.writeUInt32LE(36 + data.length, 4);
+  head.write('WAVEfmt ', 8);
+  head.writeUInt32LE(16, 16);
+  head.writeUInt16LE(1, 20);
+  head.writeUInt16LE(1, 22);
+  head.writeUInt32LE(rate, 24);
+  head.writeUInt32LE(rate * 2, 28);
+  head.writeUInt16LE(2, 32);
+  head.writeUInt16LE(16, 34);
+  head.write('data', 36);
+  head.writeUInt32LE(data.length, 40);
+  fs.writeFileSync(file, Buffer.concat([head, data]));
+  return file;
+}
+
 // A 30-second tone, written with nothing but the standard library.
 function writeFixture() {
   const file = path.join(HERE, 'fixtures', 'tone.wav');
@@ -139,6 +171,7 @@ const freePort = () => new Promise((resolve, reject) => {
 
 const { chromium } = await loadPlaywright();
 writeFixture();
+writeShortFixture();
 
 const PORT = await freePort();
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -428,6 +461,36 @@ ok(`the clip it replaced was torn down (was at ${programBefore}s)`, await displa
 await control.click('#mute');
 await display.waitForFunction(()=>document.querySelector('.layer[data-role="program"] audio').muted,null,{timeout:5000});
 ok('mute reaches the display', true);
+
+// A clip that runs out on its own used to be indistinguishable from one set
+// to loop: nothing in `state` ever heard that it had ended, so the next
+// broadcast for any unrelated reason called play() again. Using the short
+// fixture here so the test can actually wait for that moment to arrive.
+await control.fill('#url-input', `${BASE}/test/fixtures/short-tone.wav`);
+await control.click('#url-form button[type=submit]');
+await display.waitForFunction(()=>{const a=document.querySelector('.layer[data-role="program"] audio');return a && !a.paused && a.currentTime>0.1;},null,{timeout:5000});
+await display.waitForFunction(()=>document.querySelector('.layer[data-role="program"] audio').paused,null,{timeout:5000});
+ok('an unlooped clip stops on its own once it runs out', true);
+await display.waitForTimeout(900);
+ok('and stays stopped rather than restarting on the next thing that happens to broadcast',
+  await display.evaluate(()=>document.querySelector('.layer[data-role="program"] audio').paused));
+await control.click('.tab[data-tab="now"]');
+await control.waitForFunction(()=>document.querySelector('#play-pause').textContent==='▶',null,{timeout:5000});
+ok('the controller\'s own Play/Pause button agrees it stopped', true);
+
+// Restart: back to zero AND actually playing again, not just seeked while
+// still paused where a plain seek would have left it.
+await control.click('#restart-media');
+await display.waitForFunction(()=>{const a=document.querySelector('.layer[data-role="program"] audio');return a && !a.paused && a.currentTime<0.3;},null,{timeout:5000});
+ok('Restart takes it back to the start and actually plays it, not just seeks a paused clip', true);
+
+// Loop: opted into per item, off by default, and genuinely keeps it going
+// past where it would otherwise have stopped.
+await control.click('#media-loop');
+await display.waitForFunction(()=>document.querySelector('.layer[data-role="program"] audio').loop===true,null,{timeout:5000});
+await display.waitForTimeout(1900);
+ok('with loop on, the same clip is still playing well past when it would have ended',
+  await display.evaluate(()=>{const a=document.querySelector('.layer[data-role="program"] audio');return a && !a.paused;}));
 }
 
 if (want('marp decks')) {
@@ -713,6 +776,129 @@ await Promise.all([screen.waitForNavigation({ timeout: 20000 }), screen.click('#
 await screen.waitForSelector('#setup:not([hidden])', { timeout: 15000 });
 ok('the display clears the same way', await screen.evaluate(() => !localStorage.getItem('podium.config.v2')));
 await fresh.close();
+}
+
+if (want('Settings: Connection/Presentation tabs and the presentation preferences')) {
+console.log('\n-- Settings: Connection/Presentation tabs and the presentation preferences --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'settings-room', passphrase: 'tabbed settings' }));
+// A page-level stub for the Wake Lock API: headless Chromium's own support for
+// it is not something worth this test depending on - this just records what
+// the page asked for, which is the part actually being tested.
+await ctx.addInitScript(() => {
+  window.__wakeLog = [];
+  // navigator.wakeLock is a getter-only accessor on the real Navigator
+  // prototype - a plain assignment silently no-ops and the real API (which
+  // headless Chromium denies with "permission request denied" here) stays
+  // in place, so this has to actually shadow the property.
+  Object.defineProperty(navigator, 'wakeLock', { configurable: true, value: {
+    request: (type) => {
+      window.__wakeLog.push(`request:${type}`);
+      return Promise.resolve({ addEventListener() {}, release() { window.__wakeLog.push('release'); return Promise.resolve(); } });
+    },
+  } });
+});
+
+const screen = await ctx.newPage();
+trap(screen, 'settings display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+
+// Something is on screen before the controller under test ever connects, so
+// blank-on-connect has something to actually prove - a display that starts
+// black by default would make "it blanked" indistinguishable from "nothing
+// happened".
+const setupPad = await ctx.newPage();
+trap(setupPad, 'settings pad (setup)');
+await setupPad.goto(`${BASE}/control.html`);
+await setupPad.waitForSelector('.tile');
+await setupPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await setupPad.click('.tab[data-tab="say"]');
+await setupPad.fill('#text-body', 'Before the presenter arrives');
+await setupPad.click('#text-form button[type=submit]');
+await screen.waitForSelector('.layer[data-role="program"] .r-text', { timeout: 5000 });
+await setupPad.close();
+
+const pad = await ctx.newPage();
+trap(pad, 'settings pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => window.__wakeLog?.length > 0, null, { timeout: 5000 });
+ok('this device requests a wake lock on load - Keep this device\'s screen awake defaults on',
+  (await pad.evaluate(() => window.__wakeLog)).includes('request:screen'));
+await screen.waitForFunction(() => document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
+ok('and blacks out the screen the moment it connects - Black out on connect defaults on too', true);
+
+await pad.click('#open-settings');
+await pad.waitForSelector('#setup:not([hidden])');
+ok('Settings opens on the Connection tab', await pad.evaluate(() =>
+  document.querySelector('.settings-tabs .tab[data-settings-tab="connection"]').classList.contains('is-on')
+  && !document.querySelector('[data-settings-panel="connection"]').hidden
+  && document.querySelector('[data-settings-panel="presentation"]').hidden));
+
+await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
+ok('and switches to Presentation without disturbing the connection form underneath', await pad.evaluate(() =>
+  !document.querySelector('[data-settings-panel="presentation"]').hidden
+  && document.querySelector('[data-settings-panel="connection"]').hidden));
+ok('all three presentation options default on',
+  (await pad.isChecked('#pref-poll-url')) && (await pad.isChecked('#pref-blank-on-connect')) && (await pad.isChecked('#pref-keep-awake')));
+
+await pad.uncheck('#pref-keep-awake');
+await pad.waitForFunction(() => window.__wakeLog.includes('release'), null, { timeout: 5000 });
+ok('unchecking Keep awake actually releases the lock, not just the checkbox', true);
+await pad.check('#pref-keep-awake');
+await pad.waitForFunction(() => window.__wakeLog.filter((s) => s === 'request:screen').length >= 2, null, { timeout: 5000 });
+ok('and re-checking it requests a fresh one', true);
+
+await pad.uncheck('#pref-poll-url');
+ok('a preference is saved the moment it changes, with no Save button of its own',
+  await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).showPollUrl === false));
+
+await pad.click('#setup-close');
+await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+await pad.waitForSelector('.tile', { timeout: 15000 });
+
+await pad.click('.tab[data-tab="polls"]');
+await pad.fill('#poll-question', 'Which bias is this?');
+await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'Construct');
+await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'Method');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+await screen.waitForFunction(() => document.querySelector('.r-poll-question')?.textContent === 'Which bias is this?', null, { timeout: 5000 });
+ok('with Show voting URL off, the join card carries no URL text',
+  await screen.evaluate(() => {
+    const node = document.querySelector('.r-poll-url');
+    return !node || node.hidden || !node.textContent;
+  }));
+ok('but the QR and the four-letter code are there regardless - only the URL is optional', await screen.evaluate(() =>
+  !!document.querySelector('.r-poll-qr svg') && document.querySelector('.r-poll-code').textContent.length === 4));
+
+await pad.click('#poll-end');
+await pad.click('#poll-end');
+await screen.waitForFunction(() => !document.querySelector('.r-poll'), null, { timeout: 5000 });
+
+await pad.click('#open-settings');
+await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
+await pad.check('#pref-poll-url');
+await pad.click('#setup-close');
+await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+await pad.waitForSelector('.tile', { timeout: 15000 });
+
+await pad.click('.tab[data-tab="polls"]');
+await pad.fill('#poll-question', 'And now?');
+await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'Yes');
+await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'No');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+const code2 = (await pad.textContent('#poll-running-code')).trim();
+await screen.waitForFunction(() => document.querySelector('.r-poll-question')?.textContent === 'And now?', null, { timeout: 5000 });
+const urlShown = await screen.textContent('.r-poll-url');
+ok(`with it back on, the join card spells out the actual URL under the QR (${urlShown})`,
+  urlShown.includes(code2) && /^https?:\/\//.test(urlShown));
+
+await ctx.close();
 }
 
 if (want('freeze protects what is on screen, never the audio')) {
@@ -1259,7 +1445,10 @@ await screen.waitForSelector('.r-whiteboard', { timeout: 10000 });
 await pad.waitForTimeout(2200);
 const recovered = (await music()).vol;
 ok(`a clip with sound ducks the music to a whisper (${ducked})`, ducked > 0 && ducked < 0.2);
-ok(`and it comes back up when the clip goes away (${recovered})`, recovered > 0.5);
+// At rest this is music.volume (0.6 by default) times the master fader
+// (0.8 by default) - see the Mixer tab - so 0.5 is no longer a safe floor
+// for "clearly recovered", only "clearly not still ducked or muted" is.
+ok(`and it comes back up when the clip goes away (${recovered})`, recovered > 0.4);
 
 // Teaching must not disturb it.
 await pad.click('#freeze');
@@ -1267,7 +1456,7 @@ await pad.waitForTimeout(500);
 await pad.click('#blank');
 await pad.waitForTimeout(700);
 const during = await music();
-ok('freeze and blank leave the music alone', !during.paused && during.vol > 0.5);
+ok('freeze and blank leave the music alone', !during.paused && during.vol > 0.4);
 await pad.click('#blank');
 await pad.click('#freeze');
 
@@ -1277,7 +1466,7 @@ await pad.waitForTimeout(1200);
 ok('Mute silences the music as well as the content', (await music()).vol < 0.02);
 await pad.click('#mute');
 await pad.waitForTimeout(1600);
-ok('and unmuting brings it back', (await music()).vol > 0.5);
+ok('and unmuting brings it back', (await music()).vol > 0.4);
 
 // The queue is shared state: a second controller sees it without asking.
 await pad.click('.tab[data-tab="music"]');
@@ -1322,9 +1511,11 @@ await screen.waitForFunction(() => {
 await pad.click('#music-fade');
 await screen.waitForFunction(() => document.querySelector('audio#music').volume < 0.4, null, { timeout: 8000 });
 await pad.click('#music-play');
+// See the master-fader comment above: at rest this settles around 0.48
+// (0.6 channel x 0.8 master) by default, not the old ~0.6.
 await screen.waitForFunction(() => {
   const el = document.querySelector('audio#music');
-  return !el.paused && el.volume > 0.5;
+  return !el.paused && el.volume > 0.4;
 }, null, { timeout: 8000 })
   .then(() => ok('Play during a fade out catches the music and brings it back', true))
   .catch(() => ok('Play during a fade out catches the music and brings it back', false));
@@ -1419,6 +1610,77 @@ ok('with the background music undisturbed by it',
 
 await ctx.close();
 }
+}
+
+if (want('the audio mixer: three faders, one meaning each')) {
+console.log('\n-- the audio mixer: three faders, one meaning each --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'mixer-room', passphrase: 'two channels one master' }));
+const screen = await ctx.newPage();
+trap(screen, 'mixer display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'mixer pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const setSlider = (page, sel, value) => page.evaluate(([s, v]) => {
+  const input = document.querySelector(s);
+  input.value = String(v);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}, [sel, value]);
+
+await pad.click('.tab[data-tab="mixer"]');
+ok('the Mixer tab shows three separate faders', await pad.evaluate(() =>
+  !!document.querySelector('#mixer-master') && !!document.querySelector('#mixer-content') && !!document.querySelector('#mixer-music')));
+
+// Content channel: master and the channel's own level multiply together.
+// #url-input lives on the Library tab, not the Mixer.
+await pad.click('.tab[data-tab="library"]');
+await pad.fill('#url-input', `${BASE}/test/fixtures/tone.wav`);
+await pad.click('#url-form button[type=submit]');
+await screen.waitForFunction(() => { const a = document.querySelector('.layer[data-role="program"] audio'); return a && !a.paused; }, null, { timeout: 8000 });
+await pad.click('.tab[data-tab="mixer"]');
+await setSlider(pad, '#mixer-master', 0.5);
+await setSlider(pad, '#mixer-content', 0.4);
+await screen.waitForFunction(() => Math.abs(document.querySelector('.layer[data-role="program"] audio').volume - 0.2) < 0.01, null, { timeout: 5000 });
+ok('master (0.5) and the content channel (0.4) multiply, not replace each other (-> 0.2)', true);
+await setSlider(pad, '#mixer-content', 1);
+await screen.waitForFunction(() => Math.abs(document.querySelector('.layer[data-role="program"] audio').volume - 0.5) < 0.01, null, { timeout: 5000 });
+ok('the content channel back at full just leaves the master showing through (-> 0.5)', true);
+
+// Restore the master before touching the music channel, so ducking (which
+// reads the actual element volume, not the fader position) is not fighting
+// an unrelated master change at the same time.
+await setSlider(pad, '#mixer-master', 1);
+
+// Music channel: same relationship, read off the display's own <audio id="music">
+// rather than the panel's, and with nothing else sounding so there is no
+// ducking factor to also account for.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await screen.waitForFunction(() => !document.querySelector('.layer[data-role="program"] audio'), null, { timeout: 5000 });
+await pad.click('.tab[data-tab="music"]');
+await pad.click('#music-load');
+await screen.waitForFunction(() => { const el = document.querySelector('audio#music'); return el && !el.paused && el.currentTime > 0; }, null, { timeout: 15000 });
+await pad.waitForTimeout(1500);   // past the fade-in, onto a settled level
+await pad.click('.tab[data-tab="mixer"]');
+await setSlider(pad, '#mixer-master', 0.5);
+await setSlider(pad, '#mixer-music', 0.6);
+await screen.waitForFunction(() => Math.abs(document.querySelector('audio#music').volume - 0.3) < 0.02, null, { timeout: 5000 });
+ok('the master reaches the music channel too, at the same relationship (0.5 x 0.6 -> 0.3)', true);
+
+// Muting silences both channels together, wherever their own faders sit.
+await pad.click('#mute');
+await screen.waitForFunction(() => document.querySelector('audio#music').volume < 0.01, null, { timeout: 5000 });
+ok('mute silences the music channel regardless of its own fader', true);
+await pad.click('#mute');
+
+await ctx.close();
 }
 
 if (want('stills from the camera, one per panel')) {
@@ -1869,6 +2131,35 @@ await pad.reload();
 await pad.waitForSelector('.tile');
 await pad.click('.tab[data-tab="slides"]');
 ok('and a non-default split choice survives a reload too', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'now'));
+
+// The "Jump to a slide" grid: a caption under each thumbnail (the thumbnail
+// alone reads as a smear of colour at ~140px, and its only other label was a
+// hover tooltip - nothing on a touchscreen), and a filter to find one by
+// title without scrolling past a dozen near-identical rectangles.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await pad.waitForFunction(() => document.querySelector('#deck-grid')?.shadowRoot?.querySelectorAll('.cell').length === 13, null, { timeout: 20000 });
+await pad.click('.tab[data-tab="slides"]');
+const captions = await pad.evaluate(() => Array.from(document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cap')).map((c) => c.textContent));
+ok(`every thumbnail carries a readable caption, not just a hover tooltip (${captions.length})`,
+  captions.length === 13 && captions.every((c) => c.length > 0) && captions[4].toLowerCase().includes('calibration'));
+
+await pad.fill('#deck-grid-filter', 'calibration');
+await pad.waitForTimeout(150);
+const visible = await pad.evaluate(() => Array.from(document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')).filter((c) => !c.hidden).map((c) => c.dataset.search));
+ok(`filtering by title shows only the matching slides (${JSON.stringify(visible)})`,
+  visible.length === 2 && visible.every((s) => s.includes('calibration')));
+ok('the empty-state note stays hidden while something matches', await pad.isHidden('#deck-grid-empty'));
+
+await pad.fill('#deck-grid-filter', 'xyzzy nothing matches this');
+await pad.waitForTimeout(150);
+ok('and a filter matching nothing hides every thumbnail rather than showing them all',
+  (await pad.evaluate(() => Array.from(document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')).every((c) => c.hidden))));
+ok('with a note saying so', await pad.isVisible('#deck-grid-empty'));
+
+await pad.fill('#deck-grid-filter', '');
+await pad.waitForTimeout(150);
+ok('clearing the filter brings every slide back', (await pad.evaluate(() => Array.from(document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')).every((c) => !c.hidden))));
 
 await ctx.close();
 }
@@ -4031,6 +4322,414 @@ await screen.waitForFunction(() => {
 }, null, { timeout: 8000 })
   .then(() => ok('the logo survives a display reload with no controller left to ask for it', true))
   .catch(() => ok('the logo survives a display reload with no controller left to ask for it', false));
+await ctx.close();
+}
+
+if (want('audience polls: a room full of phones answering')) {
+console.log('\n-- audience polls: a room full of phones answering --');
+// The relay is the only part of Podium that ever sees an answer in the clear,
+// so this drives its endpoints directly, and drives join.html in real browser
+// contexts - one per student, because a "student" here is really just a
+// separate localStorage, which is what one answer each is keyed by.
+const created = await fetch(`${BASE}/poll`, { method: 'POST' }).then((r) => r.json());
+ok(`the relay hands back a code and a host token (${created.code})`,
+  /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/.test(created.code) && created.token?.length >= 20);
+
+const host = (path, init = {}) => fetch(`${BASE}/poll/${created.code}${path}`, {
+  ...init,
+  headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}`, ...(init.headers || {}) },
+});
+const results = () => host('/results').then((r) => r.json());
+
+const ask = (body) => host('', { method: 'PUT', body: JSON.stringify(body) });
+await ask({ kind: 'choice', question: 'Which bias is this?', open: true,
+  options: ['Construct', 'Method', 'Norming', 'Access'] });
+
+// Three phones. Separate contexts: same browser, different storage, which is
+// exactly the distinction "one answer each" rests on.
+const phones = [];
+for (let i = 0; i < 3; i++) {
+  const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const phone = await phoneCtx.newPage();
+  trap(phone, `student ${i + 1}`);
+  await phone.goto(`${BASE}/join.html?c=${created.code}`);
+  await phone.waitForFunction(() => document.querySelectorAll('.choice').length === 4, null, { timeout: 8000 });
+  phones.push({ ctx: phoneCtx, page: phone });
+}
+ok('a QR link drops a phone straight onto the question, no code to type',
+  (await phones[0].page.textContent('#question')) === 'Which bias is this?');
+ok('and the options arrive with it', (await phones[0].page.textContent('.choice:nth-child(3)')).includes('Norming'));
+
+await phones[0].page.click('.choice:nth-child(3)');
+await phones[1].page.click('.choice:nth-child(3)');
+await phones[2].page.click('.choice:nth-child(1)');
+await phones[0].page.waitForFunction(() => /Answer sent/.test(document.querySelector('#note')?.textContent || ''), null, { timeout: 5000 });
+let tally = await results();
+ok(`three phones, three answers, counted where they were meant to go (${JSON.stringify(tally.counts)})`,
+  tally.voters === 3 && tally.counts[2] === 2 && tally.counts[0] === 1);
+ok('and the phone that answered shows which one it picked',
+  await phones[0].page.evaluate(() => document.querySelector('.choice:nth-child(3)')?.getAttribute('aria-pressed') === 'true'));
+
+// Changing your mind before the question closes is not cheating.
+await phones[2].page.click('.choice:nth-child(3)');
+await phones[2].page.waitForTimeout(400);
+tally = await results();
+ok(`changing an answer replaces it rather than adding one (${JSON.stringify(tally.counts)})`,
+  tally.voters === 3 && tally.counts[2] === 3 && tally.counts[0] === 0);
+
+// A double tap is the same phone saying the same thing twice, not two votes.
+await phones[1].page.click('.choice:nth-child(3)');
+await phones[1].page.waitForTimeout(300);
+ok('and answering twice still counts once', (await results()).voters === 3);
+
+// A new question reaches every phone already holding the page open, with no
+// reload and nothing to re-scan - the whole reason the phones hold a stream.
+await ask({ kind: 'choice', question: 'And now?', open: true, options: ['Yes', 'No'] });
+await phones[0].page.waitForFunction(() => document.querySelector('#question')?.textContent === 'And now?', null, { timeout: 8000 });
+ok('a new question arrives on the phones already holding the page open', true);
+ok('with the old question\'s options gone', (await phones[0].page.$$('.choice')).length === 2);
+tally = await results();
+ok('and its own count, not the last question\'s', tally.voters === 0 && tally.counts.join() === '0,0');
+ok('while the phone forgets what it picked last time',
+  await phones[0].page.evaluate(() => Array.from(document.querySelectorAll('.choice')).every((b) => b.getAttribute('aria-pressed') === 'false')));
+
+// Short typed answers: the same pipeline, a different shape of answer.
+await ask({ kind: 'text', question: 'One word for how that felt?', open: true, options: [] });
+await phones[0].page.waitForFunction(() => !document.querySelector('#typed')?.hidden, null, { timeout: 8000 });
+await phones[0].page.fill('#answer', 'exposed');
+await phones[0].page.click('#send');
+await phones[1].page.waitForFunction(() => !document.querySelector('#typed')?.hidden, null, { timeout: 8000 });
+await phones[1].page.fill('#answer', 'seen');
+await phones[1].page.click('#send');
+await phones[0].page.waitForFunction(() => /Answer sent/.test(document.querySelector('#note')?.textContent || ''), null, { timeout: 5000 });
+tally = await results();
+ok(`typed answers come back as the answers themselves (${JSON.stringify(tally.answers)})`,
+  tally.answers.length === 2 && tally.answers.includes('exposed') && tally.answers.includes('seen'));
+
+// Closing it stops the room answering, on the phones and at the door alike.
+await ask({ kind: 'text', question: 'One word for how that felt?', open: false, options: [] });
+await phones[2].page.waitForFunction(() => document.querySelector('#send')?.disabled === true, null, { timeout: 8000 });
+ok('closing a question greys it out on every phone still holding it', true);
+const refused = await fetch(`${BASE}/poll/${created.code}/vote`, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ voter: 'someone-with-curl', answer: 'sneaked in' }),
+});
+ok('and a closed question refuses an answer sent straight at the relay', refused.status === 409);
+
+// The code is on a projector in front of everyone; the token is not. That
+// split is the only thing making "results the room has not seen yet" mean
+// anything at all.
+const peeking = await fetch(`${BASE}/poll/${created.code}/results`);
+ok('the code alone cannot read the answers - that needs the host token', peeking.status === 401);
+const rewriting = await fetch(`${BASE}/poll/${created.code}`, {
+  method: 'PUT', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ question: 'Free marks for everyone?', options: ['Yes'], open: true }),
+});
+ok('nor can it rewrite the question', rewriting.status === 401);
+ok('a wrong code is simply not a poll', (await fetch(`${BASE}/poll/ZZZZ/results`)).status === 404);
+
+// Typing the code by hand, for the phone whose camera would not focus.
+const typedCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+const typedPhone = await typedCtx.newPage();
+trap(typedPhone, 'student typing the code');
+await typedPhone.goto(`${BASE}/join.html`);
+await typedPhone.fill('#code', created.code.toLowerCase());
+await typedPhone.click('#enter button[type="submit"]');
+await typedPhone.waitForFunction(() => !document.querySelector('#live')?.hidden, null, { timeout: 8000 });
+ok('typing the code in lower case joins the same poll', (await typedPhone.textContent('#question')) === 'One word for how that felt?');
+await typedCtx.close();
+
+// A code nobody is running. Deliberately untrapped: the 404 that teaches the
+// page to say so is the thing being tested, and a trapped page would report
+// it as though something had gone wrong.
+const lostCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+const lostPhone = await lostCtx.newPage();
+await lostPhone.goto(`${BASE}/join.html?c=ZZZZ`);
+await lostPhone.waitForFunction(() => !document.querySelector('#enter')?.hidden, null, { timeout: 8000 });
+ok('and a code nobody is running says so instead of hanging',
+  /No question is running/.test(await lostPhone.textContent('#enter-note')));
+await lostCtx.close();
+
+await host('', { method: 'DELETE' });
+ok('ending a poll takes the code with it', (await fetch(`${BASE}/poll/${created.code}/results`)).status === 404);
+for (const phone of phones) await phone.ctx.close();
+}
+
+if (want('the Polls tab: composing and running a poll from the controller')) {
+console.log('\n-- the Polls tab: composing and running a poll from the controller --');
+// The relay side is covered above; this drives the actual UI a presenter
+// uses - compose, stage, watch votes arrive, close, reveal, export, end -
+// with "a phone" standing in as a direct call to the relay, same as the
+// section above.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-ui-room', passphrase: 'one at a time wherever staged' }));
+const screen = await ctx.newPage();
+trap(screen, 'poll-tab display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'poll-tab pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="polls"]');
+ok('with nothing running yet, the Polls tab opens straight on the composer',
+  await pad.evaluate(() => !document.querySelector('#poll-build').hidden && document.querySelector('#poll-running').hidden));
+
+await pad.fill('#poll-question', 'Which bias is this?');
+await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'Construct');
+await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'Method');
+await pad.click('#poll-option-add');
+await pad.fill('#poll-options .poll-option-row:nth-child(3) input', 'Norming');
+await pad.click('#poll-start');
+
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+ok('starting a poll stages it and the tab switches to the running view',
+  (await pad.textContent('#poll-running-question')) === 'Which bias is this?');
+const code = (await pad.textContent('#poll-running-code')).trim();
+ok(`the running card shows the same join code the relay handed back (${code})`,
+  /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/.test(code));
+
+await screen.waitForFunction(() => document.querySelector('.r-poll-question')?.textContent === 'Which bias is this?', null, { timeout: 5000 });
+ok('and it is really staged on the display, not just claimed by the pad',
+  await screen.evaluate((c) => document.querySelector('.r-poll-code')?.textContent === c, code));
+ok('with a QR code up so a phone never has to type the code',
+  await screen.evaluate(() => !!document.querySelector('.r-poll-qr svg')));
+
+// Three "phones" - direct relay calls, exactly what join.html itself would send.
+await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's1', answer: 0 }) });
+await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's2', answer: 0 }) });
+await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's3', answer: 1 }) });
+await screen.waitForFunction(() => document.querySelector('.r-poll-status')?.textContent.includes('3 responses'), null, { timeout: 5000 });
+ok('the display\'s own polling loop picks up votes cast straight at the relay', true);
+await pad.waitForFunction(() => document.querySelector('#poll-running-status')?.textContent.includes('3 responses'), null, { timeout: 5000 });
+ok('and the same count reaches the controller a heartbeat later', true);
+
+await pad.click('#poll-toggle-open');
+await screen.waitForFunction(() => document.querySelector('.r-poll')?.classList.contains('is-closed'), null, { timeout: 5000 });
+ok('closing voting from the controller reaches the display', true);
+await pad.waitForFunction(() => document.querySelector('#poll-toggle-open')?.textContent === 'Reopen voting', null, { timeout: 5000 });
+const lateVote = await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's4', answer: 0 }) });
+ok('and the relay itself is actually closed, not just the label', lateVote.status === 409);
+
+ok('closing voting does not reveal anything by itself - reveal is its own step',
+  await screen.evaluate(() => !document.querySelector('.r-poll').classList.contains('is-revealed')));
+await pad.click('#poll-toggle-reveal');
+await screen.waitForFunction(() => document.querySelector('.r-poll')?.classList.contains('is-revealed'), null, { timeout: 5000 });
+const barCounts = await screen.$$eval('.r-poll-bar-label .mono', (els) => els.map((e) => e.textContent));
+ok(`revealing shows the real tally on the display (${barCounts.join(',')})`, barCounts.join(',') === '2,1,0');
+const padBarCounts = await pad.waitForFunction(() => {
+  const spans = document.querySelectorAll('#poll-running-results .poll-bar-label .mono');
+  return spans.length === 3 ? Array.from(spans, (e) => e.textContent) : null;
+}, null, { timeout: 5000 }).then((h) => h.jsonValue());
+ok(`and the controller's own compact results match (${padBarCounts.join(',')})`, padBarCounts.join(',') === '2,1,0');
+
+const [download] = await Promise.all([pad.waitForEvent('download'), pad.click('#poll-export')]);
+ok('exporting a poll downloads a CSV', download.suggestedFilename().endsWith('.csv'));
+
+await pad.click('#poll-end');
+ok('ending a poll needs a second tap, like other destructive buttons here',
+  (await pad.textContent('#poll-end')) !== 'End poll');
+await pad.click('#poll-end');
+await screen.waitForFunction(() => !document.querySelector('.r-poll'), null, { timeout: 5000 });
+ok('the second tap actually clears it off the screen', true);
+await pad.waitForSelector('#poll-build:not([hidden])', { timeout: 5000 });
+ok('and the composer comes back for the next question', true);
+const goneToo = await fetch(`${BASE}/poll/${code}/results`);
+ok('while the relay drops the code at the same time, not left dangling', goneToo.status === 404);
+
+await ctx.close();
+}
+
+if (want('Polls tab: live results before reveal, hiding an answer, and history')) {
+console.log('\n-- Polls tab: live results before reveal, hiding an answer, and history --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-history-room', passphrase: 'visible to you only' }));
+const screen = await ctx.newPage();
+trap(screen, 'poll-history display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'poll-history pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="polls"]');
+await pad.selectOption('#poll-kind', 'text');
+await pad.fill('#poll-question', 'One word for how that felt?');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+const code = (await pad.textContent('#poll-running-code')).trim();
+
+await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's1', answer: 'exposed' }) });
+await fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's2', answer: 'seen' }) });
+await pad.waitForFunction(() => document.querySelectorAll('#poll-running-results .poll-answer-row').length === 2, null, { timeout: 5000 });
+ok('the presenter sees answers arrive before ever revealing anything', true);
+ok('and the projector shows nothing yet - watching them arrive privately does not leak to the room',
+  await screen.evaluate(() => document.querySelector('.r-poll-results').children.length === 0)
+  && await screen.evaluate(() => !document.querySelector('.r-poll').classList.contains('is-revealed')));
+
+// Hide whichever row is "exposed" - answer order matches vote order, but
+// asserting by content rather than position keeps this from being fragile.
+await pad.evaluate(() => {
+  const row = Array.from(document.querySelectorAll('#poll-running-results .poll-answer-row')).find((r) => r.textContent.includes('exposed'));
+  row.querySelector('.poll-answer-hide').click();
+});
+// hideAnswer is a protocol command, not a local UI toggle - it has to make a
+// round trip to the display and back before the pad's own view reflects it.
+await pad.waitForFunction(() => document.querySelector('#poll-running-results .poll-answer-row.is-hidden'), null, { timeout: 5000 });
+ok('hiding one answer marks it on the presenter\'s own list without removing it',
+  await pad.evaluate(() => document.querySelector('#poll-running-results .poll-answer-row.is-hidden')?.textContent.includes('exposed')));
+
+await pad.click('#poll-toggle-reveal');
+await screen.waitForFunction(() => document.querySelector('.r-poll')?.classList.contains('is-revealed'), null, { timeout: 5000 });
+const shown = await screen.$$eval('.r-poll-answer', (els) => els.map((e) => e.textContent));
+ok(`the hidden answer never reaches the room (shown: ${shown.join(',')})`, shown.length === 1 && shown[0] === 'seen');
+
+await pad.click('#poll-end');
+await pad.click('#poll-end');
+await pad.waitForSelector('#poll-history .poll-history-row', { timeout: 5000 });
+ok('ending it drops it into this session\'s history, question and all',
+  /One word for how that felt/.test(await pad.textContent('.poll-history-question')));
+
+await pad.click('.poll-history-row button:has-text("Redisplay")');
+await screen.waitForFunction(() => document.querySelector('.r-poll')?.classList.contains('is-revealed'), null, { timeout: 5000 });
+ok('redisplay puts the final results straight back up, already revealed', true);
+ok('with no QR to scan - the code does not exist on the relay any more',
+  await screen.evaluate(() => !document.querySelector('.r-poll-qr svg')));
+const stillHidden = await screen.$$eval('.r-poll-answer', (els) => els.map((e) => e.textContent));
+ok('and the redisplay still honours which answer was hidden', stillHidden.length === 1 && stillHidden[0] === 'seen');
+
+const historyBefore = await pad.$$eval('.poll-history-row', (n) => n.length);
+await pad.click('#poll-end');
+await pad.click('#poll-end');
+await pad.waitForFunction(() => !document.querySelector('.r-poll'), { timeout: 5000 }).catch(() => {});
+await screen.waitForFunction(() => !document.querySelector('.r-poll'), null, { timeout: 5000 });
+const historyAfter = await pad.$$eval('.poll-history-row', (n) => n.length);
+ok('dismissing a redisplay does not touch the relay or duplicate the history entry', historyAfter === historyBefore);
+
+await pad.click('.poll-history-row button:has-text("Reopen")');
+ok('reopen loads the same question back into the composer, ready to run again fresh',
+  (await pad.inputValue('#poll-question')) === 'One word for how that felt?');
+ok('as a new draft, not the old (deleted) poll', await pad.evaluate(() => document.querySelector('#poll-running').hidden));
+
+await ctx.close();
+}
+
+if (want('planning a poll: compose it now, run it later')) {
+console.log('\n-- planning a poll: compose it now, run it later --');
+const planFile = path.join(HERE, 'fixtures', 'e2e-poll-plan.podium.json');
+
+const office = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+const desk = await office.newPage();
+trap(desk, 'poll plan');
+await desk.goto(`${BASE}/plan.html`);
+await desk.waitForSelector('#type-picker .type-btn');
+await desk.fill('#plan-title', 'Poll day');
+await desk.click('#type-picker .type-btn:has-text("Poll")');
+await desk.fill('#item-fields textarea >> nth=0', 'Which bias is this?');
+await desk.fill('#item-fields textarea >> nth=1', 'Construct\nMethod\nNorming');
+const previewQuestion = await desk.textContent('.r-poll-question');
+ok(`the planning page previews a poll with the projector's own renderer ("${previewQuestion.trim()}")`, previewQuestion.trim() === 'Which bias is this?');
+await desk.waitForFunction(() => /^Saved/.test(document.querySelector('#save-state').textContent), null, { timeout: 10000 });
+const planJson = await desk.evaluate(async () => {
+  const file = await import('./assets/js/planfile.js');
+  const store = await import('./assets/js/store.js');
+  const rows = await store.allPlans();
+  return file.planToJson(rows.find((r) => r.title === 'Poll day') || rows[0]);
+});
+fs.writeFileSync(planFile, planJson);
+await office.close();
+
+const room = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await room.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-plan-room', passphrase: 'set up in advance' }));
+const screen = await room.newPage();
+trap(screen, 'poll plan display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await room.newPage();
+trap(pad, 'poll plan pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.setInputFiles('#plan-file', planFile);
+await pad.waitForFunction(() => document.querySelector('#library h3.group')?.textContent === 'Poll day', null, { timeout: 20000 });
+
+await pad.click('#library .tile:has(.tile-title:text-is("Which bias is this?"))');
+await pad.waitForFunction(() => document.querySelector('.tab[data-tab="polls"]')?.classList.contains('is-on'), null, { timeout: 5000 });
+ok('picking a planned poll switches straight to the Polls tab', true);
+ok('with the composer open, not a half-formed item on the projector',
+  await pad.evaluate(() => !document.querySelector('#poll-build').hidden && document.querySelector('#poll-running').hidden));
+ok('and the question carried over from the plan', (await pad.inputValue('#poll-question')) === 'Which bias is this?');
+ok('with its options split back out of the one text field the plan stored them in',
+  (await pad.$$eval('#poll-options input', (n) => n.map((i) => i.value))).join(',') === 'Construct,Method,Norming');
+ok('nothing is actually staged on the projector yet - a plan is a question, not a poll',
+  await screen.evaluate(() => !document.querySelector('.r-poll')));
+
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+await screen.waitForFunction(() => document.querySelector('.r-poll-question')?.textContent === 'Which bias is this?', null, { timeout: 5000 });
+ok('and starting it from there really does create a live poll on the relay', true);
+
+await room.close();
+}
+
+if (want('exporting a session includes its polls')) {
+console.log('\n-- exporting a session includes its polls --');
+// The full "photos, ink, boards" export is covered elsewhere; this only has
+// to prove a poll - running or already ended - rides along in the same zip.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-export-room', passphrase: 'polls ride along' }));
+const screen = await ctx.newPage();
+trap(screen, 'poll-export display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'poll-export pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="polls"]');
+await pad.fill('#poll-question', 'Which bias is this?');
+await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'Construct');
+await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'Method');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+
+const download = pad.waitForEvent('download', { timeout: 20000 });
+await pad.click('.tab[data-tab="photos"]');
+await pad.click('#photo-export');
+const file = await download;
+const zipPath = path.join(HERE, 'fixtures', 'poll-export.zip');
+await file.saveAs(zipPath);
+const names = [];
+{
+  const buf = fs.readFileSync(zipPath);
+  let at = 0;
+  while (at + 30 <= buf.length && buf.readUInt32LE(at) === 0x04034b50) {
+    const nameLen = buf.readUInt16LE(at + 26);
+    const extraLen = buf.readUInt16LE(at + 28);
+    const size = buf.readUInt32LE(at + 18);
+    names.push(buf.toString('utf8', at + 30, at + 30 + nameLen));
+    at += 30 + nameLen + extraLen + size;
+  }
+}
+ok(`a poll with nothing else running still produces an exportable zip (${names.join(', ')})`,
+  names.some((n) => n.startsWith('polls/') && n.endsWith('.csv')) && names.includes('session.txt'));
+
+const csvEntry = names.find((n) => n.startsWith('polls/'));
+ok(`named for its question (${csvEntry})`, /which-bias-is-this/i.test(csvEntry));
+
 await ctx.close();
 }
 

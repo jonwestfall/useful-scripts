@@ -18,9 +18,10 @@ disk. There is no build step and no framework.
 **New to this, or not especially technical?** [QUICKSTART.md](QUICKSTART.md) explains
 the whole thing in plain English and walks through putting it online free on GitHub
 Pages in about twenty minutes — no terminal, no server, no card. This file is the
-full reference; that one is the road in. [ROADMAP.md](ROADMAP.md) is where a
-longer-term idea (audience participation — polls, word clouds) is being thought
-through before it becomes code.
+full reference; that one is the road in. [ROADMAP.md](ROADMAP.md) is the plan for
+audience participation — students answering a question from their phones — and
+[OPEN-ISSUES.md](OPEN-ISSUES.md) is the short list of things believed fixed but
+not yet proved in a real room.
 
 <details>
 <summary><b>What is in this file</b> (it is long; this is the map)</summary>
@@ -108,7 +109,8 @@ HTML slide decks including reveal.js · PDFs with page-turn buttons · big text 
 a QR code for the class to scan · countdown timers · a whiteboard · your phone's
 camera as a document camera, including stills taken from it that you can hold in
 four panels at once. Plus background music the room hears and the projector never
-shows, and automated sets — a rotation of any of the above that advances itself.
+shows, automated sets — a rotation of any of the above that advances itself — and
+audience polls, answered on the room's own phones with no app to install.
 
 A few more that sit on top of anything: **ink**, so you can annotate live over a
 slide with an Apple Pencil, a **caption** along the bottom of the screen, and a
@@ -333,6 +335,21 @@ controls stops working, TAKE included — there is just nowhere to see it happen
 until you show it again. The choice is remembered per device, the same as the
 laser colour.
 
+### Jumping straight to a slide
+
+Below the presenter notes, **Jump to a slide** lays out every slide as a
+thumbnail — the actual rendered slide, not a placeholder, the same one Now and
+Next show. Each one carries its own caption underneath: at the size a
+thumbnail has to be to fit a dozen of them on an iPad, the rendered text reads
+as a smear of colour more than words, so the caption — not the thumbnail — is
+what you actually read to find the one you want. (It used to live only as a
+hover tooltip, which is nothing at all on a touchscreen.)
+
+The filter above the grid narrows by that same title text — type `calibration`
+and the deck's title slide and its numbered `## Calibration…` headings are all
+that is left on screen, out of however many others there are. Tap any
+thumbnail to jump straight to it.
+
 ### Themes
 
 Put your CSS in `marp-themes/` and list the filename in `marp-themes/themes.json`.
@@ -373,6 +390,26 @@ wondering why the colours are wrong.
   keep working when the network does not. See `vendor-build/` to rebuild it.
 - KaTeX's glyph fonts are the one thing still fetched from a CDN. Math renders
   without them, just in a fallback face.
+
+## Video and audio: pause, restart, loop
+
+Anything with a timeline — a video or audio file, YouTube — gets a transport on
+the **Now** tab the moment it is on screen: **⏮ Restart**, **−10s**, play/pause,
+**+10s**, and a scrub bar with the current position and total length. Play/pause
+also lives on the bar at the bottom of every tab, since it is the thing you reach
+for mid-sentence and should not cost a tab switch to find.
+
+**Restart** is not the same as dragging the scrub bar back to zero: a clip that
+has already run to its end is sitting there paused, and seeking a paused clip
+just moves where it is paused. Restart says *and play it* as one step.
+
+**Loop when it ends**, next to the scrub bar, is off by default — a clip plays
+once and stops, the same as picking a video expects it to. Ending is not the
+same as pausing, either: a clip that runs out on its own now genuinely stays
+stopped rather than starting over the next time anything else happens to
+change on screen, which is what it used to look like before the display
+started marking a clip played-out for itself, the same way a manual pause
+already did.
 
 ## Annotating with ink
 
@@ -687,6 +724,60 @@ drive it. Each deck-slide entry holds its own fixed slide rather than stepping
 through the rest of that deck on its own timer — a whole deck in a set means "these
 N slides, each for its own turn," not one entry quietly advancing pages by itself.
 
+## Audience polls
+
+The **Polls** tab asks the room a question they answer on their own phones — no app,
+no login, and no account of theirs to create. It only works with the self-hosted
+relay (`server/podium-server.js` — see ROADMAP.md for why): that server also runs
+the poll itself, alongside relaying the room's connections, so there is nothing
+extra to stand up. Supabase and MQTT setups don't have a server behind them for this
+and the tab says so instead of pretending.
+
+**Asking one.** Pick **Multiple choice** (2–8 options) or **Short answer**, write the
+question, and **Start poll**. That stages it like anything else — on A, or on any of
+B/C/D — and puts a QR code and a four-letter code up for the room: scanning it (or
+typing the code at the join page) drops a phone straight onto the question, nothing
+to type but an answer. Only one poll runs at a time; starting a new one before
+ending the last one is not something the tab offers.
+
+**While it runs.** Responses land within a second or two of being cast — and you see
+them arrive immediately, right there on the Polls tab. The room does not: **Reveal to
+room** is its own separate button, so watching the numbers come in while you decide
+how to frame them never means the projector shows anything early, and closing voting
+does not reveal by itself either. For a short-answer poll, each response gets its own
+**Hide** button — pull one out before anyone else sees it, without having to hide the
+whole poll to buy the time to read it; **Unhide** puts it back. **Close voting** stops
+the room answering without revealing anything; **Reopen voting** the same way. **Export
+CSV** saves the question and its tally (or its answers, each marked whether the room
+ever saw it) to a file — the same rows also ride along automatically in **Export this
+session**'s zip (Photos tab), one CSV per poll, whatever is currently running plus
+everything already ended. **End poll** — like other things here that throw work
+away, it takes a second tap — clears it from the screen and invalidates the code, so
+a phone still holding the join page can't answer late.
+
+**This session's history.** Every poll you end stays listed at the bottom of the
+Polls tab for the rest of this browser tab's session — not saved to disk, not shared
+with other controllers, gone the moment the tab closes. **Reopen** loads the same
+question back into the composer, ready to ask again from zero: a new code, votes
+starting over. **Redisplay** puts the exact final numbers back on the projector,
+already revealed, with no new votes possible — for when a discussion circles back to
+a question you already asked. Neither is offered while a poll is currently running.
+
+**Planning ahead.** The planning page (see "Planning a lecture" below) can compose a
+poll's wording in advance — kind, question, options — and save it into the plan file
+like anything else. It is a question, not yet a poll: picking it from the Library in
+class opens the Polls tab with the composer already filled in, rather than putting
+anything on the projector, since starting it for real — creating the actual code on
+the relay — only makes sense once you are in the room.
+
+**What the relay does and doesn't know.** The four-letter code is public and meant to
+be; a private token, handed to whichever controller started the poll and never shown
+on screen, is what the relay checks before it will read results, change the
+question, or delete it. Answers themselves sit in the relay's memory in the clear —
+there's no student login worth encrypting them against and nothing is written to
+disk — while the poll exists, and for up to 12 hours after the last activity on it
+even if nobody deletes it.
+
 ## Music before class
 
 The **Music** tab plays through the classroom PC's speakers with **nothing on the
@@ -735,8 +826,9 @@ position without being told.
   a third of a second, so it still feels like pressing a button.
 - A video or audio clip going on screen **ducks the music to a whisper** by itself, and
   it fades back when the clip finishes. Nothing to remember mid-lecture.
-- **Mute** means the room hears nothing, so it silences the music too. The room volume
-  slider is for content; the music has its own level.
+- **Mute** means the room hears nothing, so it silences the music too, regardless of
+  where either fader sits. See [Audio Mixer](#audio-mixer-two-channels-and-a-master)
+  for how the music's own level and the room's master volume relate to each other.
 
 The queue survives a reload of the display — it comes back paused rather than starting
 by itself in a room that had gone quiet.
@@ -761,6 +853,25 @@ is against them, and Premium's ad-free playback only applies if the classroom PC
 signed into your account — a class hearing an advert mid-lecture is exactly the failure
 this app exists to avoid. Files you host yourself have none of those problems and keep
 working when the network does not.
+
+### Audio Mixer: two channels and a master
+
+Two different things used to share the room volume slider without either one saying
+so — whatever is playing on a panel, and the background music this tab plays — and
+turning one down looked exactly like the other one being broken. The **Mixer** tab
+gives each its own fader:
+
+- **Loaded audio / video** — whatever is currently playing on a panel: a video file, an
+  audio item, YouTube.
+- **Background music** — this tab's own queue. The same slider as **Music level** above;
+  either one moves the other.
+- **Master**, the same slider as the bottom bar's — one fader for "the room is too
+  loud right now," reachable from every tab without a trip to the Mixer.
+
+A channel's own level and the master multiply rather than compete: a channel at half
+and the master at full sounds the same as a channel at full and the master at half.
+**Mute** (the speaker icon next to the master) silences both channels at once,
+wherever their own faders happen to sit.
 
 ## The document camera, and photos taken with it
 
@@ -889,7 +1000,11 @@ The workflow it is for:
    notes on the tiles and your timers on the Timer tab.
 
 Nothing else about the controller changes. It is still the same tabs, the same
-freeze-and-take, the same everything — the plan only decides what is *in* it.
+freeze-and-take, the same everything — the plan only decides what is *in* it. One
+type behaves differently: a **poll** in a plan is only ever the wording — kind,
+question, options — since nothing has talked to a relay yet to give it a real code.
+Picking its tile opens the Polls tab with the composer already filled in rather than
+putting anything on the projector; see "Audience polls" above.
 
 ### Why a file, and not a login
 
@@ -1075,6 +1190,32 @@ through: a still goes to the projector over the relay like any other image. See
 **You cannot mirror the iPad's screen.** iOS Safari has no screen-capture API, so no
 web app can do this. The camera feed and the content library are the way around it —
 and with a cue you rarely want mirroring anyway.
+
+## The controller's Settings: Connection and Presentation
+
+**Settings**, in the controller's topbar, is two tabs now rather than just the
+connection form. **Connection** is everything it always was — transport, room,
+passphrase, the relay log, and **Clear settings & reload** (see below).
+**Presentation** is new: defaults for how *this device* presents, saved on
+this device only, nothing shared with other controllers or written into the
+room.
+
+- **Show the voting URL below the QR code** (default **on**) — a poll's join
+  card always shows a QR and a four-letter code; this spells out the full
+  address too, for a room where typing beats scanning. Decided once, when
+  you tap **Start poll** — flipping it here does not alter a poll already
+  running, only the next one you start.
+- **Black out the screen when this controller connects** (default **on**) —
+  the moment this controller first finds a display, it sends Blank, so
+  nothing from a previous session is still up on the projector while you get
+  ready. This fires once per time you open or reload the controller, never
+  again from a later reconnect — a brief Wi-Fi drop mid-lecture will not
+  blank the room out from under you.
+- **Keep this device's screen awake** (default **on**) — stops this iPad or
+  phone from dimming or locking itself while the controller tab is open, the
+  same Wake Lock the display already holds once armed. Released the moment
+  you leave the tab or the browser backgrounds it, and re-requested when you
+  come back, so it never outlives the app actually being on screen.
 
 ## Starting a device over
 
@@ -1275,6 +1416,11 @@ contract — the first sections share one display and controller, and a later se
 can lean on what an earlier one left on screen, so a section that passes alone can
 still fail in the full run. Run all of it before pushing.
 
+**CI runs all of it too** (`.github/workflows/podium-tests.yml`), on every push to
+`main` and every pull request that touches `podium/**` — a fast job for the two unit
+suites, a slower one for the full Playwright run. Scoped to this folder so it never
+fires on the unrelated scripts living elsewhere in this repo.
+
 The end-to-end test starts the relay, drives a display and two controllers in real
 browsers, and checks the things that would embarrass you in front of a class:
 a board with three hundred strokes on it keeps the projector on the relay rather than
@@ -1328,14 +1474,44 @@ boxes more room and remembers the choice across a reload, and that the Now/Next
 split cycles through 50/50, 75/25 and 25/75 and keeps a non-default choice too. And
 it proves that drawing on a panel nobody has staged anything into yet — still
 showing the plain default black every panel starts as — survives being promoted to
-full screen, rather than the promoted panel and its ink both silently vanishing.
-410 checks.
+full screen, rather than the promoted panel and its ink both silently vanishing. It
+proves the "Jump to a slide" grid carries a readable caption under every thumbnail
+and that filtering it by title actually narrows the grid rather than just disabling
+it; that a clip which runs out on its own stops and stays stopped instead of quietly
+restarting, that Restart genuinely resumes a paused clip rather than just seeking it,
+and that Loop actually keeps a clip going past where it would otherwise have ended;
+and that the Mixer's three faders multiply against each other correctly (master ×
+channel) for both the content channel and the music channel, and that mute silences
+both regardless of where either fader sits. It drives audience polls end to end too:
+the relay's own endpoints directly (three phones answering, changing an answer,
+a closed question refusing a vote, the host token gating results), and separately
+the Polls tab itself — composing a poll, staging it, watching a vote cast straight
+at the relay reach both the projector and the controller, closing voting, and that
+reveal is genuinely its own step rather than something closing does for you. It
+proves results are visible to the presenter before any reveal and that hiding one
+typed answer keeps it off the projector without pulling it from the presenter's own
+list; that ending a poll drops it into this session's history, that Redisplay puts
+the final numbers back up with no join code left to scan, and that Reopen loads the
+same question into a genuinely fresh draft; that a plan can compose a poll's wording
+in the office and picking its tile in class opens the Polls tab pre-filled rather
+than staging a half-formed item; and that a poll — running or already ended — rides
+along inside the session export zip. It drives the new Settings tabs too:
+that Presentation opens as its own tab without disturbing the connection
+form, that its three options default on, that unchecking Keep this device's
+screen awake actually releases the lock rather than just the checkbox
+(caught a real bug this way — the lock's own local reference was not cleared
+on a self-requested release, so re-checking the box silently skipped asking
+for a fresh one), that Black out on connect fires once and only once against
+a screen that had something on it, and that Show the voting URL is baked
+into each poll when it starts, not read live off the current setting.
+494 checks.
 
 ## Layout
 
 ```
 podium/
   display.html  control.html  plan.html  index.html
+  join.html                       audience polls, opened by students (see ROADMAP.md)
   sw.js                           offline shell (network-first; see the file)
   manifest-control.webmanifest    Add to Home Screen, as the controller
   manifest-display.webmanifest    ...and as the display

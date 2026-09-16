@@ -270,7 +270,7 @@ dl.keys dd { margin: 0; color: var(--dim); }
    content far outside a 300px preview. */
 
 .layer, #preview-stage, #item-preview { container-type: size; }
-.r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set { position: absolute; inset: 0; }
+.r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set, .r-poll { position: absolute; inset: 0; }
 .r-black { background: #000; }
 .r-image, .r-video { width: 100%; height: 100%; display: block; background: #000; }
 .r-frame { width: 100%; height: 100%; border: 0; background: #fff; }
@@ -316,6 +316,30 @@ dl.keys dd { margin: 0; color: var(--dim); }
 .r-timer.is-urgent .r-timer-value { color: var(--cue); }
 .r-timer.is-done .r-timer-value { color: var(--live); animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
+
+.r-poll {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3cqh; background: #0a0d12; padding: 5cqh 6cqw; text-align: center;
+}
+.r-poll-question { font-size: clamp(12px, 6cqw, 92px); font-weight: 700; line-height: 1.15; }
+.r-poll-join { display: grid; place-items: center; gap: 1.4cqh; background: #fff; color: #111; border-radius: 2cqh; padding: 3cqh 4cqw; }
+.r-poll.is-revealed .r-poll-join { display: none; }
+.r-poll-qr svg { width: min(30cqh, 30cqw); height: auto; display: block; }
+.r-poll-code { font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: clamp(14px, 5cqw, 64px); letter-spacing: 0.12em; }
+.r-poll-url {
+  font-family: ui-monospace, Menlo, monospace; font-size: clamp(6px, 1.6cqw, 20px);
+  color: #333; word-break: break-all; max-width: 80cqw; text-align: center;
+}
+.r-poll-hint { font-size: clamp(7px, 1.8cqw, 22px); color: #555; }
+.r-poll-status { font-size: clamp(8px, 2.2cqw, 30px); color: var(--dim); }
+.r-poll-results { width: min(90cqw, 900px); display: flex; flex-direction: column; gap: 1.6cqh; }
+.r-poll-bar-row { display: flex; flex-direction: column; gap: .6cqh; }
+.r-poll-bar-label { display: flex; justify-content: space-between; font-size: clamp(9px, 2.6cqw, 36px); font-weight: 600; }
+.r-poll-bar-track { height: 3.2cqh; background: #1b222c; border-radius: 999px; overflow: hidden; }
+.r-poll-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s ease; }
+.r-poll-answers { display: flex; flex-direction: column; gap: 1cqh; max-height: 70cqh; overflow: auto; }
+.r-poll-answer { font-size: clamp(9px, 2.6cqw, 34px); background: #151b23; border-radius: 1.2cqh; padding: 1.2cqh 1.8cqw; text-align: left; }
+.r-poll-answer.r-poll-empty { color: var(--dim); text-align: center; }
 
 .r-camera { background: #000; }
 .r-camera-hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: clamp(9px, 2.2cqw, 22px); text-align: center; padding: 0 4cqw; }
@@ -453,6 +477,14 @@ body.control.is-frozen { background: #171006; }
 .main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .tabs { display: flex; gap: 6px; padding: 10px 12px 0; overflow-x: auto; }
 .tab { min-height: 40px; padding: 0 14px; border-radius: 999px; white-space: nowrap; font-size: 14px; }
+
+/* The Settings sheet's own Connection/Presentation split - .tabs sits inside
+   .card's own padding here rather than a full-width workspace, so it does not
+   want .tabs' left/right padding on top of that. */
+.settings-tabs { padding: 0 0 18px; }
+.settings-panel .check { margin: 16px 0 6px; }
+.settings-panel .check:first-of-type { margin-top: 4px; }
+.settings-panel .check input { transform: scale(1.15); }
 .tab.is-on { background: var(--panel-2); border-color: var(--accent); color: var(--ink); }
 .panels { flex: 1; min-height: 0; overflow: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
 .panel { display: flex; flex-direction: column; gap: 14px; }
@@ -492,6 +524,11 @@ body.control.is-frozen { background: #171006; }
 .recent-chip .where { font-size: 11px; color: var(--dim); }
 
 .stack { display: flex; flex-direction: column; gap: 10px; }
+.mixer-channel {
+  padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: var(--radius); margin-bottom: 10px;
+}
+.mixer-channel .mono { color: var(--dim); font-size: 13px; min-width: 3.4em; text-align: right; }
 .inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .inline > .grow { flex: 1; min-width: 140px; }
 .spacer { flex: 1; min-width: 0; }
@@ -766,6 +803,31 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 .set-now-list { display: flex; flex-direction: column; gap: 4px; max-height: 30vh; overflow: auto; margin-bottom: 8px; }
 .set-now-transport { display: flex; gap: 8px; }
 .set-now-transport button { flex: 1; min-height: 46px; }
+
+.poll-option-row { display: flex; gap: 8px; align-items: center; }
+.poll-option-row input { flex: 1; }
+.poll-option-row button { min-width: 32px; min-height: 32px; padding: 0; font-size: 14px; color: var(--live); }
+.poll-running-question { font-weight: 650; font-size: 16px; }
+#poll-running-code { font-family: ui-monospace, Menlo, monospace; font-weight: 700; letter-spacing: 0.08em; font-size: 15px; }
+.poll-bar-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.poll-bar-label { display: flex; justify-content: space-between; font-size: 13px; }
+.poll-bar-track { height: 10px; background: var(--panel-2); border-radius: 999px; overflow: hidden; }
+.poll-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+.poll-answer-row {
+  display: flex; align-items: center; gap: 8px; background: var(--panel-2);
+  border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; font-size: 13px;
+}
+.poll-answer-row .grow { flex: 1; }
+.poll-answer-row.is-hidden { opacity: .5; text-decoration: line-through; }
+.poll-answer-hide { min-width: 60px; min-height: 30px; padding: 0 8px; font-size: 12px; }
+#poll-action-error { color: var(--live); }
+
+.poll-history-row {
+  background: var(--panel-2); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;
+}
+.poll-history-question { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+.poll-history-row .inline { margin-top: 6px; }
+.poll-history-del { color: var(--live); min-width: 32px; }
 
 .toast { transition: opacity .2s ease; opacity: 0; pointer-events: none; }
 .toast.is-on { opacity: 1; }

@@ -34,6 +34,7 @@ export const TYPES = {
   whiteboard: { label: 'Whiteboard', icon: '✎' },
   camera:     { label: 'Camera',     icon: '\u{1F4F7}' },
   set:        { label: 'Automated set', icon: '\u{1F501}' },
+  poll:       { label: 'Poll',       icon: '\u{1F4CA}' },
 };
 
 export function itemTitle(item) {
@@ -164,6 +165,17 @@ function mediaRenderer(item, opts, media, node) {
   const cue = () => { if (cueTo) { media.currentTime = cueTo; cueTo = 0; } };
   media.addEventListener('loadedmetadata', cue);
   if (media.readyState >= 1) cue();
+
+  // Without loop, the browser pauses on its own at the end - but nothing in
+  // `state` ever hears about it, so `item.playing` stays whatever it was
+  // (true, unless someone had pressed pause), and the very next reconcile()
+  // that comes along for any unrelated reason calls play() again since
+  // nothing told it otherwise: a clip that finished naturally starts back
+  // over, indistinguishable from loop actually being on. onEnded is display.js's
+  // hook to mark it played-out in state itself, once, the same way a manual
+  // pause already does - not fired for a preview instance, which reconcile()
+  // never actually lets run long enough to reach its own end.
+  if (!opts.preview) media.addEventListener('ended', () => opts.onEnded?.());
 
   // Nothing here starts itself. reconcile() is the only thing that presses
   // play, so an item cued into the hidden layer stays parked on its first
@@ -505,6 +517,101 @@ function renderQr(item) {
       }
       return true;
     },
+    destroy() { node.remove(); },
+  };
+}
+
+// The join card (QR + code) is what's on screen while a poll is collecting
+// answers; opts.getPollJoinUrl(pollId) supplies the URL since the renderer
+// itself has no access to cfg. Reveal is a separate, explicit action (never
+// automatic on close), so results only replace the join card once
+// item.revealed is true.
+function renderPoll(item, opts) {
+  const question = el('div', { class: 'r-poll-question' }, item.question || '');
+  const qrHolder = el('div', { class: 'r-poll-qr' });
+  const code = el('div', { class: 'r-poll-code' }, item.pollId || '');
+  // Off by default is not an option here - the QR and the code are always
+  // shown; showUrl (a controller-local presentation preference, decided once
+  // by whoever composed the poll - see protocol.js's normalizeItem) only
+  // adds this third way in, for a room where typing a URL beats scanning.
+  const urlText = el('div', { class: 'r-poll-url' }, '');
+  const hint = el('div', { class: 'r-poll-hint' }, 'Scan, or join and enter the code');
+  const joinCard = el('div', { class: 'r-poll-join' }, qrHolder, code, urlText, hint);
+  const status = el('div', { class: 'r-poll-status' }, '');
+  const results = el('div', { class: 'r-poll-results' });
+  const node = el('div', { class: 'r-poll' }, question, joinCard, status, results);
+
+  const drawQr = (url) => {
+    if (!url || typeof window.qrcode !== 'function') { qrHolder.replaceChildren(); return; }
+    const qr = window.qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    qrHolder.innerHTML = qr.createSvgTag({ cellSize: 8, margin: 2, scalable: true });
+  };
+
+  const drawResults = (it) => {
+    if (it.kind === 'text') {
+      // Hidden-by-index, not filtered out of `answers` itself - the room
+      // simply never gets a row for one, same as if it had never arrived.
+      const hidden = new Set(it.hiddenAnswers || []);
+      const answers = (it.answers || []).filter((_, i) => !hidden.has(i));
+      results.replaceChildren(...(answers.length
+        ? answers.map((a) => el('div', { class: 'r-poll-answer' }, a))
+        : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No answers yet')]));
+      return;
+    }
+    const counts = it.counts || [];
+    const max = Math.max(1, ...counts, 0);
+    results.replaceChildren(...(it.options || []).map((opt, i) => {
+      const count = counts[i] || 0;
+      const fill = el('div', { class: 'r-poll-bar-fill' });
+      fill.style.width = `${Math.round((count / max) * 100)}%`;
+      return el('div', { class: 'r-poll-bar-row' },
+        el('div', { class: 'r-poll-bar-label' }, el('span', {}, opt), el('span', { class: 'mono' }, String(count))),
+        el('div', { class: 'r-poll-bar-track' }, fill));
+    }));
+  };
+
+  const draw = (it) => {
+    // A redisplay from history (see control.js's redisplayFromHistory) has a
+    // pollId, for a stable ink key, but no token - there is no relay poll
+    // behind it any more, so a join card would be a QR to a dead code. A plan
+    // item previewed in the office (planfile.js's PLAN_TYPES.poll) has
+    // neither - it is not a poll yet, just the question for one.
+    const archived = !it.token && !!it.pollId;
+    const joinUrl = it.pollId ? (opts.getPollJoinUrl?.(it.pollId) || '') : '';
+    question.textContent = it.question || '';
+    code.textContent = it.pollId || '';
+    joinCard.classList.toggle('is-archived', archived);
+    if (!it.pollId) {
+      qrHolder.replaceChildren();
+      urlText.textContent = '';
+      hint.textContent = 'Not started yet.';
+    } else if (archived) {
+      qrHolder.replaceChildren();
+      urlText.textContent = '';
+      hint.textContent = 'This poll has ended — results only, no new votes.';
+    } else {
+      drawQr(joinUrl);
+      urlText.textContent = it.showUrl !== false ? joinUrl : '';
+      hint.textContent = 'Scan, or join and enter the code';
+    }
+    urlText.hidden = !urlText.textContent;
+    node.classList.toggle('is-revealed', !!it.revealed);
+    node.classList.toggle('is-closed', it.open === false);
+    status.textContent = it.revealed
+      ? ''
+      : `${it.voters || 0} response${it.voters === 1 ? '' : 's'}${it.open === false ? ' · closed' : ''}`;
+    if (it.revealed) drawResults(it);
+    else results.replaceChildren();
+  };
+  draw(item);
+
+  return {
+    el: node,
+    update: draw,
+    reconcile() {},
+    telemetry: noTelemetry,
     destroy() { node.remove(); },
   };
 }
@@ -871,6 +978,7 @@ const FACTORIES = {
   whiteboard: renderWhiteboard,
   camera: renderCamera,
   set: renderSet,
+  poll: renderPoll,
 };
 
 export function createRenderer(item, opts = {}) {

@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 21;
+export const BUILD = 22;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -100,7 +100,18 @@ export function initialState() {
     frozen: false,          // hold the program layer; new picks land in preview
     blank: false,           // hard cut to black, keeps program loaded underneath
     previewMode: false,     // always cue before going live, even when not frozen
+    // `volume` is the room's master fader - it scales BOTH channels below it
+    // together (see musicTarget() and syncLayers() in display.js), the one
+    // knob for "everything is too loud" that needs no tab switch to reach.
+    // `contentVolume` is the Mixer's own per-channel level for whatever is
+    // playing on a panel (a video, audio, YouTube) - music has the same kind
+    // of channel level already, in `music.volume` below, unrelated to this
+    // one. A channel at 1 and the master at 0.5 sounds the same as a channel
+    // at 0.5 and the master at 1 - the master is what one slider on the
+    // bottom bar can reach without a tab switch, the channels are what the
+    // Mixer tab is for setting once and mostly leaving alone.
     volume: 0.8,
+    contentVolume: 1,
     muted: false,
     overlay: { text: '', visible: false },
     // More than one countdown, because a class often has more than one clock
@@ -209,6 +220,43 @@ function normalizeItem(item) {
     copy.cycle = [];
     copy.cyclePos = 0;
   }
+  if (copy.type === 'poll') {
+    // pollId and token identify the poll on the relay (see server/podium-
+    // server.js's /poll routes) and are set once, at creation, by whoever
+    // composed it - never regenerated here. Everything else is either what
+    // was asked (kind/question/options, editable by re-staging) or a tally
+    // the display fills in on its own polling tick (open/revealed/counts/
+    // answers) and this normalization must not clobber on every re-stage.
+    copy.kind = copy.kind === 'text' ? 'text' : 'choice';
+    copy.question = String(copy.question || '').slice(0, 500);
+    copy.options = copy.kind === 'choice'
+      ? (Array.isArray(copy.options) ? copy.options : []).slice(0, 8).map((o) => String(o).slice(0, 200))
+      : [];
+    copy.open = copy.open !== false;
+    copy.revealed = !!copy.revealed;
+    copy.voters = Math.max(0, Number(copy.voters) || 0);
+    copy.counts = copy.kind === 'choice'
+      ? copy.options.map((_, i) => Math.max(0, Number(copy.counts?.[i]) || 0))
+      : [];
+    copy.answers = copy.kind === 'text' && Array.isArray(copy.answers)
+      ? copy.answers.map((a) => String(a).slice(0, 200)).slice(0, 500)
+      : [];
+    // Indices into `answers`, not the strings themselves - the relay's answer
+    // order is stable per voter (a Map keeps an existing key's position when
+    // its value changes; only a genuinely new voter appends), so an index a
+    // presenter hid stays pointing at the same answer across tickPolls'
+    // refetches. Only meaningful for 'text'; a choice poll has nothing to hide.
+    copy.hiddenAnswers = copy.kind === 'text' && Array.isArray(copy.hiddenAnswers)
+      ? [...new Set(copy.hiddenAnswers.map((i) => Math.trunc(Number(i))).filter((i) => i >= 0 && i < copy.answers.length))]
+      : [];
+    // Whether the join card spells out the URL under the QR, alongside the
+    // four-letter code - a controller-local presentation preference (see
+    // control.js's `presentation` prefs), decided once by whoever composes
+    // the poll and carried on the item like kind/question/options, since
+    // nothing else about a poll's rendering depends on which controller is
+    // looking at it right now.
+    copy.showUrl = copy.showUrl !== false;
+  }
   return copy;
 }
 
@@ -313,6 +361,11 @@ export function inkSurfaceKey(item) {
     // show up when the rotation comes back around to entry 5, the same
     // reason a deck keys ink by slide rather than by the deck as a whole.
     case 'set': return `set:${item.key}:${item.index}`;
+    // pollId, not item.key, for the same reason black/text/qr use their own
+    // content above rather than falling to the default case: re-asking the
+    // same question (re-staging with the same pollId) must not orphan
+    // whatever was circled on it a moment ago.
+    case 'poll': return `poll:${item.pollId}`;
     default: return `${item.type}:${item.src || item.deckId || item.key || ''}`;
   }
 }
@@ -679,6 +732,12 @@ export function applyCommand(state, cmd) {
       if (state.volume > 0) state.muted = false;
       return true;
 
+    // The Mixer's own per-channel level for whatever is playing on a panel -
+    // see the comment on contentVolume in initialState().
+    case 'contentVolume':
+      state.contentVolume = clamp01(cmd.value);
+      return true;
+
     case 'mute':
       state.muted = cmd.on ?? !state.muted;
       return true;
@@ -696,7 +755,38 @@ export function applyCommand(state, cmd) {
       else if (cmd.action === 'toggle') item.playing = !item.playing;
       else if (cmd.action === 'seek') { item.seekTo = Math.max(0, Number(cmd.value) || 0); item.seekNonce = (item.seekNonce || 0) + 1; }
       else if (cmd.action === 'nudge') { item.seekBy = Number(cmd.value) || 0; item.seekNonce = (item.seekNonce || 0) + 1; }
+      // A clip that already ran to its end is sitting there paused (see
+      // handleMediaEnded in display.js) - Restart has to say "play" again
+      // itself, not just "go back to 0", or seeking a paused clip would just
+      // move where it is paused.
+      else if (cmd.action === 'restart') { item.seekTo = 0; item.seekNonce = (item.seekNonce || 0) + 1; item.playing = true; }
+      else if (cmd.action === 'setLoop') item.loop = !!cmd.value;
       else return false;
+      return true;
+    }
+
+    // Found by pollId rather than focus/where: the Polls tab controls
+    // whichever poll is actually live regardless of which panel happens to
+    // be focused right now, the same reason a poll's ink is keyed by pollId
+    // rather than by panel. open/voters/counts/answers are the display's own
+    // to fill in (see tickPolls in display.js) - revealed is the only thing
+    // a controller ever sets directly, since "does the room see this yet"
+    // was the one thing asked to stay a deliberate, separate action rather
+    // than a side effect of asking a question or closing one.
+    case 'poll': {
+      const item = [state.program, state.preview, ...state.panels].find((it) => it?.type === 'poll' && it.pollId === cmd.pollId);
+      if (!item) return false;
+      if (cmd.action === 'reveal') {
+        item.revealed = !!cmd.value;
+      } else if (cmd.action === 'hideAnswer') {
+        const index = Math.trunc(Number(cmd.index));
+        if (!Number.isInteger(index) || index < 0 || index >= item.answers.length) return false;
+        const hidden = new Set(item.hiddenAnswers || []);
+        if (cmd.value) hidden.add(index); else hidden.delete(index);
+        item.hiddenAnswers = [...hidden];
+      } else {
+        return false;
+      }
       return true;
     }
 

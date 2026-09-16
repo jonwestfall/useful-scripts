@@ -3,7 +3,7 @@
 // send commands and render whatever the display echoes back.
 
 import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress } from './util.js';
-import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
+import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
   inkDigest, inkDigestsAgree, applyInkAction, BUILD, MAX_SET_ENTRIES } from './protocol.js';
@@ -545,6 +545,11 @@ async function pick(item, where = 'auto') {
   // handling, since this applies to a tap on absolutely anything.
   if (addToDraftSet(item)) return;
   if (item.type === 'camera') { await startCamera(where); return; }
+  // A planned poll is a question, not yet a poll - it has no pollId or token
+  // until something actually creates it on the relay, which is what the Polls
+  // tab's composer does. Tapping it in the Library loads that composer rather
+  // than trying to stage an item protocol.js would reject for missing fields.
+  if (item.type === 'poll') { openPollDraftFromPlan(item); return; }
   if (item.type !== 'deck' || item.slideCount) { stage(item, where); return; }
   // A click handler can't be awaited by whatever dispatched it, so the
   // moment this returns control (at the first await below), the pad's own
@@ -592,7 +597,7 @@ function renderPreview() {
     holder.replaceChildren();
     previewKey = key;
     if (item) {
-      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets });
+      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) });
       holder.append(previewRenderer.el);
     }
   } else if (previewRenderer && item) {
@@ -626,16 +631,20 @@ function buildGrid(deck) {
   const shadow = ensureGridShadow();
   shadow.innerHTML = `<style>
     :host { display: block; }
-    #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+    #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px 8px; }
     .cell {
-      position: relative; aspect-ratio: 16 / 9; overflow: hidden; cursor: pointer;
-      background: #fff; border: 2px solid #2a3038; border-radius: 8px; padding: 0;
+      display: block; cursor: pointer; background: none; border: none; padding: 0; text-align: left;
     }
-    .cell.on { border-color: #6ea8fe; }
+    .cell[hidden] { display: none; }
+    .thumb {
+      position: relative; aspect-ratio: 16 / 9; overflow: hidden;
+      background: #fff; border: 2px solid #2a3038; border-radius: 8px;
+    }
+    .cell.on .thumb { border-color: #6ea8fe; }
     /* Marpit scopes its slide CSS to div.marpit > svg > foreignObject > section,
        so each thumbnail keeps that wrapper or the slide loses all its sizing. */
-    .cell .marpit { position: absolute; inset: 0; }
-    .cell svg { display: block; width: 100%; height: 100%; }
+    .thumb .marpit { position: absolute; inset: 0; }
+    .thumb svg { display: block; width: 100%; height: 100%; }
     /* A thumbnail (and an export) shows a slide as finished, not bullet by
        bullet - the opposite of the live build, which starts with nothing
        revealed. Podium never ships a rule that hides .podium-fragment here,
@@ -645,6 +654,15 @@ function buildGrid(deck) {
       position: absolute; right: 3px; bottom: 3px; padding: 0 5px; border-radius: 4px;
       background: rgba(0,0,0,.65); color: #fff; font: 600 11px/1.6 system-ui, sans-serif;
     }
+    /* A rendered thumbnail this small reads as a smear of colour, not text -
+       the caption is what actually lets you find a slide by scanning, the
+       same job the title attribute it replaces used to fail at on a
+       touchscreen (a hover tooltip nothing here can hover). */
+    .cap {
+      margin-top: 4px; font-size: 12px; line-height: 1.3; color: #b7c0cc;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .cell.on .cap { color: #e7ecf2; font-weight: 600; }
   </style><style>${deck.css}</style><div id="grid"></div>`;
 
   const holder = document.createElement('div');
@@ -654,23 +672,43 @@ function buildGrid(deck) {
   applyFits(holder, deck.fits);
   const grid = shadow.getElementById('grid');
   Array.from(holder.querySelectorAll('svg[data-marpit-svg]')).forEach((svg, i) => {
+    const title = deck.titles[i] || `Slide ${i + 1}`;
     const cell = document.createElement('button');
     cell.type = 'button';
     cell.className = 'cell';
     cell.dataset.index = String(i);
-    cell.title = deck.titles[i] || `Slide ${i + 1}`;
+    cell.dataset.search = title.toLowerCase();
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
     const marpit = document.createElement('div');
     marpit.className = 'marpit';
     marpit.append(svg);
-    cell.append(marpit);
+    thumb.append(marpit);
     const num = document.createElement('span');
     num.className = 'num';
     num.textContent = String(i + 1);
-    cell.append(num);
+    thumb.append(num);
+    const cap = document.createElement('div');
+    cap.className = 'cap';
+    cap.textContent = title;
+    cell.append(thumb, cap);
     cell.addEventListener('click', () => send({ op: 'nav', dir: 'goto', value: i }));
     grid.append(cell);
   });
   gridDeckId = deck.id;
+  filterGrid();
+}
+
+function filterGrid() {
+  if (!gridShadow) return;
+  const filter = $('#deck-grid-filter').value.trim().toLowerCase();
+  let shown = 0;
+  gridShadow.querySelectorAll('.cell').forEach((cell) => {
+    const match = !filter || cell.dataset.search.includes(filter);
+    cell.hidden = !match;
+    if (match) shown += 1;
+  });
+  $('#deck-grid-empty').hidden = shown > 0;
 }
 
 function highlightGrid(index) {
@@ -1061,8 +1099,23 @@ async function exportSession() {
     }
     if (others.length) lines.push('');
 
+    // 5. Polls: whatever is currently on screen (a live snapshot - the
+    // display's own poll loop keeps it within a second of the relay) plus
+    // everything already ended and sitting in this session's history.
+    const currentPoll = findPollItem();
+    const pollRows = [...(currentPoll ? [{ ...currentPoll, endedAt: null }] : []), ...pollHistory];
+    if (pollRows.length) {
+      lines.push(`Polls (${pollRows.length}):`);
+      pollRows.forEach((row, i) => {
+        const name = `polls/${String(i + 1).padStart(2, '0')}-${safeName(row.question, row.pollId || 'poll')}.csv`;
+        files.push({ name, data: new TextEncoder().encode(csvText(pollResultRows(row))) });
+        lines.push(`  ${name}${row.endedAt ? `  —  ended ${new Date(row.endedAt).toLocaleTimeString()}` : '  —  still running when this was built'}`);
+      });
+      lines.push('');
+    }
+
     if (!files.length) {
-      status.textContent = 'Nothing to export yet — take a photo, or annotate something.';
+      status.textContent = 'Nothing to export yet — take a photo, annotate something, or run a poll.';
       return;
     }
 
@@ -1189,6 +1242,7 @@ function renderNow() {
     scrub.max = d || 0;
     scrub.disabled = !d;
     if (!scrubbing) scrub.value = Math.min(t, d || t);
+    if (document.activeElement !== $('#media-loop')) $('#media-loop').checked = !!item.loop;
   }
 
   $('#freeze').classList.toggle('is-on', state.frozen);
@@ -1310,10 +1364,389 @@ function renderLayoutBar() {
   $$('.panel-btn', picker).forEach((b, i) => b.classList.toggle('is-on', i === state.focus));
 }
 
+let mixerSliding = null;   // which fader, if any, is being dragged right now
+
+function renderMixer() {
+  const pct = (v) => `${Math.round(Math.min(1, Math.max(0, Number(v) || 0)) * 100)}%`;
+  if (mixerSliding !== 'master') {
+    $('#mixer-master').value = String(state.volume);
+    $('#mixer-master-pct').textContent = pct(state.volume);
+  }
+  if (mixerSliding !== 'content') {
+    $('#mixer-content').value = String(state.contentVolume ?? 1);
+    $('#mixer-content-pct').textContent = pct(state.contentVolume ?? 1);
+  }
+  if (mixerSliding !== 'music' && !musicSliding) {
+    $('#mixer-music').value = String(state.music.volume);
+    $('#mixer-music-pct').textContent = pct(state.music.volume);
+  }
+}
+
+// Audience polls: a normal item once staged, but composing and running one
+// needs its own tab because the relay call (create/open/close/delete a poll
+// row, keyed by a token this tab is the only place that ever sees) is not
+// part of the stage/cue/take protocol the rest of Podium runs on. "One at a
+// time" is a UX rule, not something the protocol enforces, so this tab just
+// looks for whichever single poll item is staged anywhere right now.
+let pollDraft = null;    // { kind, question, options } while composing, else null
+let pollBusy = false;    // a relay call is in flight - disable the buttons that would race it
+let pollError = '';      // composer-side validation/relay error
+let pollActionError = ''; // running-poll-side relay error (close/reopen/end)
+let pollEndButton = null; // the wireDangerButton handle for #poll-end, wired further down
+
+function findPollItem() {
+  return [state.program, state.preview, ...state.panels].find((it) => it?.type === 'poll') || null;
+}
+
+// Polls this device has ended since the tab loaded - localStorage rather than
+// the plan or the relay, because neither is the right owner: a plan is
+// written in the office before any votes exist, and the relay forgets a poll
+// the moment it is deleted (see endPoll). This is purely "what did *I* just
+// run", the same shelf life as the Saved library.
+const POLL_HISTORY_KEY = 'podium.pollHistory.v1';
+const MAX_POLL_HISTORY = 20;
+
+function loadPollHistory() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(POLL_HISTORY_KEY) || '[]');
+    return Array.isArray(rows) ? rows : [];
+  } catch { return []; }
+}
+function savePollHistory() {
+  try { localStorage.setItem(POLL_HISTORY_KEY, JSON.stringify(pollHistory.slice(0, MAX_POLL_HISTORY))); } catch { /* private mode, or quota */ }
+}
+let pollHistory = loadPollHistory();
+
+function addToPollHistory(entry) {
+  pollHistory = [{ id: uid(8), ...entry }, ...pollHistory].slice(0, MAX_POLL_HISTORY);
+  savePollHistory();
+}
+
+async function pollApi(suffix, opts = {}) {
+  const base = pollBaseUrl(cfg);
+  if (!base) throw new Error('This relay does not run polls.');
+  const res = await fetch(`${base}poll${suffix}`, opts);
+  let body = null;
+  try { body = await res.json(); } catch { /* no body */ }
+  if (!res.ok) throw new Error(body?.error || `poll request failed (${res.status})`);
+  return body;
+}
+
+function newPollDraft() {
+  pollDraft = { kind: 'choice', question: '', options: ['', ''] };
+  pollError = '';
+  pollOptionsDrawn = -1;
+}
+
+// A poll written into a lecture plan (planfile.js's PLAN_TYPES.poll) carries
+// its options as one newline-separated field, since the planning page's
+// field editor only knows scalar kinds - split back into the array shape the
+// composer already works in.
+function openPollDraftFromPlan(item) {
+  const options = String(item.options || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  pollDraft = {
+    kind: item.kind === 'text' ? 'text' : 'choice',
+    question: item.question || '',
+    options: options.length ? options : ['', ''],
+  };
+  pollError = '';
+  pollOptionsDrawn = -1;
+  tab('polls');
+  renderPollsPanel();
+}
+
+async function startPoll() {
+  if (!pollDraft || pollBusy) return;
+  const question = pollDraft.question.trim();
+  if (!question) { pollError = 'Add a question first.'; renderPollsPanel(); return; }
+  const options = pollDraft.kind === 'choice'
+    ? pollDraft.options.map((o) => o.trim()).filter(Boolean)
+    : [];
+  if (pollDraft.kind === 'choice' && options.length < 2) {
+    pollError = 'Add at least two options.';
+    renderPollsPanel();
+    return;
+  }
+  pollBusy = true;
+  pollError = '';
+  renderPollsPanel();
+  try {
+    const created = await pollApi('', { method: 'POST' });
+    await pollApi(`/${created.code}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}` },
+      body: JSON.stringify({ kind: pollDraft.kind, question, options, open: true }),
+    });
+    stage({
+      type: 'poll', title: 'Poll', pollId: created.code, token: created.token,
+      kind: pollDraft.kind, question, options, open: true, revealed: false,
+      showUrl: presentation.showPollUrl,
+    });
+    pollDraft = null;
+  } catch (err) {
+    pollError = err.message || 'Could not start the poll.';
+  } finally {
+    pollBusy = false;
+    renderPollsPanel();
+  }
+}
+
+async function setPollOpen(open) {
+  const item = findPollItem();
+  if (!item || !item.token || pollBusy) return;
+  pollBusy = true;
+  pollActionError = '';
+  renderPollsPanel();
+  try {
+    await pollApi(`/${item.pollId}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${item.token}` },
+      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, open }),
+    });
+  } catch (err) {
+    pollActionError = err.message || 'Could not reach the poll.';
+  } finally {
+    pollBusy = false;
+    renderPollsPanel();
+  }
+}
+
+function togglePollReveal() {
+  const item = findPollItem();
+  if (!item) return;
+  send({ op: 'poll', pollId: item.pollId, action: 'reveal', value: !item.revealed });
+}
+
+// Poll CSVs (this one, and the ones exportSession() folds into the session
+// zip - see there) are built from the item's own counts/answers rather than
+// a fresh relay fetch: tickPolls already keeps those within a second of the
+// relay's own numbers for a live poll, and it is the only data a redisplayed
+// (archived, token-less) poll has left at all. One code path for both.
+function pollResultRows(item) {
+  const rows = [['question', item.question]];
+  if (item.kind === 'text') {
+    const hidden = new Set(item.hiddenAnswers || []);
+    rows.push(['answer', 'shown to room']);
+    (item.answers || []).forEach((a, i) => rows.push([a, hidden.has(i) ? 'no' : 'yes']));
+  } else {
+    rows.push(['option', 'votes']);
+    (item.options || []).forEach((opt, i) => rows.push([opt, String(item.counts?.[i] || 0)]));
+  }
+  return rows;
+}
+
+function csvText(rows) {
+  return rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+}
+
+function exportPollCsv() {
+  const item = findPollItem();
+  if (!item) return;
+  const blob = new Blob([csvText(pollResultRows(item))], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `poll-${safeName(item.question, item.pollId)}.csv`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+}
+
+async function endPoll() {
+  const item = findPollItem();
+  if (!item) return;
+  pollBusy = true;
+  renderPollsPanel();
+  // A redisplayed (archived) poll has no token and nothing on the relay left
+  // to delete - it is already in history, and ending it again would only
+  // duplicate the entry. Only a poll that actually ran gets archived.
+  if (item.token) {
+    addToPollHistory({
+      pollId: item.pollId, kind: item.kind, question: item.question, options: item.options,
+      counts: item.counts || [], answers: item.answers || [], voters: item.voters || 0,
+      hiddenAnswers: item.hiddenAnswers || [], endedAt: Date.now(),
+    });
+    try {
+      await pollApi(`/${item.pollId}`, { method: 'DELETE', headers: { authorization: `Bearer ${item.token}` } });
+    } catch { /* relay may already be gone - clear it from the screen regardless */ }
+  }
+  if (state.program?.pollId === item.pollId) send({ op: 'clear', where: 'program' });
+  else if (state.preview?.pollId === item.pollId) send({ op: 'clear', where: 'preview' });
+  else {
+    const idx = state.panels.findIndex((p) => p?.pollId === item.pollId);
+    if (idx !== -1) send({ op: 'panel', index: idx, item: { type: 'black' } });
+  }
+  pollBusy = false;
+  newPollDraft();
+  renderPollsPanel();
+  $('#poll-end').disabled = false;
+  pollEndButton?.disarm();
+}
+
+// Reopen: the same question, asked again from zero - a new relay poll, new
+// code, nothing carried over but the wording. Redisplay: the opposite - no
+// new relay poll at all, just the final snapshot staged back up, frozen.
+// Both would queue silently behind a poll that is currently running rather
+// than refusing outright (setting pollDraft here has no visible effect while
+// findPollItem() still finds something, per renderPollsPanel below), so the
+// history list itself disables them then instead, to keep a tap from
+// looking like a dead click.
+function reopenFromHistory(row) {
+  pollDraft = { kind: row.kind, question: row.question, options: row.kind === 'choice' ? [...row.options] : ['', ''] };
+  pollError = '';
+  pollOptionsDrawn = -1;
+  renderPollsPanel();
+}
+
+function redisplayFromHistory(row) {
+  stage({
+    type: 'poll', title: 'Poll', pollId: row.pollId, token: '',
+    kind: row.kind, question: row.question, options: row.options,
+    open: false, revealed: true, voters: row.voters, counts: row.counts, answers: row.answers,
+    hiddenAnswers: row.hiddenAnswers || [],
+  });
+}
+
+let pollOptionsDrawn = -1;
+
+// Visibility between the two halves is decided once, by renderPollsPanel,
+// from whether a poll is currently staged anywhere - neither half toggles
+// the other's .hidden itself, which is what let them fight over it and get
+// stuck on whichever ran last (see the comment on renderPollsPanel).
+function renderPollBuilder() {
+  if (!pollDraft) return;
+  $('#poll-kind').value = pollDraft.kind;
+  if (document.activeElement !== $('#poll-question')) $('#poll-question').value = pollDraft.question;
+  const showOptions = pollDraft.kind === 'choice';
+  $('#poll-options').hidden = !showOptions;
+  $('#poll-option-add').closest('.inline').hidden = !showOptions;
+  if (showOptions && pollOptionsDrawn !== pollDraft.options.length) {
+    pollOptionsDrawn = pollDraft.options.length;
+    $('#poll-options').replaceChildren(...pollDraft.options.map((_, i) => el('div', { class: 'poll-option-row' },
+      el('input', {
+        type: 'text', placeholder: `Option ${i + 1}`, maxlength: '200',
+        oninput: (ev) => { pollDraft.options[i] = ev.target.value; },
+      }),
+      el('button', {
+        type: 'button', title: 'Remove', disabled: pollDraft.options.length <= 2,
+        onclick: () => { pollDraft.options.splice(i, 1); pollOptionsDrawn = -1; renderPollsPanel(); },
+      }, '×'))));
+    pollDraft.options.forEach((v, i) => { $$('#poll-options input')[i].value = v; });
+  }
+  $('#poll-option-add').disabled = pollDraft.options.length >= 8;
+  $('#poll-error').hidden = !pollError;
+  $('#poll-error').textContent = pollError;
+  $('#poll-start').disabled = pollBusy;
+}
+
+let pollRunningDrawn = '';
+
+// Results render here unconditionally, live, whether or not the room has
+// seen them yet - only the projector's own renderer gates on `revealed`.
+// The presenter is the one person who should never have to wait for their
+// own Reveal tap to find out what the room said.
+function renderRunningPoll(item) {
+  const archived = !item.token;
+  $('#poll-running-question').textContent = item.question;
+  $('#poll-running-code').textContent = item.pollId;
+  const link = archived ? null : pollJoinUrl(cfg, item.pollId);
+  $('#poll-copy-link').disabled = !link;
+  $('#poll-copy-link').hidden = archived;
+  $('#poll-toggle-open').hidden = archived;
+  $('#poll-running-status').textContent = archived
+    ? `Redisplayed from history — ${item.voters} response${item.voters === 1 ? '' : 's'}, not accepting new votes`
+    : `${item.voters} response${item.voters === 1 ? '' : 's'}${item.open === false ? ' · voting closed' : ' · voting open'}`
+      + (item.revealed ? ' · shown to the room' : ' · visible to you only');
+  $('#poll-toggle-open').textContent = item.open === false ? 'Reopen voting' : 'Close voting';
+  $('#poll-toggle-open').disabled = pollBusy;
+  $('#poll-toggle-reveal').textContent = item.revealed ? 'Hide from room' : 'Reveal to room';
+  $('#poll-action-error').hidden = !pollActionError;
+  $('#poll-action-error').textContent = pollActionError;
+
+  const signature = `${item.kind}:${JSON.stringify(item.counts)}:${JSON.stringify(item.answers)}:${JSON.stringify(item.hiddenAnswers)}`;
+  if (signature !== pollRunningDrawn) {
+    pollRunningDrawn = signature;
+    const results = $('#poll-running-results');
+    if (item.kind === 'text') {
+      const answers = item.answers || [];
+      const hidden = new Set(item.hiddenAnswers || []);
+      results.replaceChildren(...(answers.length
+        ? answers.map((a, i) => el('div', { class: `poll-answer-row${hidden.has(i) ? ' is-hidden' : ''}` },
+            el('span', { class: 'grow' }, a),
+            el('button', {
+              type: 'button', class: 'poll-answer-hide',
+              title: hidden.has(i) ? 'Hidden from the room — tap to show it' : 'Hide this one answer from the room',
+              onclick: () => send({ op: 'poll', pollId: item.pollId, action: 'hideAnswer', index: i, value: !hidden.has(i) }),
+            }, hidden.has(i) ? 'Unhide' : 'Hide')))
+        : [el('div', { class: 'poll-answer-row' }, 'No answers yet')]));
+    } else {
+      const counts = item.counts || [];
+      const max = Math.max(1, ...counts, 0);
+      results.replaceChildren(...(item.options || []).map((opt, i) => {
+        const count = counts[i] || 0;
+        const fill = el('div', { class: 'poll-bar-fill' });
+        fill.style.width = `${Math.round((count / max) * 100)}%`;
+        return el('div', { class: 'poll-bar-row' },
+          el('div', { class: 'poll-bar-label' }, el('span', {}, opt), el('span', { class: 'mono' }, String(count))),
+          el('div', { class: 'poll-bar-track' }, fill));
+      }));
+    }
+  }
+}
+
+function renderPollHistory() {
+  const holder = $('#poll-history');
+  const busy = !!findPollItem();
+  holder.replaceChildren(...pollHistory.map((row) => {
+    const summary = row.kind === 'text'
+      ? `${row.voters} response${row.voters === 1 ? '' : 's'}`
+      : `${row.voters} response${row.voters === 1 ? '' : 's'} — ${(row.options || []).map((o, i) => `${o}: ${row.counts?.[i] || 0}`).join(', ')}`;
+    return el('div', { class: 'poll-history-row' },
+      el('div', { class: 'poll-history-question' }, row.question || '(no question)'),
+      el('div', { class: 'hint' }, summary),
+      el('div', { class: 'inline' },
+        el('button', {
+          type: 'button', disabled: busy, title: busy ? 'End the current poll first' : 'Ask this question again, fresh',
+          onclick: () => reopenFromHistory(row),
+        }, 'Reopen'),
+        el('button', {
+          type: 'button', disabled: busy, title: busy ? 'End the current poll first' : 'Show these final results again',
+          onclick: () => redisplayFromHistory(row),
+        }, 'Redisplay'),
+        el('button', {
+          type: 'button', class: 'poll-history-del', title: 'Remove from history',
+          onclick: () => { pollHistory = pollHistory.filter((r) => r.id !== row.id); savePollHistory(); renderPollHistory(); },
+        }, '×')));
+  }));
+  $('#poll-history-empty').hidden = pollHistory.length > 0;
+}
+
+// Right after starting a poll, findPollItem() still comes up empty for a
+// moment - stage() only sends the command, and this pad's own `state` does
+// not have the new item until the display's broadcast echoes it back (see
+// the file-header comment: neither pad holds state, both render the echo).
+// Deciding show-build-or-show-running here, once, from that same lookup is
+// what keeps the two halves from arguing about it below.
+function renderPollsPanel() {
+  $('#poll-unsupported').hidden = !!pollBaseUrl(cfg);
+  const item = findPollItem();
+  $('#poll-running').hidden = !item;
+  $('#poll-build').hidden = !!item;
+  if (item) {
+    renderRunningPoll(item);
+  } else {
+    if (!pollDraft) newPollDraft();
+    renderPollBuilder();
+  }
+  renderPollHistory();
+}
+
 function renderAll() {
   renderMusic();
+  renderMixer();
   renderWatermarkPanel();
   renderSetsPanel();
+  renderPollsPanel();
   renderPhotos();
   renderRecent();
   renderPreview();
@@ -1451,7 +1884,7 @@ function createLiveMirror(container) {
       renderer?.destroy();
       frame.replaceChildren();
       mountedKey = key;
-      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets }) : null;
+      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) }) : null;
       if (renderer) frame.append(renderer.el);
     } else {
       renderer?.update(resolveAssets(item));
@@ -1538,7 +1971,7 @@ function updatePadMirror() {
     padMirrorRenderer?.destroy();
     padMirror.replaceChildren();
     padMirrorKey = key;
-    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets }) : null;
+    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) }) : null;
     if (padMirrorRenderer) padMirror.append(padMirrorRenderer.el);
   } else {
     padMirrorRenderer?.update(resolveAssets(item));
@@ -2167,6 +2600,13 @@ function addToDraftSet(item) {
     flashSetNote('A live camera feed can’t be automated this way — add a still instead.');
     return true;
   }
+  // A poll needs a relay round-trip to even become a poll (see pick()), and
+  // "hold it for 20 seconds then move on" has no sensible meaning for a
+  // question the room is still answering.
+  if (item.type === 'poll') {
+    flashSetNote('A poll isn’t automated this way — start it from the Polls tab.');
+    return true;
+  }
   // A Library deck tile (as opposed to one specific slide pulled from Recent,
   // which already carries slideCount) means "the deck", not one slide of it -
   // fetching, counting and expanding it into one entry per slide happens off
@@ -2426,6 +2866,10 @@ $('#sets-build-add').addEventListener('click', () => {
 let relayStatus = 'connecting';
 let waitingSince = Date.now();
 const relayLog = createRelayLog();
+// Fires at most once per page-load, the moment a display first shows up -
+// never again from a later reconnect, so a Wi-Fi blip mid-lecture does not
+// blank the room. See the Presentation tab's own explanation of this.
+let blankSentThisLoad = false;
 
 function setStatus(status, detail) {
   relayStatus = status;
@@ -2454,6 +2898,15 @@ function renderConnection() {
   const peers = bus?.peers() || [];
   const display = peers.find((p) => p.role === 'display');
   const others = peers.filter((p) => p.role === 'control');
+
+  // Guarded on `bus` itself, not just `display`: onPeers can in principle
+  // fire before connect() finishes assigning the module-level `bus` this
+  // file's own send() reads, and a skipped send here should retry on the
+  // next heartbeat rather than being marked done and silently never sent.
+  if (display && bus && !blankSentThisLoad) {
+    blankSentThisLoad = true;
+    if (presentation.blankOnConnect) send({ op: 'blank', on: true });
+  }
 
   // A display still serving an older copy of the app - a browser that never
   // revalidated the page, or a machine whose projector tab has been open
@@ -2668,10 +3121,70 @@ $('#clear-preview').addEventListener('click', () => send({ op: 'clear', where: '
 $('#mute').addEventListener('click', () => send({ op: 'mute' }));
 $('#volume').addEventListener('input', (ev) => send({ op: 'volume', value: Number(ev.target.value) }));
 
+// Three faders, one meaning each - see the Mixer tab's own explanation and
+// the comment on contentVolume in protocol.js. mixerSliding stops the next
+// broadcast's echo from yanking a fader out from under a still-moving thumb,
+// the same reason musicSliding and scrubbing already exist.
+$('#mixer-master').addEventListener('input', (ev) => {
+  mixerSliding = 'master';
+  send({ op: 'volume', value: Number(ev.target.value) });
+});
+$('#mixer-master').addEventListener('change', () => { mixerSliding = null; });
+$('#mixer-content').addEventListener('input', (ev) => {
+  mixerSliding = 'content';
+  send({ op: 'contentVolume', value: Number(ev.target.value) });
+});
+$('#mixer-content').addEventListener('change', () => { mixerSliding = null; });
+$('#mixer-music').addEventListener('input', (ev) => {
+  mixerSliding = 'music';
+  sendMusicVolume(Number(ev.target.value));
+});
+$('#mixer-music').addEventListener('change', () => { mixerSliding = null; });
+
 $('#play-pause').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
 $('#bar-play').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
 $('#back10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: -10 }));
 $('#fwd10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: 10 }));
+$('#restart-media').addEventListener('click', () => send({ op: 'media', action: 'restart' }));
+$('#media-loop').addEventListener('change', (ev) => send({ op: 'media', action: 'setLoop', value: ev.target.checked }));
+
+$('#poll-kind').addEventListener('change', (ev) => {
+  if (!pollDraft) return;
+  pollDraft.kind = ev.target.value === 'text' ? 'text' : 'choice';
+  renderPollsPanel();
+});
+$('#poll-question').addEventListener('input', (ev) => { if (pollDraft) pollDraft.question = ev.target.value; });
+$('#poll-option-add').addEventListener('click', () => {
+  if (!pollDraft || pollDraft.options.length >= 8) return;
+  pollDraft.options.push('');
+  pollOptionsDrawn = -1;
+  renderPollsPanel();
+});
+$('#poll-build').addEventListener('submit', (ev) => { ev.preventDefault(); startPoll(); });
+$('#poll-copy-link').addEventListener('click', async () => {
+  const item = findPollItem();
+  const link = item && pollJoinUrl(cfg, item.pollId);
+  if (!link) return;
+  const button = $('#poll-copy-link');
+  try {
+    await navigator.clipboard.writeText(link);
+    button.textContent = 'Copied!';
+  } catch {
+    button.textContent = link;
+  }
+  setTimeout(() => { button.textContent = 'Copy join link'; }, 2000);
+});
+$('#poll-toggle-open').addEventListener('click', () => {
+  const item = findPollItem();
+  if (item) setPollOpen(item.open === false);
+});
+$('#poll-toggle-reveal').addEventListener('click', togglePollReveal);
+$('#poll-export').addEventListener('click', exportPollCsv);
+// wireDangerButton leaves a button disabled after a successful action - right
+// for the settings reset it was written for, wrong here: a session with
+// history and Redisplay/Reopen expects to end more than one poll, and a
+// button stuck reading "Clearing…" would silently break the second one.
+pollEndButton = wireDangerButton($('#poll-end'), 'End poll', endPoll);
 $('#scrub').addEventListener('pointerdown', () => { scrubbing = true; });
 $('#scrub').addEventListener('change', (ev) => {
   scrubbing = false;
@@ -2680,6 +3193,7 @@ $('#scrub').addEventListener('change', (ev) => {
 $('#deck-prev').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
 $('#deck-next').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
 $('#deck-export').addEventListener('click', exportDeck);
+$('#deck-grid-filter').addEventListener('input', filterGrid);
 
 // How the Now/Next row splits its width - 50/50 by default, but not always
 // the more useful split: leaning on Now to actually read a dense slide, or
@@ -3139,12 +3653,73 @@ $('#update-reload').addEventListener('click', () => {
   location.replace(url);
 });
 
+// --- presentation preferences -------------------------------------------------
+//
+// Per device, like previewHidden and confidenceSplit above - none of this is
+// room state, so none of it goes through send()/state. Grouped into one
+// object rather than three loose keys because this is the one place in the
+// app where "device preferences" has grown into its own settings surface
+// (the Presentation tab) rather than a single quick-access toggle.
+const PRESENTATION_KEY = 'podium.presentation.v1';
+const PRESENTATION_DEFAULTS = { showPollUrl: true, blankOnConnect: true, keepAwake: true };
+function loadPresentation() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
+    return { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
+  } catch { return { ...PRESENTATION_DEFAULTS }; }
+}
+function savePresentation() {
+  try { localStorage.setItem(PRESENTATION_KEY, JSON.stringify(presentation)); } catch { /* private mode, or quota */ }
+}
+let presentation = loadPresentation();
+
+// Keeping this device awake is a live effect, not just a stored preference -
+// toggling it in Settings has to take hold immediately, and a lock has to be
+// re-requested on return from the background the same way display.js already
+// does for the projector (a backgrounded tab silently drops any lock it held).
+let wakeLock = null;
+async function applyWakeLock() {
+  if (!presentation.keepAwake) {
+    // Cleared here rather than left to the sentinel's own 'release' event:
+    // that event is what notices an OS-initiated release, but the moment a
+    // release we asked for ourselves should already read as "not held" -
+    // waiting on the event round-trip would leave a re-check moments later
+    // (see the change listener below) finding a stale, already-releasing
+    // wakeLock and quietly skipping the fresh request it owes.
+    const current = wakeLock;
+    wakeLock = null;
+    await current?.release();
+    return;
+  }
+  if (wakeLock || document.visibilityState !== 'visible') return;
+  try {
+    wakeLock = await navigator.wakeLock?.request('screen');
+    wakeLock?.addEventListener('release', () => { wakeLock = null; });
+  } catch { /* not supported, or denied - the device may dim on its own */ }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') applyWakeLock(); });
+applyWakeLock();
+
+function settingsTab(name) {
+  $$('#setup .settings-tabs .tab').forEach((b) => b.classList.toggle('is-on', b.dataset.settingsTab === name));
+  $$('#setup [data-settings-panel]').forEach((p) => { p.hidden = p.dataset.settingsPanel !== name; });
+}
+$$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () => settingsTab(b.dataset.settingsTab)));
+
+$('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
+$('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
+$('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(); applyWakeLock(); });
+
 // --- setup ------------------------------------------------------------------
 
 function showSetup() {
   $('#setup').hidden = false;
   $('#app').hidden = true;
   $('#setup-close').hidden = !isConfigured(cfg);
+  settingsTab('connection');
+  $('#pref-poll-url').checked = presentation.showPollUrl;
+  $('#pref-blank-on-connect').checked = presentation.blankOnConnect;
+  $('#pref-keep-awake').checked = presentation.keepAwake;
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {
     const field = form.elements[key];

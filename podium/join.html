@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex">
+<title>Join — Podium</title>
+<!-- Everything this page needs is in this file. It is the one page a room full
+     of strangers loads, on whatever phone and whatever signal they have, so it
+     asks for nothing: no stylesheet, no framework, no CDN, no fonts, no
+     service worker, no settings, and no passphrase. It does not join the room
+     - it talks to the relay's poll endpoints and nothing else, which is why
+     handing the code to a lecture hall does not hand them the projector. -->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d10; --panel: #151a21; --line: #273040; --ink: #e8ecf2;
+    --dim: #93a0b4; --accent: #4c8dff; --live: #21c07a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
+    background: var(--bg); color: var(--ink);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 34rem; margin-inline: auto;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: .02em; }
+  .sub { color: var(--dim); font-size: 14px; margin: 0 0 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  label { display: block; font-size: 14px; color: var(--dim); margin-bottom: 6px; }
+  input, textarea, button {
+    font: inherit; color: var(--ink); background: #0f141b;
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+    width: 100%; -webkit-appearance: none;
+  }
+  #code {
+    text-transform: uppercase; letter-spacing: .4em; text-align: center;
+    font-size: 30px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  button { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  /* Thumb-sized, because this is answered standing up, one-handed, in a
+     lecture hall - not clicked with a mouse. */
+  .choice {
+    display: flex; align-items: center; gap: 12px; text-align: left;
+    background: #0f141b; border-color: var(--line); color: var(--ink);
+    font-weight: 500; min-height: 62px; margin-bottom: 10px;
+  }
+  .choice .letter {
+    flex: none; width: 34px; height: 34px; border-radius: 50%;
+    display: grid; place-items: center; font-weight: 700;
+    background: var(--line); color: var(--ink);
+  }
+  .choice[aria-pressed="true"] { border-color: var(--live); background: #10251d; }
+  .choice[aria-pressed="true"] .letter { background: var(--live); color: #06120d; }
+  .question { font-size: 19px; font-weight: 600; margin: 0 0 16px; }
+  .note { margin-top: 14px; font-size: 14px; color: var(--dim); min-height: 1.4em; }
+  .note.good { color: var(--live); }
+  .note.bad { color: #ff9d9d; }
+  .row { display: flex; gap: 10px; margin-top: 10px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<h1>Podium</h1>
+<p class="sub">Answer from your phone. Nothing here asks who you are.</p>
+
+<!-- Entering the code by hand, for anyone whose camera did not cooperate. -->
+<form id="enter" class="card">
+  <label for="code">Code on the screen</label>
+  <input id="code" name="code" inputmode="latin" autocomplete="off" autocapitalize="characters"
+         autocorrect="off" spellcheck="false" maxlength="4" placeholder="····" aria-label="Four-character code">
+  <div class="row"><button type="submit">Join</button></div>
+  <p class="note" id="enter-note"></p>
+</form>
+
+<div id="live" class="card" hidden>
+  <p class="question" id="question">Waiting for the first question…</p>
+  <div id="choices"></div>
+  <div id="typed" hidden>
+    <label for="answer">Your answer</label>
+    <textarea id="answer" rows="3" maxlength="200" placeholder="A few words is plenty"></textarea>
+    <div class="row"><button id="send" type="button">Send</button></div>
+  </div>
+  <p class="note" id="note"></p>
+</div>
+
+<script type="module" src="assets/js/join.js"></script>
+</body>
+</html>

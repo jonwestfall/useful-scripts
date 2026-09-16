@@ -12,7 +12,7 @@ import {
   $, $$, el, uid, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell,
   enterFullscreen, exitFullscreen, toggleFullscreen, isFullscreen, onFullscreenChange,
 } from './util.js';
-import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS } from './config.js';
+import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl } from './config.js';
 import { createBus } from './bus.js';
 import {
   initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD,
@@ -158,9 +158,28 @@ function freeLayer(layer) {
 
 let cameraStatus = 'idle';
 
+// A clip that reaches its own end, unlooped, pauses itself in the DOM but
+// nothing in `state` ever hears about it - so `item.playing` stays true
+// (nobody pressed pause) and the next reconcile() that comes along for any
+// unrelated reason calls play() again, restarting it from wherever a fresh
+// play() lands: indistinguishable from the loop nobody asked for. Marking it
+// played-out here, once, the moment it actually happens, is what makes
+// "stops when it's over" the default instead of "may or may not restart
+// depending on what else happens to broadcast next."
+function handleMediaEnded(key) {
+  if (!key) return;
+  const item = state.program?.key === key ? state.program
+    : state.preview?.key === key ? state.preview
+    : state.panels.find((p) => p?.key === key);
+  if (!item || item.playing === false) return;
+  item.playing = false;
+  commit();
+}
+
 function mount(layer, item) {
   freeLayer(layer);
   layer.key = item.key;
+  const key = item.key;
   layer.renderer = createRenderer(resolveAssets(item), {
     getTimer: (id) => timerById(state, id),
     // Only renderSet actually calls this - resolveAssets is applied to
@@ -186,6 +205,8 @@ function mount(layer, item) {
     // box is known is what makes that self-correct instead of staying
     // wrong for the rest of the item's time on screen.
     onReady: () => redrawInk(true),
+    onEnded: () => handleMediaEnded(key),
+    getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId),
   });
   layer.node.append(layer.renderer.el);
 }
@@ -220,7 +241,12 @@ function syncLayers() {
     if (!claimed.has(layer)) layer.node.dataset.role = 'idle';
   }
 
-  const audio = { volume: state.volume, muted: state.muted };
+  // The master (state.volume) scales the content channel's own level
+  // (state.contentVolume) rather than replacing it - the Mixer tab sets a
+  // clip's level once, the bottom bar's single fader is what reaches "too
+  // loud, turn it all down" without a tab switch. See musicTarget() for the
+  // same relationship on the music channel.
+  const audio = { volume: state.volume * state.contentVolume, muted: state.muted };
   for (const want of wanted) {
     if (want.role === 'preview') {
       // A cued clip is silent and parked, so it does not drift out of sync
@@ -675,7 +701,10 @@ function contentIsSounding() {
 
 function musicTarget() {
   if (state.muted) return 0;
-  return state.music.volume * (contentIsSounding() ? MUSIC_DUCK : 1);
+  // The same master that scales the content channel (see syncLayers) scales
+  // this one too - one fader for "everything is too loud", each channel's
+  // own level set once in the Mixer and mostly left alone.
+  return state.music.volume * state.volume * (contentIsSounding() ? MUSIC_DUCK : 1);
 }
 
 // A track that will not play is the single most likely thing to go wrong the
@@ -908,6 +937,59 @@ function tickSets() {
 }
 setInterval(tickSets, SET_TICK_MS);
 
+// --- audience polls ----------------------------------------------------------
+//
+// The display is the one device that fetches a poll's tally, the same
+// ownership tickSets already has over a running set's clock: one source of
+// truth polling the relay, broadcasting what it learns to every controller,
+// rather than every controller polling independently and disagreeing. A
+// controller only ever reads counts/answers/open off the broadcast state,
+// same as it reads a set's current entry.
+const POLL_TICK_MS = 1000;
+const pollFetchInFlight = new Set();   // pollId -> true, while its own fetch is out
+
+function pollItems() {
+  return [state.program, state.preview, ...state.panels].filter((it) => it?.type === 'poll');
+}
+
+async function tickPolls() {
+  const base = pollBaseUrl(cfg);
+  if (!base) return;
+  // A redisplayed poll from history carries a pollId (for a stable ink key)
+  // but no token - it is a frozen snapshot of a question that finished, not a
+  // live one, and has nothing on the relay left to fetch.
+  for (const item of pollItems().filter((it) => it.token)) {
+    if (pollFetchInFlight.has(item.pollId)) continue;
+    pollFetchInFlight.add(item.pollId);
+    const key = item.key;
+    fetch(`${base}poll/${encodeURIComponent(item.pollId)}/results`, {
+      headers: { authorization: `Bearer ${item.token}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((tally) => {
+        if (!tally) return;
+        // The item this key names may have moved (TAKE, a fresh stage with
+        // the same pollId re-asking the question) or left the screen
+        // entirely by the time this resolves - find it fresh rather than
+        // trust the reference captured before the fetch went out.
+        const current = pollItems().find((it) => it.key === key);
+        if (!current) return;
+        const changed = current.open !== tally.open || current.voters !== tally.voters
+          || JSON.stringify(current.counts) !== JSON.stringify(tally.counts)
+          || JSON.stringify(current.answers) !== JSON.stringify(tally.answers);
+        if (!changed) return;
+        current.open = !!tally.open;
+        current.voters = tally.voters || 0;
+        if (current.kind === 'choice') current.counts = tally.counts || [];
+        else current.answers = tally.answers || [];
+        commit();
+      })
+      .catch(() => { /* one missed tick is not worth a warning - the next one retries */ })
+      .finally(() => pollFetchInFlight.delete(item.pollId));
+  }
+}
+setInterval(tickPolls, POLL_TICK_MS);
+
 // --- rendering the rest of the chrome --------------------------------------
 
 function render() {
@@ -1042,7 +1124,7 @@ function stateStorageKey() {
 function saveStateNow() {
   clearTimeout(stateSaveTimer);
   try {
-    const { program, panels, layout, focus, timers, overlay, volume, muted, music, watermark } = state;
+    const { program, panels, layout, focus, timers, overlay, volume, contentVolume, muted, music, watermark } = state;
     // Everywhere else, only the `asset:<id>` reference goes into state and
     // the bytes are fetched fresh from whoever still holds them (see
     // resolveAssets) - deliberately, so a photo of a student's worksheet is
@@ -1054,7 +1136,7 @@ function saveStateNow() {
     // the time this screen asks again.
     const watermarkImageData = watermark.image?.startsWith('asset:') ? assetStore.get(watermark.image.slice(6)) : undefined;
     localStorage.setItem(stateStorageKey(), JSON.stringify({
-      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, muted, watermark, watermarkImageData,
+      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, contentVolume, muted, watermark, watermarkImageData,
       // The queue, not the playing: a reload lands on the arming screen, and
       // music that started itself the moment someone clicked Go live would be
       // a surprise in a room that had gone quiet.
@@ -1100,6 +1182,7 @@ function restoreState() {
   if (Array.isArray(saved.timers) && saved.timers.length) state.timers = saved.timers;
   if (saved.overlay && typeof saved.overlay === 'object') state.overlay = saved.overlay;
   if (Number.isFinite(saved.volume)) state.volume = saved.volume;
+  if (Number.isFinite(saved.contentVolume)) state.contentVolume = saved.contentVolume;
   state.muted = !!saved.muted;
   if (saved.music && Array.isArray(saved.music.tracks)) {
     state.music = { ...state.music, ...saved.music, playing: false };
@@ -1631,6 +1714,7 @@ $('#arm-fresh-session').addEventListener('click', () => {
   state.overlay = fresh.overlay;
   state.timers = fresh.timers;
   state.volume = fresh.volume;
+  state.contentVolume = fresh.contentVolume;
   state.muted = fresh.muted;
   state.music = fresh.music;
   state.watermark = fresh.watermark;

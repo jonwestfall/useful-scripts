@@ -124,6 +124,33 @@ export function relayTarget(cfg) {
   return `${names[cfg.transport] || cfg.transport} · ${where} · room ${cfg.room || '(not set)'}`;
 }
 
+// Where the audience-poll relay endpoints (and join.html) live: the same
+// self-hosted relay this device already talks to over WebSocket, just over
+// plain http(s) instead - see server/podium-server.js's /poll routes and
+// ROADMAP.md's "why the self-hosted relay changes everything". Returns null
+// for any other transport: Supabase and a public MQTT broker have no HTTP
+// server of their own behind them, so there is nowhere for a poll to live.
+export function pollBaseUrl(cfg) {
+  if (cfg.transport !== 'ws' || !cfg.wsUrl) return null;
+  try {
+    const u = new URL(cfg.wsUrl);
+    u.protocol = u.protocol === 'wss:' ? 'https:' : 'http:';
+    u.pathname = '/';
+    u.search = '';
+    u.hash = '';
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+// The URL a student's phone actually opens - one tap from the QR, straight
+// onto the question, no code to type. See join.html/join.js.
+export function pollJoinUrl(cfg, code) {
+  const base = pollBaseUrl(cfg);
+  return base ? `${base}join.html?c=${encodeURIComponent(code)}` : null;
+}
+
 // Everything a second device needs, packed into a controller URL. Encoded into
 // the QR the display shows while it is waiting to be paired.
 export function pairingUrl(cfg, base = new URL('control.html', location.href)) {

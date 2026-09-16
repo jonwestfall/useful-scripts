@@ -1,0 +1,50 @@
+name: Podium tests
+
+# Scoped to podium/ so a change anywhere else in this grab-bag repo (the
+# other scripts living alongside it) never triggers a Podium test run.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'podium/**'
+      - '.github/workflows/podium-tests.yml'
+  pull_request:
+    paths:
+      - 'podium/**'
+      - '.github/workflows/podium-tests.yml'
+
+jobs:
+  unit:
+    name: Unit tests (protocol, plan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node test/protocol.test.mjs
+        working-directory: podium
+      - run: node test/plan.test.mjs
+        working-directory: podium
+
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the relay's own dependency
+        run: npm ci
+        working-directory: podium/server
+      - name: Install Playwright and Chromium
+        run: |
+          npm install playwright
+          npx playwright install --with-deps chromium
+        working-directory: podium
+      - name: Run the end-to-end suite
+        run: node test/e2e.mjs
+        working-directory: podium
