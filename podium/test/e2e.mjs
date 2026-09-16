@@ -98,6 +98,38 @@ function writeAlphaImageFixture() {
   return file;
 }
 
+// A 1.2-second tone: short enough to actually reach its own end inside a test
+// timeout, for exercising what happens once a clip runs out rather than
+// what happens while it is playing.
+function writeShortFixture() {
+  const file = path.join(HERE, 'fixtures', 'short-tone.wav');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (fs.existsSync(file)) return file;
+  const rate = 8000;
+  const seconds = 1.2;
+  const samples = Math.round(rate * seconds);
+  const data = Buffer.alloc(samples * 2);
+  for (let i = 0; i < samples; i++) {
+    const t = i / rate;
+    data.writeInt16LE(Math.round(6000 * Math.sin(2 * Math.PI * 440 * t)), i * 2);
+  }
+  const head = Buffer.alloc(44);
+  head.write('RIFF', 0);
+  head.writeUInt32LE(36 + data.length, 4);
+  head.write('WAVEfmt ', 8);
+  head.writeUInt32LE(16, 16);
+  head.writeUInt16LE(1, 20);
+  head.writeUInt16LE(1, 22);
+  head.writeUInt32LE(rate, 24);
+  head.writeUInt32LE(rate * 2, 28);
+  head.writeUInt16LE(2, 32);
+  head.writeUInt16LE(16, 34);
+  head.write('data', 36);
+  head.writeUInt32LE(data.length, 40);
+  fs.writeFileSync(file, Buffer.concat([head, data]));
+  return file;
+}
+
 // A 30-second tone, written with nothing but the standard library.
 function writeFixture() {
   const file = path.join(HERE, 'fixtures', 'tone.wav');
@@ -139,6 +171,7 @@ const freePort = () => new Promise((resolve, reject) => {
 
 const { chromium } = await loadPlaywright();
 writeFixture();
+writeShortFixture();
 
 const PORT = await freePort();
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -428,6 +461,36 @@ ok(`the clip it replaced was torn down (was at ${programBefore}s)`, await displa
 await control.click('#mute');
 await display.waitForFunction(()=>document.querySelector('.layer[data-role="program"] audio').muted,null,{timeout:5000});
 ok('mute reaches the display', true);
+
+// A clip that runs out on its own used to be indistinguishable from one set
+// to loop: nothing in `state` ever heard that it had ended, so the next
+// broadcast for any unrelated reason called play() again. Using the short
+// fixture here so the test can actually wait for that moment to arrive.
+await control.fill('#url-input', `${BASE}/test/fixtures/short-tone.wav`);
+await control.click('#url-form button[type=submit]');
+await display.waitForFunction(()=>{const a=document.querySelector('.layer[data-role="program"] audio');return a && !a.paused && a.currentTime>0.1;},null,{timeout:5000});
+await display.waitForFunction(()=>document.querySelector('.layer[data-role="program"] audio').paused,null,{timeout:5000});
+ok('an unlooped clip stops on its own once it runs out', true);
+await display.waitForTimeout(900);
+ok('and stays stopped rather than restarting on the next thing that happens to broadcast',
+  await display.evaluate(()=>document.querySelector('.layer[data-role="program"] audio').paused));
+await control.click('.tab[data-tab="now"]');
+await control.waitForFunction(()=>document.querySelector('#play-pause').textContent==='▶',null,{timeout:5000});
+ok('the controller\'s own Play/Pause button agrees it stopped', true);
+
+// Restart: back to zero AND actually playing again, not just seeked while
+// still paused where a plain seek would have left it.
+await control.click('#restart-media');
+await display.waitForFunction(()=>{const a=document.querySelector('.layer[data-role="program"] audio');return a && !a.paused && a.currentTime<0.3;},null,{timeout:5000});
+ok('Restart takes it back to the start and actually plays it, not just seeks a paused clip', true);
+
+// Loop: opted into per item, off by default, and genuinely keeps it going
+// past where it would otherwise have stopped.
+await control.click('#media-loop');
+await display.waitForFunction(()=>document.querySelector('.layer[data-role="program"] audio').loop===true,null,{timeout:5000});
+await display.waitForTimeout(1900);
+ok('with loop on, the same clip is still playing well past when it would have ended',
+  await display.evaluate(()=>{const a=document.querySelector('.layer[data-role="program"] audio');return a && !a.paused;}));
 }
 
 if (want('marp decks')) {
@@ -1421,6 +1484,77 @@ await ctx.close();
 }
 }
 
+if (want('the audio mixer: three faders, one meaning each')) {
+console.log('\n-- the audio mixer: three faders, one meaning each --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'mixer-room', passphrase: 'two channels one master' }));
+const screen = await ctx.newPage();
+trap(screen, 'mixer display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'mixer pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const setSlider = (page, sel, value) => page.evaluate(([s, v]) => {
+  const input = document.querySelector(s);
+  input.value = String(v);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}, [sel, value]);
+
+await pad.click('.tab[data-tab="mixer"]');
+ok('the Mixer tab shows three separate faders', await pad.evaluate(() =>
+  !!document.querySelector('#mixer-master') && !!document.querySelector('#mixer-content') && !!document.querySelector('#mixer-music')));
+
+// Content channel: master and the channel's own level multiply together.
+// #url-input lives on the Library tab, not the Mixer.
+await pad.click('.tab[data-tab="library"]');
+await pad.fill('#url-input', `${BASE}/test/fixtures/tone.wav`);
+await pad.click('#url-form button[type=submit]');
+await screen.waitForFunction(() => { const a = document.querySelector('.layer[data-role="program"] audio'); return a && !a.paused; }, null, { timeout: 8000 });
+await pad.click('.tab[data-tab="mixer"]');
+await setSlider(pad, '#mixer-master', 0.5);
+await setSlider(pad, '#mixer-content', 0.4);
+await screen.waitForFunction(() => Math.abs(document.querySelector('.layer[data-role="program"] audio').volume - 0.2) < 0.01, null, { timeout: 5000 });
+ok('master (0.5) and the content channel (0.4) multiply, not replace each other (-> 0.2)', true);
+await setSlider(pad, '#mixer-content', 1);
+await screen.waitForFunction(() => Math.abs(document.querySelector('.layer[data-role="program"] audio').volume - 0.5) < 0.01, null, { timeout: 5000 });
+ok('the content channel back at full just leaves the master showing through (-> 0.5)', true);
+
+// Restore the master before touching the music channel, so ducking (which
+// reads the actual element volume, not the fader position) is not fighting
+// an unrelated master change at the same time.
+await setSlider(pad, '#mixer-master', 1);
+
+// Music channel: same relationship, read off the display's own <audio id="music">
+// rather than the panel's, and with nothing else sounding so there is no
+// ducking factor to also account for.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await screen.waitForFunction(() => !document.querySelector('.layer[data-role="program"] audio'), null, { timeout: 5000 });
+await pad.click('.tab[data-tab="music"]');
+await pad.click('#music-load');
+await screen.waitForFunction(() => { const el = document.querySelector('audio#music'); return el && !el.paused && el.currentTime > 0; }, null, { timeout: 15000 });
+await pad.waitForTimeout(1500);   // past the fade-in, onto a settled level
+await pad.click('.tab[data-tab="mixer"]');
+await setSlider(pad, '#mixer-master', 0.5);
+await setSlider(pad, '#mixer-music', 0.6);
+await screen.waitForFunction(() => Math.abs(document.querySelector('audio#music').volume - 0.3) < 0.02, null, { timeout: 5000 });
+ok('the master reaches the music channel too, at the same relationship (0.5 x 0.6 -> 0.3)', true);
+
+// Muting silences both channels together, wherever their own faders sit.
+await pad.click('#mute');
+await screen.waitForFunction(() => document.querySelector('audio#music').volume < 0.01, null, { timeout: 5000 });
+ok('mute silences the music channel regardless of its own fader', true);
+await pad.click('#mute');
+
+await ctx.close();
+}
+
 if (want('stills from the camera, one per panel')) {
 console.log('\n-- stills from the camera, one per panel --');
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, permissions: ['camera'] });
@@ -1869,6 +2003,35 @@ await pad.reload();
 await pad.waitForSelector('.tile');
 await pad.click('.tab[data-tab="slides"]');
 ok('and a non-default split choice survives a reload too', await pad.evaluate(() => document.querySelector('.confidence-row').dataset.split === 'now'));
+
+// The "Jump to a slide" grid: a caption under each thumbnail (the thumbnail
+// alone reads as a smear of colour at ~140px, and its only other label was a
+// hover tooltip - nothing on a touchscreen), and a filter to find one by
+// title without scrolling past a dozen near-identical rectangles.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await pad.waitForFunction(() => document.querySelector('#deck-grid')?.shadowRoot?.querySelectorAll('.cell').length === 13, null, { timeout: 20000 });
+await pad.click('.tab[data-tab="slides"]');
+const captions = await pad.evaluate(() => Array.from(document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cap')).map((c) => c.textContent));
+ok(`every thumbnail carries a readable caption, not just a hover tooltip (${captions.length})`,
+  captions.length === 13 && captions.every((c) => c.length > 0) && captions[4].toLowerCase().includes('calibration'));
+
+await pad.fill('#deck-grid-filter', 'calibration');
+await pad.waitForTimeout(150);
+const visible = await pad.evaluate(() => Array.from(document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')).filter((c) => !c.hidden).map((c) => c.dataset.search));
+ok(`filtering by title shows only the matching slides (${JSON.stringify(visible)})`,
+  visible.length === 2 && visible.every((s) => s.includes('calibration')));
+ok('the empty-state note stays hidden while something matches', await pad.isHidden('#deck-grid-empty'));
+
+await pad.fill('#deck-grid-filter', 'xyzzy nothing matches this');
+await pad.waitForTimeout(150);
+ok('and a filter matching nothing hides every thumbnail rather than showing them all',
+  (await pad.evaluate(() => Array.from(document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')).every((c) => c.hidden))));
+ok('with a note saying so', await pad.isVisible('#deck-grid-empty'));
+
+await pad.fill('#deck-grid-filter', '');
+await pad.waitForTimeout(150);
+ok('clearing the filter brings every slide back', (await pad.evaluate(() => Array.from(document.querySelector('#deck-grid').shadowRoot.querySelectorAll('.cell')).every((c) => !c.hidden))));
 
 await ctx.close();
 }

@@ -626,16 +626,20 @@ function buildGrid(deck) {
   const shadow = ensureGridShadow();
   shadow.innerHTML = `<style>
     :host { display: block; }
-    #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+    #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px 8px; }
     .cell {
-      position: relative; aspect-ratio: 16 / 9; overflow: hidden; cursor: pointer;
-      background: #fff; border: 2px solid #2a3038; border-radius: 8px; padding: 0;
+      display: block; cursor: pointer; background: none; border: none; padding: 0; text-align: left;
     }
-    .cell.on { border-color: #6ea8fe; }
+    .cell[hidden] { display: none; }
+    .thumb {
+      position: relative; aspect-ratio: 16 / 9; overflow: hidden;
+      background: #fff; border: 2px solid #2a3038; border-radius: 8px;
+    }
+    .cell.on .thumb { border-color: #6ea8fe; }
     /* Marpit scopes its slide CSS to div.marpit > svg > foreignObject > section,
        so each thumbnail keeps that wrapper or the slide loses all its sizing. */
-    .cell .marpit { position: absolute; inset: 0; }
-    .cell svg { display: block; width: 100%; height: 100%; }
+    .thumb .marpit { position: absolute; inset: 0; }
+    .thumb svg { display: block; width: 100%; height: 100%; }
     /* A thumbnail (and an export) shows a slide as finished, not bullet by
        bullet - the opposite of the live build, which starts with nothing
        revealed. Podium never ships a rule that hides .podium-fragment here,
@@ -645,6 +649,15 @@ function buildGrid(deck) {
       position: absolute; right: 3px; bottom: 3px; padding: 0 5px; border-radius: 4px;
       background: rgba(0,0,0,.65); color: #fff; font: 600 11px/1.6 system-ui, sans-serif;
     }
+    /* A rendered thumbnail this small reads as a smear of colour, not text -
+       the caption is what actually lets you find a slide by scanning, the
+       same job the title attribute it replaces used to fail at on a
+       touchscreen (a hover tooltip nothing here can hover). */
+    .cap {
+      margin-top: 4px; font-size: 12px; line-height: 1.3; color: #b7c0cc;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .cell.on .cap { color: #e7ecf2; font-weight: 600; }
   </style><style>${deck.css}</style><div id="grid"></div>`;
 
   const holder = document.createElement('div');
@@ -654,23 +667,43 @@ function buildGrid(deck) {
   applyFits(holder, deck.fits);
   const grid = shadow.getElementById('grid');
   Array.from(holder.querySelectorAll('svg[data-marpit-svg]')).forEach((svg, i) => {
+    const title = deck.titles[i] || `Slide ${i + 1}`;
     const cell = document.createElement('button');
     cell.type = 'button';
     cell.className = 'cell';
     cell.dataset.index = String(i);
-    cell.title = deck.titles[i] || `Slide ${i + 1}`;
+    cell.dataset.search = title.toLowerCase();
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
     const marpit = document.createElement('div');
     marpit.className = 'marpit';
     marpit.append(svg);
-    cell.append(marpit);
+    thumb.append(marpit);
     const num = document.createElement('span');
     num.className = 'num';
     num.textContent = String(i + 1);
-    cell.append(num);
+    thumb.append(num);
+    const cap = document.createElement('div');
+    cap.className = 'cap';
+    cap.textContent = title;
+    cell.append(thumb, cap);
     cell.addEventListener('click', () => send({ op: 'nav', dir: 'goto', value: i }));
     grid.append(cell);
   });
   gridDeckId = deck.id;
+  filterGrid();
+}
+
+function filterGrid() {
+  if (!gridShadow) return;
+  const filter = $('#deck-grid-filter').value.trim().toLowerCase();
+  let shown = 0;
+  gridShadow.querySelectorAll('.cell').forEach((cell) => {
+    const match = !filter || cell.dataset.search.includes(filter);
+    cell.hidden = !match;
+    if (match) shown += 1;
+  });
+  $('#deck-grid-empty').hidden = shown > 0;
 }
 
 function highlightGrid(index) {
@@ -1189,6 +1222,7 @@ function renderNow() {
     scrub.max = d || 0;
     scrub.disabled = !d;
     if (!scrubbing) scrub.value = Math.min(t, d || t);
+    if (document.activeElement !== $('#media-loop')) $('#media-loop').checked = !!item.loop;
   }
 
   $('#freeze').classList.toggle('is-on', state.frozen);
@@ -1310,8 +1344,27 @@ function renderLayoutBar() {
   $$('.panel-btn', picker).forEach((b, i) => b.classList.toggle('is-on', i === state.focus));
 }
 
+let mixerSliding = null;   // which fader, if any, is being dragged right now
+
+function renderMixer() {
+  const pct = (v) => `${Math.round(Math.min(1, Math.max(0, Number(v) || 0)) * 100)}%`;
+  if (mixerSliding !== 'master') {
+    $('#mixer-master').value = String(state.volume);
+    $('#mixer-master-pct').textContent = pct(state.volume);
+  }
+  if (mixerSliding !== 'content') {
+    $('#mixer-content').value = String(state.contentVolume ?? 1);
+    $('#mixer-content-pct').textContent = pct(state.contentVolume ?? 1);
+  }
+  if (mixerSliding !== 'music' && !musicSliding) {
+    $('#mixer-music').value = String(state.music.volume);
+    $('#mixer-music-pct').textContent = pct(state.music.volume);
+  }
+}
+
 function renderAll() {
   renderMusic();
+  renderMixer();
   renderWatermarkPanel();
   renderSetsPanel();
   renderPhotos();
@@ -2668,10 +2721,32 @@ $('#clear-preview').addEventListener('click', () => send({ op: 'clear', where: '
 $('#mute').addEventListener('click', () => send({ op: 'mute' }));
 $('#volume').addEventListener('input', (ev) => send({ op: 'volume', value: Number(ev.target.value) }));
 
+// Three faders, one meaning each - see the Mixer tab's own explanation and
+// the comment on contentVolume in protocol.js. mixerSliding stops the next
+// broadcast's echo from yanking a fader out from under a still-moving thumb,
+// the same reason musicSliding and scrubbing already exist.
+$('#mixer-master').addEventListener('input', (ev) => {
+  mixerSliding = 'master';
+  send({ op: 'volume', value: Number(ev.target.value) });
+});
+$('#mixer-master').addEventListener('change', () => { mixerSliding = null; });
+$('#mixer-content').addEventListener('input', (ev) => {
+  mixerSliding = 'content';
+  send({ op: 'contentVolume', value: Number(ev.target.value) });
+});
+$('#mixer-content').addEventListener('change', () => { mixerSliding = null; });
+$('#mixer-music').addEventListener('input', (ev) => {
+  mixerSliding = 'music';
+  sendMusicVolume(Number(ev.target.value));
+});
+$('#mixer-music').addEventListener('change', () => { mixerSliding = null; });
+
 $('#play-pause').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
 $('#bar-play').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
 $('#back10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: -10 }));
 $('#fwd10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: 10 }));
+$('#restart-media').addEventListener('click', () => send({ op: 'media', action: 'restart' }));
+$('#media-loop').addEventListener('change', (ev) => send({ op: 'media', action: 'setLoop', value: ev.target.checked }));
 $('#scrub').addEventListener('pointerdown', () => { scrubbing = true; });
 $('#scrub').addEventListener('change', (ev) => {
   scrubbing = false;
@@ -2680,6 +2755,7 @@ $('#scrub').addEventListener('change', (ev) => {
 $('#deck-prev').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
 $('#deck-next').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
 $('#deck-export').addEventListener('click', exportDeck);
+$('#deck-grid-filter').addEventListener('input', filterGrid);
 
 // How the Now/Next row splits its width - 50/50 by default, but not always
 // the more useful split: leaning on Now to actually read a dense slide, or

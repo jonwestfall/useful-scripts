@@ -334,6 +334,21 @@ controls stops working, TAKE included — there is just nowhere to see it happen
 until you show it again. The choice is remembered per device, the same as the
 laser colour.
 
+### Jumping straight to a slide
+
+Below the presenter notes, **Jump to a slide** lays out every slide as a
+thumbnail — the actual rendered slide, not a placeholder, the same one Now and
+Next show. Each one carries its own caption underneath: at the size a
+thumbnail has to be to fit a dozen of them on an iPad, the rendered text reads
+as a smear of colour more than words, so the caption — not the thumbnail — is
+what you actually read to find the one you want. (It used to live only as a
+hover tooltip, which is nothing at all on a touchscreen.)
+
+The filter above the grid narrows by that same title text — type `calibration`
+and the deck's title slide and its numbered `## Calibration…` headings are all
+that is left on screen, out of however many others there are. Tap any
+thumbnail to jump straight to it.
+
 ### Themes
 
 Put your CSS in `marp-themes/` and list the filename in `marp-themes/themes.json`.
@@ -374,6 +389,26 @@ wondering why the colours are wrong.
   keep working when the network does not. See `vendor-build/` to rebuild it.
 - KaTeX's glyph fonts are the one thing still fetched from a CDN. Math renders
   without them, just in a fallback face.
+
+## Video and audio: pause, restart, loop
+
+Anything with a timeline — a video or audio file, YouTube — gets a transport on
+the **Now** tab the moment it is on screen: **⏮ Restart**, **−10s**, play/pause,
+**+10s**, and a scrub bar with the current position and total length. Play/pause
+also lives on the bar at the bottom of every tab, since it is the thing you reach
+for mid-sentence and should not cost a tab switch to find.
+
+**Restart** is not the same as dragging the scrub bar back to zero: a clip that
+has already run to its end is sitting there paused, and seeking a paused clip
+just moves where it is paused. Restart says *and play it* as one step.
+
+**Loop when it ends**, next to the scrub bar, is off by default — a clip plays
+once and stops, the same as picking a video expects it to. Ending is not the
+same as pausing, either: a clip that runs out on its own now genuinely stays
+stopped rather than starting over the next time anything else happens to
+change on screen, which is what it used to look like before the display
+started marking a clip played-out for itself, the same way a manual pause
+already did.
 
 ## Annotating with ink
 
@@ -736,8 +771,9 @@ position without being told.
   a third of a second, so it still feels like pressing a button.
 - A video or audio clip going on screen **ducks the music to a whisper** by itself, and
   it fades back when the clip finishes. Nothing to remember mid-lecture.
-- **Mute** means the room hears nothing, so it silences the music too. The room volume
-  slider is for content; the music has its own level.
+- **Mute** means the room hears nothing, so it silences the music too, regardless of
+  where either fader sits. See [Audio Mixer](#audio-mixer-two-channels-and-a-master)
+  for how the music's own level and the room's master volume relate to each other.
 
 The queue survives a reload of the display — it comes back paused rather than starting
 by itself in a room that had gone quiet.
@@ -762,6 +798,25 @@ is against them, and Premium's ad-free playback only applies if the classroom PC
 signed into your account — a class hearing an advert mid-lecture is exactly the failure
 this app exists to avoid. Files you host yourself have none of those problems and keep
 working when the network does not.
+
+### Audio Mixer: two channels and a master
+
+Two different things used to share the room volume slider without either one saying
+so — whatever is playing on a panel, and the background music this tab plays — and
+turning one down looked exactly like the other one being broken. The **Mixer** tab
+gives each its own fader:
+
+- **Loaded audio / video** — whatever is currently playing on a panel: a video file, an
+  audio item, YouTube.
+- **Background music** — this tab's own queue. The same slider as **Music level** above;
+  either one moves the other.
+- **Master**, the same slider as the bottom bar's — one fader for "the room is too
+  loud right now," reachable from every tab without a trip to the Mixer.
+
+A channel's own level and the master multiply rather than compete: a channel at half
+and the master at full sounds the same as a channel at full and the master at half.
+**Mute** (the speaker icon next to the master) silences both channels at once,
+wherever their own faders happen to sit.
 
 ## The document camera, and photos taken with it
 
@@ -1329,8 +1384,15 @@ boxes more room and remembers the choice across a reload, and that the Now/Next
 split cycles through 50/50, 75/25 and 25/75 and keeps a non-default choice too. And
 it proves that drawing on a panel nobody has staged anything into yet — still
 showing the plain default black every panel starts as — survives being promoted to
-full screen, rather than the promoted panel and its ink both silently vanishing.
-410 checks.
+full screen, rather than the promoted panel and its ink both silently vanishing. It
+proves the "Jump to a slide" grid carries a readable caption under every thumbnail
+and that filtering it by title actually narrows the grid rather than just disabling
+it; that a clip which runs out on its own stops and stays stopped instead of quietly
+restarting, that Restart genuinely resumes a paused clip rather than just seeking it,
+and that Loop actually keeps a clip going past where it would otherwise have ended;
+and that the Mixer's three faders multiply against each other correctly (master ×
+channel) for both the content channel and the music channel, and that mute silences
+both regardless of where either fader sits. 437 checks.
 
 ## Layout
 

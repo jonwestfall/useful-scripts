@@ -165,6 +165,17 @@ function mediaRenderer(item, opts, media, node) {
   media.addEventListener('loadedmetadata', cue);
   if (media.readyState >= 1) cue();
 
+  // Without loop, the browser pauses on its own at the end - but nothing in
+  // `state` ever hears about it, so `item.playing` stays whatever it was
+  // (true, unless someone had pressed pause), and the very next reconcile()
+  // that comes along for any unrelated reason calls play() again since
+  // nothing told it otherwise: a clip that finished naturally starts back
+  // over, indistinguishable from loop actually being on. onEnded is display.js's
+  // hook to mark it played-out in state itself, once, the same way a manual
+  // pause already does - not fired for a preview instance, which reconcile()
+  // never actually lets run long enough to reach its own end.
+  if (!opts.preview) media.addEventListener('ended', () => opts.onEnded?.());
+
   // Nothing here starts itself. reconcile() is the only thing that presses
   // play, so an item cued into the hidden layer stays parked on its first
   // frame instead of running out of sync behind whatever is on screen.

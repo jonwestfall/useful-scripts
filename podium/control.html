@@ -123,6 +123,7 @@
         <button class="tab" data-tab="camera" type="button">Camera</button>
         <button class="tab" data-tab="photos" type="button">Photos</button>
         <button class="tab" data-tab="music" type="button">Music</button>
+        <button class="tab" data-tab="mixer" type="button">Mixer</button>
         <button class="tab" data-tab="sets" type="button">Sets</button>
       </nav>
 
@@ -228,7 +229,13 @@
             <div class="notes-head">Presenter notes</div>
             <div id="deck-notes" class="notes"></div>
             <div class="notes-head">Jump to a slide</div>
+            <!-- The rendered thumbnail alone is not enough to find a slide by:
+                 shrunk to ~140px, its text is legible on a laptop and not much
+                 else, and its only other label (the title attribute) is a
+                 hover tooltip - nothing on a touchscreen. -->
+            <input id="deck-grid-filter" type="text" placeholder="Filter slides by title or text…" autocomplete="off" spellcheck="false">
             <div id="deck-grid"></div>
+            <p class="hint" id="deck-grid-empty" hidden>No slide matches that.</p>
             <div class="notes-head">Export</div>
             <div class="inline">
               <button id="deck-export" type="button" disabled>Export marked-up slides (.zip)</button>
@@ -245,12 +252,17 @@
           </div>
           <div id="transport" class="stack" hidden>
             <div class="inline">
+              <button id="restart-media" type="button" title="Back to the start">⏮ Restart</button>
               <button id="back10" type="button">−10s</button>
               <button id="play-pause" type="button">▶</button>
               <button id="fwd10" type="button">+10s</button>
             </div>
             <input id="scrub" type="range" min="0" max="0" step="1" value="0">
             <div class="times"><span id="time-now">0:00</span><span id="time-total">--:--</span></div>
+            <!-- Off by default: a clip that reaches its own end now stops
+                 there and stays stopped (see handleMediaEnded in display.js) -
+                 looping is something you opt into per item, not a surprise. -->
+            <label class="check"><input id="media-loop" type="checkbox"> Loop when it ends</label>
           </div>
           <div id="paging" class="inline" hidden>
             <button id="prev-page" type="button">◀ Back</button>
@@ -461,6 +473,45 @@
           </p>
         </section>
 
+        <!-- Audio Mixer -->
+        <section class="panel" data-panel="mixer" hidden>
+          <p class="hint">
+            Two different things share the word "volume" in Podium, and this is where
+            each one gets its own fader instead of fighting over one slider: whatever is
+            playing on a panel (a video, an audio file, YouTube) and the background music
+            the room hears with nothing on the projector for it. A channel here is set
+            once and mostly left alone; <b>Master</b>, also on the bottom bar of every
+            tab, is the one fader for "everything is too loud right now."
+          </p>
+          <div class="mixer-channel">
+            <div class="inline">
+              <label class="grow" for="mixer-master">Master — everything the room hears</label>
+              <span id="mixer-master-pct" class="mono">80%</span>
+            </div>
+            <input id="mixer-master" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Master volume">
+          </div>
+          <div class="mixer-channel">
+            <div class="inline">
+              <label class="grow" for="mixer-content">Loaded audio / video — whatever is on a panel</label>
+              <span id="mixer-content-pct" class="mono">100%</span>
+            </div>
+            <input id="mixer-content" type="range" min="0" max="1" step="0.01" value="1" aria-label="Content audio and video level">
+          </div>
+          <div class="mixer-channel">
+            <div class="inline">
+              <label class="grow" for="mixer-music">Background music — heard, never shown</label>
+              <span id="mixer-music-pct" class="mono">60%</span>
+            </div>
+            <input id="mixer-music" type="range" min="0" max="1" step="0.01" value="0.6" aria-label="Background music level">
+          </div>
+          <p class="hint">
+            A channel's own level and the Master multiply together — a channel at half
+            and Master at full sounds the same as a channel at full and Master at half.
+            Muting (the speaker icon on the bottom bar) silences both channels at once,
+            regardless of where either fader sits.
+          </p>
+        </section>
+
         <!-- Automated Sets -->
         <section class="panel" data-panel="sets" hidden>
           <p class="hint">
@@ -563,9 +614,14 @@
     <button id="bar-play" type="button" hidden>▶</button>
     <button id="freeze" type="button">Freeze</button>
     <button id="blank" type="button">Blank</button>
-    <div class="vol">
-      <button id="mute" type="button">🔊</button>
-      <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume">
+    <!-- The master fader - scales content audio/video AND background music
+         together (see contentVolume in protocol.js and the Mixer tab, where
+         each channel gets its own level instead of fighting over this one).
+         Reachable from every tab without a tab switch, on purpose: it is the
+         one control for "the room is too loud right now." -->
+    <div class="vol" title="Master volume — everything the room hears">
+      <button id="mute" type="button" title="Mute everything">🔊</button>
+      <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Master volume — everything the room hears">
     </div>
   </div>
 </div>

@@ -100,7 +100,18 @@ export function initialState() {
     frozen: false,          // hold the program layer; new picks land in preview
     blank: false,           // hard cut to black, keeps program loaded underneath
     previewMode: false,     // always cue before going live, even when not frozen
+    // `volume` is the room's master fader - it scales BOTH channels below it
+    // together (see musicTarget() and syncLayers() in display.js), the one
+    // knob for "everything is too loud" that needs no tab switch to reach.
+    // `contentVolume` is the Mixer's own per-channel level for whatever is
+    // playing on a panel (a video, audio, YouTube) - music has the same kind
+    // of channel level already, in `music.volume` below, unrelated to this
+    // one. A channel at 1 and the master at 0.5 sounds the same as a channel
+    // at 0.5 and the master at 1 - the master is what one slider on the
+    // bottom bar can reach without a tab switch, the channels are what the
+    // Mixer tab is for setting once and mostly leaving alone.
     volume: 0.8,
+    contentVolume: 1,
     muted: false,
     overlay: { text: '', visible: false },
     // More than one countdown, because a class often has more than one clock
@@ -679,6 +690,12 @@ export function applyCommand(state, cmd) {
       if (state.volume > 0) state.muted = false;
       return true;
 
+    // The Mixer's own per-channel level for whatever is playing on a panel -
+    // see the comment on contentVolume in initialState().
+    case 'contentVolume':
+      state.contentVolume = clamp01(cmd.value);
+      return true;
+
     case 'mute':
       state.muted = cmd.on ?? !state.muted;
       return true;
@@ -696,6 +713,12 @@ export function applyCommand(state, cmd) {
       else if (cmd.action === 'toggle') item.playing = !item.playing;
       else if (cmd.action === 'seek') { item.seekTo = Math.max(0, Number(cmd.value) || 0); item.seekNonce = (item.seekNonce || 0) + 1; }
       else if (cmd.action === 'nudge') { item.seekBy = Number(cmd.value) || 0; item.seekNonce = (item.seekNonce || 0) + 1; }
+      // A clip that already ran to its end is sitting there paused (see
+      // handleMediaEnded in display.js) - Restart has to say "play" again
+      // itself, not just "go back to 0", or seeking a paused clip would just
+      // move where it is paused.
+      else if (cmd.action === 'restart') { item.seekTo = 0; item.seekNonce = (item.seekNonce || 0) + 1; item.playing = true; }
+      else if (cmd.action === 'setLoop') item.loop = !!cmd.value;
       else return false;
       return true;
     }

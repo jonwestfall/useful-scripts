@@ -492,6 +492,11 @@ body.control.is-frozen { background: #171006; }
 .recent-chip .where { font-size: 11px; color: var(--dim); }
 
 .stack { display: flex; flex-direction: column; gap: 10px; }
+.mixer-channel {
+  padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: var(--radius); margin-bottom: 10px;
+}
+.mixer-channel .mono { color: var(--dim); font-size: 13px; min-width: 3.4em; text-align: right; }
 .inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .inline > .grow { flex: 1; min-width: 140px; }
 .spacer { flex: 1; min-width: 0; }

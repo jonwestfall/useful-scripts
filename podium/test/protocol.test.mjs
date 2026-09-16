@@ -55,6 +55,13 @@ applyCommand(s, {op:'media', action:'toggle'});
 chk('toggle pauses', s.program.playing === false);
 applyCommand(s, {op:'media', action:'seek', value:42});
 chk('seek records nonce', s.program.seekTo === 42 && s.program.seekNonce === 1);
+applyCommand(s, {op:'media', action:'setLoop', value:true});
+chk('loop can be turned on', s.program.loop === true);
+applyCommand(s, {op:'media', action:'setLoop', value:false});
+chk('and back off', s.program.loop === false);
+applyCommand(s, {op:'media', action:'restart'});
+chk('restart seeks to zero and resumes playing, not just seeks a paused clip',
+  s.program.seekTo === 0 && s.program.seekNonce === 2 && s.program.playing === true);
 
 applyCommand(s, {op:'stage', item:{type:'pdf', src:'x.pdf'}});
 applyCommand(s, {op:'nav', dir:'next'});
@@ -161,6 +168,8 @@ applyCommand(s, {op:'freeze', on:false});
 
 applyCommand(s, {op:'volume', value:0.5});
 chk('volume', s.volume === 0.5);
+applyCommand(s, {op:'contentVolume', value:0.3});
+chk('the Mixer\'s content channel is its own field, not the master', s.contentVolume === 0.3 && s.volume === 0.5);
 applyCommand(s, {op:'blank', on:true});
 chk('blank on', s.blank === true);
 applyCommand(s, {op:'stage', item:{type:'image', src:'b.png'}});
