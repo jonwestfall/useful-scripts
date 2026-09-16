@@ -17,6 +17,8 @@
 //   PORT=8080            port to listen on
 //   STATIC=../           directory to serve (omit to run relay-only)
 //   ORIGIN=https://a.b   comma-separated allowed Origins (omit to allow any)
+//   AUTH_PASSWORD=...    put the pages (not join.html) behind HTTP Basic Auth
+//   AUTH_USER=podium     username to go with it (default: podium)
 
 const http = require('node:http');
 const fs = require('node:fs');
@@ -30,6 +32,48 @@ const ORIGINS = process.env.ORIGIN ? process.env.ORIGIN.split(',').map((s) => s.
 
 const MAX_MESSAGE = 256 * 1024;   // ink batches and SDP are the biggest things
 const MAX_PER_ROOM = 12;
+
+// --- authentication (self-hosted pages only) ---------------------------------
+//
+// Off by default, like everything else here. Setting AUTH_PASSWORD puts every
+// page this process serves behind HTTP Basic Auth - the landing page, the
+// display, the controller, the planning page, and every asset any of them
+// load - which matters once this box is serving them itself from a plain
+// domain rather than GitHub Pages' effectively unguessable URL. The room
+// passphrase above is what authorizes *control*; this is a coarser gate on
+// who can even load the tool at all.
+//
+// join.html is the deliberate exception, along with what it needs to run
+// (assets/js/join.js) and the relay's own /poll routes: a room full of
+// students answering a question must never be asked to log in, and has no
+// password to give anyway - see the comment at the top of handlePoll.
+// /favicon.ico is open too, so a browser's automatic request for one on the
+// (credential-free) join page gets a plain 404 rather than a login challenge.
+//
+// This cannot reach the relay's own WebSocket route: browsers give page
+// script no way to attach an Authorization header to a WebSocket handshake.
+// That route stays exactly as open as it always was, protected by the
+// passphrase-derived encryption rather than by this.
+const AUTH_USER = process.env.AUTH_USER || 'podium';
+const AUTH_PASSWORD = process.env.AUTH_PASSWORD || '';
+const AUTH_OPEN_PATHS = new Set(['/join.html', '/assets/js/join.js', '/favicon.ico']);
+
+function timingSafeEqualString(given, want) {
+  const a = Buffer.from(given);
+  const b = Buffer.from(want);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function isAuthorized(req) {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Basic ')) return false;
+  let decoded;
+  try { decoded = Buffer.from(header.slice(6), 'base64').toString('utf8'); } catch { return false; }
+  const sep = decoded.indexOf(':');
+  const user = sep === -1 ? decoded : decoded.slice(0, sep);
+  const pass = sep === -1 ? '' : decoded.slice(sep + 1);
+  return timingSafeEqualString(user, AUTH_USER) && timingSafeEqualString(pass, AUTH_PASSWORD);
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -286,6 +330,11 @@ const server = http.createServer((req, res) => {
   if (!STATIC) { res.writeHead(404); res.end('not found'); return; }
 
   const requested = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  if (AUTH_PASSWORD && !AUTH_OPEN_PATHS.has(requested) && !isAuthorized(req)) {
+    res.writeHead(401, { 'www-authenticate': 'Basic realm="Podium", charset="UTF-8"' });
+    res.end('authentication required');
+    return;
+  }
   const resolved = path.resolve(STATIC, `.${requested === '/' ? '/index.html' : requested}`);
   // Never serve outside the static root, whatever the request says.
   if (resolved !== STATIC && !resolved.startsWith(STATIC + path.sep)) {

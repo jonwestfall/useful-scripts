@@ -139,6 +139,11 @@ Put it behind TLS (Caddy: `podium.example.com { reverse_proxy localhost:8080 }`)
 point the pages at `wss://podium.example.com`. `podium.service` is a systemd unit;
 set `STATIC=../` in it if you also want the box to serve the pages themselves.
 
+Serving the pages yourself off a plain domain means anyone who finds the URL can load
+them, unlike GitHub Pages' effectively unguessable one — set `AUTH_PASSWORD` to put
+the whole app behind a login; see [Authentication](#authentication-self-hosted-only)
+under Security.
+
 **A free public MQTT broker.** Zero signup, good for trying it out in five minutes.
 The default is `wss://broker.emqx.io:8084/mqtt`. Podium speaks MQTT 3.1.1, which every
 broker supports. It is a public broker, which is fine here only because of the
@@ -1399,6 +1404,48 @@ Keep the passphrase out of a public repo. `config.json` is a convenient place fo
 Supabase URL and anon key (both are designed to be public); let each device carry the
 passphrase, which the pairing QR handles for you.
 
+### Authentication (self-hosted only)
+
+Everything above protects the *room* — a device with the wrong passphrase cannot
+touch the screen, whatever transport carries the messages. It says nothing about who
+can even load the pages, which starts to matter once `podium-server.js` is serving
+them itself from a plain domain rather than GitHub Pages' effectively unguessable one.
+
+Set `AUTH_PASSWORD` (and optionally `AUTH_USER`, default `podium`) and the relay puts
+the whole app behind HTTP Basic Auth:
+
+```bash
+AUTH_PASSWORD='something long and random' PORT=8080 STATIC=../ node podium-server.js
+```
+
+It covers the landing page, the display, the controller and the planning page — every
+page and every asset any of them load. It deliberately does **not** cover `join.html`
+or what it needs (`assets/js/join.js`, and the relay's own `/poll` routes): a room
+full of students answering a question must never be asked to log in, and handing them
+a password would hand them the same authority as the room passphrase — exactly what
+`join.html` exists to avoid (see the comment at the top of that file). `/healthz`
+stays open too, for monitoring.
+
+A browser asks for the username and password once, on the first page it loads, and
+remembers them for every later request to that origin — a one-time step per device,
+the same as pairing. For the classroom PC's kiosk shortcut, skip the prompt entirely
+by putting the credentials in the URL itself:
+
+```
+"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --kiosk "https://podium:something-long@podium.example.com/display.html" --edge-kiosk-type=fullscreen
+```
+
+Pairing a second device still shows the QR from a page you already got past the login
+for, but the device scanning it (an iPad that has never visited the site) hits its own
+Basic Auth prompt for `control.html` before Podium's own pairing fragment ever runs —
+one more one-time login, separate from the passphrase the QR carries.
+
+It cannot cover the relay's own WebSocket connection: browsers give page script no way
+to attach an `Authorization` header to a WebSocket handshake, so that route stays
+exactly as open as it always was, protected by the passphrase-derived encryption above
+rather than by this. Nothing here changes a GitHub Pages or Supabase Realtime setup —
+there is no server in either path for `AUTH_PASSWORD` to run on.
+
 ## Tests
 
 ```bash
@@ -1503,8 +1550,13 @@ screen awake actually releases the lock rather than just the checkbox
 on a self-requested release, so re-checking the box silently skipped asking
 for a fresh one), that Black out on connect fires once and only once against
 a screen that had something on it, and that Show the voting URL is baked
-into each poll when it starts, not read live off the current setting.
-494 checks.
+into each poll when it starts, not read live off the current setting. It
+proves the self-hosted server's authentication gate too: every page and asset
+Basic Auth is supposed to cover comes back 401 with no credentials and 200
+with the right ones, a wrong password is refused rather than any password
+being accepted, and `join.html`, its script, `/healthz`, and the relay's
+`/poll` routes stay reachable with no credentials at all regardless.
+509 checks.
 
 ## Layout
 
