@@ -41,8 +41,14 @@ jobs:
         run: npm ci
         working-directory: podium/server
       - name: Install Playwright and Chromium
+        # Pinned rather than "latest": there is no lockfile for this ad-hoc
+        # install, so an unpinned version drifts to whatever Playwright ships
+        # on the day a run happens to fire, browser included - which is how
+        # this pin came to exist (a newer Chromium's headless mode enforces
+        # window-state rules the suite had not been run against). Bump this
+        # deliberately, not as a side effect of an unrelated change.
         run: |
-          npm install playwright
+          npm install playwright@1.56.1
           npx playwright install --with-deps chromium
         working-directory: podium
       - name: Run the end-to-end suite
