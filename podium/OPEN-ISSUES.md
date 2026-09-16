@@ -33,6 +33,40 @@ after an async capability check, and two frames is an estimate of "long
 enough", not a guarantee. Worth logging the measured `fits[]` values on both
 devices for the same deck and comparing.
 
+### The slide-grid thumbnail polyfill fix
+
+**What changed:** `buildGrid()` in `control.js` — the code that builds the
+Slides tab's "Jump to a slide" thumbnail grid — now calls Marp's
+`applyPolyfill()` after the grid's slides are wired into the shadow root,
+matching what `renderDeck()` already does for the projector and the
+Now/Next mirrors.
+
+**Why it was made:** a user reported that on the "Day 6 — Weighing the
+Evidence" deck, every thumbnail past the first (an `h1` title slide) showed
+its heading at full, unscaled size, overflowing the thumbnail cell. `buildGrid()`
+moves each slide's real `<svg data-marpit-svg>` into the grid rather than
+rasterizing a copy, so it depends on the same `<foreignObject>` layout fix
+`renderDeck()` needs — and was the one call site in the codebase missing it.
+
+**Why it is unverified:** the bug could not be reproduced at all in this
+Chromium-only sandbox — every thumbnail rendered correctly both before and
+after the fix, in a full grid screenshot across all 13 slides. That is
+consistent with this being the same Safari/WebKit-only `foreignObject`
+layout bug the "Safari slide-fit fix" entry above already documents (Marp's
+polyfill checks `navigator.vendor` and does nothing on Chrome), but it means
+there is no local proof the fix addresses what the user actually saw.
+
+**What to look for:** open the Slides tab for a deck with `h2`-or-smaller
+headings (the Day 6 deck works) on the device the bug was seen on. Every
+thumbnail's heading should sit inside its own cell, matching the deck's
+other, correctly-sized thumbnails.
+
+**If it is still wrong:** confirm the browser first — if it is not Safari,
+this fix is the wrong one and the real cause is still open. If it is
+Safari, check whether the grid's shadow root was actually attached to the
+document when `applyPolyfill()` ran (its DOM measurements need a real,
+laid-out document, not an off-document fragment).
+
 ### The YouTube embed domain switch
 
 **What changed:** YouTube embeds moved from `www.youtube-nocookie.com` to

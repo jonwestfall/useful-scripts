@@ -9,7 +9,7 @@ import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedIt
   inkDigest, inkDigestsAgree, applyInkAction, BUILD, MAX_SET_ENTRIES } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
-import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide } from './deck.js';
+import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
 import { createZip } from './zip.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
@@ -627,7 +627,7 @@ function ensureGridShadow() {
   return gridShadow;
 }
 
-function buildGrid(deck) {
+async function buildGrid(deck) {
   const shadow = ensureGridShadow();
   shadow.innerHTML = `<style>
     :host { display: block; }
@@ -697,6 +697,13 @@ function buildGrid(deck) {
   });
   gridDeckId = deck.id;
   filterGrid();
+  // Marp needs its own DOM polyfill for inline-SVG slides or WebKit (every
+  // iPad, which is where this grid actually gets used) lays foreignObject
+  // content out wrong - the exact bug renderDeck() already works around for
+  // the live projector and the Now/Next mirrors. Run after the slides are
+  // connected to the real document (inside this shadow root), which is what
+  // the polyfill's own measurements need to be looking at.
+  await applyPolyfill(shadow);
 }
 
 function filterGrid() {
@@ -1158,7 +1165,7 @@ async function exportDeck() {
       if (source == null) throw new Error('This deck’s markdown is not available on this device.');
       deck = await renderDeckSource(source, item.deckId);
     }
-    if (gridDeckId !== deck.id) buildGrid(deck);
+    if (gridDeckId !== deck.id) await buildGrid(deck);
     const svgs = Array.from(ensureGridShadow().querySelectorAll('.cell svg[data-marpit-svg]'));
     if (!svgs.length) throw new Error('This deck has no slides to export.');
 
