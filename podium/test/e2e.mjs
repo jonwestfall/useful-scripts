@@ -778,6 +778,129 @@ ok('the display clears the same way', await screen.evaluate(() => !localStorage.
 await fresh.close();
 }
 
+if (want('Settings: Connection/Presentation tabs and the presentation preferences')) {
+console.log('\n-- Settings: Connection/Presentation tabs and the presentation preferences --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'settings-room', passphrase: 'tabbed settings' }));
+// A page-level stub for the Wake Lock API: headless Chromium's own support for
+// it is not something worth this test depending on - this just records what
+// the page asked for, which is the part actually being tested.
+await ctx.addInitScript(() => {
+  window.__wakeLog = [];
+  // navigator.wakeLock is a getter-only accessor on the real Navigator
+  // prototype - a plain assignment silently no-ops and the real API (which
+  // headless Chromium denies with "permission request denied" here) stays
+  // in place, so this has to actually shadow the property.
+  Object.defineProperty(navigator, 'wakeLock', { configurable: true, value: {
+    request: (type) => {
+      window.__wakeLog.push(`request:${type}`);
+      return Promise.resolve({ addEventListener() {}, release() { window.__wakeLog.push('release'); return Promise.resolve(); } });
+    },
+  } });
+});
+
+const screen = await ctx.newPage();
+trap(screen, 'settings display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+
+// Something is on screen before the controller under test ever connects, so
+// blank-on-connect has something to actually prove - a display that starts
+// black by default would make "it blanked" indistinguishable from "nothing
+// happened".
+const setupPad = await ctx.newPage();
+trap(setupPad, 'settings pad (setup)');
+await setupPad.goto(`${BASE}/control.html`);
+await setupPad.waitForSelector('.tile');
+await setupPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await setupPad.click('.tab[data-tab="say"]');
+await setupPad.fill('#text-body', 'Before the presenter arrives');
+await setupPad.click('#text-form button[type=submit]');
+await screen.waitForSelector('.layer[data-role="program"] .r-text', { timeout: 5000 });
+await setupPad.close();
+
+const pad = await ctx.newPage();
+trap(pad, 'settings pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => window.__wakeLog?.length > 0, null, { timeout: 5000 });
+ok('this device requests a wake lock on load - Keep this device\'s screen awake defaults on',
+  (await pad.evaluate(() => window.__wakeLog)).includes('request:screen'));
+await screen.waitForFunction(() => document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
+ok('and blacks out the screen the moment it connects - Black out on connect defaults on too', true);
+
+await pad.click('#open-settings');
+await pad.waitForSelector('#setup:not([hidden])');
+ok('Settings opens on the Connection tab', await pad.evaluate(() =>
+  document.querySelector('.settings-tabs .tab[data-settings-tab="connection"]').classList.contains('is-on')
+  && !document.querySelector('[data-settings-panel="connection"]').hidden
+  && document.querySelector('[data-settings-panel="presentation"]').hidden));
+
+await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
+ok('and switches to Presentation without disturbing the connection form underneath', await pad.evaluate(() =>
+  !document.querySelector('[data-settings-panel="presentation"]').hidden
+  && document.querySelector('[data-settings-panel="connection"]').hidden));
+ok('all three presentation options default on',
+  (await pad.isChecked('#pref-poll-url')) && (await pad.isChecked('#pref-blank-on-connect')) && (await pad.isChecked('#pref-keep-awake')));
+
+await pad.uncheck('#pref-keep-awake');
+await pad.waitForFunction(() => window.__wakeLog.includes('release'), null, { timeout: 5000 });
+ok('unchecking Keep awake actually releases the lock, not just the checkbox', true);
+await pad.check('#pref-keep-awake');
+await pad.waitForFunction(() => window.__wakeLog.filter((s) => s === 'request:screen').length >= 2, null, { timeout: 5000 });
+ok('and re-checking it requests a fresh one', true);
+
+await pad.uncheck('#pref-poll-url');
+ok('a preference is saved the moment it changes, with no Save button of its own',
+  await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).showPollUrl === false));
+
+await pad.click('#setup-close');
+await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+await pad.waitForSelector('.tile', { timeout: 15000 });
+
+await pad.click('.tab[data-tab="polls"]');
+await pad.fill('#poll-question', 'Which bias is this?');
+await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'Construct');
+await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'Method');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+await screen.waitForFunction(() => document.querySelector('.r-poll-question')?.textContent === 'Which bias is this?', null, { timeout: 5000 });
+ok('with Show voting URL off, the join card carries no URL text',
+  await screen.evaluate(() => {
+    const node = document.querySelector('.r-poll-url');
+    return !node || node.hidden || !node.textContent;
+  }));
+ok('but the QR and the four-letter code are there regardless - only the URL is optional', await screen.evaluate(() =>
+  !!document.querySelector('.r-poll-qr svg') && document.querySelector('.r-poll-code').textContent.length === 4));
+
+await pad.click('#poll-end');
+await pad.click('#poll-end');
+await screen.waitForFunction(() => !document.querySelector('.r-poll'), null, { timeout: 5000 });
+
+await pad.click('#open-settings');
+await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
+await pad.check('#pref-poll-url');
+await pad.click('#setup-close');
+await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+await pad.waitForSelector('.tile', { timeout: 15000 });
+
+await pad.click('.tab[data-tab="polls"]');
+await pad.fill('#poll-question', 'And now?');
+await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'Yes');
+await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'No');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+const code2 = (await pad.textContent('#poll-running-code')).trim();
+await screen.waitForFunction(() => document.querySelector('.r-poll-question')?.textContent === 'And now?', null, { timeout: 5000 });
+const urlShown = await screen.textContent('.r-poll-url');
+ok(`with it back on, the join card spells out the actual URL under the QR (${urlShown})`,
+  urlShown.includes(code2) && /^https?:\/\//.test(urlShown));
+
+await ctx.close();
+}
+
 if (want('freeze protects what is on screen, never the audio')) {
 console.log('\n-- freeze protects what is on screen, never the audio --');
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });

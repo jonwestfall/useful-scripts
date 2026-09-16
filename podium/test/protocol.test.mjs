@@ -367,6 +367,8 @@ applyCommand(s, {op:'stage', item:{
 chk('a fresh poll starts open, not yet revealed, with a zeroed tally',
   s.program.open === true && s.program.revealed === false && s.program.voters === 0
   && s.program.counts.length === 4 && s.program.counts.every((c) => c === 0));
+chk('and shows its URL by default - showUrl defaults true unless explicitly turned off',
+  s.program.showUrl === true);
 chk('reveal is found by pollId, not by focus or where', applyCommand(s, {op:'poll', pollId:'ABCD', action:'reveal', value:true}));
 chk('and it actually set revealed', s.program.revealed === true);
 chk('a pollId nobody is running is simply rejected', applyCommand(s, {op:'poll', pollId:'ZZZZ', action:'reveal', value:true}) === false);
@@ -401,6 +403,11 @@ applyCommand(s, {op:'stage', item:{
 }});
 chk('normalizing drops a hiddenAnswers index that does not fit the answers it arrived with',
   s.program.hiddenAnswers.length === 1 && s.program.hiddenAnswers[0] === 0);
+
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'QRST', token:'secret3', kind:'choice', question:'Show the URL?', options:['Yes','No'], showUrl:false,
+}});
+chk('an explicit showUrl:false is honoured, not overridden by the default', s.program.showUrl === false);
 
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');

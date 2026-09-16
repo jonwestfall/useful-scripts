@@ -690,58 +690,93 @@
 <!-- First-run settings -->
 <div id="setup" class="sheet" hidden>
   <div class="card">
-    <h1>Connect to your display</h1>
-    <p>Easiest path: open the display on the classroom PC, press <b>Pair a device</b> there, and scan the code. Otherwise fill this in by hand — the values must match the display exactly.</p>
-    <form id="setup-form">
-      <div class="field">
-        <label for="c-transport">Connection</label>
-        <select id="c-transport" name="transport">
-          <option value="supabase">Supabase Realtime</option>
-          <option value="mqtt">MQTT over WSS (public broker)</option>
-          <option value="ws">Self-hosted WebSocket</option>
-        </select>
-      </div>
-      <div class="field" data-for="supabase">
-        <label for="c-su">Supabase project URL</label>
-        <input id="c-su" name="supabaseUrl" type="url" placeholder="https://xxxx.supabase.co" autocomplete="off">
-      </div>
-      <div class="field" data-for="supabase">
-        <label for="c-sk">Supabase anon / publishable key</label>
-        <input id="c-sk" name="supabaseKey" type="text" autocomplete="off" spellcheck="false">
-      </div>
-      <div class="field" data-for="mqtt">
-        <label for="c-mu">Broker URL</label>
-        <input id="c-mu" name="mqttUrl" type="text" autocomplete="off" spellcheck="false">
-      </div>
-      <div class="field" data-for="ws">
-        <label for="c-wu">WebSocket URL</label>
-        <input id="c-wu" name="wsUrl" type="text" placeholder="wss://your-vps.example/podium" autocomplete="off" spellcheck="false">
-      </div>
-      <div class="field">
-        <label for="c-room">Room</label>
-        <input id="c-room" name="room" type="text" autocomplete="off" spellcheck="false">
-      </div>
-      <div class="field">
-        <label for="c-pass">Passphrase</label>
-        <input id="c-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
-      </div>
-      <p class="error" id="setup-error"></p>
-      <div class="row">
+    <h1>Settings</h1>
+    <nav class="tabs settings-tabs">
+      <button class="tab is-on" data-settings-tab="connection" type="button">Connection</button>
+      <button class="tab" data-settings-tab="presentation" type="button">Presentation</button>
+    </nav>
+
+    <section class="settings-panel" data-settings-panel="connection">
+      <p>Easiest path: open the display on the classroom PC, press <b>Pair a device</b> there, and scan the code. Otherwise fill this in by hand — the values must match the display exactly.</p>
+      <form id="setup-form">
+        <div class="field">
+          <label for="c-transport">Connection</label>
+          <select id="c-transport" name="transport">
+            <option value="supabase">Supabase Realtime</option>
+            <option value="mqtt">MQTT over WSS (public broker)</option>
+            <option value="ws">Self-hosted WebSocket</option>
+          </select>
+        </div>
+        <div class="field" data-for="supabase">
+          <label for="c-su">Supabase project URL</label>
+          <input id="c-su" name="supabaseUrl" type="url" placeholder="https://xxxx.supabase.co" autocomplete="off">
+        </div>
+        <div class="field" data-for="supabase">
+          <label for="c-sk">Supabase anon / publishable key</label>
+          <input id="c-sk" name="supabaseKey" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field" data-for="mqtt">
+          <label for="c-mu">Broker URL</label>
+          <input id="c-mu" name="mqttUrl" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field" data-for="ws">
+          <label for="c-wu">WebSocket URL</label>
+          <input id="c-wu" name="wsUrl" type="text" placeholder="wss://your-vps.example/podium" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="c-room">Room</label>
+          <input id="c-room" name="room" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="c-pass">Passphrase</label>
+          <input id="c-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <p class="error" id="setup-error"></p>
         <button type="submit" class="big-button">Save</button>
-        <button type="button" id="setup-close" hidden>Close</button>
-      </div>
-    </form>
-    <p class="hint">
-      <b>Relay</b> <span class="mono relay-target"></span>
-      — what this device dials, and what happened when it last tried:
-    </p>
-    <pre class="relay-log" hidden></pre>
-    <hr style="border:0;border-top:1px solid var(--line);margin:22px 0 16px">
-    <button id="reset-device" class="danger-outline" style="width:100%">Clear settings &amp; reload</button>
-    <p class="hint" id="reset-note">
-      Forgets the room, passphrase and any decks or links you saved on this device,
-      then reloads as if this iPad had never seen Podium. Affects this device only.
-    </p>
+      </form>
+      <p class="hint">
+        <b>Relay</b> <span class="mono relay-target"></span>
+        — what this device dials, and what happened when it last tried:
+      </p>
+      <pre class="relay-log" hidden></pre>
+      <hr style="border:0;border-top:1px solid var(--line);margin:22px 0 16px">
+      <button id="reset-device" class="danger-outline" style="width:100%">Clear settings &amp; reload</button>
+      <p class="hint" id="reset-note">
+        Forgets the room, passphrase and any decks or links you saved on this device,
+        then reloads as if this iPad had never seen Podium. Affects this device only.
+      </p>
+    </section>
+
+    <section class="settings-panel" data-settings-panel="presentation" hidden>
+      <p class="hint">
+        Defaults for how <b>this device</b> presents — saved here only, nothing shared
+        with other controllers or written into the room.
+      </p>
+
+      <label class="check"><input id="pref-poll-url" type="checkbox"> Show the voting URL below the QR code</label>
+      <p class="hint">
+        A poll's join card always shows a QR and a four-letter code; this spells out the
+        full address too, for a room where typing beats scanning. Decided once, when you
+        start each poll — changing it here does not alter a poll already running.
+      </p>
+
+      <label class="check"><input id="pref-blank-on-connect" type="checkbox"> Black out the screen when this controller connects</label>
+      <p class="hint">
+        The moment this controller first finds a display, send Blank — so nothing from a
+        previous session is still up while you get ready. Fires once per time you open or
+        reload the controller, never again from a later reconnect, so a brief Wi-Fi drop
+        mid-lecture does not blank the room.
+      </p>
+
+      <label class="check"><input id="pref-keep-awake" type="checkbox"> Keep this device's screen awake</label>
+      <p class="hint">
+        Stops this iPad or phone from dimming or locking itself while the controller is
+        open, the same way the display already stays awake once armed. Released the moment
+        you leave this tab or the browser backgrounds it.
+      </p>
+    </section>
+
+    <button type="button" id="setup-close" hidden>Close</button>
   </div>
 </div>
 

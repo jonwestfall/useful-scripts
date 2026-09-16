@@ -326,6 +326,10 @@ dl.keys dd { margin: 0; color: var(--dim); }
 .r-poll.is-revealed .r-poll-join { display: none; }
 .r-poll-qr svg { width: min(30cqh, 30cqw); height: auto; display: block; }
 .r-poll-code { font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: clamp(14px, 5cqw, 64px); letter-spacing: 0.12em; }
+.r-poll-url {
+  font-family: ui-monospace, Menlo, monospace; font-size: clamp(6px, 1.6cqw, 20px);
+  color: #333; word-break: break-all; max-width: 80cqw; text-align: center;
+}
 .r-poll-hint { font-size: clamp(7px, 1.8cqw, 22px); color: #555; }
 .r-poll-status { font-size: clamp(8px, 2.2cqw, 30px); color: var(--dim); }
 .r-poll-results { width: min(90cqw, 900px); display: flex; flex-direction: column; gap: 1.6cqh; }
@@ -473,6 +477,14 @@ body.control.is-frozen { background: #171006; }
 .main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .tabs { display: flex; gap: 6px; padding: 10px 12px 0; overflow-x: auto; }
 .tab { min-height: 40px; padding: 0 14px; border-radius: 999px; white-space: nowrap; font-size: 14px; }
+
+/* The Settings sheet's own Connection/Presentation split - .tabs sits inside
+   .card's own padding here rather than a full-width workspace, so it does not
+   want .tabs' left/right padding on top of that. */
+.settings-tabs { padding: 0 0 18px; }
+.settings-panel .check { margin: 16px 0 6px; }
+.settings-panel .check:first-of-type { margin-top: 4px; }
+.settings-panel .check input { transform: scale(1.15); }
 .tab.is-on { background: var(--panel-2); border-color: var(--accent); color: var(--ink); }
 .panels { flex: 1; min-height: 0; overflow: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
 .panel { display: flex; flex-direction: column; gap: 14px; }

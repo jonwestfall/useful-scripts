@@ -249,6 +249,13 @@ function normalizeItem(item) {
     copy.hiddenAnswers = copy.kind === 'text' && Array.isArray(copy.hiddenAnswers)
       ? [...new Set(copy.hiddenAnswers.map((i) => Math.trunc(Number(i))).filter((i) => i >= 0 && i < copy.answers.length))]
       : [];
+    // Whether the join card spells out the URL under the QR, alongside the
+    // four-letter code - a controller-local presentation preference (see
+    // control.js's `presentation` prefs), decided once by whoever composes
+    // the poll and carried on the item like kind/question/options, since
+    // nothing else about a poll's rendering depends on which controller is
+    // looking at it right now.
+    copy.showUrl = copy.showUrl !== false;
   }
   return copy;
 }

@@ -1480,6 +1480,7 @@ async function startPoll() {
     stage({
       type: 'poll', title: 'Poll', pollId: created.code, token: created.token,
       kind: pollDraft.kind, question, options, open: true, revealed: false,
+      showUrl: presentation.showPollUrl,
     });
     pollDraft = null;
   } catch (err) {
@@ -2865,6 +2866,10 @@ $('#sets-build-add').addEventListener('click', () => {
 let relayStatus = 'connecting';
 let waitingSince = Date.now();
 const relayLog = createRelayLog();
+// Fires at most once per page-load, the moment a display first shows up -
+// never again from a later reconnect, so a Wi-Fi blip mid-lecture does not
+// blank the room. See the Presentation tab's own explanation of this.
+let blankSentThisLoad = false;
 
 function setStatus(status, detail) {
   relayStatus = status;
@@ -2893,6 +2898,15 @@ function renderConnection() {
   const peers = bus?.peers() || [];
   const display = peers.find((p) => p.role === 'display');
   const others = peers.filter((p) => p.role === 'control');
+
+  // Guarded on `bus` itself, not just `display`: onPeers can in principle
+  // fire before connect() finishes assigning the module-level `bus` this
+  // file's own send() reads, and a skipped send here should retry on the
+  // next heartbeat rather than being marked done and silently never sent.
+  if (display && bus && !blankSentThisLoad) {
+    blankSentThisLoad = true;
+    if (presentation.blankOnConnect) send({ op: 'blank', on: true });
+  }
 
   // A display still serving an older copy of the app - a browser that never
   // revalidated the page, or a machine whose projector tab has been open
@@ -3639,12 +3653,73 @@ $('#update-reload').addEventListener('click', () => {
   location.replace(url);
 });
 
+// --- presentation preferences -------------------------------------------------
+//
+// Per device, like previewHidden and confidenceSplit above - none of this is
+// room state, so none of it goes through send()/state. Grouped into one
+// object rather than three loose keys because this is the one place in the
+// app where "device preferences" has grown into its own settings surface
+// (the Presentation tab) rather than a single quick-access toggle.
+const PRESENTATION_KEY = 'podium.presentation.v1';
+const PRESENTATION_DEFAULTS = { showPollUrl: true, blankOnConnect: true, keepAwake: true };
+function loadPresentation() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
+    return { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
+  } catch { return { ...PRESENTATION_DEFAULTS }; }
+}
+function savePresentation() {
+  try { localStorage.setItem(PRESENTATION_KEY, JSON.stringify(presentation)); } catch { /* private mode, or quota */ }
+}
+let presentation = loadPresentation();
+
+// Keeping this device awake is a live effect, not just a stored preference -
+// toggling it in Settings has to take hold immediately, and a lock has to be
+// re-requested on return from the background the same way display.js already
+// does for the projector (a backgrounded tab silently drops any lock it held).
+let wakeLock = null;
+async function applyWakeLock() {
+  if (!presentation.keepAwake) {
+    // Cleared here rather than left to the sentinel's own 'release' event:
+    // that event is what notices an OS-initiated release, but the moment a
+    // release we asked for ourselves should already read as "not held" -
+    // waiting on the event round-trip would leave a re-check moments later
+    // (see the change listener below) finding a stale, already-releasing
+    // wakeLock and quietly skipping the fresh request it owes.
+    const current = wakeLock;
+    wakeLock = null;
+    await current?.release();
+    return;
+  }
+  if (wakeLock || document.visibilityState !== 'visible') return;
+  try {
+    wakeLock = await navigator.wakeLock?.request('screen');
+    wakeLock?.addEventListener('release', () => { wakeLock = null; });
+  } catch { /* not supported, or denied - the device may dim on its own */ }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') applyWakeLock(); });
+applyWakeLock();
+
+function settingsTab(name) {
+  $$('#setup .settings-tabs .tab').forEach((b) => b.classList.toggle('is-on', b.dataset.settingsTab === name));
+  $$('#setup [data-settings-panel]').forEach((p) => { p.hidden = p.dataset.settingsPanel !== name; });
+}
+$$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () => settingsTab(b.dataset.settingsTab)));
+
+$('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
+$('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
+$('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(); applyWakeLock(); });
+
 // --- setup ------------------------------------------------------------------
 
 function showSetup() {
   $('#setup').hidden = false;
   $('#app').hidden = true;
   $('#setup-close').hidden = !isConfigured(cfg);
+  settingsTab('connection');
+  $('#pref-poll-url').checked = presentation.showPollUrl;
+  $('#pref-blank-on-connect').checked = presentation.blankOnConnect;
+  $('#pref-keep-awake').checked = presentation.keepAwake;
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {
     const field = form.elements[key];

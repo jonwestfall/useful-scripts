@@ -530,8 +530,13 @@ function renderPoll(item, opts) {
   const question = el('div', { class: 'r-poll-question' }, item.question || '');
   const qrHolder = el('div', { class: 'r-poll-qr' });
   const code = el('div', { class: 'r-poll-code' }, item.pollId || '');
+  // Off by default is not an option here - the QR and the code are always
+  // shown; showUrl (a controller-local presentation preference, decided once
+  // by whoever composed the poll - see protocol.js's normalizeItem) only
+  // adds this third way in, for a room where typing a URL beats scanning.
+  const urlText = el('div', { class: 'r-poll-url' }, '');
   const hint = el('div', { class: 'r-poll-hint' }, 'Scan, or join and enter the code');
-  const joinCard = el('div', { class: 'r-poll-join' }, qrHolder, code, hint);
+  const joinCard = el('div', { class: 'r-poll-join' }, qrHolder, code, urlText, hint);
   const status = el('div', { class: 'r-poll-status' }, '');
   const results = el('div', { class: 'r-poll-results' });
   const node = el('div', { class: 'r-poll' }, question, joinCard, status, results);
@@ -574,19 +579,24 @@ function renderPoll(item, opts) {
     // item previewed in the office (planfile.js's PLAN_TYPES.poll) has
     // neither - it is not a poll yet, just the question for one.
     const archived = !it.token && !!it.pollId;
+    const joinUrl = it.pollId ? (opts.getPollJoinUrl?.(it.pollId) || '') : '';
     question.textContent = it.question || '';
     code.textContent = it.pollId || '';
     joinCard.classList.toggle('is-archived', archived);
     if (!it.pollId) {
       qrHolder.replaceChildren();
+      urlText.textContent = '';
       hint.textContent = 'Not started yet.';
     } else if (archived) {
       qrHolder.replaceChildren();
+      urlText.textContent = '';
       hint.textContent = 'This poll has ended — results only, no new votes.';
     } else {
-      drawQr(opts.getPollJoinUrl?.(it.pollId) || '');
+      drawQr(joinUrl);
+      urlText.textContent = it.showUrl !== false ? joinUrl : '';
       hint.textContent = 'Scan, or join and enter the code';
     }
+    urlText.hidden = !urlText.textContent;
     node.classList.toggle('is-revealed', !!it.revealed);
     node.classList.toggle('is-closed', it.open === false);
     status.textContent = it.revealed

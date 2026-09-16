@@ -1191,6 +1191,32 @@ through: a still goes to the projector over the relay like any other image. See
 web app can do this. The camera feed and the content library are the way around it —
 and with a cue you rarely want mirroring anyway.
 
+## The controller's Settings: Connection and Presentation
+
+**Settings**, in the controller's topbar, is two tabs now rather than just the
+connection form. **Connection** is everything it always was — transport, room,
+passphrase, the relay log, and **Clear settings & reload** (see below).
+**Presentation** is new: defaults for how *this device* presents, saved on
+this device only, nothing shared with other controllers or written into the
+room.
+
+- **Show the voting URL below the QR code** (default **on**) — a poll's join
+  card always shows a QR and a four-letter code; this spells out the full
+  address too, for a room where typing beats scanning. Decided once, when
+  you tap **Start poll** — flipping it here does not alter a poll already
+  running, only the next one you start.
+- **Black out the screen when this controller connects** (default **on**) —
+  the moment this controller first finds a display, it sends Blank, so
+  nothing from a previous session is still up on the projector while you get
+  ready. This fires once per time you open or reload the controller, never
+  again from a later reconnect — a brief Wi-Fi drop mid-lecture will not
+  blank the room out from under you.
+- **Keep this device's screen awake** (default **on**) — stops this iPad or
+  phone from dimming or locking itself while the controller tab is open, the
+  same Wake Lock the display already holds once armed. Released the moment
+  you leave the tab or the browser backgrounds it, and re-requested when you
+  come back, so it never outlives the app actually being on screen.
+
 ## Starting a device over
 
 Settings are saved per device, which is what makes the classroom PC a one-time
@@ -1464,7 +1490,16 @@ the final numbers back up with no join code left to scan, and that Reopen loads 
 same question into a genuinely fresh draft; that a plan can compose a poll's wording
 in the office and picking its tile in class opens the Polls tab pre-filled rather
 than staging a half-formed item; and that a poll — running or already ended — rides
-along inside the session export zip. 483 checks.
+along inside the session export zip. It drives the new Settings tabs too:
+that Presentation opens as its own tab without disturbing the connection
+form, that its three options default on, that unchecking Keep this device's
+screen awake actually releases the lock rather than just the checkbox
+(caught a real bug this way — the lock's own local reference was not cleared
+on a self-requested release, so re-checking the box silently skipped asking
+for a fresh one), that Black out on connect fires once and only once against
+a screen that had something on it, and that Show the voting URL is baked
+into each poll when it starts, not read live off the current setting.
+494 checks.
 
 ## Layout
 
