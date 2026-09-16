@@ -1416,6 +1416,11 @@ contract — the first sections share one display and controller, and a later se
 can lean on what an earlier one left on screen, so a section that passes alone can
 still fail in the full run. Run all of it before pushing.
 
+**CI runs all of it too** (`.github/workflows/podium-tests.yml`), on every push to
+`main` and every pull request that touches `podium/**` — a fast job for the two unit
+suites, a slower one for the full Playwright run. Scoped to this folder so it never
+fires on the unrelated scripts living elsewhere in this repo.
+
 The end-to-end test starts the relay, drives a display and two controllers in real
 browsers, and checks the things that would embarrass you in front of a class:
 a board with three hundred strokes on it keeps the projector on the relay rather than
