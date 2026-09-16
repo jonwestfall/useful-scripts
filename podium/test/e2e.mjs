@@ -2377,6 +2377,14 @@ await screen.goto(`${BASE}/display.html`);
 await screen.click('#arm-button');
 await screen.waitForSelector('#hud[data-status="online"]');
 
+// Arming just requested real Fullscreen (goLive() -> enterFullscreen()), and
+// a CDP-level window resize is refused while a page is actually in that
+// state - not every Chromium build enforces this (it did not in the one
+// this test was first written against), but relying on that is exactly the
+// kind of thing that quietly breaks on the next engine bump. Leaving
+// fullscreen is not what this test is about; it only wants the viewport to
+// change size, so it drops out first rather than depending on this.
+await screen.evaluate(() => (document.fullscreenElement ? document.exitFullscreen() : Promise.resolve()));
 await screen.setViewportSize({ width: 1600, height: 900 });
 await screen.waitForTimeout(150);
 
