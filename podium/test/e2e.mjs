@@ -1322,7 +1322,10 @@ await screen.waitForSelector('.r-whiteboard', { timeout: 10000 });
 await pad.waitForTimeout(2200);
 const recovered = (await music()).vol;
 ok(`a clip with sound ducks the music to a whisper (${ducked})`, ducked > 0 && ducked < 0.2);
-ok(`and it comes back up when the clip goes away (${recovered})`, recovered > 0.5);
+// At rest this is music.volume (0.6 by default) times the master fader
+// (0.8 by default) - see the Mixer tab - so 0.5 is no longer a safe floor
+// for "clearly recovered", only "clearly not still ducked or muted" is.
+ok(`and it comes back up when the clip goes away (${recovered})`, recovered > 0.4);
 
 // Teaching must not disturb it.
 await pad.click('#freeze');
@@ -1330,7 +1333,7 @@ await pad.waitForTimeout(500);
 await pad.click('#blank');
 await pad.waitForTimeout(700);
 const during = await music();
-ok('freeze and blank leave the music alone', !during.paused && during.vol > 0.5);
+ok('freeze and blank leave the music alone', !during.paused && during.vol > 0.4);
 await pad.click('#blank');
 await pad.click('#freeze');
 
@@ -1340,7 +1343,7 @@ await pad.waitForTimeout(1200);
 ok('Mute silences the music as well as the content', (await music()).vol < 0.02);
 await pad.click('#mute');
 await pad.waitForTimeout(1600);
-ok('and unmuting brings it back', (await music()).vol > 0.5);
+ok('and unmuting brings it back', (await music()).vol > 0.4);
 
 // The queue is shared state: a second controller sees it without asking.
 await pad.click('.tab[data-tab="music"]');
@@ -1385,9 +1388,11 @@ await screen.waitForFunction(() => {
 await pad.click('#music-fade');
 await screen.waitForFunction(() => document.querySelector('audio#music').volume < 0.4, null, { timeout: 8000 });
 await pad.click('#music-play');
+// See the master-fader comment above: at rest this settles around 0.48
+// (0.6 channel x 0.8 master) by default, not the old ~0.6.
 await screen.waitForFunction(() => {
   const el = document.querySelector('audio#music');
-  return !el.paused && el.volume > 0.5;
+  return !el.paused && el.volume > 0.4;
 }, null, { timeout: 8000 })
   .then(() => ok('Play during a fade out catches the music and brings it back', true))
   .catch(() => ok('Play during a fade out catches the music and brings it back', false));
