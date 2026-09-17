@@ -170,7 +170,17 @@ function open(dataDir) {
   }
   try {
     // 0700: the database holds password hashes and the room passphrase.
+    // mkdirSync's mode only applies to a directory it actually creates, so an
+    // operator pointing DATA_DIR at an existing 0755 directory would otherwise
+    // leave all of that readable by every local account. Tightened either way,
+    // and not fatal if it cannot be - a deliberate ACL is the operator's call,
+    // and refusing to start over it would be worse than saying so.
     fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    try {
+      fs.chmodSync(dataDir, 0o700);
+    } catch (err) {
+      console.error(`podium: could not tighten permissions on ${dataDir} (${err.code}) - check who can read it`);
+    }
     const db = new DatabaseSync(path.join(dataDir, 'podium.db'));
     // WAL so a long read cannot block the write that a login is; a busy
     // timeout so the CLI adding a user while the server runs waits its turn

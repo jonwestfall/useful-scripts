@@ -70,6 +70,12 @@ function itemRow(row) {
   let props = {};
   try { props = JSON.parse(row.props || '{}'); } catch { /* stored by us, but never trust a parse */ }
   return {
+    // props FIRST, and everything the database knows after it. props is
+    // whatever the caller sent when the item was created, so spreading it last
+    // would let it overwrite the item's own id, course, or who uploaded it -
+    // fields that permission checks and the UI both read back. Server-owned
+    // values win; a prop can only fill in what the row does not already say.
+    ...props,
     id: row.id,
     type: row.kind,
     title: row.title,
@@ -83,8 +89,6 @@ function itemRow(row) {
     bytes: row.bytes || 0,
     createdAt: row.created_at,
     createdBy: row.created_by,
-    ...props,
-    // The URL last, so a stored prop can never overwrite where the bytes are.
     ...(row.sha256 ? { src: `/media/${row.sha256}/${encodeURIComponent(row.filename || 'file')}` } : {}),
   };
 }
@@ -217,19 +221,50 @@ function storeUpload(dataDir, stream, { limit = MAX_UPLOAD_BYTES } = {}) {
   });
 }
 
-/** Record the bytes, reusing the row if these exact bytes are already known. */
+/**
+ * Record the bytes, reusing the row if these exact bytes are already known.
+ *
+ * One statement rather than SELECT-then-INSERT: two uploads of the same file
+ * arriving together would both find nothing and both try to insert, and the
+ * loser of that race would get a UNIQUE violation - a 500 for a request whose
+ * bytes had been stored perfectly well. Letting SQLite arbitrate and then
+ * reading the id back is the same work without the race.
+ */
 function rememberMedia(db, user, { sha256, bytes, contentType }) {
-  const existing = db.prepare('SELECT * FROM media WHERE sha256 = ?').get(sha256);
-  if (existing) return existing.id;
-  const { lastInsertRowid } = db.prepare(
-    'INSERT INTO media (sha256, bytes, content_type, created_at, created_by) VALUES (?, ?, ?, ?, ?)',
-  ).run(sha256, bytes, contentType, Date.now(), user.id);
-  return lastInsertRowid;
+  db.prepare(`INSERT INTO media (sha256, bytes, content_type, created_at, created_by)
+      VALUES (?, ?, ?, ?, ?) ON CONFLICT(sha256) DO NOTHING`)
+    .run(sha256, bytes, contentType, Date.now(), user.id);
+  return db.prepare('SELECT id FROM media WHERE sha256 = ?').get(sha256).id;
+}
+
+/**
+ * Undo a store that nothing ended up pointing at - an upload whose item could
+ * not be created. Content addressing is what makes this safe: if any live item
+ * shares the hash, the row and the file are somebody else's and are left
+ * exactly where they are.
+ */
+function forgetMediaIfUnused(db, dataDir, sha256) {
+  const row = db.prepare('SELECT id FROM media WHERE sha256 = ?').get(sha256);
+  if (!row) return false;
+  const inUse = db.prepare(
+    'SELECT 1 AS ok FROM library_items WHERE media_id = ? AND deleted_at IS NULL LIMIT 1',
+  ).get(row.id);
+  if (inUse) return false;
+  db.prepare('DELETE FROM media WHERE id = ?').run(row.id);
+  try { fs.rmSync(mediaPath(dataDir, sha256), { force: true }); } catch { /* already gone */ }
+  return true;
 }
 
 function renameItem(db, user, id, { title, group, courseCode }) {
   const item = getItem(db, user, id);
   if (!item) throw Object.assign(new Error('no such item'), { status: 404 });
+  // Seeing an item is not permission to change it. Re-filing one under a
+  // different course - or under none, which means everyone - moves it between
+  // access scopes, so editing needs the same standing as removing: the person
+  // who uploaded it, a course owner, or an admin.
+  if (!mayDelete(db, user, item)) {
+    throw Object.assign(new Error('only the person who added this, a course owner, or an admin can change it'), { status: 403 });
+  }
 
   // Built from a fixed set of literals - the values are always bound, never
   // interpolated - because the alternative (one statement with COALESCE and a
@@ -285,6 +320,7 @@ function usage(db) {
 
 module.exports = {
   MAX_UPLOAD_BYTES, UPLOADABLE, uploadKindFor, mediaPath,
-  listItems, getItem, listCourses, mayReadMedia,
-  addItem, storeUpload, rememberMedia, renameItem, deleteItem, mayDelete, usage,
+  listItems, getItem, listCourses, mayReadMedia, courseIdFor,
+  addItem, storeUpload, rememberMedia, forgetMediaIfUnused,
+  renameItem, deleteItem, mayDelete, usage,
 };

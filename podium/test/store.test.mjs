@@ -296,6 +296,37 @@ catch (err) { refused = err.message; }
 // not something a non-member should be able to probe for.
 ok(`someone outside a course cannot file anything into it (${refused})`, /no course with the code/.test(refused));
 
+console.log('\n-- the library: what a caller may not overwrite --');
+
+// props is whatever the caller sent when the item was created. Spread after
+// the row it would let a caller rewrite the item's own identity - including
+// the two fields permission checks read back.
+const spoofed = library.addItem(db, ta, {
+  courseCode: 'psy415', kind: 'text', title: 'Real title',
+  props: { id: 9999, type: 'web', title: 'Spoofed', course: 'not-a-course', createdBy: admin.id, src: 'https://evil.example' },
+});
+ok('a prop cannot rewrite the item id', spoofed.id !== 9999);
+ok('or its type', spoofed.type === 'text');
+ok('or its title', spoofed.title === 'Real title');
+ok('or the course that decides who can see it', spoofed.course === 'psy415');
+ok('or who uploaded it, which is who may remove it', spoofed.createdBy === ta.id);
+
+// A src prop on an item with no media of its own is not an attack, it is how
+// an item that points at an external URL works at all. What must not be
+// writable is the URL of an item whose bytes this server is holding.
+ok('an item with no media keeps the src it was given, which is how a web link works',
+  spoofed.src === 'https://evil.example');
+const backed = library.addItem(db, owner, {
+  courseCode: '', kind: 'deck', title: 'Real deck', filename: 'real.md', mediaId,
+  props: { src: 'https://evil.example/not-the-bytes' },
+});
+ok('but an item backed by stored bytes always points at those bytes',
+  backed.src === `/media/${uploaded.sha256}/real.md`);
+// Removed again straight away: it exists only for the assertion above, and
+// leaving it pointing at the shared media would change what the usage and
+// deletion checks below are measuring.
+library.deleteItem(db, owner, backed.id);
+
 console.log('\n-- the library: who may remove --');
 
 ok('the person who uploaded it may', library.mayDelete(db, owner, forCourse) === true);
@@ -317,6 +348,48 @@ ok('and out of reach of anyone asking for it by id', library.getItem(db, ta, for
 ok('the bytes stay on disk, because another item may still point at them',
   existsSync(library.mediaPath(dataDir, uploaded.sha256)));
 ok('but they stop counting towards what is in use', library.usage(db).files === 0);
+
+console.log('\n-- the library: editing is not the same as seeing --');
+
+const ownerItem = library.addItem(db, owner, {
+  courseCode: 'psy415', kind: 'text', title: 'Owner\'s sign', props: { body: 'x' },
+});
+let notYours = '';
+try { library.renameItem(db, ta, ownerItem.id, { title: 'Renamed by a TA' }); }
+catch (err) { notYours = err.message; }
+ok(`a member who can see an item still cannot rename it (${notYours.slice(0, 32)}…)`, /can change it/.test(notYours));
+
+// The sharper version: re-filing changes who can see a thing, so it needs the
+// same standing as removing it.
+notYours = '';
+try { library.renameItem(db, ta, ownerItem.id, { courseCode: '' }); }
+catch (err) { notYours = err.message; }
+ok('and certainly cannot move it out of its course, where everyone would see it',
+  /can change it/.test(notYours) && library.getItem(db, owner, ownerItem.id).course === 'psy415');
+
+ok('the person who added it can rename it',
+  library.renameItem(db, owner, ownerItem.id, { title: 'Renamed' }).title === 'Renamed');
+
+console.log('\n-- the library: bytes nothing points at --');
+
+const orphanBytes = Buffer.from('an upload whose item never happened\n');
+const orphan = await library.storeUpload(dataDir, Readable.from([orphanBytes]));
+library.rememberMedia(db, owner, { ...orphan, contentType: 'text/markdown' });
+ok('an upload with no item is forgotten, file and row together',
+  library.forgetMediaIfUnused(db, dataDir, orphan.sha256)
+  && !existsSync(library.mediaPath(dataDir, orphan.sha256)));
+
+// Content addressing is what makes that safe - the same bytes may be somebody
+// else's file too.
+const sharedBytes = await library.storeUpload(dataDir, Readable.from([deck]));
+const sharedId = library.rememberMedia(db, owner, { ...sharedBytes, contentType: 'text/markdown' });
+library.addItem(db, owner, { courseCode: '', kind: 'deck', title: 'Still referenced', filename: 'a.md', mediaId: sharedId });
+ok('but bytes a live item still points at are left exactly where they are',
+  library.forgetMediaIfUnused(db, dataDir, sharedBytes.sha256) === false
+  && existsSync(library.mediaPath(dataDir, sharedBytes.sha256)));
+
+ok('recording the same bytes twice is one row, even racing',
+  library.rememberMedia(db, owner, { ...sharedBytes, contentType: 'text/markdown' }) === sharedId);
 
 console.log('\n-- the library: courses --');
 

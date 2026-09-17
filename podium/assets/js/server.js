@@ -52,6 +52,17 @@ export async function signOut() {
       headers: { 'content-type': 'application/json' },
     });
   } catch { /* the cookie may outlive this, but the page is leaving anyway */ }
+
+  // The offline shell holds the pages this account was allowed to load. The
+  // cookie is gone now, but the service worker answers from that cache
+  // whenever the network does not - so on a classroom PC with the Wi-Fi down,
+  // the next person would be handed the controller a signed-out browser is
+  // supposed to be refused. Signing out drops it; the next successful load
+  // fills it again.
+  try {
+    await caches?.delete('podium-shell');
+  } catch { /* no Cache API, or nothing cached: nothing to leak either */ }
+
   forgetServerInfo();
   location.href = '/login.html';
 }

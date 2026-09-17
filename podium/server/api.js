@@ -116,11 +116,15 @@ function sameOrigin(req) {
 }
 
 function capabilities(ctx, user) {
-  const features = ['auth', 'library'];
+  // The library needs somewhere to store things AND someone to attribute them
+  // to, so it is only advertised once an account exists. Otherwise a freshly
+  // installed instance with no accounts yet would offer an Admin page whose
+  // every request answers 401 - a feature announced before it can be used.
+  const features = ctx.db && ctx.hasAccounts() ? ['auth', 'library'] : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
     version: API_VERSION,
-    features: ctx.db ? features : [],
+    features,
     auth: {
       mode: ctx.hasAccounts() ? 'accounts' : (ctx.basicPassword ? 'password' : 'open'),
       required: ctx.hasAccounts() || !!ctx.basicPassword,
@@ -134,7 +138,13 @@ function capabilities(ctx, user) {
  */
 async function handleApi(req, res, url, ctx) {
   const route = url.pathname.replace(/^\/api\/?/, '');
-  const user = ctx.db ? accounts.sessionUser(ctx.db, cookieToken(req)) : null;
+  // Same sliding-expiry refresh the static gate does. Without it, a controller
+  // or admin page left open and used only through the API would slide its row
+  // forward while the browser quietly reached the Max-Age it was given at
+  // login, and would be signed out with a perfectly valid session behind it.
+  const token = cookieToken(req);
+  const refreshCookie = () => res.setHeader('set-cookie', setCookie(req, token, Math.floor(accounts.SESSION_MS / 1000)));
+  const user = ctx.db ? accounts.sessionUser(ctx.db, token, { onSlide: refreshCookie }) : null;
 
   if (route === 'capabilities' && req.method === 'GET') {
     json(res, 200, capabilities(ctx, user));
@@ -261,20 +271,39 @@ async function receiveUpload(req, url, ctx, user) {
       `Podium does not take ${filename.includes('.') ? `${filename.split('.').pop()} files` : 'files without an extension'}`,
     ), { status: 415 });
   }
+
+  // Everything that can be checked without reading the body is checked BEFORE
+  // reading the body. Resolving the course afterwards would mean a signed-in
+  // outsider could spend 50 MB of disk per request on a course they are not a
+  // member of, and only be told no once it had all landed.
+  const courseCode = url.searchParams.get('course') || '';
+  library.courseIdFor(ctx.db, user, courseCode);
+
   // The declared content type is ignored in favour of the extension's: these
   // bytes come back from this origin later, and what a browser is told they
-  // are must not be something an uploader chose.
+  // are must not be something an uploader chose. The KIND comes from the same
+  // mapping for the same reason - `week.md&type=web` would otherwise hand
+  // markdown to the web-page renderer.
   const { sha256, bytes } = await library.storeUpload(ctx.dataDir, req);
-  const mediaId = library.rememberMedia(ctx.db, user, { sha256, bytes, contentType: allowed.type });
-  const item = library.addItem(ctx.db, user, {
-    courseCode: url.searchParams.get('course') || '',
-    kind: url.searchParams.get('type') || allowed.kind,
-    title: url.searchParams.get('title') || filename.replace(/\.[^.]+$/, ''),
-    group: url.searchParams.get('group') || '',
-    filename,
-    mediaId,
-  });
-  return { item };
+  let mediaId;
+  try {
+    mediaId = library.rememberMedia(ctx.db, user, { sha256, bytes, contentType: allowed.type });
+    const item = library.addItem(ctx.db, user, {
+      courseCode,
+      kind: allowed.kind,
+      title: url.searchParams.get('title') || filename.replace(/\.[^.]+$/, ''),
+      group: url.searchParams.get('group') || '',
+      filename,
+      mediaId,
+    });
+    return { item };
+  } catch (err) {
+    // The bytes are on disk and nothing ended up pointing at them. Content
+    // addressing means this is safe to undo: if any other item shares the
+    // hash, forgetMediaIfUnused leaves both alone.
+    library.forgetMediaIfUnused(ctx.db, ctx.dataDir, sha256);
+    throw err;
+  }
 }
 
 // Behind nginx every connection comes from 127.0.0.1, so the forwarded header

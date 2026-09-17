@@ -61,6 +61,9 @@ else
 # Podium service configuration. systemd reads this; see server/podium-server.js
 # for what each one does.
 PORT=$PORT
+# Localhost only: this box is meant to have a TLS terminator in front, and
+# binding every interface would publish the plain-HTTP port beside it.
+HOST=127.0.0.1
 STATIC=../
 DATA_DIR=$DATA_DIR
 
@@ -87,29 +90,47 @@ echo "==> first release"
 # the release into another.
 PREFIX="$PREFIX" DATA_DIR="$DATA_DIR" CONFIG_DIR="$CONFIG_DIR" "$here/deploy/update.sh" "$here"
 
-echo "==> enabling the service"
-systemctl enable --now podium.service
-
 echo "==> first account"
+# BEFORE the service is enabled, deliberately. An instance with a DATA_DIR and
+# no accounts has no gate at all, so starting first and bootstrapping second
+# would leave a window - and on the non-interactive path, an install that was
+# simply never finished would leave that window open indefinitely.
+#
 # runuser rather than sudo: sudo is not on every minimal box, and this has to
 # run AS the service account - a database file left owned by root is one the
 # service cannot then write to.
 as_podium() { runuser -u "$PODIUM_USER" -- env DATA_DIR="$DATA_DIR" "$@"; }
 admin_cli="$PREFIX/current/server/podium-admin.js"
 existing=$(as_podium node "$admin_cli" user list 2>/dev/null || true)
+have_account=0
 if [[ -n "$existing" && "$existing" != *'no accounts yet'* ]]; then
   echo "    accounts already exist, leaving them alone"
-elif [[ ! -t 0 ]]; then
-  echo "    no terminal to prompt on — create the first account yourself:"
-  echo "      runuser -u $PODIUM_USER -- env DATA_DIR=$DATA_DIR node $admin_cli user add <name> --admin"
-else
-  echo "    Until an account exists, anyone who can reach this box can use it."
+  have_account=1
+elif [[ -t 0 ]]; then
+  echo "    Until an account exists there is no gate, so this comes first."
   read -rp "    Username for the first (admin) account [admin]: " first_user
   first_user=${first_user:-admin}
   as_podium node "$admin_cli" user add "$first_user" --admin
-  # The gate is decided per request, but the startup line that reports which
-  # mode is live is not - restart so the logs tell the truth.
-  systemctl restart podium.service
+  have_account=1
+fi
+
+if (( have_account )); then
+  echo "==> enabling the service"
+  systemctl enable --now podium.service
+else
+  # Installed, ready, and deliberately not running. Refusing to start is the
+  # only honest end to an unattended install: the alternative is an open
+  # Podium on a public box waiting for someone to notice.
+  systemctl enable podium.service
+  cat <<EOF
+
+    NOT STARTED. There is no account yet, and an instance without one has no
+    gate. Create the first account and then start it:
+
+      runuser -u $PODIUM_USER -- env DATA_DIR=$DATA_DIR node $admin_cli user add <name> --admin
+      systemctl start podium
+
+EOF
 fi
 
 cat <<EOF

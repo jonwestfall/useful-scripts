@@ -18,6 +18,7 @@
 // server-backed deployment, and it is entirely optional - see VPS.md.
 //
 //   PORT=8080            port to listen on
+//   HOST=127.0.0.1       address to bind (omit to accept from anywhere)
 //   STATIC=../           directory to serve (omit to run relay-only)
 //   ORIGIN=https://a.b   comma-separated allowed Origins (omit to allow any)
 //   DATA_DIR=/var/lib/podium   where accounts and uploads live (omit for none)
@@ -49,6 +50,12 @@ const api = require('./api.js');
 const library = require('./library.js');
 
 const PORT = Number(process.env.PORT || 8080);
+// Unset means every interface, which is what running this on a laptop for a
+// room on the same Wi-Fi needs. A deployment with a TLS terminator in front
+// wants 127.0.0.1 so the only way in is through it; deploy/install.sh writes
+// that into the environment file, because on that box it is the right answer
+// and the wildcard would expose the plain-HTTP port alongside the proxy.
+const HOST = process.env.HOST || '';
 const STATIC = process.env.STATIC ? path.resolve(__dirname, process.env.STATIC) : null;
 const ORIGINS = process.env.ORIGIN ? process.env.ORIGIN.split(',').map((s) => s.trim()) : null;
 
@@ -555,7 +562,7 @@ function describeAuth() {
 }
 
 server.on('close', () => { clearInterval(heartbeat); if (sessionSweep) clearInterval(sessionSweep); });
-server.listen(PORT, () => {
-  console.log(`podium relay on :${PORT}${STATIC ? ` (serving ${STATIC})` : ' (relay only)'}`);
+server.listen(PORT, HOST || undefined, () => {
+  console.log(`podium relay on ${HOST || '*'}:${PORT}${STATIC ? ` (serving ${STATIC})` : ' (relay only)'}`);
   console.log(`podium auth: ${describeAuth()}${db ? `, data in ${store.dataDirFromEnv()}` : ''}`);
 });

@@ -185,9 +185,17 @@ request automatically — subresources, manifests, icons, service-worker fetches
 
 `AUTH_PASSWORD` (the Basic Auth that shipped last week) stays for installs that
 want one shared credential and no accounts. The precedence is explicit and
-logged at startup: **if any enabled account exists, the cookie governs and
-`AUTH_PASSWORD` is ignored.** Two doors into the same house, one of them
-weaker, is how instances get embarrassed.
+logged at startup: **if any account exists — including disabled ones — the
+cookie governs and `AUTH_PASSWORD` is ignored.** Two doors into the same house,
+one of them weaker, is how instances get embarrassed.
+
+"Including disabled ones" is the important half. Counting only the accounts
+that can currently sign in would mean that disabling the last one — something
+you would do precisely because something was wrong — dropped the instance back
+to `AUTH_PASSWORD`, or with the installer's defaults to no gate at all.
+Locking yourself out must never be the same gesture as letting everyone else
+in. With every account disabled the gate stays up and nobody gets through it;
+`podium-admin user enable` is the way back, and the startup line says so.
 
 One sharp edge this creates, and it must be handled in the same change: the
 service worker is network-first and caches what it fetches. A navigation to
