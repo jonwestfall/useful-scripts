@@ -1009,19 +1009,28 @@ press: entries are at least fifteen seconds apart, so what you get is where the 
 *dwelled*.
 
 Alongside it, the bulky half: **your ink**, filed by the display as strokes when you stand
-down, **the photos** taken in the room, filed as each one is taken, and **everything an
-export builds** — the annotated slides, the boards, the poll CSVs, `session.txt` — filed
+down, **the photos** taken in the room if you have asked for them to be kept, and
+**everything an export builds** — the annotated slides, the boards, the poll CSVs, `session.txt` — filed
 when you press *Export this session*. Those are the same files the zip hands you, so a
 past lecture can be downloaded again as the same zip, from a browser that was never in the
 room.
 
-Photos are the one part of that which is usually somebody else's — a worksheet, a board
-mid-argument, a face at the back. Podium's long-standing answer was that they live in
-memory until you press Export, and a server changes that, so the change is a switch you
-can see: **Keep photos on the server with this lecture**, on the Photos tab, on by
-default and remembered per device. Turn it off and no photo leaves the tablet, while ink,
-poll results and the rest of an export still go. It appears only on a Podium that keeps
-sessions.
+Photos are the exception, and they are **off by default**. A photo is usually somebody
+else's — a worksheet, a board mid-argument, a face at the back — and Podium's long-standing
+answer has been that they live in memory until you press Export, so nothing is stored that
+nobody asked for. Two switches, answering different questions:
+
+* **Settings → Presentation → Keep photos on the server by default** is the decision you
+  make once, in the office, for this device.
+* **Keep photos on the server with this lecture**, on the Photos tab, is this lecture only
+  — for the guest speaker, or the room with a camera pointed at the students. It starts
+  from the default and is forgotten on reload, so an exception never quietly becomes the
+  rule.
+
+Either way it governs both the photo filed as it is taken and the photos inside a filed
+export. Ink, poll results and the rest of an export are nobody else's picture and are kept
+whenever there is a lecture to keep them with. Both switches appear only on a Podium that
+keeps sessions.
 
 **The display writes this, not the relay, and it could not be otherwise.** Every message
 Podium puts on a relay is encrypted in the browser under the room passphrase, so a relay
@@ -1147,6 +1156,48 @@ nginx, say — is the thing protecting it. It holds no credentials and makes no
 security claim: anything stored on that machine is readable by anyone who can open
 that browser, and a plan file is plain JSON. Put it behind the same auth as the rest
 of Podium and treat the file like any other lecture prep.
+
+## The Admin page (self-hosted only)
+
+`admin.html` is the fourth page, and the only one you never open in front of a class.
+It appears as a working page only where there is a server behind it with at least one
+account; everywhere else it loads and says so. What is on it depends on who you are.
+
+**People** (administrators only). Add an account, set somebody's password, make
+somebody an administrator, disable an account that should stop working today. Each row
+says when that account was last seen and how many devices it is still signed in on.
+Setting a password signs every one of those devices out, which is the point of doing
+it in a hurry.
+
+Two things the page will not let you do: disable or demote **yourself** — the switches
+are simply not on your own row — and disable or demote the **last administrator who can
+sign in**. An instance with nobody able to administer it can only be fixed from a shell.
+That rail is on the web page and deliberately *not* in `podium-admin`, because a shell
+is the recovery path and "that account is compromised, turn it off now" should never be
+argued with.
+
+**Courses.** Everyone sees the courses they are in; open one you own and you get the
+whole of it in one place: who is in it, a way to add or promote or remove them, and the
+room that course connects to — transport, room name and passphrase, with a one-button
+rotate for when someone has left. That is what turns "Sam joins PSY 415" into "Sam's
+iPad sets itself up by logging in". Who is in a course is shown to whoever runs it, not
+to every member.
+
+Making and archiving courses is an administrator's. **Archiving** is as close to
+deleting as Podium gets: everything filed under the course — library items, plans,
+session records — stays exactly where it is and stops being listed. A term that is over
+should go quiet, not take its lecture recordings with it. Bringing it back is the same
+button.
+
+**Storage** (administrators only) says what the library, the session records and the
+database are costing, and offers one button: a copy of the database, taken safely while
+the server is running. Read the small print on it — that file holds accounts, courses,
+settings, library *entries* and session timelines, but **not the files themselves**,
+which live on disk beside it. A real backup is the whole data directory; see
+[deploy/](deploy/README.md).
+
+`podium-admin.js` still does all of this from a shell, and remains the right tool for
+installing and for getting back in. See [VPS.md](VPS.md).
 
 ## Your lecture library
 

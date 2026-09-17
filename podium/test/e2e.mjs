@@ -4934,11 +4934,14 @@ fs.writeFileSync(uploadDeck, '# Uploaded In Class\n\nThis never went near git.\n
 await desk.setInputFiles('#up-file', uploadDeck);
 await desk.fill('#up-title', 'Week 1 lecture');
 await desk.selectOption('#up-course', 'psy415');
-await desk.waitForSelector('.admin-row', { state: 'detached' }).catch(() => {});
+await desk.waitForSelector('#items .admin-row', { state: 'detached' }).catch(() => {});
 await desk.click('#up-go');
-await desk.waitForSelector('.admin-row');
-ok(`the upload lands in the library (${(await desk.textContent('.admin-row')).replace(/\s+/g, ' ').trim()})`,
-  (await desk.textContent('.admin-row')).includes('Week 1 lecture'));
+// Scoped to the library list: the admin page has rows for people, courses and
+// past sessions too, and "the first .admin-row on the page" is not a thing this
+// test ever meant.
+await desk.waitForSelector('#items .admin-row');
+ok(`the upload lands in the library (${(await desk.textContent('#items .admin-row')).replace(/\s+/g, ' ').trim()})`,
+  (await desk.textContent('#items .admin-row')).includes('Week 1 lecture'));
 ok(`and the page accounts for the disk it used (${await desk.textContent('#usage')})`,
   /1 file, /.test(await desk.textContent('#usage')));
 
@@ -5111,9 +5114,11 @@ ok('going live starts a session record, and what went on the projector lands in 
 // A photo is somebody else's picture more often than not, so the server keeping
 // it is a switch you can see rather than a new default nobody was told about.
 await pad.click('.tab[data-tab="photos"]');
-ok('a server-backed controller offers the choice about keeping photos',
-  await pad.isVisible('#photo-keep-row') && await pad.isChecked('#photo-keep'));
+ok('a server-backed controller offers the choice about keeping photos, and starts with it off',
+  await pad.isVisible('#photo-keep-row') && !await pad.isChecked('#photo-keep'));
 
+// Off is the default, so this lecture has to ask for its photos.
+await pad.check('#photo-keep');
 await pad.click('#photo-panel');
 await pad.waitForSelector('#photo-strip .shot', { timeout: 20000 });
 await desk.waitForFunction(async () => {
@@ -5163,6 +5168,61 @@ ok(`opening it shows what was covered, by name (${timeline.join(', ')})`,
   timeline.includes('Uploaded In Class'));
 
 // Naming one is how "Tue 14:00" becomes something you can find again.
+// --- running the place from the admin page ---------------------------------
+//
+// Everything below was a shell command until phase 5: an account, a course,
+// somebody in it, and the room that course connects to.
+await desk.waitForSelector('#people-card:not([hidden])');
+await desk.fill('#new-user', 'sam');
+await desk.fill('#new-name', 'Sam Okafor');
+await desk.fill('#new-pass', 'sams password here');
+await desk.click('#new-user-go');
+await desk.waitForFunction(() => /Added sam/.test(document.querySelector('#people-note')?.textContent || ''), null, { timeout: 8000 });
+const peopleRows = await desk.$$eval('#people .admin-row .admin-title', (els) => els.map((e) => e.textContent));
+ok(`an account can be made without a shell (${peopleRows.join(', ')})`,
+  peopleRows.some((t) => t.includes('Sam Okafor (sam)')));
+
+// Signing yourself out of the page you are standing on is never what the click
+// meant, so it is not offered.
+const ownRow = await desk.$('#people .admin-row:has(.admin-title:text-is("Jon W (jon)"))');
+ok('your own row offers no way to disable or demote yourself',
+  await ownRow.$('button:has-text("Disable")') === null
+  && await ownRow.$eval('input[type=checkbox]', (i) => i.disabled) === true);
+
+await desk.click('#courses-card .admin-row:has(.admin-title:text-is("PSY 415")) button:has-text("Open")');
+await desk.waitForSelector('#courses .session-body');
+await desk.selectOption('#courses .session-body select', 'sam');
+await desk.click('#courses .session-body button:has-text("Add to the course")');
+await desk.waitForFunction(
+  () => [...document.querySelectorAll('#courses .session-body .admin-title')].some((e) => e.textContent.includes('(sam)')),
+  null, { timeout: 8000 },
+);
+ok('and put into a course from the same page', true);
+
+// The room a course connects to, which is what makes joining it enough to set
+// a device up.
+const passField = '#courses .session-body [data-setting="passphrase"]';
+ok(`the course's room and key are there to be read by somebody who runs it (${await desk.inputValue('#courses .session-body [data-setting="room"]')})`,
+  await desk.inputValue('#courses .session-body [data-setting="room"]') === 'psy415-live'
+  && await desk.inputValue(passField) === 'handed over by the server');
+const before = await desk.inputValue(passField);
+await desk.click('#courses .session-body button:has-text("New passphrase")');
+ok('rotating it is one button, because that is how you take a room back',
+  await desk.inputValue(passField) !== before);
+// Only the field changed - nothing is saved until Save is clicked - but leave
+// it reading what the server actually holds rather than a key nobody has.
+await desk.fill(passField, before);
+
+ok(`the page says what the box is holding (${(await desk.textContent('#storage-note')).slice(0, 60)}…)`,
+  /Library: 1 file/.test(await desk.textContent('#storage-note'))
+  && /database:/.test(await desk.textContent('#storage-note')));
+
+const backup = desk.waitForEvent('download', { timeout: 30000 });
+await desk.click('#backup-go');
+const backupFile = await backup;
+ok(`a copy of the database comes out in one click (${backupFile.suggestedFilename()})`,
+  /^podium-\d{4}-\d{2}-\d{2}.*\.db$/.test(backupFile.suggestedFilename()));
+
 // The record, rebuilt into the same zip by a page that was never in the room.
 const rebuilt = desk.waitForEvent('download', { timeout: 40000 });
 await desk.click('#sessions .session-body button:has-text("Download the session")');

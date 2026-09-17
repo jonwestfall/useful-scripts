@@ -468,6 +468,386 @@ async function refreshSessions() {
   renderSessions();
 }
 
+// --- people ------------------------------------------------------------------
+//
+// Administrators only, and the card is absent rather than disabled for everyone
+// else: a page full of controls that all answer 403 tells you less than a page
+// that simply does not offer them.
+//
+// Every rule enforced here is enforced again on the server (see changePerson in
+// api.js). This decides what to draw; that decides what happens.
+
+let people = [];
+
+const when = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+
+function sayPeople(text, bad = false) {
+  const note = $('#people-note');
+  note.textContent = text;
+  note.classList.toggle('is-bad', bad);
+}
+
+async function patchPerson(person, body, row) {
+  row?.classList.add('is-busy');
+  try {
+    const res = await fetch(`/api/people/${encodeURIComponent(person.username)}`, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const answer = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(answer.error || 'that did not work');
+    sayPeople(`Saved ${person.username}.`);
+    await refreshPeople();
+  } catch (err) {
+    sayPeople(err.message, true);
+    renderPeople();            // put the checkbox back where the server thinks it is
+  }
+}
+
+function renderPeople() {
+  const filter = $('#people-search').value.trim().toLowerCase();
+  const holder = $('#people');
+  holder.replaceChildren();
+
+  const shown = people.filter((person) => !filter
+    || `${person.username} ${person.displayName}`.toLowerCase().includes(filter));
+  if (!shown.length) {
+    holder.append(el('p', { class: 'hint' }, people.length ? 'Nothing matches that.' : 'No accounts yet.'));
+    return;
+  }
+
+  for (const person of shown) {
+    const row = el('div', { class: 'admin-row' });
+    row.append(el('span', { class: 'admin-title' },
+      person.displayName === person.username ? person.username : `${person.displayName} (${person.username})`));
+    row.append(el('span', { class: 'admin-meta' },
+      [person.disabled ? 'disabled' : '',
+        person.devices ? `signed in on ${person.devices}` : '',
+        person.lastSeen ? `last seen ${when(person.lastSeen)}` : 'never signed in',
+        `added ${when(person.createdAt)}`].filter(Boolean).join(' · ')));
+
+    // Yourself, in a list of accounts: the two switches that could sign you out
+    // of the page you are standing on are not offered at all.
+    const isMe = person.id === me?.id;
+    row.append(el('label', { class: 'check', title: 'Can manage people, courses and settings' },
+      el('input', {
+        type: 'checkbox',
+        checked: person.isAdmin,
+        disabled: isMe,
+        onchange: (ev) => patchPerson(person, { isAdmin: ev.target.checked }, row),
+      }), ' admin'));
+    row.append(el('button', {
+      class: 'admin-small', type: 'button',
+      onclick: () => changePassword(person),
+    }, 'Set a password'));
+    if (!isMe) {
+      row.append(el('button', {
+        class: 'admin-small', type: 'button',
+        onclick: () => patchPerson(person, { disabled: !person.disabled }, row),
+      }, person.disabled ? 'Enable' : 'Disable'));
+    }
+    holder.append(row);
+  }
+}
+
+// Deliberately a prompt rather than a field on every row: setting somebody
+// else's password is a rare, deliberate act, and a page carrying a dozen empty
+// password boxes invites a browser to fill one of them in.
+function changePassword(person) {
+  // eslint-disable-next-line no-alert
+  const password = prompt(`A new password for ${person.username}. Every device it is signed in on will be signed out.`);
+  if (password === null) return;
+  if (password.length < 8) { sayPeople('A password has to be at least 8 characters.', true); return; }
+  patchPerson(person, { password });
+}
+
+async function addPerson() {
+  const username = $('#new-user').value.trim();
+  const password = $('#new-pass').value;
+  if (!username || password.length < 8) {
+    sayPeople('A username and a password of at least 8 characters, please.', true);
+    return;
+  }
+  $('#new-user-go').disabled = true;
+  try {
+    const res = await fetch('/api/people', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        username, password, displayName: $('#new-name').value.trim(), isAdmin: $('#new-admin').checked,
+      }),
+    });
+    const answer = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(answer.error || 'that did not work');
+    sayPeople(`Added ${answer.person.username}.`);
+    for (const id of ['#new-user', '#new-name', '#new-pass']) $(id).value = '';
+    $('#new-admin').checked = false;
+    await refreshPeople();
+  } catch (err) {
+    sayPeople(err.message, true);
+  } finally {
+    $('#new-user-go').disabled = false;
+  }
+}
+
+async function refreshPeople() {
+  const res = await fetch('/api/people', { credentials: 'same-origin' });
+  if (!res.ok) return;
+  people = (await res.json()).people || [];
+  renderPeople();
+}
+
+// --- courses, membership, and the room each one connects to -------------------
+//
+// A course is the only unit of sharing Podium has: a library item filed under
+// one is visible to its members, a plan filed under one is shared with them, the
+// room named in its settings hands them the passphrase, and a lecture held in
+// that room is filed there. So this panel is where somebody joining a course
+// actually gets everything, in one act.
+
+let serverCourses = [];
+let openCourse = null;
+
+function sayCourses(text, bad = false) {
+  const note = $('#courses-note');
+  note.textContent = text;
+  note.classList.toggle('is-bad', bad);
+}
+
+async function courseApi(path, options = {}) {
+  const res = await fetch(`/api/courses${path}`, {
+    credentials: 'same-origin',
+    headers: options.body ? { 'content-type': 'application/json' } : undefined,
+    ...options,
+  });
+  const answer = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(answer.error || 'that did not work');
+  return answer;
+}
+
+const SETTING_FIELDS = [
+  ['transport', 'Connection', 'ws / mqtt / supabase'],
+  ['room', 'Room', 'psy415-live'],
+  ['passphrase', 'Passphrase', ''],
+  ['wsUrl', 'WebSocket URL', 'wss://podium.example.com/podium'],
+  ['mqttUrl', 'Broker URL', ''],
+  ['supabaseUrl', 'Supabase URL', ''],
+  ['supabaseKey', 'Supabase key', ''],
+];
+
+/**
+ * The room a course connects to, which is the thing that turns "add Sam to
+ * PSY 415" into "Sam's iPad sets itself up by logging in".
+ *
+ * The passphrase is in here in plain sight, and that is what it is for - anyone
+ * who can open this panel can already read it through /api/settings, because
+ * being able to manage the course is being handed the key. Rotating it is how
+ * you take it back from someone who has left.
+ */
+function renderCourseSettings(course, settings) {
+  const form = el('div', { class: 'admin-form' });
+  for (const [key, label, placeholder] of SETTING_FIELDS) {
+    form.append(el('label', { class: 'field' },
+      el('span', {}, label),
+      el('input', {
+        type: 'text', 'data-setting': key, value: settings[key] || '',
+        placeholder, autocomplete: 'off', spellcheck: 'false',
+      })));
+  }
+  const status = el('span', { class: 'hint', role: 'status' });
+  const save = el('button', {
+    class: 'admin-small', type: 'button',
+    onclick: async () => {
+      const wanted = {};
+      for (const input of form.querySelectorAll('[data-setting]')) {
+        if (input.value.trim()) wanted[input.dataset.setting] = input.value.trim();
+      }
+      save.disabled = true;
+      status.textContent = 'Saving…';
+      try {
+        await fetch(`/api/settings/${encodeURIComponent(course.code)}`, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ settings: wanted }),
+        }).then(async (res) => {
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'that did not work');
+        });
+        status.textContent = 'Saved — devices pick it up the next time they sign in.';
+      } catch (err) {
+        status.textContent = err.message;
+      } finally {
+        save.disabled = false;
+      }
+    },
+  }, 'Save the connection');
+
+  const rotate = el('button', {
+    class: 'admin-small', type: 'button',
+    title: 'A new passphrase, which is how you take the room back from a device that has left',
+    onclick: () => {
+      const field = form.querySelector('[data-setting="passphrase"]');
+      field.value = [...crypto.getRandomValues(new Uint8Array(8))]
+        .map((n) => 'abcdefghijkmnopqrstuvwxyz23456789'[n % 33]).join('');
+      status.textContent = 'New passphrase generated — save it, then re-pair every device.';
+    },
+  }, 'New passphrase');
+
+  return el('div', {}, form, el('div', { class: 'admin-actions' }, save, rotate, status));
+}
+
+function renderCourseBody(course) {
+  const body = el('div', { class: 'session-body' });
+
+  for (const person of course.people || []) {
+    const row = el('div', { class: 'admin-row' },
+      el('span', { class: 'admin-title' }, `${person.displayName} (${person.username})`),
+      el('span', { class: 'admin-meta' }, [person.role, person.disabled ? 'disabled' : ''].filter(Boolean).join(' · ')),
+      el('button', {
+        class: 'admin-small', type: 'button',
+        onclick: () => withCourse(() => courseApi(
+          `/${encodeURIComponent(course.code)}/members`,
+          { method: 'POST', body: JSON.stringify({ username: person.username, role: person.role === 'owner' ? 'member' : 'owner' }) },
+        )),
+      }, person.role === 'owner' ? 'Make a member' : 'Make an owner'),
+      el('button', {
+        class: 'admin-del', type: 'button',
+        onclick: () => withCourse(() => courseApi(
+          `/${encodeURIComponent(course.code)}/members/${encodeURIComponent(person.username)}`,
+          { method: 'DELETE' },
+        )),
+      }, 'Remove'));
+    body.append(row);
+  }
+  if (!course.people?.length) body.append(el('p', { class: 'hint' }, 'Nobody is in this course yet.'));
+
+  const pick = el('select', {}, el('option', { value: '' }, 'Add somebody…'));
+  for (const person of people.filter((p) => !(course.people || []).some((m) => m.username === p.username))) {
+    pick.append(el('option', { value: person.username }, `${person.displayName} (${person.username})`));
+  }
+  // Only an administrator is handed the list of every account; a course owner
+  // who is not one adds by typing a username they already know.
+  const typed = el('input', { type: 'text', placeholder: 'username', autocomplete: 'off', spellcheck: 'false' });
+  const add = el('button', {
+    class: 'admin-small', type: 'button',
+    onclick: () => {
+      const username = (me?.isAdmin ? pick.value : typed.value.trim());
+      if (!username) return;
+      withCourse(() => courseApi(`/${encodeURIComponent(course.code)}/members`,
+        { method: 'POST', body: JSON.stringify({ username, role: 'member' }) }));
+    },
+  }, 'Add to the course');
+  body.append(el('div', { class: 'admin-actions' }, me?.isAdmin ? pick : typed, add));
+
+  body.append(el('h3', { class: 'hint', style: 'margin:14px 0 0' }, 'What a device that signs in gets'));
+  body.append(renderCourseSettings(course, courseSettings[course.code] || {}));
+  return body;
+}
+
+async function withCourse(work) {
+  try {
+    await work();
+    sayCourses('');
+    await refreshCourses();
+  } catch (err) {
+    sayCourses(err.message, true);
+  }
+}
+
+function renderCourses() {
+  const holder = $('#courses');
+  holder.replaceChildren();
+  $('#new-course-row').hidden = !me?.isAdmin;
+
+  if (!serverCourses.length) {
+    holder.append(el('p', { class: 'hint' }, me?.isAdmin
+      ? 'No courses yet. A course is how you share a library, a plan and a room with somebody.'
+      : 'You are not in any courses yet.'));
+    return;
+  }
+
+  for (const course of serverCourses) {
+    const row = el('div', { class: 'admin-row' },
+      el('span', { class: 'admin-title' }, course.title),
+      el('span', { class: 'admin-meta' },
+        [course.code, `${course.members} member${course.members === 1 ? '' : 's'}`,
+          course.role, course.archived ? 'archived' : ''].filter(Boolean).join(' · ')));
+    if (course.people) {
+      row.append(el('button', {
+        class: 'admin-small', type: 'button',
+        onclick: () => { openCourse = openCourse === course.code ? null : course.code; renderCourses(); },
+      }, openCourse === course.code ? 'Close' : 'Open'));
+    }
+    if (me?.isAdmin) {
+      row.append(el('button', {
+        class: 'admin-small', type: 'button',
+        title: 'Archived courses keep everything filed under them and simply stop being listed',
+        onclick: () => withCourse(() => courseApi(`/${encodeURIComponent(course.code)}`,
+          { method: 'PATCH', body: JSON.stringify({ archived: !course.archived }) })),
+      }, course.archived ? 'Bring back' : 'Archive'));
+    }
+    holder.append(row);
+    if (openCourse === course.code) holder.append(renderCourseBody(course));
+  }
+}
+
+async function addCourse() {
+  const code = $('#new-course').value.trim();
+  if (!code) { sayCourses('A course needs a code.', true); return; }
+  $('#new-course-go').disabled = true;
+  try {
+    await courseApi('', { method: 'POST', body: JSON.stringify({ code, title: $('#new-course-title').value.trim() }) });
+    $('#new-course').value = '';
+    $('#new-course-title').value = '';
+    sayCourses(`Added ${code.toLowerCase()}.`);
+    await refreshCourses();
+  } catch (err) {
+    sayCourses(err.message, true);
+  } finally {
+    $('#new-course-go').disabled = false;
+  }
+}
+
+let courseSettings = {};
+
+async function refreshCourses() {
+  const [list, settings] = await Promise.all([
+    fetch('/api/courses', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : { courses: [] })),
+    fetch('/api/settings', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : { courses: [] })),
+  ]);
+  serverCourses = list.courses || [];
+  courseSettings = Object.fromEntries((settings.courses || []).map((row) => [row.course, row.settings]));
+  renderCourses();
+}
+
+// --- what the box is holding --------------------------------------------------
+
+async function refreshStorage() {
+  const res = await fetch('/api/storage', { credentials: 'same-origin' });
+  if (!res.ok) return;
+  const held = await res.json();
+  $('#storage-note').textContent = [
+    `Library: ${held.library.files} file${held.library.files === 1 ? '' : 's'}, ${bytes(held.library.bytes)}`,
+    `sessions: ${held.sessions.files} file${held.sessions.files === 1 ? '' : 's'}, ${bytes(held.sessions.bytes)}`,
+    `database: ${bytes(held.database)}`,
+    held.retentionDays
+      ? `session files are kept for ${held.retentionDays} days`
+      : 'session files are kept indefinitely',
+  ].join(' · ') + `. All of it under ${held.dataDir}.`;
+}
+
+function downloadBackup() {
+  // A plain navigation rather than fetch-then-blob: the file is the whole
+  // database and holding a second copy of it in the tab's memory to hand it
+  // straight back to the disk would be a strange thing to do.
+  $('#backup-note').textContent = 'Taking a snapshot…';
+  location.href = '/api/backup';
+  setTimeout(() => { $('#backup-note').textContent = ''; }, 6000);
+}
+
 const info = await serverInfo();
 if (!info.features.includes('library')) {
   $('#no-server').hidden = false;
@@ -483,5 +863,21 @@ if (!info.features.includes('library')) {
     $('#sessions-card').hidden = false;
     $('#sess-search').addEventListener('input', renderSessions);
     await refreshSessions();
+  }
+
+  // Courses are everyone's (you see the ones you are in); people and storage
+  // are an administrator's. Each card appears only where it would work.
+  if (info.features.includes('people')) {
+    $('#courses-card').hidden = false;
+    $('#new-course-go').addEventListener('click', addCourse);
+    if (me?.isAdmin) {
+      $('#people-card').hidden = false;
+      $('#storage-card').hidden = false;
+      $('#people-search').addEventListener('input', renderPeople);
+      $('#new-user-go').addEventListener('click', addPerson);
+      $('#backup-go').addEventListener('click', downloadBackup);
+      await Promise.all([refreshPeople(), refreshStorage()]);
+    }
+    await refreshCourses();
   }
 }

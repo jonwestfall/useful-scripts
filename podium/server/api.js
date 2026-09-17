@@ -18,7 +18,11 @@
 
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const accounts = require('./accounts.js');
+const courses = require('./courses.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
 const plans = require('./plans.js');
@@ -124,7 +128,7 @@ function capabilities(ctx, user) {
   // installed instance with no accounts yet would offer an Admin page whose
   // every request answers 401 - a feature announced before it can be used.
   const features = ctx.db && ctx.hasAccounts()
-    ? ['auth', 'library', 'plans', 'settings', 'sessions']
+    ? ['auth', 'library', 'plans', 'settings', 'sessions', 'people']
     : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
@@ -203,8 +207,76 @@ async function handleApi(req, res, url, ctx) {
   const [head, ...rest] = route.split('/');
 
   try {
-    if (head === 'courses' && req.method === 'GET') {
-      json(res, 200, { courses: library.listCourses(ctx.db, user) });
+    if (head === 'courses' && !rest.length && req.method === 'GET') {
+      // Two shapes from one route: the flat list every page has always read
+      // (code, title, role), and - for a course this account runs - who is in
+      // it. See courses.list for why membership is not shown to everyone.
+      json(res, 200, { courses: courses.list(ctx.db, user) });
+      return true;
+    }
+
+    if (head === 'courses' && !rest.length && req.method === 'POST') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, { course: courses.create(ctx.db, user, { code: body.code, title: body.title }) });
+      return true;
+    }
+
+    if (head === 'courses' && rest.length === 1 && req.method === 'PATCH') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, {
+        course: courses.update(ctx.db, user, rest[0], { title: body.title, archived: body.archived }),
+      });
+      return true;
+    }
+
+    if (head === 'courses' && rest.length === 2 && rest[1] === 'members' && req.method === 'POST') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, { people: courses.addMember(ctx.db, user, rest[0], { username: body.username, role: body.role }) });
+      return true;
+    }
+
+    if (head === 'courses' && rest.length === 3 && rest[1] === 'members' && req.method === 'DELETE') {
+      json(res, 200, { people: courses.removeMember(ctx.db, user, rest[0], decodeURIComponent(rest[2])) });
+      return true;
+    }
+
+    // --- accounts ---------------------------------------------------------
+    //
+    // Administrators only, all of it. Who else has an account here is not a
+    // member's business, and neither is making one.
+
+    if (head === 'people') {
+      if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can manage accounts' }); return true; }
+
+      if (!rest.length && req.method === 'GET') {
+        json(res, 200, { people: accounts.listUsers(ctx.db), me: user.id });
+        return true;
+      }
+
+      if (!rest.length && req.method === 'POST') {
+        const body = await readJson(req, 8 * 1024);
+        json(res, 200, {
+          person: await accounts.createUser(ctx.db, {
+            username: body.username,
+            password: body.password,
+            displayName: body.displayName,
+            isAdmin: !!body.isAdmin,
+          }),
+        });
+        return true;
+      }
+
+      if (rest.length === 1 && req.method === 'PATCH') {
+        json(res, 200, { person: await changePerson(ctx, user, decodeURIComponent(rest[0]), await readJson(req, 8 * 1024)) });
+        return true;
+      }
+    }
+
+    // --- what the box is holding -------------------------------------------
+
+    if (head === 'storage' && req.method === 'GET') {
+      if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can see this' }); return true; }
+      json(res, 200, storageReport(ctx));
       return true;
     }
 
@@ -438,6 +510,67 @@ async function receiveUpload(req, url, ctx, user) {
     library.forgetMediaIfUnused(ctx.db, ctx.dataDir, sha256);
     throw err;
   }
+}
+
+/**
+ * Change one account, from the admin page.
+ *
+ * Four separate things behind one route because they are four checkboxes on one
+ * row: the name, administrator or not, disabled or not, and a new password.
+ *
+ * The two that can strand the instance are refused HERE rather than in
+ * accounts.js, which is deliberate - see assertAnotherAdminRemains. A browser
+ * is where a slip happens; podium-admin at a shell is what a slip is recovered
+ * with, and it keeps its teeth.
+ */
+async function changePerson(ctx, user, username, body) {
+  const person = accounts.findUser(ctx.db, username);
+  if (!person) throw Object.assign(new Error(`no account called ${username}`), { status: 404 });
+
+  if (body.displayName !== undefined) accounts.setDisplayName(ctx.db, username, body.displayName);
+
+  if (body.isAdmin !== undefined && !!body.isAdmin !== !!person.is_admin) {
+    if (!body.isAdmin) accounts.assertAnotherAdminRemains(ctx.db, username, 'taking that away');
+    accounts.setAdmin(ctx.db, username, !!body.isAdmin);
+  }
+
+  if (body.disabled !== undefined && !!body.disabled !== !!person.disabled_at) {
+    if (body.disabled) {
+      // Signing yourself out of the page you are standing on, permanently, is
+      // never what the click meant.
+      if (person.id === user.id) {
+        throw Object.assign(new Error('you cannot disable the account you are signed in as'), { status: 409 });
+      }
+      accounts.assertAnotherAdminRemains(ctx.db, username, 'disabling it');
+    }
+    accounts.setDisabled(ctx.db, username, !!body.disabled);
+  }
+
+  // Last, so that a request which also disables an account cannot leave it with
+  // a new password it can never use. setPassword drops every session that
+  // account had, which is the point of doing it in a hurry.
+  if (body.password) await accounts.setPassword(ctx.db, username, body.password);
+
+  return accounts.publicUser(accounts.findUser(ctx.db, username));
+}
+
+/**
+ * What this box is actually holding, in the three numbers an operator wants
+ * before they go looking for more disk: the library, the session records, and
+ * the database itself.
+ */
+function storageReport(ctx) {
+  let database = 0;
+  try { database = fs.statSync(path.join(ctx.dataDir, 'podium.db')).size; } catch { /* not yet written */ }
+  return {
+    library: library.usage(ctx.db),
+    sessions: lectures.usage(ctx.db),
+    database,
+    dataDir: ctx.dataDir,
+    // Media bytes live on disk beside the database, not inside it - so a copy
+    // of the database alone is not a backup, and the page says so.
+    retentionDays: Number(process.env.LECTURE_RETENTION_DAYS || 0) || null,
+  };
 }
 
 /**

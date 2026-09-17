@@ -1029,7 +1029,7 @@ let pendingTimer = null;
 serverInfo().then((info) => {
   if (!info.features.includes('sessions')) return;
   const note = $('#arm-record');
-  note.textContent = 'This lecture is saved to the server: what went on screen, your ink, poll results, and photos taken in the room.';
+  note.textContent = 'This lecture is saved to the server: what went on screen, your ink and any poll results. Photos are kept only if a controller is set to keep them.';
   note.hidden = false;
 });
 

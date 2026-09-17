@@ -279,8 +279,8 @@ member is what gets you both.
 Two consequences, stated rather than buried. **Reading** a course's settings
 means holding the key to its projector — that is the point, and it means adding
 someone to a course hands them that key and removing them again does not take
-it back. Rotating the passphrase does, and `podium-admin course settings
---new-passphrase` is where that happens. **Writing** them is therefore an
+it back. Rotating the passphrase does — one button on the Admin page's course
+card, or `podium-admin course settings --new-passphrase`. **Writing** them is therefore an
 owner's or an admin's business, never a plain member's: a TA who could rotate
 the key could lock an instructor out of their own lecture.
 
@@ -375,15 +375,19 @@ existed already — and it is also the one thing it could get wrong, so
 Rebuilding the zip happens in the browser, with the same `zip.js` the controller
 uses. The server never packs an archive; there is no zip code on it at all.
 
-**The photo switch.** Podium's stated answer for photos has been that they live
-in memory until Export, because a photo is usually somebody else's — a
-worksheet, a board mid-argument, a face at the back. A server keeping them
-changes that, so it is a switch on the Photos tab (*Keep photos on the server
-with this lecture*), on by default, remembered per device, and governing both
-the photo filed as it is taken and the photos inside a filed export. Ink, poll
-CSVs and the rest of an export are nobody else's picture and are kept whenever
-there is a lecture to keep them with. Turning a documented default over without
-saying so would have been the wrong kind of quiet.
+**The photo switch, and why it is off.** Podium's stated answer for photos has
+been that they live in memory until Export, because a photo is usually somebody
+else's — a worksheet, a board mid-argument, a face at the back. So the server
+keeps none unless somebody has said it should: store no more than you have to.
+
+Two levels, because they answer different questions. *Settings → Presentation →
+Keep photos on the server by default* is the decision made once, in the office,
+for a device. The switch on the Photos tab is this lecture only — a guest
+speaker, a room with a camera on the students — and it starts from that default
+and is forgotten on reload, so an exception never quietly becomes the rule.
+Either one governs both the photo filed as it is taken and the photos inside a
+filed export. Ink, poll CSVs and the rest of an export are nobody else's
+picture and are kept whenever there is a lecture to keep them with.
 
 **The retention control**, and the asymmetry that is the point of it:
 `LECTURE_RETENTION_DAYS` ages out *files* — photos, ink, rasterized pages — and
@@ -400,11 +404,52 @@ per file, 500 files and 400 MB per lecture, and an allow-list of what a session
 may keep at all (png, jpeg, webp, json, txt, csv — nothing that executes, the
 same rule the library's list is built on).
 
-### Phase 5 — `admin.html` proper
+### Phase 5 — `admin.html` proper ✅
 
-Accounts, courses and membership. Server settings. Storage usage. Backup and
-restore. Phases 2–4 each add their own panel to a page that starts as a stub
-in Phase 1.
+Accounts, courses and membership, the room each course connects to, what the
+box is holding, and a copy of the database. Everything on this page was a shell
+command until now, and that was the real gap: `podium-admin` is the right tool
+for installing and for recovering, and the wrong one for adding a TA in the
+week before term.
+
+**Accounts** are an administrator's business and the card is absent rather than
+disabled for anyone else — a page of controls that all answer 403 tells you
+less than a page that does not offer them. Each row says when the account was
+last seen and on how many devices it is still signed in, which are the two
+questions anyone actually has in front of a list of accounts. Setting somebody
+else's password is a prompt rather than a field per row: it is a rare,
+deliberate act, and a page carrying a dozen empty password boxes invites a
+browser to fill one in.
+
+**The rail that matters**: the last administrator who can sign in cannot be
+disabled or demoted *from the browser*, and you are never offered either switch
+on your own row. An instance with no enabled admin cannot be administered from
+a browser at all, and the way back is a shell. Which is exactly why the same
+rail is **not** in `accounts.js`: standing at a shell is the credential the CLI
+runs on, and "that account is compromised, turn it off now" must not be a thing
+Podium argues with. The rail goes on the path where a slip is plausible, not on
+the path that exists to recover from one.
+
+**Courses** gain the thing that makes them worth having: opening one shows who
+is in it, lets an owner add and promote and remove, and shows the room that
+course connects to — transport, room name, passphrase — with a one-button
+rotate. That is the whole of "Sam joins PSY 415 and their iPad sets itself up
+by logging in", on one card. Who is in a course is shown to somebody who *runs*
+it, not to every member: a list of every account on the instance, assembled
+from course pages, should need a reason. Making and archiving courses stays an
+admin's: a course is the thing access is granted by, so inventing one is
+inventing a place to put things where the instance's admin never looks.
+Archiving is as close to deleting as Podium gets — everything filed under the
+course stays exactly where it is and simply stops being listed. A term that is
+over should go quiet, not take its lecture recordings with it.
+
+**Storage** is three numbers and a button. `VACUUM INTO` is why the button is
+three lines rather than a stop-the-world problem: SQLite writes a consistent
+snapshot while the server runs, WAL and concurrent writers and all. The page
+says plainly what that file is *not* — uploads and session photos live on disk
+beside the database, so restoring it alone gives you every entry pointing at
+bytes that are not there. Backing up the whole data directory is what
+`deploy/` documents, and the ops script in phase 6 is where it gets automated.
 
 ### Phase 6 — operations
 

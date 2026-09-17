@@ -375,6 +375,10 @@ const server = http.createServer((req, res) => {
   // Answered whether or not this process serves the pages: a display on
   // GitHub Pages pointed at this relay still needs to be able to ask what it
   // can do here.
+  // Not routed through handleApi because it answers with a file rather than
+  // JSON, and a consistent-looking API is not worth a second file-streaming
+  // path. See serveBackup.
+  if (url.pathname === '/api/backup' && req.method === 'GET') { serveBackup(req, res); return; }
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
     api.handleApi(req, res, url, authContext).catch(() => {
       try { api.json(res, 500, { error: 'request failed' }); } catch { /* response already begun */ }
@@ -464,6 +468,62 @@ function serveMedia(req, res, url) {
       'cache-control': 'private, no-cache',
       etag,
     });
+  });
+}
+
+/**
+ * A copy of the database, taken safely while the server is running.
+ *
+ * `VACUUM INTO` is the reason this is three lines rather than a stop-the-world
+ * problem: SQLite writes a consistent snapshot of the whole database to a new
+ * file, taking its own locks, with WAL and concurrent writers and all. Copying
+ * podium.db with `cp` while the process is up would not be safe; this is.
+ *
+ * What it is NOT is a whole backup, and the page that offers it says so plainly:
+ * uploaded files and session photos live on disk beside the database, not inside
+ * it. The database alone restores your accounts, courses, settings, library
+ * ENTRIES and session timelines, and leaves every one of those entries pointing
+ * at bytes that are not there. Backing up the whole DATA_DIR is what deploy/
+ * documents.
+ *
+ * Administrators only. It carries password hashes and every room's passphrase.
+ */
+function serveBackup(req, res) {
+  if (!db || !DATA_DIR) { res.writeHead(404); res.end('not found'); return; }
+  const user = accounts.sessionUser(db, api.cookieToken(req));
+  if (!user) { api.json(res, 401, { error: 'not signed in' }); return; }
+  if (!user.isAdmin) { api.json(res, 403, { error: 'only an administrator can download a backup' }); return; }
+
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  const temp = path.join(DATA_DIR, `.backup-${crypto.randomBytes(6).toString('hex')}.db`);
+  try {
+    // A quoted string literal, not a bound parameter: VACUUM INTO takes no
+    // parameters. The path is this process's own, built from DATA_DIR and
+    // random bytes, so there is nothing of anyone else's in it to quote wrong.
+    db.exec(`VACUUM INTO '${temp.replace(/'/g, "''")}'`);
+  } catch (err) {
+    console.error(`podium: backup failed (${err.message})`);
+    api.json(res, 500, { error: 'could not take a copy of the database' });
+    return;
+  }
+
+  const drop = () => { try { fs.rmSync(temp, { force: true }); } catch { /* gone already */ } };
+  fs.stat(temp, (err, info) => {
+    if (err) { drop(); api.json(res, 500, { error: 'could not take a copy of the database' }); return; }
+    res.writeHead(200, {
+      'content-type': 'application/vnd.sqlite3',
+      'content-length': info.size,
+      'content-disposition': `attachment; filename="podium-${stamp}.db"`,
+      'cache-control': 'no-store',
+    });
+    const stream = fs.createReadStream(temp);
+    stream.pipe(res);
+    // Whichever way this ends - sent, or a browser that went away mid-download
+    // - the snapshot goes. A DATA_DIR quietly filling with abandoned copies of
+    // itself is a good way to run a box out of disk.
+    stream.on('close', drop);
+    stream.on('error', () => { drop(); res.destroy(); });
+    res.on('close', drop);
   });
 }
 

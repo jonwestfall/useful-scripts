@@ -397,6 +397,7 @@ body.control.is-frozen { background: #171006; }
 .admin-meta { color: var(--dim); font-size: 12px; }
 .admin-del { min-height: 32px; padding: 0 10px; font-size: 12px; }
 .admin-del[data-armed='yes'] { background: var(--live); border-color: var(--live); color: #fff; }
+.admin-row.is-busy { opacity: 0.55; pointer-events: none; }
 .admin-small { min-height: 32px; padding: 0 10px; font-size: 12px; }
 .admin-name { flex: 1; min-width: 8rem; }
 .session-body { padding: 0 0 12px; border-top: 1px solid var(--line); }

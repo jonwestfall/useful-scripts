@@ -1237,7 +1237,7 @@ async function fileExportWithLecture(files, status) {
   let failed = 0;
   for (const file of files) {
     // The one thing the switch on this tab governs (see filePhotoWithLecture).
-    if (!keepPhotos && file.name.startsWith('photos/')) continue;
+    if (!photosKept() && file.name.startsWith('photos/')) continue;
     status.textContent = `Keeping this session on the server… (${sent + 1} of ${files.length})`;
     const type = file.name.endsWith('.png') ? 'image/png'
       : file.name.endsWith('.jpg') ? 'image/jpeg'
@@ -1551,18 +1551,26 @@ const recordingNow = () => serverKeepsSessions && !!state.lectureId;
 
 // Photos are the one payload here that is somebody else's: a worksheet, a
 // board mid-argument, a face at the back of the room. Podium's long-standing
-// answer was that they live in memory until you press Export, and a server
-// changes that - so the change is a switch you can see and turn off, per
-// device, rather than a new default nobody was told about. It governs both the
-// photo filed as it is taken and the photos inside a filed export; ink, poll
-// CSVs and the rest of an export are not anyone else's picture and are kept
-// whenever there is a lecture to keep them with.
-const KEEP_PHOTOS_KEY = 'podium.keepPhotos.v1';
-let keepPhotos = localStorage.getItem(KEEP_PHOTOS_KEY) !== 'no';
+// answer was that they live in memory until you press Export, so the server
+// keeping them is OFF unless somebody has said otherwise - store no more than
+// you have to, and let the person who knows the room decide.
+//
+// Two levels, because they answer different questions. Settings > Presentation
+// holds the DEFAULT for this device, which is where "my lectures should keep
+// their photos" belongs: decided once, in the office. The switch on the Photos
+// tab is this lecture only, which is where "not this one" belongs: a guest
+// speaker, a room with a camera on the students. It starts from the default and
+// is forgotten on reload, so an exception never quietly becomes the rule.
+//
+// Either way it governs the photo filed as it is taken and the photos inside a
+// filed export. Ink, poll CSVs and the rest of an export are not anyone else's
+// picture and are kept whenever there is a lecture to keep them with.
+let keepPhotosThisSession = null;      // null = whatever the default says
+
+const photosKept = () => keepPhotosThisSession ?? presentation.keepPhotos;
 
 function setKeepPhotos(on) {
-  keepPhotos = !!on;
-  try { localStorage.setItem(KEEP_PHOTOS_KEY, keepPhotos ? 'yes' : 'no'); } catch { /* private mode */ }
+  keepPhotosThisSession = !!on;
   renderKeepPhotos();
 }
 
@@ -1570,7 +1578,7 @@ function renderKeepPhotos() {
   const row = $('#photo-keep-row');
   if (!row) return;
   row.hidden = !serverKeepsSessions;
-  $('#photo-keep').checked = keepPhotos;
+  $('#photo-keep').checked = photosKept();
 }
 
 function filePollWithLecture(entry) {
@@ -1596,7 +1604,7 @@ function fileWithLecture(name, kind, data, type) {
 }
 
 function filePhotoWithLecture(photo, dataUrl) {
-  if (!keepPhotos) return;
+  if (!photosKept()) return;
   fileWithLecture(photoFileName(photo), 'photo', dataUrlToBytes(dataUrl), 'image/jpeg');
 }
 
@@ -3862,7 +3870,7 @@ $('#update-reload').addEventListener('click', () => {
 // app where "device preferences" has grown into its own settings surface
 // (the Presentation tab) rather than a single quick-access toggle.
 const PRESENTATION_KEY = 'podium.presentation.v1';
-const PRESENTATION_DEFAULTS = { showPollUrl: true, blankOnConnect: true, keepAwake: true };
+const PRESENTATION_DEFAULTS = { showPollUrl: true, blankOnConnect: true, keepAwake: true, keepPhotos: false };
 function loadPresentation() {
   try {
     const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
@@ -3910,6 +3918,14 @@ $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () =
 $('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
 $('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
 $('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(); applyWakeLock(); });
+// Changing the default takes effect now as well as next time: turning it on in
+// Settings and finding the Photos tab still unticked would read as a bug.
+$('#pref-keep-photos').addEventListener('change', (ev) => {
+  presentation.keepPhotos = ev.target.checked;
+  savePresentation();
+  keepPhotosThisSession = null;
+  renderKeepPhotos();
+});
 
 // --- setup ------------------------------------------------------------------
 
@@ -3921,6 +3937,8 @@ function showSetup() {
   $('#pref-poll-url').checked = presentation.showPollUrl;
   $('#pref-blank-on-connect').checked = presentation.blankOnConnect;
   $('#pref-keep-awake').checked = presentation.keepAwake;
+  $('#pref-keep-photos').checked = presentation.keepPhotos;
+  renderKeepPhotos();
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {
     const field = form.elements[key];

@@ -69,6 +69,12 @@ sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js member add psy415 s
 `podium-admin.js help` lists the rest. The first account is the moment the
 instance stops being open to anyone who can reach it, so make it early.
 
+After that, most of this is easier on the **Admin page** in a browser: accounts,
+courses, membership, each course's room and passphrase, and what the box is
+holding. The CLI stays the right tool for installing, for scripting, and for
+getting back in — it is the one path that will still disable the last
+administrator when you need it to.
+
 ## Session records, and how long they are kept
 
 Once there are accounts, the display writes down what it showed, and the

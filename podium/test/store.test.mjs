@@ -21,6 +21,7 @@ const store = require('../server/store.js');
 const accounts = require('../server/accounts.js');
 const api = require('../server/api.js');
 const lectures = require('../server/lectures.js');
+const courses = require('../server/courses.js');
 
 const fails = [];
 const ok = (label, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + label); if (!cond) fails.push(label); };
@@ -733,6 +734,81 @@ ok('the pruned lecture is still there, with its timeline intact',
 
 ok('usage counts what the sessions are actually costing',
   lectures.usage(db).files === 1 && lectures.usage(db).bytes === fresh.bytes);
+
+console.log('\n-- running the place: accounts and courses --');
+
+// The rail that matters most: an instance with no enabled administrator cannot
+// be administered from a browser at all. Earlier sections left more than one
+// admin behind, so this starts by getting down to the case being tested.
+for (const person of accounts.listUsers(db)) {
+  if (person.isAdmin && person.username !== 'root') accounts.setAdmin(db, person.username, false);
+}
+ok('there is one administrator to lose', accounts.countEnabledAdmins(db) === 1);
+let stranded = '';
+try { accounts.assertAnotherAdminRemains(db, 'root', 'disabling it'); } catch (err) { stranded = err.message; }
+ok(`disabling the only administrator is refused from the browser path (${stranded.slice(0, 48)}…)`,
+  /only administrator who can sign in/.test(stranded));
+ok('but the CLI path is not held to it - a shell is the credential, and "that account is compromised" must work',
+  (() => { accounts.setDisabled(db, 'root', true); const off = accounts.countEnabledAdmins(db) === 0;
+    accounts.setDisabled(db, 'root', false); return off; })());
+
+const sidekick = await accounts.createUser(db, { username: 'sam', password: 'sams password here' });
+accounts.setAdmin(db, 'sam', true);
+ok('with a second administrator the rail lets go', (() => {
+  try { accounts.assertAnotherAdminRemains(db, 'root', 'disabling it'); return true; } catch { return false; }
+})());
+accounts.setAdmin(db, 'sam', false);
+ok('and comes back when the second one is demoted', (() => {
+  try { accounts.assertAnotherAdminRemains(db, 'root', 'disabling it'); return false; } catch { return true; }
+})());
+
+ok('an account listing says when each was last seen and on how many devices',
+  accounts.listUsers(db).every((row) => 'lastSeen' in row && 'devices' in row));
+ok('and never carries a password hash anywhere near the browser',
+  !JSON.stringify(accounts.listUsers(db)).includes('scrypt$'));
+
+// Courses: made by admins, run by owners.
+const made = courses.create(db, admin, { code: 'PSY101', title: 'PSY 101' });
+ok(`a course code is folded to lower case, because it is typed into a filter box (${made.code})`,
+  made.code === 'psy101');
+let refusedCourse = '';
+try { courses.create(db, ta, { code: 'sneaky' }); } catch (err) { refusedCourse = err.message; }
+ok('a member cannot invent a course to file things under', /only an administrator/.test(refusedCourse));
+refusedCourse = '';
+try { courses.create(db, admin, { code: 'not a code' }); } catch (err) { refusedCourse = err.message; }
+ok('nor can an administrator invent one that cannot be typed', /course code is 1-64/.test(refusedCourse));
+refusedCourse = '';
+try { courses.create(db, admin, { code: 'psy101' }); } catch (err) { refusedCourse = err.message; }
+ok('and the same code twice is refused rather than silently merged', /already a course/.test(refusedCourse));
+
+courses.addMember(db, admin, 'psy101', { username: 'sam', role: 'owner' });
+courses.addMember(db, admin, 'psy101', { username: 'ta' });
+const sam = accounts.publicUser(accounts.findUser(db, 'sam'));
+ok('an owner sees who else is in their course', (courses.list(db, sam).find((c) => c.code === 'psy101')?.people || []).length === 2);
+ok('a plain member is not handed the membership list',
+  courses.list(db, ta).find((c) => c.code === 'psy101')?.people === undefined);
+
+let refusedMember = '';
+try { courses.addMember(db, ta, 'psy101', { username: 'outsider' }); } catch (err) { refusedMember = err.message; }
+ok('and cannot add anybody', /that you can change/.test(refusedMember));
+refusedMember = '';
+try { courses.removeMember(db, sam, 'psy101', 'sam'); } catch (err) { refusedMember = err.message; }
+ok('an owner cannot remove the last owner and leave a course nobody runs',
+  /only owner of psy101/.test(refusedMember));
+ok('but can remove a member', courses.removeMember(db, sam, 'psy101', 'ta').length === 1);
+
+// Archiving is as close to deleting as Podium gets, and deliberately keeps
+// everything filed under the course.
+courses.addMember(db, admin, 'psy101', { username: 'ta' });
+courses.update(db, admin, 'psy101', { archived: true });
+ok('an archived course is still listed to an administrator, who is the one who can bring it back',
+  courses.list(db, admin).find((c) => c.code === 'psy101')?.archived === true);
+ok('and is not listed to its members any more', !courses.list(db, ta).some((c) => c.code === 'psy101'));
+ok('nothing filed under it is touched',
+  db.prepare('SELECT COUNT(*) AS n FROM course_members WHERE course_id = (SELECT id FROM courses WHERE code = ?)')
+    .get('psy101').n === 2);
+courses.update(db, admin, 'psy101', { archived: false });
+ok('bringing it back is the same gesture in reverse', courses.list(db, ta).some((c) => c.code === 'psy101'));
 
 db.close();
 rmSync(root, { recursive: true, force: true });
