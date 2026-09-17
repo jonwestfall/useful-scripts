@@ -1603,7 +1603,7 @@ server is listed on a controller that was already open, opens there with no file
 in between, and says plainly when the course you typed is not one this server
 has rather than guessing; and a browser with no settings whatsoever signs in and
 is simply connected, having taken its room and passphrase from the course it
-belongs to. 543 checks.
+belongs to. 546 checks.
 
 ## Layout
 

@@ -366,13 +366,27 @@ async function receiveUpload(req, url, ctx, user) {
   }
 }
 
-// Behind nginx every connection comes from 127.0.0.1, so the forwarded header
-// is the only thing that distinguishes one attacker from another for the
-// purposes of throttling. Taking the FIRST entry is right for a chain the
-// local proxy appends to.
+/**
+ * Behind nginx every connection comes from 127.0.0.1, so the forwarded header
+ * is the only thing that distinguishes one attacker from another for the
+ * purposes of throttling.
+ *
+ * The LAST entry, not the first. `proxy_set_header X-Forwarded-For
+ * $proxy_add_x_forwarded_for` APPENDS the address nginx actually saw to
+ * whatever the client sent, so the header reads
+ * "<whatever the client claimed>, <the real peer>". Reading the front of that
+ * list means reading a value the client chose - and a login throttle keyed on
+ * a value the attacker picks is no throttle at all, since a new one can be
+ * invented for every attempt.
+ *
+ * This is right for exactly the deployment deploy/podium.nginx.conf describes:
+ * one trusted proxy on this same box. Behind two, the last entry is the inner
+ * proxy and this wants to count back one more.
+ */
 function clientIp(req) {
-  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return forwarded || req.socket?.remoteAddress || '';
+  const chain = String(req.headers['x-forwarded-for'] || '')
+    .split(',').map((part) => part.trim()).filter(Boolean);
+  return chain.length ? chain[chain.length - 1] : (req.socket?.remoteAddress || '');
 }
 
 /**
@@ -410,4 +424,4 @@ function gate(req, res, pathname, ctx) {
   return true;
 }
 
-module.exports = { handleApi, gate, readJson, json, parseCookies, safeNext, cookieToken, COOKIE, API_VERSION };
+module.exports = { handleApi, gate, readJson, json, parseCookies, safeNext, cookieToken, clientIp, COOKIE, API_VERSION };

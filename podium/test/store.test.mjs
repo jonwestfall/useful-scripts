@@ -205,6 +205,23 @@ ok('and whatever it decodes to is not a session anybody holds',
   accounts.sessionUser(db, api.parseCookies('podium_session=%').podium_session) === null);
 ok('a truncated escape at the end of a value is survived too',
   api.parseCookies('podium_session=abc%E0%A4').podium_session !== undefined);
+// nginx appends the address it actually saw to whatever the client sent, so
+// the header reads "<what the client claimed>, <the real peer>". Reading the
+// front of that is reading a value the attacker picked - and a login throttle
+// keyed on an attacker-chosen value is no throttle at all, because a fresh one
+// can be invented for every attempt.
+const ipOf = (headers, socket = '10.1.1.1') =>
+  api.clientIp({ headers, socket: { remoteAddress: socket } });
+ok(`the real peer is the LAST entry a proxy appended, not the first (${ipOf({ 'x-forwarded-for': '1.2.3.4, 203.0.113.9' })})`,
+  ipOf({ 'x-forwarded-for': '1.2.3.4, 203.0.113.9' }) === '203.0.113.9');
+ok('so a spoofed chain cannot mint a new identity per login attempt',
+  ipOf({ 'x-forwarded-for': 'fake-1, fake-2, 203.0.113.9' }) === '203.0.113.9');
+ok('one entry means one proxy and that entry is the client',
+  ipOf({ 'x-forwarded-for': '203.0.113.9' }) === '203.0.113.9');
+ok('with no proxy in front, the socket is the answer', ipOf({}) === '10.1.1.1');
+ok('and an empty header falls back to the socket rather than to nothing',
+  ipOf({ 'x-forwarded-for': '  ,  ' }) === '10.1.1.1');
+
 ok('a relative path is a safe place to go after signing in', api.safeNext('/control.html') === '/control.html');
 ok('a protocol-relative one is not', api.safeNext('//evil.example/x') === '');
 ok('an absolute URL is not', api.safeNext('https://evil.example/x') === '');

@@ -431,13 +431,37 @@ function serveMedia(req, res, url) {
 
   const row = db.prepare('SELECT * FROM media WHERE sha256 = ?').get(sha256);
   const file = library.mediaPath(DATA_DIR, sha256);
+
+  // The bytes behind a hash never change, so the temptation is to let the
+  // browser keep them for a year. That would be wrong: a cached copy is served
+  // without asking this process anything, so it would outlive being removed
+  // from the course, the item being deleted, and signing out. `no-cache` still
+  // lets the browser STORE it - it just has to ask first, and asking is where
+  // the check above happens. An ETag makes that question cheap: one 304 rather
+  // than a lecture's worth of video again.
+  const etag = `"${sha256}"`;
+  if (req.headers['if-none-match'] === etag) {
+    res.writeHead(304, { etag, 'cache-control': 'private, no-cache' });
+    res.end();
+    return;
+  }
+
+  // The type follows the name in the URL rather than the row, because one set
+  // of bytes can be shared by several items: media is deduplicated by hash, so
+  // the same file uploaded as a .md and again as a .pdf has one row carrying
+  // whichever type arrived first. Deriving it from the requested filename, and
+  // only ever through the same allow-list the upload went through, gives each
+  // item the type its own name implies.
+  const byName = library.uploadKindFor(decodeURIComponent(url.pathname.split('/')[3] || ''));
+
   fs.stat(file, (err, info) => {
     if (err || !info.isFile()) { res.writeHead(404); res.end('not found'); return; }
     serve(req, res, file, info.size, {
-      'content-type': row.content_type,
+      'content-type': byName?.type || row.content_type,
       'x-content-type-options': 'nosniff',
       'content-security-policy': "default-src 'none'; sandbox",
-      'cache-control': 'private, max-age=31536000, immutable',
+      'cache-control': 'private, no-cache',
+      etag,
     });
   });
 }

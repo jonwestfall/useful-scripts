@@ -708,6 +708,15 @@
 
     <section class="settings-panel" data-settings-panel="connection">
       <p>Easiest path: open the display on the classroom PC, press <b>Pair a device</b> there, and scan the code. Otherwise fill this in by hand — the values must match the display exactly.</p>
+      <!-- Filled in only when this account belongs to more than one course
+           with settings on the server. One course is adopted automatically at
+           load (see loadConfig); several is a choice nobody else can make,
+           because picking the wrong room is a mistake you find out about in
+           front of a class. -->
+      <div id="setup-courses" class="field" hidden>
+        <label>Use a course's settings</label>
+        <div id="setup-course-buttons" class="inline"></div>
+      </div>
       <form id="setup-form">
         <div class="field">
           <label for="c-transport">Connection</label>

@@ -5058,6 +5058,40 @@ ok('and the passphrase with it, which is what joining the room actually needs',
   adopted.passphrase === 'handed over by the server');
 await freshCtx.close();
 
+// Two courses is a choice, and nothing is adopted silently: picking the wrong
+// room is a mistake you discover in front of a class.
+for (const args of [
+  ['course', 'add', 'psy101', '--title', 'PSY 101'],
+  ['member', 'add', 'psy101', 'jon', '--role', 'owner'],
+  ['course', 'settings', 'psy101', '--transport', 'ws', '--room', 'psy101-live',
+    '--ws-url', `ws://127.0.0.1:${acctPort}/podium`, '--passphrase', 'the other room'],
+]) {
+  execFileSync(process.execPath, ['podium-admin.js', ...args], {
+    cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData },
+  });
+}
+
+const twoCtx = await browser.newContext();
+const two = await twoCtx.newPage();
+trap(two, 'two-course device');
+await two.goto(`${acctBase}/control.html`);
+await two.waitForSelector('#form');
+await two.fill('#username', 'jon');
+await two.fill('#password', 'a good long password');
+await Promise.all([two.waitForURL(/control\.html/), two.click('#go')]);
+
+await two.waitForSelector('#setup-courses:not([hidden])', { timeout: 15000 });
+const choices = await two.$$eval('#setup-course-buttons button', (els) => els.map((e) => e.textContent));
+ok(`belonging to two courses offers the choice rather than guessing (${choices.join(', ')})`,
+  choices.includes('PSY 415') && choices.includes('PSY 101'));
+ok('and adopts neither on its own', await two.evaluate(() => !localStorage.getItem('podium.config.v2')));
+
+await two.click('#setup-course-buttons button:has-text("PSY 101")');
+ok('picking one fills the form in and leaves it to be looked at, not saved behind your back',
+  await two.inputValue('#c-room') === 'psy101-live'
+  && await two.evaluate(() => !localStorage.getItem('podium.config.v2')));
+await twoCtx.close();
+
 await desk.close();
 await acctScreen.close();
 

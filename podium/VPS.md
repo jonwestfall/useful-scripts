@@ -39,7 +39,7 @@ there is a real server sitting there with a disk.
 | What stores it | **SQLite via `node:sqlite`** — built into Node 22, no npm dependency, no compiler, one file on disk. Media on the filesystem beside it |
 | Uploads | **~50 MB**, single request. Decks, PDFs, images, modest audio. Lecture video still arrives by `rsync` |
 | Where management lives | **A new `admin.html`** — library, accounts, courses, server settings |
-| What a TA may do | Drive the projector · upload to the library · read poll results and history. **Not** delete library items |
+| What a TA may do | Drive the projector · upload to the library · read poll results and history. **Not** delete other people's library items (they can remove what they added themselves — see below) |
 | What a session keeps | Timeline of what was on screen · polls and results · ink · document-camera photos |
 | Installation | **Installer plus update script**, generalised from the deploy script this instance already runs, health check and rollback included |
 | The room passphrase | **Stored on the server.** See *What the server can see*, below — this is a real trade and it is being made deliberately |
@@ -140,7 +140,7 @@ courses(id, code, title, created_at, archived_at)
 course_members(course_id, user_id, role)        -- owner | member
 ```
 
-Later phases add `media`, `library_items`, `plans`, `device_settings`,
+Later phases add `media`, `library_items`, `plans`, `course_settings`,
 `lectures`, `lecture_events`, `lecture_polls`, `lecture_ink`, `lecture_photos`.
 Every migration is a numbered step against `PRAGMA user_version`, applied in
 order at startup, and only ever adds.
@@ -252,6 +252,14 @@ A course becomes the item's group heading on the controller when nothing more
 specific is set, and the group is part of what the existing filter box
 searches — so typing `psy415` narrows the library to that course. That is the
 "filter, not a mode switch" decision, implemented without a new control.
+
+**One softening of the decision above**, flagged rather than slipped in:
+removing a library item is allowed to an admin, a course owner, *or the person
+who uploaded it*. The table says a TA may not delete, and what that was
+protecting against is shared materials disappearing — not somebody being
+unable to take back the wrong file thirty seconds after uploading it. A member
+can still only ever remove their own. Say the word and it becomes
+owner-and-admin only.
 
 ### Phase 3 — plans and settings ✅
 

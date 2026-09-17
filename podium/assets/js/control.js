@@ -3812,6 +3812,25 @@ function showSetup() {
   };
   form.elements.transport.addEventListener('change', onTransport);
   onTransport();
+
+  // More than one course on this server has settings this account may use, so
+  // nothing was adopted automatically (loadConfig only does that when there is
+  // exactly one and no choice to make). Offer them: each button fills the form
+  // in, leaving the person to look at it and press Save, rather than silently
+  // re-pointing a controller at a room.
+  const courses = cfg.serverCourses || [];
+  $('#setup-courses').hidden = courses.length < 2;
+  $('#setup-course-buttons').replaceChildren(...courses.map((course) => el('button', {
+    type: 'button',
+    onclick: () => {
+      for (const [key, value] of Object.entries(course.settings)) {
+        const field = form.elements[key];
+        if (field) field.value = value;
+      }
+      onTransport();
+      $('#setup-error').textContent = `Filled in from ${course.title}. Check it and save.`;
+    },
+  }, course.title || course.course)));
   form.addEventListener('submit', (ev) => {
     ev.preventDefault();
     // `generated: null` because submitting this form IS the choice: the room
