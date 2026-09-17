@@ -70,6 +70,17 @@
     </div>
   </section>
 
+  <!-- Past sessions. The display writes these as it goes (see
+       server/lectures.js); this is where you read them back. -->
+  <section class="card" id="sessions-card" hidden>
+    <div class="admin-head">
+      <h2>Past sessions</h2>
+      <input id="sess-search" type="search" placeholder="Filter by name, room or course" aria-label="Filter sessions">
+    </div>
+    <p class="hint" id="sess-note"></p>
+    <div id="sessions"></div>
+  </section>
+
   <section class="card">
     <div class="admin-head">
       <h2>Library</h2>

@@ -5092,6 +5092,54 @@ ok('picking one fills the form in and leaves it to be looked at, not saved behin
   && await two.evaluate(() => !localStorage.getItem('podium.config.v2')));
 await twoCtx.close();
 
+// --- what happened in the room -----------------------------------------
+//
+// The display wrote a timeline while the deck above was on screen. Nothing
+// else could have: the relay only ever sees ciphertext (see
+// server/lectures.js), so a lecture is only ever recorded by the one device
+// that holds the decrypted state.
+await desk.waitForFunction(async () => {
+  const res = await fetch('/api/lectures', { credentials: 'same-origin' });
+  if (!res.ok) return false;
+  const { lectures } = await res.json();
+  return lectures.length === 1 && lectures[0].events > 0;
+}, null, { timeout: 20000 });
+ok('going live starts a session record, and what went on the projector lands in it', true);
+
+// E is stand down - the way back out of a lecture without a "quit" key a
+// stray press could hit.
+await acctScreen.keyboard.press('e');
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures[0]?.endedAt > 0;
+}, null, { timeout: 15000 });
+ok('and standing down closes it', true);
+
+await desk.reload();
+await desk.waitForSelector('#sessions-card:not([hidden]) .admin-row');
+const sessionMeta = await desk.textContent('#sessions .admin-meta');
+ok(`the admin page lists the session with what it knows about it (${sessionMeta.replace(/\s+/g, ' ').trim()})`,
+  /acct-room/.test(sessionMeta) && /moment/.test(sessionMeta));
+
+await desk.click('#sessions .admin-row .admin-small');
+await desk.waitForSelector('.timeline-row');
+const timeline = await desk.$$eval('.timeline-row .timeline-what', (els) => els.map((e) => e.textContent));
+// The deck's own name, not the library tile's: staging a deck titles it from
+// its front matter or its first heading (see frontMatterTitle), and the
+// timeline records what the item was called on screen rather than inventing a
+// second name for the same thing.
+ok(`opening it shows what was covered, by name (${timeline.join(', ')})`,
+  timeline.includes('Uploaded In Class'));
+
+// Naming one is how "Tue 14:00" becomes something you can find again.
+await desk.fill('#sessions .admin-name', 'Day 6 — Weighing the Evidence');
+await desk.dispatchEvent('#sessions .admin-name', 'change');
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures[0]?.title === 'Day 6 — Weighing the Evidence';
+}, null, { timeout: 8000 });
+ok('and naming it sticks', true);
+
 await desk.close();
 await acctScreen.close();
 

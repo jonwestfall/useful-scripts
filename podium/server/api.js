@@ -20,6 +20,7 @@
 
 const accounts = require('./accounts.js');
 const library = require('./library.js');
+const lectures = require('./lectures.js');
 const plans = require('./plans.js');
 const settings = require('./settings.js');
 
@@ -123,7 +124,7 @@ function capabilities(ctx, user) {
   // installed instance with no accounts yet would offer an Admin page whose
   // every request answers 401 - a feature announced before it can be used.
   const features = ctx.db && ctx.hasAccounts()
-    ? ['auth', 'library', 'plans', 'settings']
+    ? ['auth', 'library', 'plans', 'settings', 'sessions']
     : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
@@ -285,6 +286,66 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'plans' && rest.length === 1 && req.method === 'DELETE') {
       json(res, 200, { removed: plans.deletePlan(ctx.db, user, rest[0]).id });
+      return true;
+    }
+
+    // --- lectures: what happened in the room -------------------------------
+    //
+    // Written by the DISPLAY, which is the only device that holds the
+    // decrypted state, and by a controller as it ends a poll. The relay writes
+    // none of it and could not: it only ever sees ciphertext. See lectures.js.
+
+    if (head === 'lectures' && !rest.length && req.method === 'GET') {
+      json(res, 200, { lectures: lectures.listLectures(ctx.db, user) });
+      return true;
+    }
+
+    if (head === 'lectures' && !rest.length && req.method === 'POST') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, { lecture: lectures.startLecture(ctx.db, user, { room: body.room, title: body.title }) });
+      return true;
+    }
+
+    if (head === 'lectures' && rest.length === 1 && req.method === 'GET') {
+      const lecture = lectures.getLecture(ctx.db, user, rest[0]);
+      if (!lecture) { json(res, 404, { error: 'no such lecture' }); return true; }
+      json(res, 200, { lecture });
+      return true;
+    }
+
+    if (head === 'lectures' && rest.length === 1 && req.method === 'PATCH') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, {
+        lecture: lectures.renameLecture(ctx.db, user, rest[0], {
+          title: body.title,
+          courseCode: 'course' in body ? body.course : undefined,
+        }),
+      });
+      return true;
+    }
+
+    if (head === 'lectures' && rest.length === 1 && req.method === 'DELETE') {
+      json(res, 200, { removed: lectures.deleteLecture(ctx.db, user, rest[0]).id });
+      return true;
+    }
+
+    // A batch, because the display queues events and flushes them every few
+    // seconds rather than spending a request on every slide.
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'events' && req.method === 'POST') {
+      const body = await readJson(req, 256 * 1024);
+      json(res, 200, lectures.appendEvents(ctx.db, user, rest[0], body.events));
+      return true;
+    }
+
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'polls' && req.method === 'POST') {
+      const body = await readJson(req, 512 * 1024);
+      json(res, 200, lectures.recordPoll(ctx.db, user, rest[0], body.poll || body));
+      return true;
+    }
+
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'end' && req.method === 'POST') {
+      const body = await readJson(req, 8 * 1024).catch(() => ({}));
+      json(res, 200, { lecture: lectures.endLecture(ctx.db, user, rest[0], { at: body.at }) });
       return true;
     }
 

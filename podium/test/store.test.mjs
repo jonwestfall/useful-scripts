@@ -20,6 +20,7 @@ process.removeAllListeners('warning');   // the node:sqlite experimental notice
 const store = require('../server/store.js');
 const accounts = require('../server/accounts.js');
 const api = require('../server/api.js');
+const lectures = require('../server/lectures.js');
 
 const fails = [];
 const ok = (label, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + label); if (!cond) fails.push(label); };
@@ -504,6 +505,118 @@ ok('an admin is handed every course that has settings', settings.forUser(db, adm
 settings.write(db, owner, 'psy415', { transport: 'ws', room: 'psy415-room', passphrase: 'rotated', wsUrl: 'ws://localhost/podium' });
 ok('rotating the passphrase is how you take it back from someone who has left',
   settings.forUser(db, ta)[0].settings.passphrase === 'rotated');
+
+console.log('\n-- what happened in the room --');
+
+// The room name is psy415's, which is how a lecture finds its course: the
+// display never sends a course code, it sends the room it is in.
+const lecture = lectures.startLecture(db, owner, { room: 'psy415-room' });
+ok('starting a lecture files it under the course whose settings name that room',
+  lecture.course === 'psy415');
+ok('and records who started it', lecture.ownerId === owner.id && !lecture.endedAt);
+
+const elsewhere = lectures.startLecture(db, owner, { room: 'some-other-room' });
+ok('a room no course claims produces a lecture with no course at all', elsewhere.course === null);
+
+ok('a member of the course can see it', lectures.listLectures(db, ta).some((l) => l.id === lecture.id));
+ok('and cannot see the one held in a room that belongs to nobody',
+  !lectures.listLectures(db, ta).some((l) => l.id === elsewhere.id));
+ok('somebody outside the course sees neither', lectures.listLectures(db, outsider).length === 0);
+ok('an admin sees both', lectures.listLectures(db, admin).length === 2);
+
+const started = Date.now();
+lectures.appendEvents(db, owner, lecture.id, [
+  { at: started, kind: 'program', title: 'Week 6', detail: { type: 'deck', slide: 1 } },
+  { at: started + 60000, kind: 'program', title: 'Week 6', detail: { type: 'deck', slide: 12 } },
+]);
+const readBack = lectures.getLecture(db, ta, lecture.id);
+ok('the timeline reads back in order, to anyone who can see the lecture',
+  readBack.timeline.length === 2 && readBack.timeline[0].detail.slide === 1);
+ok('and the detail survives the round trip as an object, not a string',
+  readBack.timeline[1].detail.slide === 12);
+
+// The display's clock is not the one the timeline is read against.
+lectures.appendEvents(db, owner, lecture.id, [
+  { at: started + 40 * 24 * 3600 * 1000, kind: 'program', title: 'Tomorrow' },
+  { at: 1, kind: 'program', title: 'Long ago' },
+]);
+const clamped = lectures.getLecture(db, owner, lecture.id).timeline;
+ok('an event dated after now is pulled back to now, not stored as the future',
+  clamped[3].at <= Date.now() && clamped[3].title === 'Tomorrow');
+ok('and one dated before the lecture began is pulled forward to its start',
+  clamped.find((e) => e.title === 'Long ago').at === lecture.startedAt);
+
+let refusedEvents = '';
+try { lectures.appendEvents(db, outsider, lecture.id, [{ kind: 'program', title: 'sneak' }]); }
+catch (err) { refusedEvents = err.message; }
+ok('someone who cannot see a lecture cannot write to it either, and is told no more than that',
+  /no such lecture/.test(refusedEvents));
+
+// A TA's controller ending a poll is the case this permission exists for: the
+// display may well be signed in as somebody else entirely.
+lectures.recordPoll(db, ta, lecture.id, {
+  pollId: 'p1', kind: 'choice', question: 'Which is the confound?',
+  options: ['a', 'b'], counts: [3, 9], voters: 12, endedAt: started + 120000,
+});
+lectures.recordPoll(db, ta, lecture.id, {
+  pollId: 'p1', kind: 'choice', question: 'Which is the confound?',
+  options: ['a', 'b'], counts: [3, 11], voters: 14, endedAt: started + 121000,
+});
+const withPoll = lectures.getLecture(db, owner, lecture.id);
+ok('a poll a TA ended is filed under the instructor\'s lecture', withPoll.pollResults.length === 1);
+ok('and the same poll sent twice updates rather than duplicating',
+  withPoll.pollResults[0].voters === 14 && withPoll.pollResults[0].counts[1] === 11);
+ok('the tally comes back in the shape the CSV exporter wants',
+  withPoll.pollResults[0].options[0] === 'a' && Array.isArray(withPoll.pollResults[0].answers));
+
+let refusedDelete = '';
+try { lectures.deleteLecture(db, ta, lecture.id); } catch (err) { refusedDelete = err.message; }
+ok('a member who can read a lecture still cannot remove it', /only whoever ran this lecture/.test(refusedDelete));
+ok('a course owner can, which is the same rule the library runs on',
+  !!lectures.deleteLecture(db, owner, lectures.startLecture(db, owner, { room: 'psy415-room' }).id));
+
+// Go live, decide the projector is fine, stand down again: no record.
+const glance = lectures.startLecture(db, owner, { room: 'psy415-room' });
+const ended = lectures.endLecture(db, owner, glance.id, { at: Date.now() });
+ok('a lecture that recorded nothing is discarded rather than kept', ended.discarded === true);
+ok('and is really gone', !lectures.getLecture(db, admin, glance.id));
+
+const closed = lectures.endLecture(db, owner, lecture.id, { at: started + 3600000 });
+ok('one that recorded something is ended, not discarded', !closed.discarded && closed.endedAt === started + 3600000);
+
+// The second Go live in the same room, after a display whose tab was closed
+// without ever standing down.
+const abandoned = lectures.startLecture(db, owner, { room: 'lost-power' });
+// Backdated so that "ended at the last thing it recorded" is distinguishable
+// from both "ended when it started" and "ended now", which a lecture that ran
+// for two milliseconds inside a test would not be.
+db.prepare('UPDATE lectures SET started_at = ? WHERE id = ?').run(Date.now() - 3600000, abandoned.id);
+const lastSeen = Date.now() - 1800000;
+lectures.appendEvents(db, owner, abandoned.id, [{ at: lastSeen, kind: 'program', title: 'Half a lecture' }]);
+const afterAbandoning = lectures.startLecture(db, owner, { room: 'lost-power' });
+ok('going live again in the same room closes the lecture left open',
+  lectures.getLecture(db, owner, abandoned.id).endedAt === lastSeen);
+ok('at the last thing it recorded, not at now - it did not run until this morning',
+  lectures.getLecture(db, owner, abandoned.id).endedAt < afterAbandoning.startedAt - 60000);
+ok('and the new one is open', !afterAbandoning.endedAt);
+lectures.startLecture(db, owner, { room: 'some-other-room' });
+ok('an abandoned lecture that recorded nothing is discarded rather than left as a stub',
+  lectures.getLecture(db, owner, elsewhere.id) === null);
+
+// The cap exists so that one wedged display cannot fill the disk.
+const flood = lectures.startLecture(db, owner, { room: 'psy415-room' });
+let kept = 0;
+for (let i = 0; i < Math.ceil((lectures.MAX_EVENTS + 200) / lectures.MAX_EVENTS_PER_POST); i++) {
+  kept += lectures.appendEvents(db, owner, flood.id, Array.from(
+    { length: lectures.MAX_EVENTS_PER_POST }, (_, n) => ({ kind: 'program', title: `item ${i}-${n}` }),
+  )).stored;
+}
+ok(`the timeline stops at the cap (${kept} stored)`, kept === lectures.MAX_EVENTS);
+ok('and says so, so a record that stops halfway is not read as a lecture that ended there',
+  lectures.getLecture(db, owner, flood.id).truncated === true);
+lectures.deleteLecture(db, owner, flood.id);
+ok('removing a lecture takes its timeline with it',
+  db.prepare('SELECT COUNT(*) AS n FROM lecture_events WHERE lecture_id = ?').get(flood.id).n === 0);
 
 db.close();
 rmSync(root, { recursive: true, force: true });

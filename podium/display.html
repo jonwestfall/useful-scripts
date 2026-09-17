@@ -67,6 +67,10 @@
     <p class="hint">Room <span id="room-name" class="mono"></span> · code <span id="arm-code" class="mono">····</span></p>
     <p class="hint">Press <kbd>?</kbd> at any time for the keyboard shortcuts.</p>
     <p class="hint" id="arm-status">Connecting…</p>
+    <!-- Only on a server-backed Podium that keeps session records. Saying so
+         on the screen the room can see is the point: nobody should have to read
+         the docs to find out that what goes on the projector is written down. -->
+    <p class="hint" id="arm-record" hidden></p>
     <!-- Shown when this tab is coming back to a lecture rather than starting
          one: a reload on the classroom PC used to drop everything to black. -->
     <p class="hint" id="arm-resume" hidden>

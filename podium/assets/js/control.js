@@ -1489,6 +1489,30 @@ let pollHistory = loadPollHistory();
 function addToPollHistory(entry) {
   pollHistory = [{ id: uid(8), ...entry }, ...pollHistory].slice(0, MAX_POLL_HISTORY);
   savePollHistory();
+  fileWithLecture(entry);
+}
+
+// The same tally, sent to the server's record of this lecture - where it
+// outlives this browser, this device and this term, which the shelf above
+// deliberately does not.
+//
+// The controller does this rather than the display because the controller is
+// what ends a poll and the only thing that ever holds the final counts. Which
+// lecture it belongs to comes from state.lectureId, which the display puts on
+// the bus when it goes live (see protocol.js). Best-effort and silent: a poll
+// that fails to file is still in history, still exportable, and still on
+// screen - there is nothing here worth interrupting a class about.
+let serverKeepsSessions = false;
+serverInfo().then((info) => { serverKeepsSessions = info.features.includes('sessions'); });
+
+function fileWithLecture(entry) {
+  if (!serverKeepsSessions || !state.lectureId) return;
+  fetch(`/api/lectures/${encodeURIComponent(state.lectureId)}/polls`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ poll: entry }),
+  }).catch(() => { /* the copy in history is the one that mattered */ });
 }
 
 async function pollApi(suffix, opts = {}) {

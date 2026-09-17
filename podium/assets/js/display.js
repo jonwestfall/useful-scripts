@@ -22,6 +22,7 @@ import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { encodeToFit } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
 import { createCameraReceiver } from './rtc.js';
+import { serverInfo } from './server.js';
 
 const HEARTBEAT_MS = 2000;
 const TELEMETRY_MS = 400;
@@ -990,6 +991,169 @@ async function tickPolls() {
 }
 setInterval(tickPolls, POLL_TICK_MS);
 
+// --- the session record ------------------------------------------------------
+//
+// What was on the projector, written down so it can be read back weeks later.
+//
+// THIS SCREEN writes it, and that is not a preference. Every message Podium
+// puts on a relay is encrypted in the browser under the room passphrase, so a
+// relay keeping its own log would have a pile of ciphertext and no idea what
+// any of it showed. The display is the one device holding the decrypted state,
+// and on a server-backed deployment it is also a signed-in page - so it is the
+// only thing in the system that CAN keep this record. See server/lectures.js.
+//
+// Entirely optional, and silent when it is not available: a Podium served from
+// GitHub Pages, a USB stick or a relay with no database never gets past the
+// capabilities probe below, and nothing on this screen changes.
+
+const RECORD_FLUSH_MS = 5000;
+// At most one timeline entry per this long. Stepping through forty slides
+// should leave a record of where the lecture DWELLED, not forty rows - so a
+// change inside the gap replaces the one waiting rather than adding its own.
+const RECORD_MIN_GAP_MS = 15000;
+const RECORD_QUEUE_MAX = 200;
+const RECORD_BATCH = 100;
+
+let lectureId = null;       // the lecture being written, while live
+let eventQueue = [];
+let flushTimer = null;
+let flushing = false;
+let lastSurface = null;     // the ink surface key the last entry described
+let lastEventAt = 0;
+let pendingEvent = null;
+let pendingTimer = null;
+
+// Said on the screen the room can see, rather than left to the docs: what goes
+// on the projector being written down is the sort of thing people should not
+// have to go looking for.
+serverInfo().then((info) => {
+  if (!info.features.includes('sessions')) return;
+  const note = $('#arm-record');
+  note.textContent = 'This lecture will be saved to the server: what goes on screen, and any poll results.';
+  note.hidden = false;
+});
+
+const lectureUrl = (id, suffix = '') => `/api/lectures/${encodeURIComponent(id)}${suffix}`;
+
+const postJson = (url, body) => fetch(url, {
+  method: 'POST',
+  credentials: 'same-origin',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+// Slide and page numbers are stored 0- and 1-based respectively inside an item
+// (see inkSurfaceKey); both are written here as a human would say them.
+function recordDetail(item) {
+  const detail = { type: item?.type || 'black' };
+  if (item?.type === 'deck') detail.slide = (Number(item.slide) || 0) + 1;
+  if (item?.type === 'slides') detail.slide = (Number(item.slide) || 0) + 1;
+  if (item?.type === 'pdf') detail.page = Number(item.page) || 1;
+  if (item?.type === 'poll' && item.pollId) detail.pollId = item.pollId;
+  return detail;
+}
+
+async function startRecording() {
+  if (lectureId) return;
+  // Awaited rather than read off a flag the probe sets when it lands: Go live
+  // can be clicked in the same second the page opened, and a lecture that went
+  // unrecorded because of a race is exactly the kind of thing nobody would
+  // notice until they went looking for it. serverInfo() only asks once.
+  if (!(await serverInfo()).features.includes('sessions')) return;
+  try {
+    const res = await postJson('/api/lectures', { room: cfg.room });
+    if (!res.ok) return;
+    const { lecture } = await res.json();
+    lectureId = lecture.id;
+    state.lectureId = lecture.id;
+    lastSurface = null;
+    lastEventAt = 0;
+    // Broadcast it: a controller ending a poll files the tally under this id.
+    // commit() notes what is already on screen as the timeline's first entry.
+    commit();
+  } catch { /* no network: the lecture runs, only the record is lost */ }
+}
+
+async function stopRecording() {
+  const id = lectureId;
+  if (!id) return;
+  lectureId = null;
+  state.lectureId = null;
+  clearTimeout(pendingTimer);
+  if (pendingEvent) { eventQueue.push(pendingEvent); pendingEvent = null; }
+  await flushEvents(id);
+  try { await postJson(lectureUrl(id, '/end'), { at: Date.now() }); } catch { /* it stays open */ }
+}
+
+/**
+ * Note what the room is looking at now, if it is something new.
+ *
+ * Called from commit(), so it runs on every state change there is - which is
+ * why the first thing it does is the cheap comparison. The ink surface key is
+ * what "something new" means here, deliberately: it already knows that slide 4
+ * of a deck is a different thing from slide 5, and that re-staging the same
+ * message is not.
+ */
+function noteSurface() {
+  if (!lectureId || !state.armed) return;
+  const item = state.program;
+  const key = inkSurfaceKey(item);
+  if (key === lastSurface) return;
+  const opening = lastSurface === null;
+  lastSurface = key;
+  // Going live with nothing up yet is not a moment in the lecture. Later
+  // blackouts are - "the projector went dark at 10:42" is real - so only the
+  // opening one is dropped.
+  if (opening && key === 'black') return;
+  pendingEvent = { at: Date.now(), kind: 'program', title: itemTitle(item), detail: recordDetail(item) };
+  clearTimeout(pendingTimer);
+  pendingTimer = setTimeout(settleSurface, Math.max(0, RECORD_MIN_GAP_MS - (Date.now() - lastEventAt)));
+}
+
+function settleSurface() {
+  if (!pendingEvent || !lectureId) return;
+  lastEventAt = Date.now();
+  // `at` is when the item went up, not when the gap expired: the entry should
+  // say when the room started looking at this, not when this code got round
+  // to writing it down.
+  eventQueue.push(pendingEvent);
+  pendingEvent = null;
+  if (eventQueue.length > RECORD_QUEUE_MAX) eventQueue.splice(0, eventQueue.length - RECORD_QUEUE_MAX);
+  if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = null; flushEvents(lectureId); }, RECORD_FLUSH_MS);
+}
+
+async function flushEvents(id) {
+  if (!id || flushing || !eventQueue.length) return;
+  flushing = true;
+  const batch = eventQueue.slice(0, RECORD_BATCH);
+  try {
+    const res = await postJson(lectureUrl(id, '/events'), { events: batch });
+    // Only drop them once the server has them. A flush that fails leaves the
+    // queue alone and the next one carries the same entries - which is the
+    // whole reason this is a queue and not a request per slide.
+    if (res.ok) eventQueue = eventQueue.slice(batch.length);
+  } catch { /* keep them */ } finally {
+    flushing = false;
+  }
+  if (eventQueue.length && !flushTimer) {
+    flushTimer = setTimeout(() => { flushTimer = null; flushEvents(lectureId); }, RECORD_FLUSH_MS);
+  }
+}
+
+// A closing tab has no time for a fetch, and the last thing that happened is
+// exactly what has not been sent yet. sendBeacon is the one request a browser
+// promises to finish after the page is gone; it carries same-origin cookies,
+// which is what makes it authenticate at all.
+function beaconEvents() {
+  if (!lectureId) return;
+  const events = [...eventQueue, ...(pendingEvent ? [pendingEvent] : [])].slice(0, RECORD_BATCH);
+  if (!events.length) return;
+  try {
+    navigator.sendBeacon?.(lectureUrl(lectureId, '/events'),
+      new Blob([JSON.stringify({ events })], { type: 'application/json' }));
+  } catch { /* nothing more to try from a page that is leaving */ }
+}
+
 // --- rendering the rest of the chrome --------------------------------------
 
 function render() {
@@ -1159,6 +1323,7 @@ function saveStateSoon() {
 function flushPersistence() {
   saveInkNow();
   saveStateNow();
+  beaconEvents();
 }
 window.addEventListener('pagehide', flushPersistence);
 
@@ -1209,6 +1374,7 @@ function commit() {
   broadcastSoon();
   saveInkSoon();
   saveStateSoon();
+  noteSurface();
 }
 
 // Ink is the one payload that can be far larger than a relay message will
@@ -1459,6 +1625,7 @@ function goLive() {
 
   sizeInk();
   commit();
+  startRecording();
   return finishGoLive([audio, context, fullscreen]);
 }
 
@@ -1481,6 +1648,7 @@ async function standDown() {
   document.body.classList.remove('is-live');
   state.armed = false;
   commit();
+  stopRecording();
   try { await exitFullscreen(); } catch { /* already windowed */ }
 }
 

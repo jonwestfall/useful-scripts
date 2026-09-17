@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 22;
+export const BUILD = 23;
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -90,6 +90,13 @@ export function initialState() {
   return {
     rev: 0,
     armed: false,          // has someone clicked "Go live" on the display yet
+    // The id of the session record this lecture is being written into, on a
+    // server-backed deployment, and null everywhere else - which is every
+    // other way of running Podium, so nothing may depend on it existing. The
+    // display owns it (it is the device that starts and ends a lecture) and
+    // broadcasts it here so that a controller ending a poll knows which
+    // lecture the tally belongs under. See server/lectures.js.
+    lectureId: null,
     program: { ...BLACK },
     preview: null,
     // The layout's own cue, on the same principle as preview above: while

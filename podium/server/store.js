@@ -151,6 +151,71 @@ const MIGRATIONS = [
       CREATE INDEX plans_by_course ON plans(course_id);
     `);
   },
+
+  function toV4(db) {
+    db.exec(`
+      -- One run of the room: Go live to stand down. The DISPLAY writes these,
+      -- not the relay, and that is not a preference - the relay only ever sees
+      -- ciphertext, so it could not tell you what was on screen if it wanted
+      -- to. The display is the one device that holds the decrypted state, and
+      -- on a server-backed deployment it is also a signed-in page, so it is
+      -- the only thing in the system able to keep this record at all.
+      --
+      -- course_id is resolved from the ROOM at start time: the course whose
+      -- stored settings name this room, among the courses the account
+      -- starting it may use. NULL means no course matched, and then the same
+      -- rule as plans applies - it is private to whoever ran it. A record of
+      -- your own teaching is not something colleagues should find by default.
+      CREATE TABLE lectures (
+        id         INTEGER PRIMARY KEY,
+        course_id  INTEGER REFERENCES courses(id) ON DELETE SET NULL,
+        room       TEXT    NOT NULL DEFAULT '',
+        title      TEXT    NOT NULL DEFAULT '',
+        started_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        started_at INTEGER NOT NULL,
+        ended_at   INTEGER,
+        -- Set when the event cap was reached. A timeline that silently stops
+        -- halfway would be read as "the lecture ended there".
+        truncated  INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX lectures_by_course ON lectures(course_id);
+      CREATE INDEX lectures_by_owner ON lectures(started_by);
+      CREATE INDEX lectures_by_start ON lectures(started_at);
+
+      -- Append-only. Nothing is ever updated in place, and an event's end is
+      -- simply the next one's start (or the lecture's ended_at for the last),
+      -- so a display that loses the network or the power leaves a timeline
+      -- that is short rather than one that is wrong.
+      CREATE TABLE lecture_events (
+        id         INTEGER PRIMARY KEY,
+        lecture_id INTEGER NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+        at         INTEGER NOT NULL,
+        kind       TEXT    NOT NULL,
+        title      TEXT    NOT NULL DEFAULT '',
+        detail     TEXT    NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX lecture_events_by_lecture ON lecture_events(lecture_id, at);
+
+      -- The tally as it stood when the poll was ended, which is the only
+      -- moment it exists anywhere: the relay deletes a poll as it closes, and
+      -- until now the only copy was the controller's localStorage. This is
+      -- what makes "re-export that CSV weeks later" possible.
+      CREATE TABLE lecture_polls (
+        id         INTEGER PRIMARY KEY,
+        lecture_id INTEGER NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+        poll_id    TEXT    NOT NULL,
+        kind       TEXT    NOT NULL DEFAULT 'choice',
+        question   TEXT    NOT NULL DEFAULT '',
+        results    TEXT    NOT NULL DEFAULT '{}',
+        voters     INTEGER NOT NULL DEFAULT 0,
+        ended_at   INTEGER NOT NULL,
+        -- The same poll ended twice (two controllers in the room, or a retry
+        -- after a failed post) is one row, not two.
+        UNIQUE (lecture_id, poll_id)
+      );
+      CREATE INDEX lecture_polls_by_lecture ON lecture_polls(lecture_id, ended_at);
+    `);
+  },
 ];
 
 function migrate(db) {

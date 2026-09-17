@@ -994,6 +994,40 @@ student's work or a board mid-argument — and it means the zip, on the device y
 to save it to, is the only copy that outlives the class. On an iPad the download lands
 in Files, from where the images can be moved into Photos like any other download.
 
+### Session records (self-hosted only)
+
+On a Podium with a server behind it (`DATA_DIR` and at least one account — see
+[VPS.md](VPS.md)), the display also writes down what it showed. Click **Go live** and a
+session record opens; the arming screen says so before you start, because a room should
+not have to read the documentation to find that out. Stand down (**E**) and it closes.
+
+What is kept is a timeline — what went on the projector, and when — plus the final tally
+of every poll you ended. Stepping quickly through slides does not produce a row per
+press: entries are at least fifteen seconds apart, so what you get is where the lecture
+*dwelled*. Nothing on the projector is photographed and no ink is stored; that is a later
+phase.
+
+**The display writes this, not the relay, and it could not be otherwise.** Every message
+Podium puts on a relay is encrypted in the browser under the room passphrase, so a relay
+keeping its own log would hold a pile of ciphertext and no idea what any of it showed.
+The display is the one device that has the decrypted state — and, on a server-backed
+deployment, is also signed in. A poll's numbers come from the controller for the same
+reason: it is what ends a poll and the only device that ever holds the final counts.
+
+Read them back on **admin.html**, under *Past sessions*: open one for its timeline, give
+it a name so "Tue 14:00" becomes something you can find again, download the timeline as
+text, or pull any poll's CSV out weeks later — which is the point, since the relay
+deletes a poll the moment it closes and until now the only copy was the controller's own
+browser.
+
+Who sees what follows the same rule as lecture plans: a session held in a room that
+belongs to a course is visible to that course, and one held anywhere else is visible only
+to whoever ran it. Removing one is narrower still — whoever ran it, a course owner, or an
+admin.
+
+None of this exists on GitHub Pages, on a USB stick, or against Supabase or MQTT. There is
+no server in those paths to hold it, the pages notice, and nothing about them changes.
+
 ## Planning a lecture in your office
 
 `plan.html` is the third page, and the only one you use when there is no class in

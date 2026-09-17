@@ -253,13 +253,12 @@ specific is set, and the group is part of what the existing filter box
 searches — so typing `psy415` narrows the library to that course. That is the
 "filter, not a mode switch" decision, implemented without a new control.
 
-**One softening of the decision above**, flagged rather than slipped in:
-removing a library item is allowed to an admin, a course owner, *or the person
-who uploaded it*. The table says a TA may not delete, and what that was
-protecting against is shared materials disappearing — not somebody being
-unable to take back the wrong file thirty seconds after uploading it. A member
-can still only ever remove their own. Say the word and it becomes
-owner-and-admin only.
+**Removing a library item** is allowed to an admin, a course owner, *or the
+person who uploaded it*. The "a TA may not delete" line in the table is about
+*other people's* materials: what it protects against is shared files
+disappearing, not somebody being unable to take back the wrong upload thirty
+seconds later. A TA's own upload is theirs to remove. A member can only ever
+remove their own, and nobody below owner can touch anyone else's.
 
 ### Phase 3 — plans and settings ✅
 
@@ -302,15 +301,60 @@ Sharing a plan shares it to be read and taught from — a course member can open
 it and cannot overwrite it, and neither can a course owner who did not write
 it.
 
-### Phase 4 — durable sessions
+### Phase 4a — the timeline and the polls ✅
 
-`lectures` and its four child tables. The display writes a timeline as it
-goes; the relay writes poll results through to disk instead of only holding
-them in RAM; ink and document-camera photos are captured at the end of a
-lecture rather than living in `localStorage`. A session browser on
-`admin.html`, the existing session zip exported from any past lecture rather
-than only the live one, and a retention control, because ink and photos are the
-two payloads that grow without bound.
+`lectures`, `lecture_events` and `lecture_polls`. What was on the projector and
+when, plus the final tally of every poll that ran. A session browser on
+`admin.html` to read it back, name it, download the timeline, and pull a poll's
+CSV out weeks later.
+
+**As built**, with one correction to the sketch above worth stating plainly,
+because it was wrong rather than merely vague: *the relay cannot write poll
+results through to disk*, and it could not write the timeline either. Every
+message Podium puts on a relay is encrypted in the browser under the room
+passphrase — the relay moves ciphertext and knows nothing about what it says.
+Only the `/poll` routes are plaintext there, and they carry answers, never the
+question's final state or anything about what was on screen.
+
+So the DISPLAY writes the timeline. It is the one device holding the decrypted
+authoritative state, and on a server-backed deployment it is also a signed-in
+page, so it can simply POST. The controller files each poll's tally for the same
+reason: it is what ends a poll, and the only device that ever holds the final
+counts. The display broadcasts the lecture id in `state` so the controller knows
+what to file it under.
+
+The rest of what that decision produced:
+
+- **Which course a lecture belongs to is derived from the room**, not sent. The
+  display has never needed to know a course code; it knows the room it is in,
+  and phase 3 already stores a room per course. No match means no course, and
+  then the plans rule applies — private to whoever ran it.
+- **Entries are throttled to one per fifteen seconds**, and a change inside the
+  gap replaces the one waiting. Stepping through forty slides should record
+  where the lecture dwelled, not forty rows.
+- **Append-only, with no end time per entry**: an entry ends where the next one
+  begins. A display that loses the network or the power then leaves a record
+  that is short rather than one that is wrong.
+- **Events are queued and flushed in batches**, retried on failure, and beaconed
+  on `pagehide` — the last thing that happened is exactly what a debounce has
+  not sent yet.
+- **A lecture that recorded nothing is discarded**, whether it was stood down or
+  simply abandoned. Clicking Go live to check the projector is not a lecture.
+- **5000 events per lecture**, and the lecture is flagged when it hits that, so
+  a timeline that stops halfway is never read as a lecture that ended there.
+- Writing to a lecture takes only the right to see it — the display and the
+  controllers in a room are routinely different accounts. Removing one is
+  narrower: whoever ran it, a course owner, or an admin.
+- The arming screen says the lecture will be recorded. Nobody should have to
+  read this file to find that out.
+
+### Phase 4b — ink and photos
+
+The bulky half: ink and document-camera photos captured at the end of a lecture
+rather than living in memory until the tab closes, the existing session zip
+exported from any past lecture rather than only the live one, and a retention
+control — these are the two payloads that grow without bound, and the reason
+the retention control belongs here rather than with the timeline.
 
 ### Phase 5 — `admin.html` proper
 
