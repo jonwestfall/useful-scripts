@@ -34,14 +34,14 @@ const SHELL = /\.(?:html|css|js|mjs|webmanifest|json|woff2?)$/;
 // included - a deck that cannot render is the difference between a lecture and
 // no lecture.
 const WARM = [
-  './', 'index.html', 'display.html', 'control.html', 'plan.html',
+  './', 'index.html', 'display.html', 'control.html', 'plan.html', 'admin.html',
   'manifest-control.webmanifest', 'manifest-display.webmanifest',
   'assets/css/podium.css',
   'assets/vendor/qrcode.js', 'assets/vendor/marp.esm.js',
   'assets/icons/icon-192.png', 'assets/icons/apple-touch-icon.png',
   ...[
-    'bus', 'config', 'control', 'crypto', 'deck', 'display', 'plan', 'planfile',
-    'protocol', 'renderers', 'rtc', 'server', 'store', 'util', 'zip',
+    'admin', 'bus', 'config', 'control', 'crypto', 'deck', 'display', 'plan',
+    'planfile', 'protocol', 'renderers', 'rtc', 'server', 'store', 'util', 'zip',
   ].map((name) => `assets/js/${name}.js`),
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),
 ];

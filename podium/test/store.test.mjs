@@ -7,8 +7,10 @@
 // migrations that run once, a password that cannot be read back, a session
 // that stops working when its account does. A mock would be testing itself.
 
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
@@ -152,6 +154,122 @@ ok('a relative path is a safe place to go after signing in', api.safeNext('/cont
 ok('a protocol-relative one is not', api.safeNext('//evil.example/x') === '');
 ok('an absolute URL is not', api.safeNext('https://evil.example/x') === '');
 ok('and neither is one with a newline smuggled into it', api.safeNext('/ok\nSet-Cookie: x') === '');
+
+console.log('\n-- the library: what may be uploaded --');
+
+const library = require('../server/library.js');
+
+ok('a markdown file is a deck', library.uploadKindFor('week1.md')?.kind === 'deck');
+ok('an extension in capitals is the same extension', library.uploadKindFor('SCAN.PDF')?.kind === 'pdf');
+ok('a jpeg is an image', library.uploadKindFor('photo.jpeg')?.kind === 'image');
+// The allow-list exists because uploads are served from the app's own origin.
+// Anything a browser would execute there could read the session cookie.
+ok('html is refused', library.uploadKindFor('evil.html') === null);
+ok('svg is refused, being a script container with a picture extension', library.uploadKindFor('evil.svg') === null);
+ok('javascript is refused', library.uploadKindFor('evil.js') === null);
+ok('a file with no extension at all is refused', library.uploadKindFor('README') === null);
+ok('and so is a double extension that ends badly', library.uploadKindFor('deck.md.html') === null);
+
+console.log('\n-- the library: storing bytes --');
+
+const owner = await accounts.createUser(db, { username: 'owner', password: 'owner password here' });
+const ta = await accounts.createUser(db, { username: 'ta', password: 'assistant password' });
+const outsider = await accounts.createUser(db, { username: 'outsider', password: 'outsider password' });
+const admin = await accounts.createUser(db, { username: 'root', password: 'admin password here', isAdmin: true });
+
+db.prepare('INSERT INTO courses (code, title, created_at) VALUES (?, ?, ?)').run('psy415', 'PSY 415', Date.now());
+const courseId = db.prepare('SELECT id FROM courses WHERE code = ?').get('psy415').id;
+db.prepare('INSERT INTO course_members (course_id, user_id, role) VALUES (?, ?, ?)').run(courseId, owner.id, 'owner');
+db.prepare('INSERT INTO course_members (course_id, user_id, role) VALUES (?, ?, ?)').run(courseId, ta.id, 'member');
+
+const deck = Buffer.from('# A deck\n\nwith a slide on it\n');
+const uploaded = await library.storeUpload(dataDir, Readable.from([deck]));
+ok(`an upload is stored under the sha-256 of its own bytes (${uploaded.sha256.slice(0, 12)}…)`,
+  uploaded.sha256 === createHash('sha256').update(deck).digest('hex') && uploaded.bytes === deck.length);
+ok('and the file is really where that says it is', existsSync(library.mediaPath(dataDir, uploaded.sha256)));
+
+const again = await library.storeUpload(dataDir, Readable.from([deck]));
+ok('the same bytes uploaded twice are the same file, not two', again.sha256 === uploaded.sha256);
+ok('and nothing is left behind from the second attempt',
+  readdirSync(path.join(dataDir, 'media', uploaded.sha256.slice(0, 2))).length === 1);
+
+let tooBig = '';
+try { await library.storeUpload(dataDir, Readable.from([Buffer.alloc(2048)]), { limit: 1024 }); }
+catch (err) { tooBig = err.message; }
+ok(`a file past the cap is refused (${tooBig})`, /larger than/.test(tooBig));
+ok('and the half-written file is cleaned up rather than left in the media directory',
+  readdirSync(path.join(dataDir, 'media')).every((name) => !name.startsWith('.incoming-')));
+
+const mediaId = library.rememberMedia(db, owner, { ...uploaded, contentType: 'text/markdown' });
+ok('the same bytes recorded twice reuse one row',
+  library.rememberMedia(db, owner, { ...uploaded, contentType: 'text/markdown' }) === mediaId);
+
+console.log('\n-- the library: who sees what --');
+
+const forCourse = library.addItem(db, owner, {
+  courseCode: 'psy415', kind: 'deck', title: 'Week 1', group: '', filename: 'week1.md', mediaId,
+});
+const forEveryone = library.addItem(db, owner, {
+  courseCode: '', kind: 'text', title: 'Shared sign', props: { body: 'Back in 5' },
+});
+
+ok('an item carries the course it was filed under', forCourse.course === 'psy415');
+ok('and a URL for its bytes, named by hash', forCourse.src === `/media/${uploaded.sha256}/week1.md`);
+ok('an item with no media has no src', !('src' in forEveryone));
+ok('type-specific fields survive the round trip', forEveryone.body === 'Back in 5');
+ok('the group is left empty rather than defaulted, so the client can file it by course',
+  forCourse.group === '');
+
+const seenBy = (user) => library.listItems(db, user).map((i) => i.title).sort();
+ok(`a course member sees the course's items (${seenBy(ta).join(', ')})`,
+  JSON.stringify(seenBy(ta)) === JSON.stringify(['Shared sign', 'Week 1']));
+ok(`someone outside the course sees only what is shared with everyone (${seenBy(outsider).join(', ')})`,
+  JSON.stringify(seenBy(outsider)) === JSON.stringify(['Shared sign']));
+ok('an admin sees everything', JSON.stringify(seenBy(admin)) === JSON.stringify(['Shared sign', 'Week 1']));
+
+ok('a member may fetch the bytes behind an item they can see',
+  library.mayReadMedia(db, ta, uploaded.sha256) === true);
+ok('and someone outside the course may not, sha-256 in the URL or not',
+  library.mayReadMedia(db, outsider, uploaded.sha256) === false);
+ok('a hash nobody uploaded is not readable by anyone',
+  library.mayReadMedia(db, admin, 'f'.repeat(64)) === false);
+
+let refused = '';
+try { library.addItem(db, outsider, { courseCode: 'psy415', kind: 'text', title: 'Sneaking in' }); }
+catch (err) { refused = err.message; }
+// The same answer a genuinely missing course gives: whether a course exists is
+// not something a non-member should be able to probe for.
+ok(`someone outside a course cannot file anything into it (${refused})`, /no course with the code/.test(refused));
+
+console.log('\n-- the library: who may remove --');
+
+ok('the person who uploaded it may', library.mayDelete(db, owner, forCourse) === true);
+ok('an admin may', library.mayDelete(db, admin, forCourse) === true);
+ok('a course owner may', library.mayDelete(db, { ...owner, isAdmin: false }, forCourse) === true);
+// The decision from the interview: a TA can add to the library and present
+// from it, but shared materials disappearing by accident is worth making hard.
+ok('an ordinary course member may not', library.mayDelete(db, ta, forCourse) === false);
+ok('and someone outside the course certainly may not', library.mayDelete(db, outsider, forCourse) === false);
+
+let stopped = '';
+try { library.deleteItem(db, ta, forCourse.id); } catch (err) { stopped = err.message; }
+ok('trying anyway is refused rather than quietly ignored', /can remove it/.test(stopped));
+ok('and the item is still there', library.getItem(db, ta, forCourse.id) !== null);
+
+library.deleteItem(db, owner, forCourse.id);
+ok('removing it takes it out of the listing', !seenBy(ta).includes('Week 1'));
+ok('and out of reach of anyone asking for it by id', library.getItem(db, ta, forCourse.id) === null);
+ok('the bytes stay on disk, because another item may still point at them',
+  existsSync(library.mediaPath(dataDir, uploaded.sha256)));
+ok('but they stop counting towards what is in use', library.usage(db).files === 0);
+
+console.log('\n-- the library: courses --');
+
+ok('a member is told about their course', library.listCourses(db, ta).map((c) => c.code).join() === 'psy415');
+ok('with the role they hold in it', library.listCourses(db, ta)[0].role === 'member');
+ok('an owner is told they are one', library.listCourses(db, owner)[0].role === 'owner');
+ok('someone in no courses is told about none', library.listCourses(db, outsider).length === 0);
+ok('an admin sees every course', library.listCourses(db, admin).map((c) => c.code).join() === 'psy415');
 
 db.close();
 rmSync(root, { recursive: true, force: true });

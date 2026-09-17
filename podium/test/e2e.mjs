@@ -243,7 +243,13 @@ const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_IN
 // purpose, and the 401 it gets back - which the browser logs as a failed
 // resource load - is the assertion, not a fault. Narrow on purpose: a 401 from
 // any OTHER url is still a failure.
-const DELIBERATE = /not-a-real-file|\/api\/login/;
+//
+// The 415 is the third of these: a test uploads an .html file to prove the
+// allow-list refuses it. Matched by its status text rather than by url,
+// because that status has exactly one source - library.js turning down a file
+// type - and an upload that broke for any other reason fails its assertion
+// instead of quietly passing.
+const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)/;
 
 const trap = (page, tag) => {
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
@@ -4902,6 +4908,85 @@ ok('the right password lands on the page that was asked for', /control\.html$/.t
 await pad.waitForSelector('#session-badge .session-who');
 ok(`the controller says who is signed in ("${await pad.textContent('#session-badge .session-who')}")`,
   (await pad.textContent('#session-badge .session-who')).trim() === 'Jon W');
+
+// --- the library, once there is a disk to keep it on ---------------------
+//
+// The whole point of the server-side library: a deck reaches the projector
+// without a git commit. Uploaded on one page, picked on another, shown on a
+// third.
+execFileSync(process.execPath, ['podium-admin.js', 'course', 'add', 'psy415', '--title', 'PSY 415'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData },
+});
+execFileSync(process.execPath, ['podium-admin.js', 'member', 'add', 'psy415', 'jon', '--role', 'owner'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData },
+});
+
+const desk = await acctCtx.newPage();
+trap(desk, 'acct admin');
+await desk.goto(`${acctBase}/admin.html`);
+await desk.waitForSelector('#admin:not([hidden])');
+ok('the admin page opens for a signed-in account', await desk.isVisible('#up-file'));
+ok(`and says what it will take (${(await desk.textContent('#upload-help')).slice(0, 40)}…)`,
+  /50 MB/.test(await desk.textContent('#upload-help')) && /\.md/.test(await desk.textContent('#upload-help')));
+
+const uploadDeck = path.join(acctData, 'uploaded-deck.md');
+fs.writeFileSync(uploadDeck, '# Uploaded In Class\n\nThis never went near git.\n\n---\n\n## The second slide\n');
+await desk.setInputFiles('#up-file', uploadDeck);
+await desk.fill('#up-title', 'Week 1 lecture');
+await desk.selectOption('#up-course', 'psy415');
+await desk.waitForSelector('.admin-row', { state: 'detached' }).catch(() => {});
+await desk.click('#up-go');
+await desk.waitForSelector('.admin-row');
+ok(`the upload lands in the library (${(await desk.textContent('.admin-row')).replace(/\s+/g, ' ').trim()})`,
+  (await desk.textContent('.admin-row')).includes('Week 1 lecture'));
+ok(`and the page accounts for the disk it used (${await desk.textContent('#usage')})`,
+  /1 file, /.test(await desk.textContent('#usage')));
+
+// A file Podium will not serve from its own origin, because a browser would
+// run it there with the session cookie in reach.
+const notAllowed = path.join(acctData, 'evil.html');
+fs.writeFileSync(notAllowed, '<script>alert(1)</script>');
+await desk.setInputFiles('#up-file', notAllowed);
+await desk.click('#up-go');
+await desk.waitForFunction(() => document.querySelector('#up-note')?.classList.contains('is-bad'), null, { timeout: 8000 });
+ok(`an html upload is refused with a reason ("${(await desk.textContent('#up-note')).trim()}")`,
+  /does not take html/.test(await desk.textContent('#up-note')));
+
+// Now the controller, which has to merge it in beside the shipped manifest.
+await pad.reload();
+await pad.waitForSelector('#library .tile');
+const groupNames = await pad.$$eval('#library .group', (els) => els.map((e) => e.textContent));
+ok(`the uploaded deck is filed under its course, not lumped in with the examples (${groupNames.join(', ')})`,
+  groupNames.includes('PSY415'));
+ok('and the decks that ship with Podium are still there beside it',
+  groupNames.includes('Working examples'));
+
+await pad.fill('#lib-filter', 'psy415');
+const filteredTitles = await pad.$$eval('#library .tile:not([hidden]) .tile-title', (els) => els.map((e) => e.textContent));
+ok(`typing a course code filters the library down to that course (${filteredTitles.join(', ')})`,
+  filteredTitles.length === 1 && filteredTitles[0] === 'Week 1 lecture');
+
+// And it has to actually work as a deck: fetched from /media, rendered by the
+// same Marp the projector uses.
+const acctScreen = await acctCtx.newPage();
+trap(acctScreen, 'acct display');
+await acctScreen.goto(`${acctBase}/display.html`);
+await acctScreen.click('#arm-button');
+await acctScreen.waitForSelector('#hud[data-status="online"]');
+
+await pad.click('#library .tile:not([hidden])');
+// Read out of the deck's shadow root, the same way the marp-decks section
+// does: the rendered slide is not in the host element's light DOM.
+await acctScreen.waitForFunction(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const svg = [...(host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || [])]
+    .find((s) => s.classList.contains('podium-on'));
+  return /Uploaded In Class/.test(svg?.querySelector('section')?.textContent || '');
+}, null, { timeout: 25000 });
+ok('and picking it puts it on the projector, rendered from the uploaded bytes', true);
+
+await desk.close();
+await acctScreen.close();
 
 // The hole Basic Auth could never close: a browser will not put an
 // Authorization header on a WebSocket handshake, but it sends cookies without

@@ -19,7 +19,16 @@
     </div>
     <div class="row" style="margin-top:10px">
       <a href="plan.html" style="text-decoration:none;flex:1"><button style="width:100%">Planning</button></a>
+      <!-- Only worth offering when something is actually serving this; on
+           GitHub Pages or from a folder there is nothing to administer, and
+           admin.js says so plainly rather than half-working. -->
+      <a id="admin-link" href="admin.html" style="text-decoration:none;flex:1" hidden><button style="width:100%">Admin</button></a>
     </div>
+    <script type="module">
+      import { serverInfo } from './assets/js/server.js';
+      const info = await serverInfo();
+      if (info.features.includes('library')) document.getElementById('admin-link').hidden = false;
+    </script>
     <p class="hint" style="margin-top:20px">
       <b>Display</b> on the classroom PC — bookmark it. <b>Controller</b> on the iPad: open it and use
       Share → Add to Home Screen so it launches without Safari's chrome.

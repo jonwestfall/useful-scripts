@@ -66,6 +66,47 @@ const MIGRATIONS = [
       CREATE INDEX course_members_by_user ON course_members(user_id);
     `);
   },
+
+  function toV2(db) {
+    db.exec(`
+      -- Content-addressed, so uploading the same PDF to two courses stores one
+      -- copy and deleting either one never takes bytes the other still points
+      -- at. The sha is the filename on disk as well as the key here.
+      CREATE TABLE media (
+        id           INTEGER PRIMARY KEY,
+        sha256       TEXT    NOT NULL UNIQUE,
+        bytes        INTEGER NOT NULL,
+        content_type TEXT    NOT NULL,
+        created_at   INTEGER NOT NULL,
+        created_by   INTEGER REFERENCES users(id)
+      );
+
+      -- A library item is what the controller's Library tab shows. course_id
+      -- NULL means "everyone on this instance"; anything else is visible to
+      -- that course's members, which is the whole of the access model (see
+      -- VPS.md: a course is a tag that also grants access).
+      --
+      -- props is the rest of the Podium item - the fields that differ per kind
+      -- - stored as JSON rather than as forty mostly-empty columns. The server
+      -- never interprets it; it only ever hands it back.
+      CREATE TABLE library_items (
+        id          INTEGER PRIMARY KEY,
+        course_id   INTEGER REFERENCES courses(id) ON DELETE CASCADE,
+        kind        TEXT    NOT NULL,
+        title       TEXT    NOT NULL,
+        group_label TEXT    NOT NULL DEFAULT '',
+        media_id    INTEGER REFERENCES media(id),
+        filename    TEXT    NOT NULL DEFAULT '',
+        props       TEXT    NOT NULL DEFAULT '{}',
+        created_by  INTEGER REFERENCES users(id),
+        created_at  INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL,
+        deleted_at  INTEGER
+      );
+      CREATE INDEX library_items_by_course ON library_items(course_id);
+      CREATE INDEX library_items_by_media ON library_items(media_id);
+    `);
+  },
 ];
 
 function migrate(db) {

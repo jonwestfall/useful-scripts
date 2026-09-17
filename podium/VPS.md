@@ -200,7 +200,7 @@ was redirected.
 
 Each phase is meant to be independently shippable and independently useful.
 
-### Phase 1 — accounts, and the server's own memory
+### Phase 1 — accounts, and the server's own memory ✅
 
 The foundation everything else needs: a place to put things, and a notion of
 who is asking.
@@ -216,13 +216,34 @@ Shipping the nginx template in this phase is not optional: the same change that
 moves auth into the app must remove it from the proxy, or the instance gets two
 prompts.
 
-### Phase 2 — the library on the server
+### Phase 2 — the library on the server ✅
 
 `media` and `library_items`. Upload up to 50 MB from `admin.html`, dedupe by
 hash, allow-list content types. The controller's Library tab merges three
 sources: items shipped in `content/manifest.json` (read-only, so the working
 examples still work), items uploaded to a course you are a member of, and
 whatever the device has cached. Deleting is owner-only, as decided.
+
+**As built.** An upload is the raw file as the request body with its name and
+course in the query string — not `multipart/form-data`, which would have been
+the largest thing in this repository and exists only to carry three short
+strings the query string carries anyway. `fetch(url, { method: 'POST', body:
+file })` is the whole client side.
+
+Uploads are served from Podium's own origin, which is the thing to be careful
+about: a file a browser would execute there runs with the session cookie and
+the projector inside its reach. Three defences, all of them in the same change:
+the allow-list is extensions, not declared types, and has no `.html`, `.svg`,
+`.js` or `.xml` in it; `nosniff`, so a browser cannot decide a `.png` is really
+something else; and `Content-Security-Policy: default-src 'none'; sandbox` on
+every media response, which leaves anything that got past the first two with no
+scripts and no origin. Uploaded *decks* were already safe: `deck.js` renders
+markdown through a Marp HTML allow-list that has never permitted `<script>`.
+
+A course becomes the item's group heading on the controller when nothing more
+specific is set, and the group is part of what the existing filter box
+searches — so typing `psy415` narrows the library to that course. That is the
+"filter, not a mode switch" decision, implemented without a new control.
 
 ### Phase 3 — plans and settings
 

@@ -46,6 +46,7 @@ const { WebSocketServer } = require('ws');
 const store = require('./store.js');
 const accounts = require('./accounts.js');
 const api = require('./api.js');
+const library = require('./library.js');
 
 const PORT = Number(process.env.PORT || 8080);
 const STATIC = process.env.STATIC ? path.resolve(__dirname, process.env.STATIC) : null;
@@ -82,10 +83,12 @@ const AUTH_USER = process.env.AUTH_USER || 'podium';
 const AUTH_PASSWORD = process.env.AUTH_PASSWORD || '';
 const AUTH_OPEN_PATHS = new Set(['/join.html', '/assets/js/join.js', '/login.html', '/favicon.ico']);
 
-const db = store.open(store.dataDirFromEnv(), (problem) => console.error(`podium: ${problem}`));
+const DATA_DIR = store.dataDirFromEnv();
+const db = store.open(DATA_DIR, (problem) => console.error(`podium: ${problem}`));
 const hasAccounts = () => !!db && accounts.countEnabledUsers(db) > 0;
 const authContext = {
   db,
+  dataDir: DATA_DIR,
   hasAccounts,
   basicPassword: AUTH_PASSWORD,
   isBasicAuthorized: (req) => isAuthorized(req),
@@ -356,6 +359,10 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // Uploaded files. Served from this origin, which is why the headers below
+  // are not optional - see serveMedia.
+  if (url.pathname.startsWith('/media/')) { serveMedia(req, res, url); return; }
+
   if (!STATIC) { res.writeHead(404); res.end('not found'); return; }
 
   const requested = decodeURIComponent(new URL(req.url, 'http://x').pathname);
@@ -374,14 +381,55 @@ const server = http.createServer((req, res) => {
   });
 });
 
+/**
+ * An uploaded file, from the library.
+ *
+ * These bytes came from a person, and they are served from the same origin as
+ * the controller and the display - so if a browser could ever be talked into
+ * executing one, it would run with the session cookie and the projector inside
+ * its reach. Three things stop that, and all three matter:
+ *
+ *   - library.js only accepts extensions that nothing executes (no .html,
+ *     .svg, .js, .xml), and the type served is the one the extension implies,
+ *     never the one the uploader declared;
+ *   - nosniff, so a browser cannot decide a .png is really something else;
+ *   - a sandboxing CSP, which leaves anything that slipped past the first two
+ *     with no scripts, no origin, and nothing to talk to.
+ *
+ * The path carries the SHA-256 of the contents, so the bytes behind a URL can
+ * never change and the cache can be told to keep them forever.
+ */
+function serveMedia(req, res, url) {
+  if (!db) { res.writeHead(404); res.end('not found'); return; }
+  const user = accounts.sessionUser(db, api.cookieToken(req));
+  if (!user) { api.json(res, 401, { error: 'not signed in' }); return; }
+
+  const sha256 = url.pathname.split('/')[2] || '';
+  if (!/^[0-9a-f]{64}$/.test(sha256)) { res.writeHead(404); res.end('not found'); return; }
+  if (!library.mayReadMedia(db, user, sha256)) { res.writeHead(404); res.end('not found'); return; }
+
+  const row = db.prepare('SELECT * FROM media WHERE sha256 = ?').get(sha256);
+  const file = library.mediaPath(DATA_DIR, sha256);
+  fs.stat(file, (err, info) => {
+    if (err || !info.isFile()) { res.writeHead(404); res.end('not found'); return; }
+    serve(req, res, file, info.size, {
+      'content-type': row.content_type,
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'; sandbox",
+      'cache-control': 'private, max-age=31536000, immutable',
+    });
+  });
+}
+
 // Range support is not optional here: without it a browser reports a video's
 // duration as Infinity and refuses to seek, so scrubbing a self-hosted clip
 // from the iPad would silently do nothing.
-function serve(req, res, file, size) {
+function serve(req, res, file, size, overrides = {}) {
   const headers = {
     'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
     'accept-ranges': 'bytes',
     'cache-control': 'no-cache',
+    ...overrides,
   };
 
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');

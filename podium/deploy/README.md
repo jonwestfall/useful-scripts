@@ -68,6 +68,22 @@ sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js member add psy415 s
 `podium-admin.js help` lists the rest. The first account is the moment the
 instance stops being open to anyone who can reach it, so make it early.
 
+Courses are how the library is shared: an item filed under `psy415` is visible
+to that course's members, an item filed under nothing is visible to everyone
+with an account here. Members can add to a course library and present from it;
+removing something needs to be its uploader, a course owner, or an admin.
+
+## The library
+
+Once there are accounts, `admin.html` is where files go — decks, PDFs, images,
+audio and video, up to 50 MB each, straight from a browser instead of through a
+git commit. Uploads are stored under the SHA-256 of their contents, so the same
+file added to two courses takes one copy of the disk.
+
+They appear on the controller's Library tab beside the examples that ship in
+`content/manifest.json`, filed under their course. Typing a course code into
+the filter box narrows the library to that course.
+
 ## Backing up
 
 Everything that matters is under one directory, which was the point of putting

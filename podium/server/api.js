@@ -19,6 +19,7 @@
 'use strict';
 
 const accounts = require('./accounts.js');
+const library = require('./library.js');
 
 const COOKIE = 'podium_session';
 const API_VERSION = 1;
@@ -108,7 +109,7 @@ function sameOrigin(req) {
 }
 
 function capabilities(ctx, user) {
-  const features = ['auth'];
+  const features = ['auth', 'library'];
   return {
     podium: true,
     version: API_VERSION,
@@ -169,8 +170,104 @@ async function handleApi(req, res, url, ctx) {
     return true;
   }
 
+  // --- everything past here needs to know who is asking -------------------
+  if (!ctx.db) { json(res, 404, { error: 'this server stores nothing' }); return true; }
+  if (!user) { json(res, 401, { error: 'not signed in' }); return true; }
+  if (req.method !== 'GET' && !sameOrigin(req)) {
+    json(res, 403, { error: 'cross-origin request refused' });
+    return true;
+  }
+
+  const [head, ...rest] = route.split('/');
+
+  try {
+    if (head === 'courses' && req.method === 'GET') {
+      json(res, 200, { courses: library.listCourses(ctx.db, user) });
+      return true;
+    }
+
+    if (head === 'library' && rest[0] === 'upload' && req.method === 'POST') {
+      json(res, 200, await receiveUpload(req, url, ctx, user));
+      return true;
+    }
+
+    if (head === 'library' && !rest.length && req.method === 'GET') {
+      json(res, 200, {
+        items: library.listItems(ctx.db, user),
+        courses: library.listCourses(ctx.db, user),
+        usage: library.usage(ctx.db),
+        limits: { uploadBytes: library.MAX_UPLOAD_BYTES, extensions: [...library.UPLOADABLE.keys()] },
+      });
+      return true;
+    }
+
+    // Items with no bytes behind them - a big text card, a web link, a QR.
+    // The upload route is for everything that is a file.
+    if (head === 'library' && !rest.length && req.method === 'POST') {
+      const body = await readJson(req);
+      if (!body.type || !body.title) { json(res, 400, { error: 'an item needs a type and a title' }); return true; }
+      const { type, title, group, course, ...props } = body;
+      json(res, 200, {
+        item: library.addItem(ctx.db, user, { kind: type, title, group, courseCode: course, props }),
+      });
+      return true;
+    }
+
+    if (head === 'library' && rest.length === 1 && req.method === 'PATCH') {
+      const body = await readJson(req);
+      const item = library.renameItem(ctx.db, user, rest[0], {
+        title: body.title, group: body.group,
+        courseCode: 'course' in body ? body.course : undefined,
+      });
+      json(res, 200, { item });
+      return true;
+    }
+
+    if (head === 'library' && rest.length === 1 && req.method === 'DELETE') {
+      json(res, 200, { removed: library.deleteItem(ctx.db, user, rest[0]).id });
+      return true;
+    }
+  } catch (err) {
+    json(res, err.status || 500, { error: err.status ? err.message : 'that did not work' });
+    return true;
+  }
+
   json(res, 404, { error: 'no such endpoint' });
   return true;
+}
+
+/**
+ * An upload is the raw file as the request body, with its name and where it
+ * belongs in the query string.
+ *
+ * Deliberately not multipart/form-data. Podium has no dependencies and parsing
+ * multipart correctly is a hundred lines of boundary handling that exists only
+ * to carry three short strings alongside the bytes - strings a query string
+ * carries perfectly well. `fetch(url, { method: 'POST', body: file })` is the
+ * whole client side of it.
+ */
+async function receiveUpload(req, url, ctx, user) {
+  const filename = String(url.searchParams.get('filename') || '').split(/[\\/]/).pop().slice(0, 200);
+  const allowed = library.uploadKindFor(filename);
+  if (!allowed) {
+    throw Object.assign(new Error(
+      `Podium does not take ${filename.includes('.') ? `${filename.split('.').pop()} files` : 'files without an extension'}`,
+    ), { status: 415 });
+  }
+  // The declared content type is ignored in favour of the extension's: these
+  // bytes come back from this origin later, and what a browser is told they
+  // are must not be something an uploader chose.
+  const { sha256, bytes } = await library.storeUpload(ctx.dataDir, req);
+  const mediaId = library.rememberMedia(ctx.db, user, { sha256, bytes, contentType: allowed.type });
+  const item = library.addItem(ctx.db, user, {
+    courseCode: url.searchParams.get('course') || '',
+    kind: url.searchParams.get('type') || allowed.kind,
+    title: url.searchParams.get('title') || filename.replace(/\.[^.]+$/, ''),
+    group: url.searchParams.get('group') || '',
+    filename,
+    mediaId,
+  });
+  return { item };
 }
 
 // Behind nginx every connection comes from 127.0.0.1, so the forwarded header

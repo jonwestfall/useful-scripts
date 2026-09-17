@@ -145,12 +145,13 @@ them, unlike GitHub Pages' effectively unguessable one — set `AUTH_PASSWORD` t
 the whole app behind a login; see [Authentication](#authentication-self-hosted-only)
 under Security.
 
-Give it a `DATA_DIR` as well and it stops being only a pipe: real accounts instead of
-one shared password, and — as the phases in [VPS.md](VPS.md) land — a library you can
-upload to, plans that are simply *there* in class, and session and poll history that
-survives a restart. [`deploy/`](deploy/README.md) has an installer and an update
-script for exactly that layout. All of it is optional and none of it changes the other
-two routes.
+Give it a `DATA_DIR` as well and it stops being only a pipe. Real accounts instead of
+one shared password, and a library you can **upload to from a browser** — decks, PDFs,
+images, audio and video up to 50 MB, filed under a course, appearing on the iPad
+without a git commit. Plans that are simply *there* in class, and durable session and
+poll history, are the phases still to come; [VPS.md](VPS.md) is the whole plan and
+[`deploy/`](deploy/README.md) has an installer and an update script for that layout.
+All of it is optional and none of it changes the other two routes.
 
 **A free public MQTT broker.** Zero signup, good for trying it out in five minutes.
 The default is `wss://broker.emqx.io:8084/mqtt`. Podium speaks MQTT 3.1.1, which every
@@ -1590,7 +1591,13 @@ itself; that the right one lands on the page originally asked for and the bar
 then says who you are; that the session cookie is `HttpOnly`; that the relay
 socket refuses a stranger who knows the room name but opens for a signed-in
 cookie — the hole Basic Auth could never close — and that signing out puts the
-gate back. 526 checks.
+gate back. It drives the server-side library end to end too: a deck uploaded on
+the admin page, with no git commit anywhere in sight, turns up on the controller
+filed under its course, is narrowed to by typing that course code into the
+ordinary filter box, and renders on the projector from the uploaded bytes —
+while an `.html` upload is refused with a reason, because uploads are served
+from Podium's own origin and a file a browser would execute there would run
+with the session cookie in reach. 535 checks.
 
 ## Layout
 
