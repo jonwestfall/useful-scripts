@@ -29,6 +29,13 @@ const SESSION_TOUCH_MS = 60 * 60 * 1000;
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
+// Hashed once at startup, from bytes nobody will ever type, and verified
+// against whenever there is no real account to verify against. See login().
+// The fallback is deliberately unparseable rather than a valid hash of
+// anything: if hashing itself failed, "no password matches" is the answer.
+const NO_SUCH_ACCOUNT = (async () => hashPassword(crypto.randomBytes(32).toString('hex')))()
+  .catch(() => 'scrypt$unusable');
+
 const scrypt = (password, salt) => new Promise((resolve, reject) => {
   crypto.scrypt(password, salt, SCRYPT.keylen, { N: SCRYPT.N, r: SCRYPT.r, p: SCRYPT.p },
     (err, key) => (err ? reject(err) : resolve(key)));
@@ -106,10 +113,23 @@ const listUsers = (db) =>
   }));
 
 /**
- * Whether this instance has anyone who can log in. This is the switch that
- * decides the whole authentication story: accounts existing is what makes the
- * cookie gate govern, and what makes AUTH_PASSWORD stop being consulted.
+ * Whether this instance has accounts at all - DISABLED ONES INCLUDED.
+ *
+ * This is the switch that decides the whole authentication story: accounts
+ * existing is what makes the cookie gate govern, and what makes AUTH_PASSWORD
+ * stop being consulted. Counting only the enabled ones would mean that
+ * disabling your last account - a thing you would do precisely because
+ * something was wrong - dropped the instance back to AUTH_PASSWORD, or with
+ * the installer's defaults to no gate at all. Locking yourself out must never
+ * be the same gesture as letting everyone else in.
+ *
+ * With every account disabled the mode stays "accounts" and nobody can sign
+ * in, which is the right way to fail. `podium-admin user enable` is the way
+ * back.
  */
+const countUsers = (db) => db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
+
+/** Accounts that can actually sign in right now. Not the gate switch. */
 const countEnabledUsers = (db) =>
   db.prepare('SELECT COUNT(*) AS n FROM users WHERE disabled_at IS NULL').get().n;
 
@@ -144,6 +164,9 @@ function setDisabled(db, username, disabled) {
 
 const MAX_FAILURES = 8;
 const LOCKOUT_MS = 15 * 60 * 1000;
+// Bounded, because the keys are attacker-chosen: a flood of made-up usernames
+// would otherwise grow this map for fifteen minutes at a time.
+const MAX_TRACKED = 5000;
 const failures = new Map();
 
 function throttledFor(key, now = Date.now()) {
@@ -161,8 +184,16 @@ function noteFailure(key, now = Date.now()) {
     entry.count += 1;
     entry.until = now + LOCKOUT_MS;
   }
-  if (failures.size > 5000) {
+  if (failures.size > MAX_TRACKED) {
     for (const [k, v] of failures) if (v.until <= now) failures.delete(k);
+    // Still over the cap means the entries are all live, so expiry alone
+    // cannot help. A Map iterates in insertion order, so this drops the
+    // longest-standing counters first. It does mean a patient attacker can
+    // push their own counter out - but a bounded, occasionally-forgetful
+    // throttle beats one that grows until the process dies.
+    while (failures.size > MAX_TRACKED) {
+      failures.delete(failures.keys().next().value);
+    }
   }
 }
 
@@ -185,8 +216,14 @@ function startSession(db, userId, userAgent = '', now = Date.now()) {
  * The user behind a cookie, or null. Slides the expiry forward as it goes, so
  * a device used every week stays logged in and one abandoned in a drawer does
  * not.
+ *
+ * `onSlide` fires when the expiry actually moved, because the row sliding is
+ * only half the job: the browser was told `Max-Age` once, at login, and
+ * nothing since. Without re-issuing the cookie, a controller used every day
+ * would still be signed out ninety days later - the server would happily have
+ * kept the session, and the browser would have thrown the key away.
  */
-function sessionUser(db, token, now = Date.now()) {
+function sessionUser(db, token, { now = Date.now(), onSlide } = {}) {
   if (!token) return null;
   const hash = tokenHash(token);
   const row = db.prepare(`SELECT s.expires_at, s.last_seen_at, u.*
@@ -200,6 +237,7 @@ function sessionUser(db, token, now = Date.now()) {
   if (now - row.last_seen_at > SESSION_TOUCH_MS) {
     db.prepare('UPDATE auth_sessions SET last_seen_at = ?, expires_at = ? WHERE token_sha256 = ?')
       .run(now, now + SESSION_MS, hash);
+    onSlide?.();
   }
   return publicUser(row);
 }
@@ -222,11 +260,13 @@ async function login(db, username, password, { userAgent = '', ip = '' } = {}) {
     if (throttledFor(key, now)) return { ok: false, retryAfterMs: throttledFor(key, now) };
   }
   const row = findUser(db, name);
-  const stored = row && !row.disabled_at
-    ? row.password_hash
-    // Hash anyway against a throwaway value, so a missing account costs the
-    // same wall-clock time as a wrong password and cannot be probed for.
-    : await hashPassword(crypto.randomBytes(8).toString('hex'));
+  // Verify against a fixed unusable hash when there is no account to verify
+  // against, so a username nobody has costs exactly ONE scrypt - the same as a
+  // wrong password for a real one. Hashing a throwaway here instead would cost
+  // two, and the difference is measurable from outside: it would turn this
+  // into the account-enumeration oracle the fixed answer below exists to
+  // prevent.
+  const stored = row && !row.disabled_at ? row.password_hash : await NO_SUCH_ACCOUNT;
   const good = await verifyPassword(password, stored);
   if (!good || !row || row.disabled_at) {
     noteFailure(`u:${name}`, now);
@@ -240,7 +280,7 @@ async function login(db, username, password, { userAgent = '', ip = '' } = {}) {
 
 module.exports = {
   hashPassword, verifyPassword, normalizeUsername, publicUser,
-  createUser, findUser, listUsers, countEnabledUsers, setPassword, setDisabled,
+  createUser, findUser, listUsers, countUsers, countEnabledUsers, setPassword, setDisabled,
   startSession, sessionUser, endSession, pruneSessions, login,
   SESSION_MS,
 };

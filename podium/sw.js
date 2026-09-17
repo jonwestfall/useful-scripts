@@ -46,13 +46,26 @@ const WARM = [
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),
 ];
 
+// cache.add() would be shorter, and wrong: it stores whatever the fetch ends
+// up at, redirects followed. On a server with accounts, an update that happens
+// to run while signed out would warm every entry with the login page - filed
+// under control.html's key, index.html's key, and so on. Fetching and checking
+// before storing is the same guard the fetch handler applies, for the same
+// reason.
+async function warm(cache, path) {
+  try {
+    const res = await fetch(path, { credentials: 'same-origin' });
+    if (res.ok && !res.redirected && res.type === 'basic') await cache.put(path, res);
+  } catch { /* offline, or behind a gate: there is simply nothing to warm */ }
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     // One at a time rather than cache.addAll, which rejects the whole install
     // if any single file 404s - a renamed module would otherwise leave the app
     // with no offline shell at all rather than one file short of a full one.
-    await Promise.all(WARM.map((path) => cache.add(path).catch(() => {})));
+    await Promise.all(WARM.map((path) => warm(cache, path)));
     await self.skipWaiting();
   })());
 });

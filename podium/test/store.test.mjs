@@ -47,6 +47,41 @@ ok('DATA_DIR unset is the same answer', store.dataDirFromEnv({}) === null);
 ok('DATA_DIR set resolves to an absolute path',
   path.isAbsolute(store.dataDirFromEnv({ DATA_DIR: 'relative/bits' })));
 
+// Whether a database exists is what decides whether the account gate governs,
+// so "configured but unusable" must never look like "deliberately stateless".
+// The first would hand an unprotected site to whoever asked next.
+let openFailure = '';
+try { store.open(path.join(root, 'data', 'podium.db', 'inside-a-file')); }
+catch (err) { openFailure = err.message; }
+ok(`a configured directory that cannot be opened throws instead of returning null (${openFailure.slice(0, 40)}…)`,
+  /could not open the database/.test(openFailure));
+
+// A rollback that goes one release too far: the schema is from the future and
+// this code has never seen it.
+db.exec(`PRAGMA user_version = ${store.SCHEMA_VERSION + 5}`);
+let fromTheFuture = '';
+try { store.migrate(db); } catch (err) { fromTheFuture = err.message; }
+ok(`a database newer than the code is refused rather than written to (${fromTheFuture.slice(0, 48)}…)`,
+  /newer release/.test(fromTheFuture));
+db.exec(`PRAGMA user_version = ${store.SCHEMA_VERSION}`);
+
+// A migration that dies partway must leave nothing behind. Without a
+// transaction it would commit the tables it managed before the failure while
+// leaving the version where it was - and every restart afterwards would rerun
+// the migration and fail on a table that already exists, permanently.
+const { DatabaseSync } = require('node:sqlite');
+const broken = new DatabaseSync(path.join(root, 'half-migrated.db'));
+broken.exec('CREATE TABLE courses (nothing_like_the_real_one TEXT)');   // migration 1 will collide here
+let partial = '';
+try { store.migrate(broken); } catch (err) { partial = err.message; }
+ok(`a migration that fails partway says which one (${partial.slice(0, 40)}…)`,
+  /migration to schema version 1 failed/.test(partial));
+ok('leaves the version where it was, so the next start tries again cleanly',
+  broken.prepare('PRAGMA user_version').get().user_version === 0);
+ok('and rolls back the tables it did manage to create',
+  broken.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'users'").get().n === 0);
+broken.close();
+
 console.log('\n-- accounts --');
 
 const jon = await accounts.createUser(db, {
@@ -116,6 +151,14 @@ ok('disabling an account drops every session it had',
   db.prepare('SELECT COUNT(*) AS n FROM auth_sessions').get().n === 0);
 ok('and it can no longer sign in', (await accounts.login(db, 'jon', 'correct horse battery', { ip: '10.0.0.1' })).ok === false);
 ok('a disabled account is not counted as one that can log in', accounts.countEnabledUsers(db) === 0);
+// The switch that decides whether the cookie gate governs counts EVERY
+// account, not just the ones that can sign in. Otherwise disabling your last
+// account - something you would do precisely because something was wrong -
+// would drop the instance to AUTH_PASSWORD, or with the installer's defaults
+// to no gate at all. Locking yourself out must not let everyone else in.
+ok('with every account disabled the instance still has accounts, so the gate stays up',
+  accounts.countUsers(db) > 0 && accounts.countEnabledUsers(db) === 0);
+
 accounts.setDisabled(db, 'jon', false);
 ok('re-enabling brings it back', accounts.countEnabledUsers(db) === 1);
 ok('but not its old sessions', accounts.sessionUser(db, second.token) === null);
@@ -150,6 +193,18 @@ ok('a cookie header is parsed into its parts',
   api.parseCookies('a=1; podium_session=abc; b=2').podium_session === 'abc');
 ok('a header with no cookies at all is empty rather than broken',
   Object.keys(api.parseCookies('')).length === 0);
+// decodeURIComponent throws on a malformed escape, and a Cookie header is
+// whatever a stranger sends. Thrown from the static gate, where nothing is
+// catching, one header would have been enough to take the process down.
+let cookieCrash = null;
+try { cookieCrash = api.parseCookies('podium_session=%').podium_session; }
+catch (err) { cookieCrash = `threw: ${err.message}`; }
+ok(`a malformed percent escape is survived rather than thrown (${cookieCrash})`,
+  typeof cookieCrash === 'string' && !cookieCrash.startsWith('threw:'));
+ok('and whatever it decodes to is not a session anybody holds',
+  accounts.sessionUser(db, api.parseCookies('podium_session=%').podium_session) === null);
+ok('a truncated escape at the end of a value is survived too',
+  api.parseCookies('podium_session=abc%E0%A4').podium_session !== undefined);
 ok('a relative path is a safe place to go after signing in', api.safeNext('/control.html') === '/control.html');
 ok('a protocol-relative one is not', api.safeNext('//evil.example/x') === '');
 ok('an absolute URL is not', api.safeNext('https://evil.example/x') === '');

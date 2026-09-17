@@ -23,6 +23,7 @@ set -Eeuo pipefail
 
 PREFIX=${PREFIX:-/opt/podium}
 DATA_DIR=${DATA_DIR:-/var/lib/podium}
+CONFIG_DIR=${CONFIG_DIR:-/etc/podium}
 SERVICE=${SERVICE:-podium.service}
 HEALTH_URL=${HEALTH_URL:-}
 # Optional: a directory of files to lay over the release after copying it,
@@ -39,7 +40,7 @@ die() { echo "update: $*" >&2; exit 1; }
 [[ -f "$source_dir/server/package-lock.json" ]] || die "no lockfile in $source_dir/server"
 
 if [[ -z "$HEALTH_URL" ]]; then
-  port=$(sed -n 's/^PORT=//p' /etc/podium/podium.env 2>/dev/null | tail -1)
+  port=$(sed -n 's/^PORT=//p' "$CONFIG_DIR/podium.env" 2>/dev/null | tail -1)
   HEALTH_URL="http://127.0.0.1:${port:-8080}/healthz"
 fi
 

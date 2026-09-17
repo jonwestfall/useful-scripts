@@ -47,9 +47,10 @@ sudo podium/deploy/update.sh
 ```
 
 Copy the checkout into a fresh release directory, install production
-dependencies, run the two browser-free test suites, flip the symlink, restart,
-and poll `/healthz` — putting the previous release back if it does not come up.
-The checkout is only ever read, so `git pull` keeps working.
+dependencies, run the three browser-free test suites (`protocol`, `plan` and
+`store`), flip the symlink, restart, and poll `/healthz` — putting the previous
+release back if it does not come up. The checkout is only ever read, so
+`git pull` keeps working.
 
 Environment variables it honours: `PREFIX`, `DATA_DIR`, `SERVICE`,
 `HEALTH_URL`, `KEEP_RELEASES`, and `ADMIN_DIR` — a directory of host-specific

@@ -278,8 +278,14 @@ certificate expiry, whether the service worker and the deployed build agree.
 ## Installation
 
 `deploy/install.sh` on a fresh box: service user, the directory layout above,
-`/etc/podium/podium.env` with a generated session secret, the systemd unit, an
-nginx site from the template, and a prompt for the first admin account.
+`/etc/podium/podium.env`, the systemd unit, an nginx site from the template,
+and a prompt for the first admin account.
+
+There is no session secret to generate, which is worth saying because most
+setups have one. Podium does not sign its session cookies — a cookie carries
+32 random bytes and nothing else, and the database stores only their SHA-256.
+Nothing has to be kept in sync for a session to be verifiable, so there is no
+key to lose, rotate, or accidentally commit.
 
 `deploy/update.sh` afterwards, generalised from the script this instance
 already runs — rsync into a timestamped release directory, apply host config,

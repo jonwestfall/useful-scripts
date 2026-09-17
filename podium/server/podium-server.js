@@ -84,8 +84,22 @@ const AUTH_PASSWORD = process.env.AUTH_PASSWORD || '';
 const AUTH_OPEN_PATHS = new Set(['/join.html', '/assets/js/join.js', '/login.html', '/favicon.ico']);
 
 const DATA_DIR = store.dataDirFromEnv();
-const db = store.open(DATA_DIR, (problem) => console.error(`podium: ${problem}`));
-const hasAccounts = () => !!db && accounts.countEnabledUsers(db) > 0;
+
+// Configured storage that will not open is a hard stop, not a warning. Whether
+// there is a database is what decides whether the account gate governs, so
+// carrying on without one would answer "is this instance protected?" with
+// "no" - quietly, at the exact moment something is already wrong with the box.
+let db = null;
+try {
+  db = store.open(DATA_DIR);
+} catch (err) {
+  console.error(`podium: ${err.message}`);
+  console.error('podium: DATA_DIR is set, so refusing to start without it - a server that has forgotten its accounts is an open one.');
+  process.exit(1);
+}
+
+// Deliberately every account, disabled ones included: see countUsers.
+const hasAccounts = () => !!db && accounts.countUsers(db) > 0;
 const authContext = {
   db,
   dataDir: DATA_DIR,
@@ -527,9 +541,14 @@ sessionSweep?.unref();
 function describeAuth() {
   if (!STATIC) return 'relay only';
   if (hasAccounts()) {
+    // Worth saying out loud: with every account disabled the gate is still up
+    // and nobody can get through it, which is the right failure but a
+    // confusing one to debug from the outside.
+    const noneEnabled = accounts.countEnabledUsers(db) === 0
+      ? ' - every account is disabled, so nobody can sign in until one is enabled' : '';
     return AUTH_PASSWORD
-      ? 'accounts (AUTH_PASSWORD is set but ignored: accounts take precedence)'
-      : 'accounts';
+      ? `accounts (AUTH_PASSWORD is set but ignored: accounts take precedence)${noneEnabled}`
+      : `accounts${noneEnabled}`;
   }
   if (AUTH_PASSWORD) return 'shared password';
   return db ? 'open - no accounts yet, run podium-admin user add' : 'open';

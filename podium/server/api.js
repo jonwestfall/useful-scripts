@@ -51,7 +51,14 @@ function parseCookies(header) {
     const eq = part.indexOf('=');
     if (eq === -1) continue;
     const name = part.slice(0, eq).trim();
-    if (name) out[name] = decodeURIComponent(part.slice(eq + 1).trim());
+    if (!name) continue;
+    const raw = part.slice(eq + 1).trim();
+    // decodeURIComponent throws on a malformed escape, and a Cookie header is
+    // whatever a stranger decided to send. `Cookie: podium_session=%` would
+    // otherwise throw straight out of the gate on the static path, where
+    // nothing is waiting to catch it - one header, and the process is gone.
+    // A cookie that cannot be decoded is a cookie nobody issued.
+    try { out[name] = decodeURIComponent(raw); } catch { out[name] = raw; }
   }
   return out;
 }
@@ -288,7 +295,13 @@ function gate(req, res, pathname, ctx) {
   if (ctx.openPaths.has(pathname)) return true;
 
   if (ctx.hasAccounts()) {
-    if (accounts.sessionUser(ctx.db, cookieToken(req))) return true;
+    const token = cookieToken(req);
+    // Re-issue the cookie whenever the session's expiry slides forward.
+    // setHeader rather than a writeHead argument, because the thing that
+    // eventually answers this request (a file, a range, a redirect) writes its
+    // own headers and knows nothing about sessions.
+    const onSlide = () => res.setHeader('set-cookie', setCookie(req, token, Math.floor(accounts.SESSION_MS / 1000)));
+    if (accounts.sessionUser(ctx.db, token, { onSlide })) return true;
     if (looksLikePage(req, pathname)) {
       const next = encodeURIComponent(pathname + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''));
       res.writeHead(302, { location: `/login.html?next=${next}`, 'cache-control': 'no-store' });

@@ -124,8 +124,10 @@ async function main(argv) {
 
   const dataDir = flags['data-dir'] || process.env.DATA_DIR;
   if (!dataDir) throw new Error('set DATA_DIR (or pass --data-dir) to say where the database lives');
-  const db = store.open(require('node:path').resolve(dataDir), (problem) => { throw new Error(problem); });
-  if (!db) throw new Error(`could not open a database in ${dataDir}`);
+  // open() throws with a reason of its own when a configured directory cannot
+  // be used; main()'s catch prints it. null means only "no directory given",
+  // which the check above has already ruled out.
+  const db = store.open(require('node:path').resolve(dataDir));
 
   const say = (text) => process.stdout.write(`${text}\n`);
 

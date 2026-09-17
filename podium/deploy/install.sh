@@ -32,10 +32,14 @@ die() { echo "install: $*" >&2; exit 1; }
 
 (( EUID == 0 )) || die 'run as root'
 [[ -f "$here/server/podium-server.js" ]] || die "no podium checkout at $here"
-command -v node >/dev/null || die 'node is not installed (Podium needs Node 22 or newer)'
+command -v node >/dev/null || die 'node is not installed (Podium needs Node 22.5 or newer)'
 
-node_major=$(node -p 'process.versions.node.split(".")[0]')
-(( node_major >= 22 )) || die "node 22 or newer is required for node:sqlite (found $(node -v))"
+# Ask the module, not the version number. node:sqlite arrived partway through
+# the Node 22 line, so "major >= 22" passes on 22.0-22.4 where requiring it
+# still throws - and the failure would be silent: storage off, no accounts, an
+# open site.
+node -e 'require("node:sqlite")' 2>/dev/null \
+  || die "this node cannot load node:sqlite, which Podium stores everything in (found $(node -v); needs 22.5 or newer)"
 
 echo "==> service account: $PODIUM_USER"
 if ! id -u "$PODIUM_USER" >/dev/null 2>&1; then
@@ -78,7 +82,10 @@ sed -e "s#@PREFIX@#$PREFIX#g" -e "s#@USER@#$PODIUM_USER#g" \
 systemctl daemon-reload
 
 echo "==> first release"
-"$here/deploy/update.sh" "$here"
+# Passed explicitly: these are shell variables, not exported ones, so without
+# this a non-default PREFIX would install the unit pointing at one place and
+# the release into another.
+PREFIX="$PREFIX" DATA_DIR="$DATA_DIR" CONFIG_DIR="$CONFIG_DIR" "$here/deploy/update.sh" "$here"
 
 echo "==> enabling the service"
 systemctl enable --now podium.service

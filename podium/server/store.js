@@ -111,27 +111,62 @@ const MIGRATIONS = [
 
 function migrate(db) {
   const from = db.prepare('PRAGMA user_version').get().user_version;
+
+  // A database from a NEWER release than this code. Rolling the code back does
+  // not roll the schema back with it (see the layout notes in VPS.md), so this
+  // is the expected shape of a rollback that went one release too far. Running
+  // anyway means old code writing to a schema it has never seen; stopping is
+  // the only safe answer, and it is recoverable by deploying forward again.
+  if (from > MIGRATIONS.length) {
+    throw new Error(
+      `this database is at schema version ${from} but this Podium only knows ${MIGRATIONS.length}`
+      + ' - it was written by a newer release, so deploy that one again rather than rolling further back',
+    );
+  }
+
   for (let version = from; version < MIGRATIONS.length; version++) {
-    MIGRATIONS[version](db);
-    // PRAGMA takes no bound parameters; the value is a loop index, not input.
-    db.exec(`PRAGMA user_version = ${version + 1}`);
+    // SQLite makes DDL transactional, so a migration that dies halfway - a
+    // full disk, a killed process - leaves no trace instead of leaving half
+    // its tables behind with the old version still recorded. That state would
+    // be permanent: every restart would rerun the migration and fail on a
+    // table that already exists.
+    db.exec('BEGIN');
+    try {
+      MIGRATIONS[version](db);
+      // PRAGMA takes no bound parameters; the value is a loop index, not input.
+      // Inside the transaction, so the version and the tables it describes can
+      // never disagree.
+      db.exec(`PRAGMA user_version = ${version + 1}`);
+      db.exec('COMMIT');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch { /* already rolled back by the failure */ }
+      throw new Error(`migration to schema version ${version + 1} failed: ${err.message}`);
+    }
   }
   return MIGRATIONS.length;
 }
 
 /**
- * Open (creating if needed) the database under `dataDir`, or return null if
- * this box cannot offer one. Never throws: a server that cannot store things
- * is a supported configuration, not a failure.
+ * Open (creating if needed) the database under `dataDir`.
+ *
+ * Returns null for one reason only: no dataDir was configured, which means
+ * "store nothing" and is a supported way to run the relay. Everything else
+ * throws.
+ *
+ * That distinction is load-bearing. Whether there is a database decides
+ * whether the account gate governs (see api.js), so a configured database that
+ * cannot be opened - wrong permissions, a corrupt file, a schema from the
+ * future - must NOT quietly look the same as "this box stores nothing". It
+ * would take the gate down with it and leave the pages open to anyone. The
+ * caller is expected to refuse to start.
  */
-function open(dataDir, onProblem = () => {}) {
+function open(dataDir) {
   if (!dataDir) return null;
   let DatabaseSync;
   try {
     ({ DatabaseSync } = require('node:sqlite'));
   } catch {
-    onProblem('this Node has no node:sqlite, so server-side storage is off');
-    return null;
+    throw new Error('this Node has no node:sqlite (Podium needs 22.5 or newer to store anything)');
   }
   try {
     // 0700: the database holds password hashes and the room passphrase.
@@ -146,8 +181,7 @@ function open(dataDir, onProblem = () => {}) {
     migrate(db);
     return db;
   } catch (err) {
-    onProblem(`could not open the database in ${dataDir}: ${err.message}`);
-    return null;
+    throw new Error(`could not open the database in ${dataDir}: ${err.message}`);
   }
 }
 
