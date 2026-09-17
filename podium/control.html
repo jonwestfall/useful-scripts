@@ -26,6 +26,9 @@
     <span id="peer-count"></span>
     <span id="plan-name" hidden></span>
     <span class="spacer"></span>
+    <!-- Only ever filled in when this Podium came from a server with accounts
+         (see server.js); on every other deployment it stays empty and hidden. -->
+    <span id="session-badge" class="session-badge" hidden></span>
     <!-- Splitting the screen: pick how many panels and how they're arranged,
          then which one Library taps, deck nav, and Ink currently address.
          Lives in the topbar rather than a row of its own so it costs no

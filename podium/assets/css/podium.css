@@ -375,6 +375,11 @@ body.control.is-frozen { background: #171006; }
 #status[data-status='error']::before, #status[data-status='mismatch']::before { color: var(--live); }
 #display-state.is-bad { color: #ffb3b3; }
 .topbar button { min-height: 34px; padding: 0 10px; font-size: 13px; }
+/* Who is signed in, on a server that has accounts. Empty and hidden on every
+   other deployment, so it costs nothing in the bar it is not needed in. */
+.session-badge { display: flex; align-items: center; gap: 8px; }
+.session-badge .session-who { color: var(--ink); }
+.topbar .session-badge button { min-height: 28px; padding: 0 9px; font-size: 12px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .workspace { display: flex; flex: 1; min-height: 0; }
@@ -867,6 +872,7 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
    when something is wrong, and let the buttons shrink. */
 @media (max-width: 640px) {
   .topbar .brand, .topbar .room-info, #peer-count { display: none; }
+  .topbar .session-badge .session-who { display: none; }
   .bottombar { gap: 6px; }
   .bottombar button { min-width: 0; padding: 0 8px; }
   .bottombar .vol { flex: 1; min-width: 76px; gap: 6px; }

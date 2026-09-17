@@ -13,11 +13,18 @@ import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, appl
 import { createZip } from './zip.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
+import { mountSessionBadge } from './server.js';
 
 const LIB_KEY = 'podium.library.v1';
 
 let cfg = await loadConfig();
 let bus = null;
+
+// Does nothing unless this Podium came from a server with accounts, which is
+// the whole arrangement: one set of pages, extra affordances only where the
+// thing serving them can back them. Not awaited - a slow probe must not hold
+// up a controller someone is standing in front of a class with.
+mountSessionBadge($('#session-badge'));
 let state = initialState();
 let telemetry = { time: 0, duration: 0, playing: false };
 let telemetryAt = Date.now();

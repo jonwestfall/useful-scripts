@@ -20,6 +20,9 @@ import {
 import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle } from './deck.js';
 import { BUILD, MAX_TIMERS } from './protocol.js';
+import { mountSessionBadge } from './server.js';
+
+mountSessionBadge($('#session-badge'));
 
 let plan = null;
 let selectedId = null;

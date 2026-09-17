@@ -41,7 +41,7 @@ const WARM = [
   'assets/icons/icon-192.png', 'assets/icons/apple-touch-icon.png',
   ...[
     'bus', 'config', 'control', 'crypto', 'deck', 'display', 'plan', 'planfile',
-    'protocol', 'renderers', 'rtc', 'store', 'util', 'zip',
+    'protocol', 'renderers', 'rtc', 'server', 'store', 'util', 'zip',
   ].map((name) => `assets/js/${name}.js`),
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),
 ];
@@ -79,9 +79,23 @@ self.addEventListener('fetch', (event) => {
       const fresh = await fetch(request);
       // Only a real same-origin answer is worth keeping; an opaque or errored
       // response cached here would be served back as though it were the page.
-      if (fresh && fresh.ok && fresh.type === 'basic') {
+      //
+      // `redirected` is the one that bites on a server with accounts: asking
+      // for control.html while signed out follows the redirect and comes back
+      // a perfectly valid, perfectly cacheable login page - which would then
+      // be stored under CONTROL.HTML's key and served in its place, offline,
+      // forever. A redirect is never the thing that was asked for.
+      if (fresh && fresh.ok && fresh.type === 'basic' && !fresh.redirected) {
         const cache = await caches.open(CACHE);
         cache.put(request, fresh.clone()).catch(() => {});
+      }
+      // A redirected response may not be handed back for a navigation at all:
+      // the document would be the login page while the address bar still said
+      // control.html, so browsers reject it outright. Re-issuing the redirect
+      // ourselves lets the browser do the navigating, and the address bar ends
+      // up saying what is actually on screen.
+      if (fresh && fresh.redirected && request.mode === 'navigate') {
+        return Response.redirect(fresh.url, 302);
       }
       return fresh;
     } catch (err) {

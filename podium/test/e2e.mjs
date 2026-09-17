@@ -13,6 +13,8 @@
 
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
+import http from 'node:http';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import zlib from 'node:zlib';
@@ -236,7 +238,12 @@ const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_IN
 // prove the room is told why it went quiet. The browser's own 404 is the point
 // of that test rather than a result, and naming the fixture keeps the allowance
 // narrow enough that a real 404 anywhere else still counts.
-const DELIBERATE = /not-a-real-file/;
+//
+// /api/login is the same shape of thing: a test types the wrong password on
+// purpose, and the 401 it gets back - which the browser logs as a failed
+// resource load - is the assertion, not a fault. Narrow on purpose: a 401 from
+// any OTHER url is still a failure.
+const DELIBERATE = /not-a-real-file|\/api\/login/;
 
 const trap = (page, tag) => {
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
@@ -4806,6 +4813,137 @@ ok('the right username and password get the page through',
 
 authServer.kill();
 await new Promise((resolve) => authServer.on('exit', resolve));
+}
+
+if (want('signing in to a server with accounts')) {
+console.log('\n-- signing in to a server with accounts --');
+// A third server, with a DATA_DIR and a real account in it. The shared one has
+// neither, deliberately: accounts change how every page load in the suite
+// behaves, so the instance that has them is kept to this section.
+const acctPort = await freePort();
+const acctBase = `http://127.0.0.1:${acctPort}`;
+const acctData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-data-'));
+
+// The first account cannot come from a web form - a page that lets an
+// anonymous visitor make the first admin is a page that hands the box to
+// whoever finds it first - so it comes from the CLI, as it would on a real
+// install.
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'jon', '--admin', '--name', 'Jon W', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: acctData },
+  input: 'a good long password\n',
+});
+
+const acctServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  // AUTH_PASSWORD is set on purpose: accounts must win, and the Basic Auth
+  // door must be shut while they do.
+  env: { ...process.env, PORT: String(acctPort), STATIC: '../', DATA_DIR: acctData, AUTH_PASSWORD: 'should-be-ignored' },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+acctServer.stderr.on('data', (d) => process.stderr.write(`[acct-server] ${d}`));
+let startupLog = '';
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('accounts relay did not start')), 10000);
+  acctServer.stdout.on('data', (d) => {
+    startupLog += String(d);
+    if (startupLog.includes('podium auth:')) { clearTimeout(timer); resolve(); }
+  });
+  acctServer.on('exit', (code) => reject(new Error(`accounts relay exited with ${code}`)));
+});
+ok(`the server says out loud which gate is live ("${startupLog.trim().split('\n').pop()}")`,
+  /podium auth: accounts \(AUTH_PASSWORD is set but ignored/.test(startupLog));
+
+ok('the Basic Auth door is shut once there are accounts',
+  (await fetch(`${acctBase}/control.html`, {
+    headers: { authorization: `Basic ${Buffer.from('podium:should-be-ignored').toString('base64')}` },
+  })).status === 401);
+
+const caps = await fetch(`${acctBase}/api/capabilities`).then((r) => r.json());
+ok('the capabilities probe is answerable without signing in, and says so',
+  caps.podium === true && caps.auth.mode === 'accounts' && caps.auth.required === true && caps.user === null);
+
+// The audience page is the one thing that must never want an account.
+const acctCtx = await browser.newContext();
+await acctCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${acctPort}/podium`, room: 'acct-room', passphrase: 'signed in and locked' }));
+
+const joiner = await acctCtx.newPage();
+trap(joiner, 'acct join');
+await joiner.goto(`${acctBase}/join.html`);
+ok('a student reaches the join page with no account and no prompt',
+  await joiner.isVisible('#enter') && joiner.url().endsWith('/join.html'));
+await joiner.close();
+
+// A browser asking for a page it may not have gets a page back, not a native
+// credential dialog - which is the whole reason this is a cookie.
+const pad = await acctCtx.newPage();
+trap(pad, 'acct control');
+await pad.goto(`${acctBase}/control.html`);
+await pad.waitForSelector('#form');
+ok(`asking for the controller signed out lands on the login page (${new URL(pad.url()).pathname})`,
+  new URL(pad.url()).pathname === '/login.html');
+ok('carrying where you were trying to go', new URL(pad.url()).searchParams.get('next') === '/control.html');
+ok('and the login page styles itself, having nothing behind the gate to fetch',
+  await pad.evaluate(() => getComputedStyle(document.body).backgroundColor) === 'rgb(11, 13, 16)');
+
+await pad.fill('#username', 'jon');
+await pad.fill('#password', 'not the password');
+await pad.click('#go');
+await pad.waitForFunction(() => document.querySelector('#note')?.classList.contains('bad'), null, { timeout: 8000 });
+ok(`a wrong password says so and stays put ("${(await pad.textContent('#note')).trim()}")`,
+  new URL(pad.url()).pathname === '/login.html');
+ok('and clears the password rather than leaving it sitting there', await pad.inputValue('#password') === '');
+
+await pad.fill('#password', 'a good long password');
+await Promise.all([pad.waitForURL(/control\.html/), pad.click('#go')]);
+ok('the right password lands on the page that was asked for', /control\.html$/.test(pad.url()));
+
+await pad.waitForSelector('#session-badge .session-who');
+ok(`the controller says who is signed in ("${await pad.textContent('#session-badge .session-who')}")`,
+  (await pad.textContent('#session-badge .session-who')).trim() === 'Jon W');
+
+// The hole Basic Auth could never close: a browser will not put an
+// Authorization header on a WebSocket handshake, but it sends cookies without
+// being asked. So the relay socket is gated now too.
+const upgradeStatus = (cookie) => new Promise((resolve) => {
+  const req = http.request({
+    host: '127.0.0.1', port: acctPort, path: '/podium?room=acct-room',
+    headers: {
+      connection: 'Upgrade', upgrade: 'websocket',
+      'sec-websocket-version': '13', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+      ...(cookie ? { cookie } : {}),
+    },
+  });
+  req.on('upgrade', (res, socket) => { socket.destroy(); resolve('upgraded'); });
+  req.on('response', (res) => { res.resume(); resolve(res.statusCode); });
+  req.on('error', () => resolve('error'));
+  req.end();
+});
+ok(`the relay socket refuses a stranger who knows the room name (${await upgradeStatus('')})`,
+  (await upgradeStatus('')) === 401);
+
+const signedInCookie = (await acctCtx.cookies())
+  .filter((c) => c.name === 'podium_session').map((c) => `${c.name}=${c.value}`).join('; ');
+ok('the session cookie is HttpOnly, so no page script can read or leak it',
+  (await acctCtx.cookies()).find((c) => c.name === 'podium_session')?.httpOnly === true);
+ok(`and the same socket opens for a signed-in one (${await upgradeStatus(signedInCookie)})`,
+  (await upgradeStatus(signedInCookie)) === 'upgraded');
+
+// Which means the controller it came from is really connected, not merely
+// showing a page.
+await pad.waitForSelector('#status[data-status="online"]', { timeout: 15000 });
+ok('so the signed-in controller actually reaches the relay', true);
+
+await Promise.all([pad.waitForURL(/login\.html/), pad.click('#session-badge button')]);
+ok('signing out goes back to the login page', /login\.html/.test(pad.url()));
+ok('and the controller is behind the gate again',
+  (await fetch(`${acctBase}/control.html`)).status === 401);
+
+await acctCtx.close();
+acctServer.kill();
+await new Promise((resolve) => acctServer.on('exit', resolve));
+fs.rmSync(acctData, { recursive: true, force: true });
 }
 
 if (want('back to the landing page')) {
