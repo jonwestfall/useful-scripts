@@ -85,6 +85,32 @@ They appear on the controller's Library tab beside the examples that ship in
 `content/manifest.json`, filed under their course. Typing a course code into
 the filter box narrows the library to that course.
 
+## Setting a course up so a new device is just a login
+
+Give a course a room and a passphrase and its members' devices configure
+themselves when they sign in — no pairing QR, nothing typed:
+
+```bash
+cd /opt/podium/current/server
+sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js course settings psy415 \
+  --transport ws --room psy415-live --ws-url wss://podium.example.com/podium --new-passphrase
+```
+
+`--new-passphrase` invents one and prints it; that is the only time it is
+shown. Any other change leaves it alone and does not print it.
+
+Be clear-eyed about what this hands out: **every member of a course can read
+that course's passphrase**, because driving the projector is what it is for.
+Adding someone gives them that key, and removing them does not take it back —
+rotating it does, and every device already set up for the course then needs the
+new one. Changing a course's settings is restricted to its owners and to
+admins, so a TA cannot rotate a key out from under an instructor.
+
+Lecture plans work the same way round as you would hope: a plan you send to the
+server is yours alone unless you file it under a course, and a plan filed under
+a course can be opened and taught from by its members but rewritten only by
+whoever wrote it.
+
 ## Backing up
 
 Everything that matters is under one directory, which was the point of putting

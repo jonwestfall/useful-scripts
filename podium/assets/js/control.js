@@ -3116,6 +3116,18 @@ async function connect() {
 function tab(name) {
   $$('.tab').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
   $$('.panel').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+  // The list of lectures on the server is asked for again every time the tab
+  // carrying it is opened. Reading it once at startup would mean a lecture
+  // sent from the desk five minutes ago was invisible here until a reload -
+  // and reloading the controller mid-lecture is exactly what nobody wants to
+  // discover they have to do.
+  // The plan controls live in Library, not Settings - a lecture plan is
+  // content, not configuration. Its list of what is on the server is asked for
+  // again every time that tab opens, because reading it once at startup would
+  // mean a lecture sent from the desk five minutes ago stayed invisible until
+  // a reload, and reloading the controller mid-lecture is exactly what nobody
+  // wants to find out they have to do.
+  if (name === 'library' && !$('#plan-server').hidden) refreshServerPlans();
   // Every panel shares one scrolling container (.panels), so a tab switch
   // alone does not reset it - scrolled halfway down a long Library before
   // tapping Ink lands the Ink tab starting from that same halfway point,
@@ -3848,6 +3860,48 @@ $('#plan-file').addEventListener('change', async (ev) => {
   } catch (err) {
     $('#plan-note').textContent = `That file did not load: ${err.message}`;
   }
+});
+
+// The same thing without the file: a lecture built at the desk and sent to the
+// server is already here. Absent a server, none of this appears and the file
+// picker above is the whole story.
+async function refreshServerPlans() {
+  try {
+    const res = await fetch('/api/plans', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const { plans } = await res.json();
+    const pick = $('#plan-server-pick');
+    pick.replaceChildren(...(plans || []).map((row) => el('option', { value: String(row.id) },
+      [row.title, row.course && `(${row.course})`].filter(Boolean).join(' '))));
+    if (!(plans || []).length) pick.append(el('option', { value: '' }, 'Nothing saved yet'));
+  } catch { /* the file picker above is unaffected */ }
+}
+
+$('#plan-server-open').addEventListener('click', async () => {
+  const id = $('#plan-server-pick').value;
+  if (!id) return;
+  $('#plan-note').textContent = 'Opening…';
+  try {
+    const res = await fetch(`/api/plans/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not open');
+    const doc = body.plan.doc;
+    const { plan, warnings } = readPlan(typeof doc === 'string' ? doc : JSON.stringify(doc));
+    await adoptPlan(plan);
+    await loadLibrary();
+    tab('library');
+    $('#plan-note').textContent = warnings.length
+      ? `Loaded “${plan.title}”, with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}`
+      : `Loaded “${plan.title}”.`;
+  } catch (err) {
+    $('#plan-note').textContent = `That lecture did not open: ${err.message}`;
+  }
+});
+
+serverInfo().then((info) => {
+  if (!info.features.includes('plans')) return;
+  $('#plan-server').hidden = false;
+  refreshServerPlans();
 });
 
 $('#plan-clear').addEventListener('click', async () => {

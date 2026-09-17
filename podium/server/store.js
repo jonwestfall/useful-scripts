@@ -107,6 +107,50 @@ const MIGRATIONS = [
       CREATE INDEX library_items_by_media ON library_items(media_id);
     `);
   },
+
+  function toV3(db) {
+    db.exec(`
+      -- What a device needs to talk to the room: transport, room name, and the
+      -- passphrase every message is encrypted under. Held per COURSE, because
+      -- a TA who may drive the projector needs the passphrase to do it and
+      -- membership is how they get it - the same rule the library runs on.
+      --
+      -- This is the table that makes a Podium server able to decrypt its own
+      -- relay traffic. VPS.md argues that trade out; the short version is that
+      -- a server which ships you the JavaScript doing the encrypting could
+      -- always have read the key, and end-to-end encryption is there to
+      -- protect you from a relay operator who is not you.
+      CREATE TABLE course_settings (
+        course_id  INTEGER PRIMARY KEY REFERENCES courses(id) ON DELETE CASCADE,
+        settings   TEXT    NOT NULL DEFAULT '{}',
+        updated_at INTEGER NOT NULL,
+        updated_by INTEGER REFERENCES users(id)
+      );
+
+      -- A lecture plan, stored whole: doc is exactly the plan file planfile.js
+      -- writes, so what the server keeps and what a USB stick carries are the
+      -- same document and neither can drift from the other.
+      --
+      -- NOTE the visibility rule is the OPPOSITE of library_items, and
+      -- deliberately: there, no course means "everyone with an account"; here
+      -- it means "only its author". A library item is something you went out
+      -- of your way to publish. A plan is a draft until you say otherwise, and
+      -- half a lecture appearing in a colleague's list would be a nasty
+      -- surprise. Filing one under a course is the act of sharing it.
+      CREATE TABLE plans (
+        id         INTEGER PRIMARY KEY,
+        owner_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        course_id  INTEGER REFERENCES courses(id) ON DELETE SET NULL,
+        title      TEXT    NOT NULL DEFAULT '',
+        doc        TEXT    NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        deleted_at INTEGER
+      );
+      CREATE INDEX plans_by_owner ON plans(owner_id);
+      CREATE INDEX plans_by_course ON plans(course_id);
+    `);
+  },
 ];
 
 function migrate(db) {

@@ -173,6 +173,13 @@
             <span id="plan-note" class="hint"></span>
             <button type="button" id="plan-clear" hidden>Remove plan</button>
           </div>
+          <!-- When the server keeps plans, there is nothing to carry: the
+               lecture built at the desk is already here. Hidden entirely on
+               every other way of running Podium. -->
+          <div class="inline" id="plan-server" hidden>
+            <select id="plan-server-pick" aria-label="A lecture on the server"></select>
+            <button type="button" id="plan-server-open">Open</button>
+          </div>
           <p class="hint" style="margin:0">
             Plans are built in <a href="plan.html">Planning</a> on your office machine and carried here as a file.
           </p>

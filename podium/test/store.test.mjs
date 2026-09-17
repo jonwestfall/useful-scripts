@@ -399,6 +399,95 @@ ok('an owner is told they are one', library.listCourses(db, owner)[0].role === '
 ok('someone in no courses is told about none', library.listCourses(db, outsider).length === 0);
 ok('an admin sees every course', library.listCourses(db, admin).map((c) => c.code).join() === 'psy415');
 
+console.log('\n-- plans: a draft is not a publication --');
+
+const plans = require('../server/plans.js');
+
+const draft = plans.savePlan(db, owner, { title: 'Half-written', doc: { v: 1, items: [] } });
+const shared = plans.savePlan(db, owner, { title: 'Day 6 running order', courseCode: 'psy415', doc: { v: 1, items: [{ id: 'a' }] } });
+
+// The rule that is the OPPOSITE of the library's, and the reason this section
+// exists: there, no course means everyone; here it means nobody but you.
+const plansSeenBy = (user) => plans.listPlans(db, user).map((p) => p.title).sort();
+ok(`its author sees both (${plansSeenBy(owner).join(', ')})`,
+  JSON.stringify(plansSeenBy(owner)) === JSON.stringify(['Day 6 running order', 'Half-written']));
+ok(`a course member sees only the one filed under the course (${plansSeenBy(ta).join(', ')})`,
+  JSON.stringify(plansSeenBy(ta)) === JSON.stringify(['Day 6 running order']));
+ok('someone outside the course sees neither, unlike a library item with no course',
+  plansSeenBy(outsider).length === 0);
+ok('an admin sees both', plansSeenBy(admin).length === 2);
+
+ok('a listing carries names, not documents', plans.listPlans(db, owner)[0].doc === undefined);
+ok('asking for one by id gets the document back whole',
+  JSON.stringify(plans.getPlan(db, owner, shared.id).doc) === JSON.stringify({ v: 1, items: [{ id: 'a' }] }));
+ok('a plan nobody shared is not reachable by id either', plans.getPlan(db, outsider, draft.id) === null);
+
+// Sharing a plan is sharing it to be read and taught from, not handed over.
+let refusedPlan = '';
+try { plans.updatePlan(db, ta, shared.id, { title: 'Rewritten by a TA' }); }
+catch (err) { refusedPlan = err.message; }
+ok(`a course member can open a shared plan but not rewrite it (${refusedPlan.slice(0, 30)}…)`,
+  /only the person who wrote this plan/.test(refusedPlan));
+ok('not even a course owner, if they did not write it',
+  plans.mayWrite(db, { ...owner, id: ta.id, isAdmin: false }, shared) === false);
+ok('its author can', plans.updatePlan(db, owner, shared.id, { title: 'Day 6, revised' }).title === 'Day 6, revised');
+ok('and an admin can', plans.mayWrite(db, admin, shared) === true);
+
+refusedPlan = '';
+try { plans.savePlan(db, outsider, { title: 'Sneaking in', courseCode: 'psy415', doc: {} }); }
+catch (err) { refusedPlan = err.message; }
+ok('a plan cannot be filed under a course you are not in', /no course with the code/.test(refusedPlan));
+
+refusedPlan = '';
+try { plans.savePlan(db, owner, { title: 'Enormous', doc: { blob: 'x'.repeat(plans.MAX_DOC_BYTES) } }); }
+catch (err) { refusedPlan = err.message; }
+ok('a plan too large to store is refused rather than stored', /too large/.test(refusedPlan));
+
+plans.deletePlan(db, owner, draft.id);
+ok('removing a plan takes it out of the listing', !plansSeenBy(owner).includes('Half-written'));
+
+console.log('\n-- settings: the key to the projector --');
+
+const settings = require('../server/settings.js');
+
+ok('unknown keys are dropped rather than passed through to a device',
+  JSON.stringify(settings.cleanSettings({ room: 'r', passphrase: 'p', evil: 'x' })) === JSON.stringify({ room: 'r', passphrase: 'p' }));
+let badTransport = '';
+try { settings.cleanSettings({ transport: 'carrier-pigeon' }); } catch (err) { badTransport = err.message; }
+ok('and a transport Podium does not speak is refused', /transport must be one of/.test(badTransport));
+
+// Writing a room or a passphrase is an owner's business. A TA who could
+// rotate the key could lock the instructor out of their own lecture.
+ok('a course owner may write its settings', settings.mayWrite(db, owner, 'psy415') === true);
+ok('an ordinary member may not', settings.mayWrite(db, ta, 'psy415') === false);
+ok('an admin may', settings.mayWrite(db, admin, 'psy415') === true);
+
+let refusedWrite = '';
+try { settings.write(db, ta, 'psy415', { room: 'hijacked' }); } catch (err) { refusedWrite = err.message; }
+ok('and trying anyway is refused', /that you can change/.test(refusedWrite));
+refusedWrite = '';
+try { settings.write(db, outsider, 'psy415', { room: 'hijacked' }); } catch (err) { refusedWrite = err.message; }
+ok('an outsider gets the same answer a missing course would give, learning nothing',
+  /no course with the code psy415 that you can change/.test(refusedWrite));
+
+settings.write(db, owner, 'psy415', {
+  transport: 'ws', room: 'psy415-room', passphrase: 'the room key', wsUrl: 'ws://localhost/podium',
+});
+
+// The point of the whole phase: a TA logging in gets a working config, key
+// included, because that is what driving the projector requires.
+const forTa = settings.forUser(db, ta);
+ok(`a member's device is handed the course's settings (${forTa.map((c) => c.course).join(', ')})`,
+  forTa.length === 1 && forTa[0].course === 'psy415');
+ok('including the passphrase, which is the whole point and the whole trade',
+  forTa[0].settings.passphrase === 'the room key');
+ok('someone outside the course is handed nothing', settings.forUser(db, outsider).length === 0);
+ok('an admin is handed every course that has settings', settings.forUser(db, admin).length === 1);
+
+settings.write(db, owner, 'psy415', { transport: 'ws', room: 'psy415-room', passphrase: 'rotated', wsUrl: 'ws://localhost/podium' });
+ok('rotating the passphrase is how you take it back from someone who has left',
+  settings.forUser(db, ta)[0].settings.passphrase === 'rotated');
+
 db.close();
 rmSync(root, { recursive: true, force: true });
 

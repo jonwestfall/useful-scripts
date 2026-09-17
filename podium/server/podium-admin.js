@@ -27,6 +27,7 @@ process.on('warning', (warning) => {
 
 const store = require('./store.js');
 const accounts = require('./accounts.js');
+const settings = require('./settings.js');
 
 const USAGE = `podium-admin — accounts and courses for a server-backed Podium
 
@@ -37,6 +38,9 @@ const USAGE = `podium-admin — accounts and courses for a server-backed Podium
   user enable <username>
   course add <code> [--title "PSY 415"]
   course list
+  course settings <code> [--transport ws|mqtt|supabase] [--room ...] [--ws-url ...]
+                         [--mqtt-url ...] [--supabase-url ...] [--supabase-key ...]
+                         [--passphrase ...|--new-passphrase]
   member add <course-code> <username> [--role owner|member]
   member remove <course-code> <username>
   sessions prune
@@ -54,7 +58,7 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (!arg.startsWith('--')) { positional.push(arg); continue; }
     const name = arg.slice(2);
-    if (['admin', 'password-stdin'].includes(name)) { flags[name] = true; continue; }
+    if (['admin', 'password-stdin', 'new-passphrase'].includes(name)) { flags[name] = true; continue; }
     flags[name] = argv[++i] ?? '';
   }
   return { positional, flags };
@@ -81,9 +85,9 @@ function promptSecret(label) {
     };
     const onData = (chunk) => {
       for (const ch of String(chunk)) {
-        if (ch === '\r' || ch === '\n' || ch === '') { done(null, value); return; }
-        if (ch === '') { done(new Error('cancelled')); return; }
-        if (ch === '' || ch === '\b') { value = value.slice(0, -1); continue; }
+        if (ch === '\r' || ch === '\n' || ch === '\u0004') { done(null, value); return; }
+        if (ch === '\u0003') { done(new Error('cancelled')); return; }
+        if (ch === '\u007f' || ch === '\b') { value = value.slice(0, -1); continue; }
         if (ch >= ' ') value += ch;
       }
     };
@@ -110,6 +114,10 @@ async function getPassword(flags, { confirm = true } = {}) {
   if (first !== again) throw new Error('those did not match');
   return first;
 }
+
+// Standing at a root shell IS the credential here, so there is no account to
+// act as. A null id records the change as nobody's rather than inventing one.
+const ROOT = { id: null, isAdmin: true };
 
 function courseByCode(db, code) {
   const row = db.prepare('SELECT * FROM courses WHERE code = ?').get(String(code || '').trim().toLowerCase());
@@ -188,6 +196,40 @@ async function main(argv) {
         GROUP BY c.id ORDER BY c.code`).all();
     if (!rows.length) { say('no courses yet'); return 0; }
     for (const row of rows) say(`${row.code.padEnd(16)} ${String(row.members).padStart(3)} member(s)  ${row.title}`);
+    return 0;
+  }
+
+  // What a device that logs in gets handed. Held per course so that a TA who
+  // may drive the projector has the passphrase to do it - and rotated from
+  // here, which is the only way to take it back from someone who has left.
+  if (group === 'course' && action === 'settings') {
+    const course = courseByCode(db, rest[0]);
+    const current = settings.forUser(db, ROOT).find((c) => c.course === course.code);
+    const wanted = { ...(current?.settings || {}) };
+    const map = {
+      transport: 'transport', room: 'room', passphrase: 'passphrase',
+      'ws-url': 'wsUrl', 'mqtt-url': 'mqttUrl',
+      'supabase-url': 'supabaseUrl', 'supabase-key': 'supabaseKey',
+    };
+    for (const [flag, key] of Object.entries(map)) {
+      if (flags[flag] !== undefined) wanted[key] = flags[flag];
+    }
+    if (flags['new-passphrase']) {
+      wanted.passphrase = require('node:crypto').randomBytes(12).toString('base64url');
+    }
+    if (!Object.keys(wanted).length) {
+      say(`${course.code} has no settings stored`);
+      return 0;
+    }
+    const saved = settings.write(db, ROOT, course.code, wanted);
+    say(`${course.code}: ${Object.entries(saved.settings)
+      // A passphrase printed into a terminal is a passphrase in a scrollback
+      // buffer. --new-passphrase is the one time you have to see it.
+      .map(([k, v]) => `${k}=${k === 'passphrase' && !flags['new-passphrase'] ? '(unchanged, hidden)' : v}`)
+      .join(' ')}`);
+    if (flags['new-passphrase']) {
+      say('every device already set up for this course must be given the new passphrase');
+    }
     return 0;
   }
 

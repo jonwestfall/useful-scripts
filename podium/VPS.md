@@ -253,13 +253,46 @@ specific is set, and the group is part of what the existing filter box
 searches — so typing `psy415` narrows the library to that course. That is the
 "filter, not a mode switch" decision, implemented without a new control.
 
-### Phase 3 — plans and settings
+### Phase 3 — plans and settings ✅
 
-`plans` and `device_settings`. `plan.html` gains "save to server" and "open from
-server" next to the file import and export it already has; nothing about the
-plan *file* changes, because carrying one on a USB stick must keep working.
-Logging in on a new device fetches transport, room, passphrase and preferences,
+`plans` and `course_settings`. `plan.html` gains "send to the server" and "open
+from the server" next to the file import and export it already has; nothing
+about the plan *file* changes, because carrying one on a USB stick must keep
+working. Logging in on a new device fetches transport, room and passphrase,
 which is what makes new-device setup a login instead of a QR scan.
+
+**As built, and one thing the sketch above got wrong.** Settings are held per
+*course*, not per device or per user. The sketch never said whose settings a
+device gets, and the answer matters: a TA may drive the projector, driving the
+projector needs the room passphrase, and a per-user store would hand a TA
+nothing — leaving the passphrase to be passed along by hand, which is the thing
+this phase exists to stop. A course owns a room and a passphrase; being a
+member is what gets you both.
+
+Two consequences, stated rather than buried. **Reading** a course's settings
+means holding the key to its projector — that is the point, and it means adding
+someone to a course hands them that key and removing them again does not take
+it back. Rotating the passphrase does, and `podium-admin course settings
+--new-passphrase` is where that happens. **Writing** them is therefore an
+owner's or an admin's business, never a plain member's: a TA who could rotate
+the key could lock an instructor out of their own lecture.
+
+A device with no settings of its own adopts a course's automatically when
+there is exactly one to adopt, and saves them — so the offline shell still
+opens to a controller rather than a setup form when the Wi-Fi is down. Where
+there are several courses, nothing is adopted and the choice is offered:
+picking the wrong room is a mistake you discover in front of a class. Server
+settings sit *below* localStorage in the precedence, so a device somebody has
+already set up is never quietly re-pointed.
+
+Plans invert the library's visibility rule, deliberately. A library item with
+no course is visible to everyone with an account; a **plan** with no course is
+visible only to its author. A library item is something you went out of your
+way to publish; a plan is a draft until you file it under a course, and half a
+written lecture appearing in a colleague's list would be a nasty surprise.
+Sharing a plan shares it to be read and taught from — a course member can open
+it and cannot overwrite it, and neither can a course owner who did not write
+it.
 
 ### Phase 4 — durable sessions
 

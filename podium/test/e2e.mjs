@@ -4985,6 +4985,79 @@ await acctScreen.waitForFunction(() => {
 }, null, { timeout: 25000 });
 ok('and picking it puts it on the projector, rendered from the uploaded bytes', true);
 
+// --- plans and settings, the things you stop carrying -------------------
+
+// A lecture built at the desk and sent to the server is on the iPad in class
+// without a file in between. That is the whole of phase 3's first half.
+const planner = await acctCtx.newPage();
+trap(planner, 'acct plan');
+await planner.goto(`${acctBase}/plan.html`);
+await planner.waitForSelector('#plan-server:not([hidden])');
+ok('the planning page offers the server when there is one', true);
+
+await planner.fill('#plan-title', 'Day 6 — sent, not carried');
+await planner.fill('#plan-course', 'psy415');
+await planner.click('#plan-push');
+await planner.waitForFunction(() => /Sent/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+ok(`sending it says where it went ("${(await planner.textContent('#plan-push-note')).trim()}")`,
+  /shared with psy415/.test(await planner.textContent('#plan-push-note')));
+
+// A course the server has never heard of must not silently become a share.
+await planner.fill('#plan-course', 'not-a-real-course');
+await planner.click('#plan-push');
+await planner.waitForFunction(() => /yours alone/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+ok('a course this server does not have is saved privately, and says so rather than guessing',
+  /no course "not-a-real-course"/.test(await planner.textContent('#plan-push-note')));
+
+// And in class. Opening the Library tab is what re-reads the list, which is
+// the point: this controller was already open before the plan was sent, and
+// must not need a reload to see it.
+await pad.click('.tab[data-tab="library"]');
+await pad.waitForSelector('#plan-server:not([hidden])', { timeout: 8000 });
+await pad.waitForFunction(
+  () => [...document.querySelectorAll('#plan-server-pick option')].some((o) => o.textContent.includes('sent, not carried')),
+  null, { timeout: 8000 },
+);
+const offered = await pad.$$eval('#plan-server-pick option', (els) => els.map((e) => e.textContent));
+ok(`the controller lists what is on the server (${offered.join(', ')})`,
+  offered.some((t) => t.includes('Day 6 — sent, not carried')));
+
+await pad.selectOption('#plan-server-pick', { label: 'Day 6 — sent, not carried (psy415)' });
+await pad.click('#plan-server-open');
+await pad.waitForFunction(() => /Loaded/.test(document.querySelector('#plan-note')?.textContent || ''), null, { timeout: 10000 });
+ok(`opening it in class needs no file at all ("${(await pad.textContent('#plan-note')).trim()}")`,
+  /Day 6 — sent, not carried/.test(await pad.textContent('#plan-note')));
+
+await planner.close();
+
+// The second half: a device nobody has configured sets itself up from the
+// course it belongs to, which is what makes a new iPad a login rather than a
+// QR scan and a typed passphrase.
+execFileSync(process.execPath, ['podium-admin.js', 'course', 'settings', 'psy415',
+  '--transport', 'ws', '--room', 'psy415-live', '--ws-url', `ws://127.0.0.1:${acctPort}/podium`,
+  '--passphrase', 'handed over by the server'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData },
+});
+
+// A genuinely fresh browser: no localStorage, no pairing hash, nothing but a
+// login.
+const freshCtx = await browser.newContext();
+const fresh = await freshCtx.newPage();
+trap(fresh, 'fresh device');
+await fresh.goto(`${acctBase}/control.html`);
+await fresh.waitForSelector('#form');
+await fresh.fill('#username', 'jon');
+await fresh.fill('#password', 'a good long password');
+await Promise.all([fresh.waitForURL(/control\.html/), fresh.click('#go')]);
+
+await fresh.waitForSelector('#status[data-status="online"]', { timeout: 20000 });
+ok('a device with no settings at all signs in and is simply connected', true);
+const adopted = await fresh.evaluate(() => JSON.parse(localStorage.getItem('podium.config.v2') || '{}'));
+ok(`it adopted the course's room without anyone typing it (${adopted.room})`, adopted.room === 'psy415-live');
+ok('and the passphrase with it, which is what joining the room actually needs',
+  adopted.passphrase === 'handed over by the server');
+await freshCtx.close();
+
 await desk.close();
 await acctScreen.close();
 

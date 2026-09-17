@@ -1597,7 +1597,13 @@ filed under its course, is narrowed to by typing that course code into the
 ordinary filter box, and renders on the projector from the uploaded bytes —
 while an `.html` upload is refused with a reason, because uploads are served
 from Podium's own origin and a file a browser would execute there would run
-with the session cookie in reach. 535 checks.
+with the session cookie in reach. And it proves the two things a server-backed
+Podium stops you carrying: a lecture built on the planning page and sent to the
+server is listed on a controller that was already open, opens there with no file
+in between, and says plainly when the course you typed is not one this server
+has rather than guessing; and a browser with no settings whatsoever signs in and
+is simply connected, having taken its room and passphrase from the course it
+belongs to. 543 checks.
 
 ## Layout
 

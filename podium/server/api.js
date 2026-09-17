@@ -20,6 +20,8 @@
 
 const accounts = require('./accounts.js');
 const library = require('./library.js');
+const plans = require('./plans.js');
+const settings = require('./settings.js');
 
 const COOKIE = 'podium_session';
 const API_VERSION = 1;
@@ -120,7 +122,9 @@ function capabilities(ctx, user) {
   // to, so it is only advertised once an account exists. Otherwise a freshly
   // installed instance with no accounts yet would offer an Admin page whose
   // every request answers 401 - a feature announced before it can be used.
-  const features = ctx.db && ctx.hasAccounts() ? ['auth', 'library'] : (ctx.db ? ['auth'] : []);
+  const features = ctx.db && ctx.hasAccounts()
+    ? ['auth', 'library', 'plans', 'settings']
+    : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
     version: API_VERSION,
@@ -242,6 +246,62 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'library' && rest.length === 1 && req.method === 'DELETE') {
       json(res, 200, { removed: library.deleteItem(ctx.db, user, rest[0]).id });
+      return true;
+    }
+
+    // --- lecture plans ----------------------------------------------------
+
+    if (head === 'plans' && !rest.length && req.method === 'GET') {
+      json(res, 200, { plans: plans.listPlans(ctx.db, user), courses: library.listCourses(ctx.db, user) });
+      return true;
+    }
+
+    if (head === 'plans' && !rest.length && req.method === 'POST') {
+      const body = await readJson(req, plans.MAX_DOC_BYTES + 1024);
+      json(res, 200, {
+        plan: plans.savePlan(ctx.db, user, { title: body.title, courseCode: body.course, doc: body.doc }),
+      });
+      return true;
+    }
+
+    if (head === 'plans' && rest.length === 1 && req.method === 'GET') {
+      const plan = plans.getPlan(ctx.db, user, rest[0]);
+      if (!plan) { json(res, 404, { error: 'no such plan' }); return true; }
+      json(res, 200, { plan });
+      return true;
+    }
+
+    if (head === 'plans' && rest.length === 1 && req.method === 'PUT') {
+      const body = await readJson(req, plans.MAX_DOC_BYTES + 1024);
+      json(res, 200, {
+        plan: plans.updatePlan(ctx.db, user, rest[0], {
+          title: body.title,
+          courseCode: 'course' in body ? body.course : undefined,
+          doc: body.doc,
+        }),
+      });
+      return true;
+    }
+
+    if (head === 'plans' && rest.length === 1 && req.method === 'DELETE') {
+      json(res, 200, { removed: plans.deletePlan(ctx.db, user, rest[0]).id });
+      return true;
+    }
+
+    // --- connection settings ----------------------------------------------
+    //
+    // This hands out room passphrases, which is the whole point of it: a
+    // device that has these can join the room. Membership of the course is
+    // what earns them, and writing them takes more than membership.
+
+    if (head === 'settings' && !rest.length && req.method === 'GET') {
+      json(res, 200, { courses: settings.forUser(ctx.db, user) });
+      return true;
+    }
+
+    if (head === 'settings' && rest.length === 1 && req.method === 'PUT') {
+      const body = await readJson(req);
+      json(res, 200, { saved: settings.write(ctx.db, user, rest[0], body.settings || body) });
       return true;
     }
   } catch (err) {
