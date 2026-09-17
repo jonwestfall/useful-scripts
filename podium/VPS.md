@@ -141,7 +141,7 @@ course_members(course_id, user_id, role)        -- owner | member
 ```
 
 Later phases add `media`, `library_items`, `plans`, `course_settings`,
-`lectures`, `lecture_events`, `lecture_polls`, `lecture_ink`, `lecture_photos`.
+`lectures`, `lecture_events`, `lecture_polls`, `lecture_files`.
 Every migration is a numbered step against `PRAGMA user_version`, applied in
 order at startup, and only ever adds.
 
@@ -348,19 +348,63 @@ The rest of what that decision produced:
 - The arming screen says the lecture will be recorded. Nobody should have to
   read this file to find that out.
 
-### Phase 4b — ink and photos
+### Phase 4b — ink, photos, and how long they stay ✅
 
-The bulky half: ink and document-camera photos captured at the end of a lecture
-rather than living in memory until the tab closes, the existing session zip
-exported from any past lecture rather than only the live one, and a retention
-control — these are the two payloads that grow without bound, and the reason
-the retention control belongs here rather than with the timeline.
+`lecture_files`: one row per file a session keeps, with the bytes in the SAME
+content-addressed store the library uses. That sharing is the whole reason the
+phase is small — dedup, the hashed path, `/media` serving and its hardening all
+existed already — and it is also the one thing it could get wrong, so
+`forgetMediaIfUnused` and `mayReadMedia` both had to learn that "in use" and
+"may read" now have two tables to ask.
+
+**Who files what, and why it has to be them:**
+
+- **The display files the ink**, as strokes, when the lecture ends. It is the
+  only device that has all of it — which is why exporting a session has always
+  begun by pulling it across the relay from there. Strokes rather than pictures:
+  a heavily drawn-on lecture is tens of kilobytes of JSON, and rebuilding a
+  picture needs the deck behind it.
+- **The controller files the photos**, as each one is taken, because that is
+  where they live.
+- **The controller files everything an export builds** — annotated slides,
+  boards, poll CSVs, `session.txt` — when somebody presses Export. This is the
+  part that makes "download that lecture again in March" real, and it is
+  deliberately the export's own output rather than a second rendering path: the
+  zip you got on the day and the zip you get in March are the same files.
+
+Rebuilding the zip happens in the browser, with the same `zip.js` the controller
+uses. The server never packs an archive; there is no zip code on it at all.
+
+**The photo switch.** Podium's stated answer for photos has been that they live
+in memory until Export, because a photo is usually somebody else's — a
+worksheet, a board mid-argument, a face at the back. A server keeping them
+changes that, so it is a switch on the Photos tab (*Keep photos on the server
+with this lecture*), on by default, remembered per device, and governing both
+the photo filed as it is taken and the photos inside a filed export. Ink, poll
+CSVs and the rest of an export are nobody else's picture and are kept whenever
+there is a lecture to keep them with. Turning a documented default over without
+saying so would have been the wrong kind of quiet.
+
+**The retention control**, and the asymmetry that is the point of it:
+`LECTURE_RETENTION_DAYS` ages out *files* — photos, ink, rasterized pages — and
+never timelines or poll results. The bulk is what fills a disk; a few hundred
+short rows is what somebody wants three years later when asked what a course
+covered. Unset means keep everything, which is the right default for a box one
+person runs for their own teaching: deleting a term's photos because nobody had
+read the documentation would be the worse mistake. The sweep runs at startup and
+daily, and `podium-admin lectures prune --days N` does it by hand. That command
+is deliberately not called `sessions prune`, which already means expired logins.
+
+Caps, so that one wedged controller cannot fill the disk in an afternoon: 16 MB
+per file, 500 files and 400 MB per lecture, and an allow-list of what a session
+may keep at all (png, jpeg, webp, json, txt, csv — nothing that executes, the
+same rule the library's list is built on).
 
 ### Phase 5 — `admin.html` proper
 
 Accounts, courses and membership. Server settings. Storage usage. Backup and
-restore. Phases 2–4 each add their own panel to a page that starts as a stub in
-Phase 1.
+restore. Phases 2–4 each add their own panel to a page that starts as a stub
+in Phase 1.
 
 ### Phase 6 — operations
 

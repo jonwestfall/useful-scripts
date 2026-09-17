@@ -69,6 +69,29 @@ sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js member add psy415 s
 `podium-admin.js help` lists the rest. The first account is the moment the
 instance stops being open to anyone who can reach it, so make it early.
 
+## Session records, and how long they are kept
+
+Once there are accounts, the display writes down what it showed, and the
+controller files the photos and the pages an export rasterizes (see
+[../VPS.md](../VPS.md)). Those two are the parts that grow, so
+`LECTURE_RETENTION_DAYS` in `podium.env` ages them out:
+
+```
+LECTURE_RETENTION_DAYS=180
+```
+
+Unset means keep everything, which is the right default for a box one person
+runs for their own teaching. Whatever it is set to, a lecture's **timeline and
+poll results are never aged out** — they are a few hundred short rows, and they
+are what you want three years later when somebody asks what a course covered.
+The sweep runs at startup and once a day; to run it by hand, or once, without
+setting it at all:
+
+```bash
+sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js lectures list
+sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js lectures prune --days 180
+```
+
 Courses are how the library is shared: an item filed under `psy415` is visible
 to that course's members, an item filed under nothing is visible to everyone
 with an account here. Members can add to a course library and present from it;

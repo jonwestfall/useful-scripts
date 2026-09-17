@@ -6,6 +6,7 @@
 
 import { $, el } from './util.js';
 import { serverInfo, mountSessionBadge } from './server.js';
+import { createZip } from './zip.js';
 
 mountSessionBadge($('#session-badge'));
 
@@ -162,6 +163,7 @@ async function upload() {
 
 let lectures = [];
 let openLecture = null;      // { id, detail } - the one expanded below its row
+let sessionUsage = null;
 
 const pad = (n) => String(n).padStart(2, '0');
 const clock = (ms) => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
@@ -243,6 +245,56 @@ function describe(event) {
   return bits.join(' · ');
 }
 
+const safeName = (detail) => String(detail.title || detail.room || 'session')
+  .replace(/[^a-z0-9-_ ]+/gi, '').trim().replace(/\s+/g, '-')
+  .slice(0, 48)
+  .toLowerCase() || 'session';
+
+/**
+ * The session zip, rebuilt from what the lecture kept.
+ *
+ * The same files the controller put in the zip it handed you on the day - the
+ * photos, the annotated slides, the boards, the poll CSVs, session.txt - packed
+ * again here by the same writer, in a browser that was never in the room. That
+ * is the whole point of phase 4b: the record stops depending on which tablet
+ * was in whose hand when somebody remembered to press Export.
+ */
+async function downloadSessionZip(detail, button) {
+  button.disabled = true;
+  const was = button.textContent;
+  try {
+    const files = [];
+    for (const file of detail.files) {
+      button.textContent = `Fetching ${files.length + 1} of ${detail.files.length}…`;
+      const res = await fetch(file.url, { credentials: 'same-origin' });
+      if (!res.ok) continue;           // named in the summary below rather than failing the lot
+      files.push({ name: file.name, data: new Uint8Array(await res.arrayBuffer()) });
+    }
+    if (!files.length) { button.textContent = 'Nothing could be fetched'; return; }
+    if (files.length < detail.files.length) {
+      files.push({
+        name: 'missing.txt',
+        data: new TextEncoder().encode(
+          `${detail.files.length - files.length} of this session's files could not be read back.\n`),
+      });
+    }
+    button.textContent = 'Building the zip…';
+    const stamp = new Date(detail.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const blob = await createZip(files);
+    const a = el('a', { href: URL.createObjectURL(blob), download: `podium-${safeName(detail)}-${stamp}.zip` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  } catch {
+    button.textContent = 'That did not work';
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  button.textContent = was;
+}
+
 function renderSessionBody(detail) {
   const body = el('div', { class: 'session-body' });
 
@@ -251,6 +303,14 @@ function renderSessionBody(detail) {
       class: 'admin-small', type: 'button',
       onclick: () => download(`podium-${detail.id}-timeline.txt`, timelineText(detail), 'text/plain'),
     }, 'Download the timeline'));
+
+  if (detail.files.length) {
+    const kept = detail.files.reduce((sum, file) => sum + file.bytes, 0);
+    actions.append(el('button', {
+      class: 'admin-small', type: 'button',
+      onclick: (ev) => downloadSessionZip(detail, ev.target),
+    }, `Download the session (${detail.files.length} files, ${bytes(kept)})`));
+  }
   for (const poll of detail.pollResults) {
     actions.append(el('button', {
       class: 'admin-small', type: 'button',
@@ -273,6 +333,16 @@ function renderSessionBody(detail) {
       el('span', { class: 'timeline-note' }, describe(event))));
   }
   body.append(list);
+
+  if (detail.files.length) {
+    const photos = detail.files.filter((f) => f.kind === 'photo').length;
+    const ink = detail.files.some((f) => f.kind === 'ink');
+    body.append(el('p', { class: 'hint' },
+      [`${detail.files.length} file${detail.files.length === 1 ? '' : 's'} kept`,
+        photos ? `${photos} photo${photos === 1 ? '' : 's'}` : '',
+        ink ? 'the ink' : ''].filter(Boolean).join(' · ')));
+  }
+
   if (detail.truncated) {
     body.append(el('p', { class: 'hint' },
       'This lecture recorded as much as Podium keeps, so the timeline stops before the end did.'));
@@ -341,7 +411,9 @@ function renderSessions() {
     || `${l.title} ${l.room} ${l.course || ''} ${l.owner}`.toLowerCase().includes(filter));
 
   $('#sess-note').textContent = lectures.length
-    ? `${lectures.length} session${lectures.length === 1 ? '' : 's'} recorded.`
+    ? `${lectures.length} session${lectures.length === 1 ? '' : 's'} recorded`
+      + (sessionUsage?.files ? `, keeping ${sessionUsage.files} file${sessionUsage.files === 1 ? '' : 's'} `
+        + `(${bytes(sessionUsage.bytes)}) of photos, ink and exported pages.` : '.')
     : 'Nothing recorded yet — a session appears here once a display goes live.';
 
   if (!shown.length) {
@@ -390,7 +462,9 @@ function renderSessions() {
 async function refreshSessions() {
   const res = await fetch('/api/lectures', { credentials: 'same-origin' });
   if (!res.ok) return;
-  lectures = (await res.json()).lectures || [];
+  const data = await res.json();
+  lectures = data.lectures || [];
+  sessionUsage = data.usage || null;
   renderSessions();
 }
 

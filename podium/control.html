@@ -663,6 +663,13 @@
             written to this device unless you export it.
           </p>
           <hr style="border:0;border-top:1px solid var(--line);margin:6px 0">
+          <!-- Only on a Podium with a server that keeps sessions. A photo is
+               usually somebody else's - a worksheet, a board, a face - so the
+               server keeping them is a switch you can see, not a new default
+               nobody was told about. -->
+          <div class="inline" id="photo-keep-row" hidden>
+            <label class="check"><input id="photo-keep" type="checkbox" checked> Keep photos on the server with this lecture</label>
+          </div>
           <div class="inline">
             <button id="photo-export" class="big-button" type="button" disabled>Export this session…</button>
           </div>

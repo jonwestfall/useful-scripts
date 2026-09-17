@@ -5106,6 +5106,37 @@ await desk.waitForFunction(async () => {
 }, null, { timeout: 20000 });
 ok('going live starts a session record, and what went on the projector lands in it', true);
 
+// --- the bulky half: a photo, and the export that outlives the tablet ------
+//
+// A photo is somebody else's picture more often than not, so the server keeping
+// it is a switch you can see rather than a new default nobody was told about.
+await pad.click('.tab[data-tab="photos"]');
+ok('a server-backed controller offers the choice about keeping photos',
+  await pad.isVisible('#photo-keep-row') && await pad.isChecked('#photo-keep'));
+
+await pad.click('#photo-panel');
+await pad.waitForSelector('#photo-strip .shot', { timeout: 20000 });
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' })
+    .then((r) => r.json());
+  return (lecture.files || []).some((f) => f.kind === 'photo');
+}, null, { timeout: 20000 });
+ok('a photo taken in the room is filed with the lecture as it is taken', true);
+
+// And the export, which is what makes a past lecture downloadable in March
+// from a browser that was never in the room.
+const acctZip = pad.waitForEvent('download', { timeout: 60000 });
+await pad.click('#photo-export');
+await (await acctZip).saveAs(path.join(HERE, 'fixtures', 'acct-session.zip'));
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' })
+    .then((r) => r.json());
+  return (lecture.files || []).some((f) => f.name === 'session.txt');
+}, null, { timeout: 30000 });
+ok('and everything the export built is filed with it too', true);
+
 // E is stand down - the way back out of a lecture without a "quit" key a
 // stray press could hit.
 await acctScreen.keyboard.press('e');
@@ -5132,6 +5163,13 @@ ok(`opening it shows what was covered, by name (${timeline.join(', ')})`,
   timeline.includes('Uploaded In Class'));
 
 // Naming one is how "Tue 14:00" becomes something you can find again.
+// The record, rebuilt into the same zip by a page that was never in the room.
+const rebuilt = desk.waitForEvent('download', { timeout: 40000 });
+await desk.click('#sessions .session-body button:has-text("Download the session")');
+const rebuiltFile = await rebuilt;
+ok(`a past lecture downloads as a session zip again (${rebuiltFile.suggestedFilename()})`,
+  /\.zip$/.test(rebuiltFile.suggestedFilename()));
+
 await desk.fill('#sessions .admin-name', 'Day 6 — Weighing the Evidence');
 await desk.dispatchEvent('#sessions .admin-name', 'change');
 await desk.waitForFunction(async () => {

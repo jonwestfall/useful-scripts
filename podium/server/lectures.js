@@ -22,6 +22,8 @@
 
 'use strict';
 
+const path = require('node:path');
+
 const library = require('./library.js');
 const settings = require('./settings.js');
 
@@ -35,6 +37,50 @@ const MAX_TITLE = 200;
 const MAX_DETAIL_BYTES = 2000;
 
 const EVENT_KINDS = new Set(['program', 'poll', 'note']);
+
+// --- what a session may keep -------------------------------------------------
+//
+// Photos taken in the room, the ink as strokes, and the pages the controller
+// rasterizes when it exports. Its own allow-list rather than the library's:
+// these arrive from Podium's own pages, not from a file picker, and the set of
+// things they can be is short and known. Nothing here executes, which is the
+// same rule the library's list is built on and the reason .svg is absent from
+// both - the bytes come back from this origin later.
+const KEEPABLE = new Map(Object.entries({
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.json': 'application/json',
+  '.txt': 'text/plain; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+}));
+
+// What a file is FOR, which is all the server knows about it: a photo taken
+// in the room, the ink as strokes, or a page the controller rasterized when it
+// exported. Anything else is filed as a plain part of the export.
+const FILE_KINDS = new Set(['photo', 'ink', 'session']);
+
+const MAX_FILE_BYTES = 16 * 1024 * 1024;
+const MAX_FILES_PER_LECTURE = 500;
+// One lecture's whole record. A 90-minute session with two dozen photos and
+// forty annotated slides lands around 40 MB; this is room for an unusual one
+// without letting a wedged controller fill the disk in an afternoon.
+const MAX_LECTURE_BYTES = 400 * 1024 * 1024;
+
+const keepableType = (name) => KEEPABLE.get(path.extname(String(name || '')).toLowerCase()) || null;
+
+// The path a file has inside the zip, and the only thing a caller chooses about
+// where the bytes land - so it is cleaned rather than trusted. Forward slashes
+// survive (the zip has folders); anything that could climb out of one, or that
+// a filesystem would argue with, does not. The bytes themselves are stored
+// under their own hash and never under this name.
+function cleanName(raw) {
+  const parts = String(raw || '').split('/')
+    .map((part) => part.replace(/[^a-zA-Z0-9._ -]+/g, '').replace(/^\.+/, '').trim())
+    .filter(Boolean);
+  return parts.join('/').slice(0, 200);
+}
 
 // Owner, admin, or a member of the course it was filed under - the same rule
 // as a plan, and for the same reason. A lecture with no course is a record of
@@ -124,6 +170,16 @@ function mayDelete(db, user, lecture) {
   return row?.role === 'owner';
 }
 
+/**
+ * The lecture's summary, if this account may see it - and nothing else. What
+ * getLecture does with a whole timeline, every poll and every file attached is
+ * far too much to read just to find out whether a photo may be filed.
+ */
+function visibleLecture(db, user, id) {
+  const row = findLecture(db, user, id);
+  return row ? lectureRow(row) : null;
+}
+
 function listLectures(db, user, { limit = 200 } = {}) {
   const rows = db.prepare(`${SELECT_LECTURES} WHERE ${VISIBLE} ORDER BY l.started_at DESC LIMIT ?3`)
     .all(user.id, user.isAdmin ? 1 : 0, Math.min(Math.max(Number(limit) || 200, 1), 500));
@@ -151,7 +207,7 @@ function getLecture(db, user, id) {
       voters: p.voters,
       endedAt: p.ended_at,
     }));
-  return { ...lectureRow(row), timeline: events, pollResults: polls };
+  return { ...lectureRow(row), timeline: events, pollResults: polls, files: listFiles(db, row.id) };
 }
 
 /**
@@ -304,6 +360,103 @@ function recordPoll(db, user, id, poll) {
   return { pollId };
 }
 
+// --- the files a session keeps -----------------------------------------------
+
+const fileRow = (row) => ({
+  id: row.id,
+  name: row.name,
+  kind: row.kind,
+  bytes: row.bytes,
+  at: row.created_at,
+  // The same content-addressed path the library's items use, so one route
+  // serves both and gets the hardening right once (see serveMedia).
+  url: `/media/${row.sha256}/${encodeURIComponent(row.name.split('/').pop() || 'file')}`,
+});
+
+const listFiles = (db, lectureId) =>
+  db.prepare(`SELECT lf.*, m.sha256, m.bytes FROM lecture_files lf
+      JOIN media m ON m.id = lf.media_id
+     WHERE lf.lecture_id = ? ORDER BY lf.name`).all(lectureId).map(fileRow);
+
+/**
+ * Keep one file with a lecture. `sha256`/`bytes` come from library.storeUpload,
+ * which has already written the bytes into the shared media store.
+ *
+ * Exporting a session twice replaces what the first export left rather than
+ * accumulating two of everything - the name is unique per lecture, and the
+ * bytes the replaced row pointed at are freed if nothing else wants them.
+ */
+function addFile(db, user, id, { name, kind, sha256, bytes, contentType, dataDir }) {
+  const lecture = findLecture(db, user, id);
+  if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
+
+  const clean = cleanName(name);
+  if (!clean) throw Object.assign(new Error('that file needs a name'), { status: 400 });
+
+  const held = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(m.bytes), 0) AS bytes
+      FROM lecture_files lf JOIN media m ON m.id = lf.media_id
+     WHERE lf.lecture_id = ? AND lf.name <> ?`).get(lecture.id, clean);
+  if (held.files >= MAX_FILES_PER_LECTURE) {
+    throw Object.assign(new Error('that lecture already keeps as many files as it can'), { status: 413 });
+  }
+  if (held.bytes + bytes > MAX_LECTURE_BYTES) {
+    throw Object.assign(new Error('that lecture has reached the space one session may use'), { status: 413 });
+  }
+
+  const mediaId = library.rememberMedia(db, user, { sha256, bytes, contentType });
+  const previous = db.prepare(`SELECT m.sha256 FROM lecture_files lf JOIN media m ON m.id = lf.media_id
+     WHERE lf.lecture_id = ? AND lf.name = ?`).get(lecture.id, clean);
+  db.prepare(`INSERT INTO lecture_files (lecture_id, media_id, kind, name, created_at, created_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(lecture_id, name) DO UPDATE SET
+        media_id = excluded.media_id, kind = excluded.kind,
+        created_at = excluded.created_at, created_by = excluded.created_by`)
+    .run(lecture.id, mediaId, FILE_KINDS.has(kind) ? kind : 'session', clean, Date.now(), user.id);
+  if (previous && previous.sha256 !== sha256) library.forgetMediaIfUnused(db, dataDir, previous.sha256);
+
+  return { name: clean, bytes };
+}
+
+
+/** What the session records are costing in disk, for the admin page to show. */
+function usage(db) {
+  const row = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(bytes), 0) AS bytes FROM media
+     WHERE id IN (SELECT media_id FROM lecture_files)`).get();
+  return { files: row.files, bytes: row.bytes };
+}
+
+/**
+ * The retention control: drop the FILES of lectures older than `days`, and
+ * leave the timelines alone.
+ *
+ * That asymmetry is the whole design. Photos and rasterized slides are the two
+ * payloads that grow without bound; a timeline is a few hundred short rows and
+ * is exactly what somebody wants three years later when they are asked what a
+ * course covered. So the bulk ages out and the record does not.
+ *
+ * Age is measured from when the lecture started, not from when a file was
+ * written: a lecture is the unit anybody thinks in, and an export run a week
+ * late should not buy its photos another term.
+ */
+function pruneFiles(db, dataDir, { days, now = Date.now() } = {}) {
+  const keepFor = Number(days);
+  if (!Number.isFinite(keepFor) || keepFor <= 0) return { removed: 0, bytes: 0 };
+  const before = now - keepFor * 24 * 60 * 60 * 1000;
+  const doomed = db.prepare(`SELECT lf.id, m.sha256, m.bytes FROM lecture_files lf
+      JOIN media m ON m.id = lf.media_id
+      JOIN lectures l ON l.id = lf.lecture_id
+     WHERE l.started_at < ?`).all(before);
+  let bytes = 0;
+  for (const row of doomed) {
+    db.prepare('DELETE FROM lecture_files WHERE id = ?').run(row.id);
+    // Only counted as space recovered if the bytes really went: the same photo
+    // may still be a library item, and content addressing means that copy is
+    // this copy.
+    if (library.forgetMediaIfUnused(db, dataDir, row.sha256)) bytes += row.bytes;
+  }
+  return { removed: doomed.length, bytes };
+}
+
 function renameLecture(db, user, id, { title, courseCode } = {}) {
   const lecture = findLecture(db, user, id);
   if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
@@ -330,21 +483,30 @@ function renameLecture(db, user, id, { title, courseCode } = {}) {
  * somebody asked for it to go is the opposite of what the retention control
  * this sits under is for.
  */
-function deleteLecture(db, user, id) {
+function deleteLecture(db, user, id, { dataDir } = {}) {
   const lecture = findLecture(db, user, id);
   if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
   const row = lectureRow(lecture);
   if (!mayDelete(db, user, row)) {
     throw Object.assign(new Error('only whoever ran this lecture can remove it'), { status: 403 });
   }
-  // The children go with it: both child tables are ON DELETE CASCADE, and
-  // PRAGMA foreign_keys is on (see store.js).
+  // The children go with it: every child table is ON DELETE CASCADE, and
+  // PRAGMA foreign_keys is on (see store.js). The BYTES do not follow on their
+  // own, though - they live in the shared media store, so each one is offered
+  // back afterwards and kept if anything else still points at it.
+  const held = dataDir
+    ? db.prepare(`SELECT m.sha256 FROM lecture_files lf JOIN media m ON m.id = lf.media_id
+         WHERE lf.lecture_id = ?`).all(row.id)
+    : [];
   db.prepare('DELETE FROM lectures WHERE id = ?').run(row.id);
+  for (const { sha256 } of held) library.forgetMediaIfUnused(db, dataDir, sha256);
   return row;
 }
 
 module.exports = {
   listLectures, getLecture, startLecture, endLecture, appendEvents, recordPoll,
   renameLecture, deleteLecture, mayDelete, courseIdForRoom,
+  addFile, listFiles, pruneFiles, usage, keepableType, cleanName, visibleLecture,
   MAX_EVENTS, MAX_EVENTS_PER_POST, MAX_POLLS,
+  MAX_FILE_BYTES, MAX_FILES_PER_LECTURE, MAX_LECTURE_BYTES, KEEPABLE,
 };

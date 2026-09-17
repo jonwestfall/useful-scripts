@@ -1029,7 +1029,7 @@ let pendingTimer = null;
 serverInfo().then((info) => {
   if (!info.features.includes('sessions')) return;
   const note = $('#arm-record');
-  note.textContent = 'This lecture will be saved to the server: what goes on screen, and any poll results.';
+  note.textContent = 'This lecture is saved to the server: what went on screen, your ink, poll results, and photos taken in the room.';
   note.hidden = false;
 });
 
@@ -1082,7 +1082,39 @@ async function stopRecording() {
   clearTimeout(pendingTimer);
   if (pendingEvent) { eventQueue.push(pendingEvent); pendingEvent = null; }
   await flushEvents(id);
+  await fileInk(id);
   try { await postJson(lectureUrl(id, '/end'), { at: Date.now() }); } catch { /* it stays open */ }
+}
+
+// Ink, as strokes, at the end of the lecture.
+//
+// This screen is the only device that has all of it, which is why exporting a
+// session has always begun by pulling it across the relay from here. Filing it
+// with the lecture means the annotations survive the tab closing even when
+// nobody exported - and, unlike a rasterized page, the strokes are small: a
+// heavily drawn-on lecture is tens of kilobytes of JSON.
+//
+// It is the raw record, not the picture. Rebuilding an annotated slide needs
+// the deck behind it, which is the controller's job and is what an export
+// files alongside this.
+async function fileInk(id) {
+  const surfaces = Object.fromEntries(
+    Object.entries(state.ink.bySurface || {}).filter(([, strokes]) => strokes?.length),
+  );
+  if (!Object.keys(surfaces).length) return;
+  const body = JSON.stringify({ room: cfg.room, savedAt: Date.now(), bySurface: surfaces });
+  // The cap is the server's (16 MB); stopping short of it here means the
+  // lecture keeps a smaller record rather than the server turning the whole
+  // thing down over one enormous surface.
+  if (body.length > 15 * 1024 * 1024) return;
+  try {
+    await fetch(lectureUrl(id, '/files?name=ink.json&kind=ink'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+  } catch { /* the ink is still on this screen, and still in localStorage */ }
 }
 
 /**

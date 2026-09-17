@@ -1082,10 +1082,10 @@ async function exportSession() {
       lines.push(`Photos (${photos.length}):`);
       // Oldest first in the zip: the strip shows newest first because that is
       // what you just took, but a folder wants to read forwards.
-      [...photos].reverse().forEach((photo, i) => {
+      [...photos].reverse().forEach((photo) => {
         const data = assetStore.get(photo.id);
         if (!data) { skipped.push(`photo "${photo.title}" (no longer held)`); return; }
-        const name = `photos/${String(i + 1).padStart(2, '0')}-${safeName(photo.title, 'photo')}.jpg`;
+        const name = photoFileName(photo);
         files.push({ name, data: dataUrlToBytes(data) });
         lines.push(`  ${name}  —  ${new Date(photo.at).toLocaleTimeString()}`);
       });
@@ -1189,8 +1189,17 @@ async function exportSession() {
     }
 
     if (skipped.length) lines.push('Not included:', ...skipped.map((line) => `  - ${line}`), '');
-    lines.push('Photos and ink are held only while the app is open; this zip is the copy that lasts.');
+    lines.push(recordingNow()
+      ? 'This lecture is also kept on the server; the same files can be downloaded again from the Admin page.'
+      : 'Photos and ink are held only while the app is open; this zip is the copy that lasts.');
     files.push({ name: 'session.txt', data: new TextEncoder().encode(lines.join('\n')) });
+
+    // The same files, filed with the lecture: this is what makes "export that
+    // session again in March" possible from a browser that was never in the
+    // room. Sent before the zip is built rather than after, because the zip is
+    // what ends the export and a tab closed on the download is a tab that never
+    // got here.
+    await fileExportWithLecture(files, status);
 
     status.textContent = 'Building the zip…';
     const blob = await createZip(files);
@@ -1211,6 +1220,33 @@ async function exportSession() {
     exporting = false;
     btn.disabled = !bus;
   }
+}
+
+/**
+ * Send every file an export just built to the lecture the display opened.
+ *
+ * Sequential rather than all at once: this is a tablet on classroom Wi-Fi
+ * sending several megabytes, and twenty parallel uploads is how that Wi-Fi
+ * stops carrying the relay as well. Failures are counted, not thrown - the zip
+ * in your hand is the copy that matters, and the server keeping fewer files
+ * than it might is not a reason to fail the export.
+ */
+async function fileExportWithLecture(files, status) {
+  if (!recordingNow()) return;
+  let sent = 0;
+  let failed = 0;
+  for (const file of files) {
+    // The one thing the switch on this tab governs (see filePhotoWithLecture).
+    if (!keepPhotos && file.name.startsWith('photos/')) continue;
+    status.textContent = `Keeping this session on the server… (${sent + 1} of ${files.length})`;
+    const type = file.name.endsWith('.png') ? 'image/png'
+      : file.name.endsWith('.jpg') ? 'image/jpeg'
+        : file.name.endsWith('.csv') ? 'text/csv'
+          : 'text/plain';
+    if (await fileWithLecture(file.name, 'session', file.data, type)) sent += 1;
+    else failed += 1;
+  }
+  if (failed) status.textContent = `Kept ${sent} of ${sent + failed} files on the server; building the zip…`;
 }
 
 async function exportDeck() {
@@ -1489,30 +1525,79 @@ let pollHistory = loadPollHistory();
 function addToPollHistory(entry) {
   pollHistory = [{ id: uid(8), ...entry }, ...pollHistory].slice(0, MAX_POLL_HISTORY);
   savePollHistory();
-  fileWithLecture(entry);
+  filePollWithLecture(entry);
 }
 
-// The same tally, sent to the server's record of this lecture - where it
-// outlives this browser, this device and this term, which the shelf above
-// deliberately does not.
+// --- filing this lecture's record with the server ----------------------------
 //
-// The controller does this rather than the display because the controller is
-// what ends a poll and the only thing that ever holds the final counts. Which
-// lecture it belongs to comes from state.lectureId, which the display puts on
-// the bus when it goes live (see protocol.js). Best-effort and silent: a poll
-// that fails to file is still in history, still exportable, and still on
-// screen - there is nothing here worth interrupting a class about.
+// Only on a Podium with a server behind it, and silent everywhere else. What
+// this device holds that nothing else does - a poll's final tally, the photos
+// in the strip, and the pages an export rasterizes - is sent to the lecture the
+// display opened when it went live. Which lecture that is comes from
+// state.lectureId, broadcast in the shared state (see protocol.js).
+//
+// The controller files polls rather than the display because the controller is
+// what ends a poll and the only thing that ever holds the final counts, and
+// photos for the same reason: they live here. Everything is best-effort and
+// silent - a file that fails to send is still in the strip, still exportable,
+// and still on screen, and none of it is worth interrupting a class about.
 let serverKeepsSessions = false;
-serverInfo().then((info) => { serverKeepsSessions = info.features.includes('sessions'); });
+serverInfo().then((info) => {
+  serverKeepsSessions = info.features.includes('sessions');
+  renderKeepPhotos();
+});
 
-function fileWithLecture(entry) {
-  if (!serverKeepsSessions || !state.lectureId) return;
+const recordingNow = () => serverKeepsSessions && !!state.lectureId;
+
+// Photos are the one payload here that is somebody else's: a worksheet, a
+// board mid-argument, a face at the back of the room. Podium's long-standing
+// answer was that they live in memory until you press Export, and a server
+// changes that - so the change is a switch you can see and turn off, per
+// device, rather than a new default nobody was told about. It governs both the
+// photo filed as it is taken and the photos inside a filed export; ink, poll
+// CSVs and the rest of an export are not anyone else's picture and are kept
+// whenever there is a lecture to keep them with.
+const KEEP_PHOTOS_KEY = 'podium.keepPhotos.v1';
+let keepPhotos = localStorage.getItem(KEEP_PHOTOS_KEY) !== 'no';
+
+function setKeepPhotos(on) {
+  keepPhotos = !!on;
+  try { localStorage.setItem(KEEP_PHOTOS_KEY, keepPhotos ? 'yes' : 'no'); } catch { /* private mode */ }
+  renderKeepPhotos();
+}
+
+function renderKeepPhotos() {
+  const row = $('#photo-keep-row');
+  if (!row) return;
+  row.hidden = !serverKeepsSessions;
+  $('#photo-keep').checked = keepPhotos;
+}
+
+function filePollWithLecture(entry) {
+  if (!recordingNow()) return;
   fetch(`/api/lectures/${encodeURIComponent(state.lectureId)}/polls`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ poll: entry }),
   }).catch(() => { /* the copy in history is the one that mattered */ });
+}
+
+/** One file of the session's record. `data` is a Blob or a Uint8Array. */
+function fileWithLecture(name, kind, data, type) {
+  if (!recordingNow()) return Promise.resolve(false);
+  return fetch(`/api/lectures/${encodeURIComponent(state.lectureId)}/files`
+    + `?name=${encodeURIComponent(name)}&kind=${encodeURIComponent(kind)}`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': type },
+    body: data,
+  }).then((res) => res.ok).catch(() => false);
+}
+
+function filePhotoWithLecture(photo, dataUrl) {
+  if (!keepPhotos) return;
+  fileWithLecture(photoFileName(photo), 'photo', dataUrlToBytes(dataUrl), 'image/jpeg');
 }
 
 async function pollApi(suffix, opts = {}) {
@@ -2336,10 +2421,20 @@ function makeThumb(dataUrl) {
   });
 }
 
+// The name a photo has in the session zip, and on the server if this room is
+// being recorded - so the two are the same file rather than two copies of one
+// picture. Numbered by the photo's own place in the lecture (`n`), not by its
+// position in the strip: the strip only holds the last two dozen, so after a
+// busy lecture a position-based number would renumber what survived and leave
+// the record disagreeing with itself.
+const photoFileName = (photo) =>
+  `photos/${String(photo.n).padStart(2, '0')}-${safeName(photo.title, 'photo')}.jpg`;
+
 function addPhoto({ id, data, title, badge }) {
   assetStore.set(id, data);
   photoCount += 1;
   photos.unshift({ id, title, badge, at: Date.now(), n: photoCount, thumb: data });
+  filePhotoWithLecture(photos[0], data);
   // Swap in the small copy as soon as it is ready; until then the strip shows
   // the full-size one rather than an empty box.
   makeThumb(data).then((thumb) => {
@@ -3683,6 +3778,7 @@ $('#music-volume').addEventListener('input', (ev) => { musicSliding = true; send
 $('#music-volume').addEventListener('change', () => { musicSliding = false; });
 
 $('#photo-export').addEventListener('click', exportSession);
+$('#photo-keep').addEventListener('change', (ev) => setKeepPhotos(ev.target.checked));
 // Two taps, like every other irreversible button here. Clearing the strip
 // costs nothing that is on screen - the display keeps what it was sent - but
 // it does throw away the only copy of anything not yet exported.

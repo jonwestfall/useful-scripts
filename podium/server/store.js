@@ -216,6 +216,39 @@ const MIGRATIONS = [
       CREATE INDEX lecture_polls_by_lecture ON lecture_polls(lecture_id, ended_at);
     `);
   },
+
+  function toV5(db) {
+    db.exec(`
+      -- The bulky half of a session: the photos taken in the room, the ink as
+      -- strokes, and the rasterized pages the controller builds when it exports
+      -- - annotated slides, boards drawn on, poll CSVs, the session.txt that
+      -- says what is in it. Each row is one file inside what used to be a zip
+      -- that existed only on whichever device pressed Export.
+      --
+      -- The bytes go in the SAME content-addressed media store the library uses,
+      -- so a photo filed twice (an export after a re-export) is stored once and
+      -- removing either copy can never pull the bytes out from under the other.
+      -- That is also why library.js's forgetMediaIfUnused and mayReadMedia both
+      -- had to learn about this table: "unused" and "may read" are now questions
+      -- with two places to look.
+      --
+      -- name is the path the file has inside the zip, and it is unique per
+      -- lecture: exporting a second time REPLACES what the first export left
+      -- rather than accumulating two of everything.
+      CREATE TABLE lecture_files (
+        id         INTEGER PRIMARY KEY,
+        lecture_id INTEGER NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+        media_id   INTEGER NOT NULL REFERENCES media(id),
+        kind       TEXT    NOT NULL,          -- photo | ink | session
+        name       TEXT    NOT NULL,
+        created_at INTEGER NOT NULL,
+        created_by INTEGER REFERENCES users(id),
+        UNIQUE (lecture_id, name)
+      );
+      CREATE INDEX lecture_files_by_lecture ON lecture_files(lecture_id);
+      CREATE INDEX lecture_files_by_media ON lecture_files(media_id);
+    `);
+  },
 ];
 
 function migrate(db) {

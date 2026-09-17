@@ -296,7 +296,11 @@ async function handleApi(req, res, url, ctx) {
     // none of it and could not: it only ever sees ciphertext. See lectures.js.
 
     if (head === 'lectures' && !rest.length && req.method === 'GET') {
-      json(res, 200, { lectures: lectures.listLectures(ctx.db, user) });
+      json(res, 200, {
+        lectures: lectures.listLectures(ctx.db, user),
+        usage: lectures.usage(ctx.db),
+        limits: { fileBytes: lectures.MAX_FILE_BYTES, lectureBytes: lectures.MAX_LECTURE_BYTES },
+      });
       return true;
     }
 
@@ -325,7 +329,7 @@ async function handleApi(req, res, url, ctx) {
     }
 
     if (head === 'lectures' && rest.length === 1 && req.method === 'DELETE') {
-      json(res, 200, { removed: lectures.deleteLecture(ctx.db, user, rest[0]).id });
+      json(res, 200, { removed: lectures.deleteLecture(ctx.db, user, rest[0], { dataDir: ctx.dataDir }).id });
       return true;
     }
 
@@ -340,6 +344,15 @@ async function handleApi(req, res, url, ctx) {
     if (head === 'lectures' && rest.length === 2 && rest[1] === 'polls' && req.method === 'POST') {
       const body = await readJson(req, 512 * 1024);
       json(res, 200, lectures.recordPoll(ctx.db, user, rest[0], body.poll || body));
+      return true;
+    }
+
+    // The bulky half: photos, ink, and the pages an export rasterizes. The file
+    // IS the body, as with a library upload and for the same reason - the two
+    // strings that go with it fit in a query string, and multipart would be the
+    // largest thing in this repository with no dependencies.
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'files' && req.method === 'POST') {
+      json(res, 200, { file: await receiveLectureFile(req, url, ctx, user, rest[0]) });
       return true;
     }
 
@@ -422,6 +435,41 @@ async function receiveUpload(req, url, ctx, user) {
     // The bytes are on disk and nothing ended up pointing at them. Content
     // addressing means this is safe to undo: if any other item shares the
     // hash, forgetMediaIfUnused leaves both alone.
+    library.forgetMediaIfUnused(ctx.db, ctx.dataDir, sha256);
+    throw err;
+  }
+}
+
+/**
+ * One file kept with a lecture: a photo, the ink, or a page from an export.
+ *
+ * Checked in the same order the library upload is, and for the same reason:
+ * everything answerable without reading the body is answered first, so a
+ * signed-in stranger cannot spend megabytes of disk per request on a lecture
+ * they may not touch and only be told no once it has all landed.
+ */
+async function receiveLectureFile(req, url, ctx, user, lectureId) {
+  const name = String(url.searchParams.get('name') || '');
+  const type = lectures.keepableType(name);
+  if (!type) {
+    throw Object.assign(new Error(
+      `a session keeps ${[...lectures.KEEPABLE.keys()].join(' ')} - not ${name.split('.').pop() || 'that'}`,
+    ), { status: 415 });
+  }
+  // Resolves the lecture and this account's right to write to it before a byte
+  // is read; addFile asks again afterwards, which is the check that counts.
+  if (!lectures.visibleLecture(ctx.db, user, lectureId)) {
+    throw Object.assign(new Error('no such lecture'), { status: 404 });
+  }
+
+  const { sha256, bytes } = await library.storeUpload(ctx.dataDir, req, { limit: lectures.MAX_FILE_BYTES });
+  try {
+    // The type comes from the name through our own allow-list, never from what
+    // the request declared - these bytes are served back from this origin, and
+    // what a browser is told they are must not be something a caller chose.
+    return lectures.addFile(ctx.db, user, lectureId,
+      { name, kind: url.searchParams.get('kind') || '', sha256, bytes, contentType: type, dataDir: ctx.dataDir });
+  } catch (err) {
     library.forgetMediaIfUnused(ctx.db, ctx.dataDir, sha256);
     throw err;
   }

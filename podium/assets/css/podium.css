@@ -387,7 +387,7 @@ body.control.is-frozen { background: #171006; }
 .admin-head input { min-width: 14rem; }
 .admin-form { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); margin-top: 10px; }
 .admin-form .field { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
-.admin-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.admin-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
 .admin-actions .is-bad { color: #ffb3b3; }
 .admin-row {
   display: flex; align-items: center; gap: 12px;

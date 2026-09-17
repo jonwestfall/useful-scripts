@@ -27,6 +27,7 @@ process.on('warning', (warning) => {
 
 const store = require('./store.js');
 const accounts = require('./accounts.js');
+const lectures = require('./lectures.js');
 const settings = require('./settings.js');
 
 const USAGE = `podium-admin — accounts and courses for a server-backed Podium
@@ -44,6 +45,8 @@ const USAGE = `podium-admin — accounts and courses for a server-backed Podium
   member add <course-code> <username> [--role owner|member]
   member remove <course-code> <username>
   sessions prune
+  lectures list [--limit 20]
+  lectures prune --days <n>
 
 Options
   --data-dir <path>    where the database lives (default: $DATA_DIR)
@@ -257,6 +260,39 @@ async function main(argv) {
 
   if (group === 'sessions' && action === 'prune') {
     say(`removed ${accounts.pruneSessions(db)} expired session(s)`);
+    return 0;
+  }
+
+  // "sessions" above is logins; a lecture is the other thing this program calls
+  // a session, and the admin page calls "Past sessions". Two words for two
+  // tables, kept apart here because pruning the wrong one is not a mistake you
+  // want a tired operator to be able to make at 6pm.
+  if (group === 'lectures' && action === 'list') {
+    const limit = Number(flags.limit) || 20;
+    const rows = lectures.listLectures(db, ROOT, { limit });
+    if (!rows.length) { say('no lectures recorded'); return 0; }
+    for (const row of rows) {
+      const kept = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(m.bytes), 0) AS bytes
+          FROM lecture_files lf JOIN media m ON m.id = lf.media_id WHERE lf.lecture_id = ?`).get(row.id);
+      say([
+        String(row.id).padStart(5),
+        new Date(row.startedAt).toISOString().slice(0, 16).replace('T', ' '),
+        (row.course || '-').padEnd(10),
+        (row.title || row.room || '').slice(0, 40).padEnd(40),
+        `${row.events} moments`,
+        `${kept.files} files`,
+        `${Math.round(kept.bytes / 1024)} KB`,
+      ].join('  '));
+    }
+    return 0;
+  }
+
+  if (group === 'lectures' && action === 'prune') {
+    const days = Number(flags.days);
+    if (!Number.isFinite(days) || days <= 0) throw new Error('lectures prune needs --days <n>');
+    const { removed, bytes } = lectures.pruneFiles(db, dataDir, { days });
+    say(`removed ${removed} file(s) from lectures older than ${days} day(s), freeing ${Math.round(bytes / 1024)} KB`);
+    say('their timelines and poll results are kept - only the photos, ink and exported pages go');
     return 0;
   }
 

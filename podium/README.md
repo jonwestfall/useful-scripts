@@ -991,7 +991,9 @@ than failing the export that holds the rest.
 Nothing here is written to the tablet until you press that button. Photos and the
 strip live in memory for the session, which is the right default for a picture of a
 student's work or a board mid-argument — and it means the zip, on the device you chose
-to save it to, is the only copy that outlives the class. On an iPad the download lands
+to save it to, is the only copy that outlives the class. (On a self-hosted Podium with
+accounts there is a second copy, on your own server — see *Session records* below, which
+is also where the switch for turning that off lives.) On an iPad the download lands
 in Files, from where the images can be moved into Photos like any other download.
 
 ### Session records (self-hosted only)
@@ -1004,8 +1006,22 @@ not have to read the documentation to find that out. Stand down (**E**) and it c
 What is kept is a timeline — what went on the projector, and when — plus the final tally
 of every poll you ended. Stepping quickly through slides does not produce a row per
 press: entries are at least fifteen seconds apart, so what you get is where the lecture
-*dwelled*. Nothing on the projector is photographed and no ink is stored; that is a later
-phase.
+*dwelled*.
+
+Alongside it, the bulky half: **your ink**, filed by the display as strokes when you stand
+down, **the photos** taken in the room, filed as each one is taken, and **everything an
+export builds** — the annotated slides, the boards, the poll CSVs, `session.txt` — filed
+when you press *Export this session*. Those are the same files the zip hands you, so a
+past lecture can be downloaded again as the same zip, from a browser that was never in the
+room.
+
+Photos are the one part of that which is usually somebody else's — a worksheet, a board
+mid-argument, a face at the back. Podium's long-standing answer was that they live in
+memory until you press Export, and a server changes that, so the change is a switch you
+can see: **Keep photos on the server with this lecture**, on the Photos tab, on by
+default and remembered per device. Turn it off and no photo leaves the tablet, while ink,
+poll results and the rest of an export still go. It appears only on a Podium that keeps
+sessions.
 
 **The display writes this, not the relay, and it could not be otherwise.** Every message
 Podium puts on a relay is encrypted in the browser under the room passphrase, so a relay
@@ -1016,14 +1032,22 @@ reason: it is what ends a poll and the only device that ever holds the final cou
 
 Read them back on **admin.html**, under *Past sessions*: open one for its timeline, give
 it a name so "Tue 14:00" becomes something you can find again, download the timeline as
-text, or pull any poll's CSV out weeks later — which is the point, since the relay
-deletes a poll the moment it closes and until now the only copy was the controller's own
-browser.
+text, pull any poll's CSV out weeks later — which is the point, since the relay deletes a
+poll the moment it closes and until now the only copy was the controller's own browser —
+or **Download the session**, which packs everything the lecture kept back into the same
+zip, built in your browser by the same writer that made it on the day.
 
 Who sees what follows the same rule as lecture plans: a session held in a room that
 belongs to a course is visible to that course, and one held anywhere else is visible only
 to whoever ran it. Removing one is narrower still — whoever ran it, a course owner, or an
 admin.
+
+Photos and rasterized slides are the two payloads that grow without bound, so the server
+can age them out: set `LECTURE_RETENTION_DAYS` (see [deploy/](deploy/README.md)) and the
+files of lectures older than that are swept at startup and once a day, or run
+`podium-admin.js lectures prune --days 180` by hand. Unset means keep everything. Either
+way a lecture's **timeline and poll results are never aged out** — a few hundred short
+rows is not what fills a disk, and it is exactly what somebody wants three years later.
 
 None of this exists on GitHub Pages, on a USB stick, or against Supabase or MQTT. There is
 no server in those paths to hold it, the pages notice, and nothing about them changes.

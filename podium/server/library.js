@@ -122,7 +122,23 @@ function mayReadMedia(db, user, sha256) {
       JOIN media m ON m.id = li.media_id
      WHERE m.sha256 = ?3 AND li.deleted_at IS NULL AND ${VISIBLE} LIMIT 1`)
     .get(user.id, user.isAdmin ? 1 : 0, String(sha256));
-  return !!row;
+  if (row) return true;
+  // The other way to be allowed at these bytes: they are a file kept by a
+  // lecture you can see. The lecture's own visibility rule is the one that
+  // decides (see server/lectures.js) - deliberately not this file's VISIBLE,
+  // which is the library's and inverts for a missing course.
+  const kept = db.prepare(`SELECT 1 AS ok FROM lecture_files lf
+      JOIN media m ON m.id = lf.media_id
+      JOIN lectures l ON l.id = lf.lecture_id
+     WHERE m.sha256 = ?3
+       AND (l.started_by = ?1
+            OR ?2 = 1
+            OR (l.course_id IS NOT NULL
+                AND EXISTS (SELECT 1 FROM course_members cm
+                             WHERE cm.course_id = l.course_id AND cm.user_id = ?1)))
+     LIMIT 1`)
+    .get(user.id, user.isAdmin ? 1 : 0, String(sha256));
+  return !!kept;
 }
 
 function listCourses(db, user) {
@@ -246,8 +262,17 @@ function rememberMedia(db, user, { sha256, bytes, contentType }) {
 function forgetMediaIfUnused(db, dataDir, sha256) {
   const row = db.prepare('SELECT id FROM media WHERE sha256 = ?').get(sha256);
   if (!row) return false;
+  // TWO tables point at media now: the library, and the files a session keeps
+  // (see the lecture_files comment in store.js). Content addressing means a
+  // photo filed with a lecture and the same photo uploaded to the library are
+  // one set of bytes, so "nobody is using this any more" has to be asked of
+  // both - forgetting to ask the second is how a lecture's record would lose
+  // its pictures the day somebody tidied the library.
   const inUse = db.prepare(
-    'SELECT 1 AS ok FROM library_items WHERE media_id = ? AND deleted_at IS NULL LIMIT 1',
+    `SELECT 1 AS ok FROM library_items WHERE media_id = ?1 AND deleted_at IS NULL
+      UNION ALL
+     SELECT 1 AS ok FROM lecture_files WHERE media_id = ?1
+     LIMIT 1`,
   ).get(row.id);
   if (inUse) return false;
   db.prepare('DELETE FROM media WHERE id = ?').run(row.id);

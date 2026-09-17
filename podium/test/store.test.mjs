@@ -618,6 +618,122 @@ lectures.deleteLecture(db, owner, flood.id);
 ok('removing a lecture takes its timeline with it',
   db.prepare('SELECT COUNT(*) AS n FROM lecture_events WHERE lecture_id = ?').get(flood.id).n === 0);
 
+console.log('\n-- what a session keeps: photos, ink, exported pages --');
+
+const session4b = lectures.startLecture(db, owner, { room: 'psy415-room' });
+const photoBytes = Buffer.from('not really a jpeg, but bytes are bytes');
+const photo = await library.storeUpload(dataDir, Readable.from([photoBytes]));
+
+ok('an unknown extension is refused before a byte is read', lectures.keepableType('lecture.html') === null);
+ok('and .svg with it, for the same reason the library refuses it', lectures.keepableType('board.svg') === null);
+ok('a png is taken, with the type coming from the name rather than the caller',
+  lectures.keepableType('slides/day-6/slide-01.PNG') === 'image/png');
+
+lectures.addFile(db, owner, session4b.id, {
+  name: 'photos/01-a worksheet.jpg', kind: 'photo',
+  sha256: photo.sha256, bytes: photo.bytes, contentType: 'image/jpeg', dataDir,
+});
+const withFile = lectures.getLecture(db, owner, session4b.id);
+ok(`the file comes back with the lecture (${withFile.files[0]?.name})`,
+  withFile.files.length === 1 && withFile.files[0].kind === 'photo');
+ok('under a content-addressed url, the same shape the library uses',
+  withFile.files[0].url === `/media/${photo.sha256}/01-a%20worksheet.jpg`);
+
+// The name is the path inside the zip and the only thing a caller picks, so it
+// is cleaned rather than trusted.
+const climbed = await library.storeUpload(dataDir, Readable.from([Buffer.from('another file')]));
+const named = lectures.addFile(db, owner, session4b.id, {
+  name: '../../etc/photos/../sneaky.png', kind: 'photo',
+  sha256: climbed.sha256, bytes: climbed.bytes, contentType: 'image/png', dataDir,
+});
+ok(`a name that tries to climb out of the zip is cleaned, not obeyed (${named.name})`,
+  !named.name.includes('..') && named.name.endsWith('sneaky.png'));
+
+// A TA's controller files a photo under the instructor's lecture: the same
+// permission the poll route runs on.
+ok('a member of the course can file a photo too',
+  !!lectures.addFile(db, ta, session4b.id, {
+    name: 'photos/02-the board.jpg', kind: 'photo',
+    sha256: photo.sha256, bytes: photo.bytes, contentType: 'image/jpeg', dataDir,
+  }));
+let refusedFile = '';
+try {
+  lectures.addFile(db, outsider, session4b.id, {
+    name: 'photos/03-nope.jpg', kind: 'photo',
+    sha256: photo.sha256, bytes: photo.bytes, contentType: 'image/jpeg', dataDir,
+  });
+} catch (err) { refusedFile = err.message; }
+ok('an outsider cannot, and learns nothing about whether the lecture exists',
+  /no such lecture/.test(refusedFile));
+
+// The same photo filed twice is one set of bytes: media is shared with the
+// library, which is exactly why forgetMediaIfUnused had to learn about this.
+ok('the same bytes filed twice are stored once',
+  db.prepare('SELECT COUNT(*) AS n FROM media WHERE sha256 = ?').get(photo.sha256).n === 1);
+
+ok('anyone who can see the lecture can fetch its files', library.mayReadMedia(db, ta, photo.sha256));
+ok('and someone who cannot, cannot', !library.mayReadMedia(db, outsider, photo.sha256));
+
+// Re-exporting replaces rather than accumulating, and frees what it replaced.
+const redone = await library.storeUpload(dataDir, Readable.from([Buffer.from('a better rasterization')]));
+lectures.addFile(db, owner, session4b.id, {
+  name: 'photos/01-a worksheet.jpg', kind: 'photo',
+  sha256: redone.sha256, bytes: redone.bytes, contentType: 'image/jpeg', dataDir,
+});
+ok('exporting again replaces a file rather than adding a second of it',
+  lectures.getLecture(db, owner, session4b.id).files.filter((f) => f.name === 'photos/01-a worksheet.jpg').length === 1);
+ok('and the bytes it replaced are still there, because another file still points at them',
+  existsSync(library.mediaPath(dataDir, photo.sha256)));
+
+// A library item sharing a photo's bytes: removing the lecture must not take
+// the library's copy with it, and vice versa.
+const sharedItem = library.addItem(db, owner, {
+  kind: 'image', title: 'The same worksheet', filename: 'worksheet.jpg',
+  mediaId: library.rememberMedia(db, owner, { sha256: redone.sha256, bytes: redone.bytes, contentType: 'image/jpeg' }),
+});
+lectures.deleteLecture(db, owner, session4b.id, { dataDir });
+ok('removing a lecture takes its files with it',
+  db.prepare('SELECT COUNT(*) AS n FROM lecture_files').get().n === 0);
+ok('but not bytes the library is still using',
+  existsSync(library.mediaPath(dataDir, redone.sha256)) && !!library.getItem(db, owner, sharedItem.id));
+ok('while bytes nothing points at any more do go',
+  !existsSync(library.mediaPath(dataDir, photo.sha256)));
+
+console.log('\n-- the retention control --');
+
+const longAgo = lectures.startLecture(db, owner, { room: 'psy415-room' });
+db.prepare('UPDATE lectures SET started_at = ? WHERE id = ?')
+  .run(Date.now() - 200 * 24 * 3600 * 1000, longAgo.id);
+lectures.appendEvents(db, owner, longAgo.id, [{ kind: 'program', title: 'Week 2, two terms ago' }]);
+const aged = await library.storeUpload(dataDir, Readable.from([Buffer.from('a photo from last year')]));
+lectures.addFile(db, owner, longAgo.id, {
+  name: 'photos/01-last year.jpg', kind: 'photo',
+  sha256: aged.sha256, bytes: aged.bytes, contentType: 'image/jpeg', dataDir,
+});
+
+const recent = lectures.startLecture(db, owner, { room: 'some-other-room' });
+const fresh = await library.storeUpload(dataDir, Readable.from([Buffer.from('a photo from this week')]));
+lectures.addFile(db, owner, recent.id, {
+  name: 'photos/01-this week.jpg', kind: 'photo',
+  sha256: fresh.sha256, bytes: fresh.bytes, contentType: 'image/jpeg', dataDir,
+});
+
+ok('no retention set means nothing is ever removed', lectures.pruneFiles(db, dataDir, { days: 0 }).removed === 0);
+
+const pruned = lectures.pruneFiles(db, dataDir, { days: 90 });
+ok(`pruning drops the files of lectures past the cut-off (${pruned.removed} file, ${pruned.bytes} bytes)`,
+  pruned.removed === 1 && pruned.bytes === aged.bytes);
+ok('and the bytes really leave the disk', !existsSync(library.mediaPath(dataDir, aged.sha256)));
+ok('a recent lecture keeps its photos', existsSync(library.mediaPath(dataDir, fresh.sha256)));
+
+// The whole point of the asymmetry: the bulk ages out, the record does not.
+const survivor = lectures.getLecture(db, owner, longAgo.id);
+ok('the pruned lecture is still there, with its timeline intact',
+  !!survivor && survivor.timeline.length === 1 && survivor.files.length === 0);
+
+ok('usage counts what the sessions are actually costing',
+  lectures.usage(db).files === 1 && lectures.usage(db).bytes === fresh.bytes);
+
 db.close();
 rmSync(root, { recursive: true, force: true });
 

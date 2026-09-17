@@ -48,6 +48,7 @@ const store = require('./store.js');
 const accounts = require('./accounts.js');
 const api = require('./api.js');
 const library = require('./library.js');
+const lectures = require('./lectures.js');
 
 const PORT = Number(process.env.PORT || 8080);
 // Unset means every interface, which is what running this on a laptop for a
@@ -568,6 +569,32 @@ const sessionSweep = db ? setInterval(() => {
 }, 60 * 60 * 1000) : null;
 sessionSweep?.unref();
 
+// The retention control. Photos and rasterized slides are the two payloads that
+// grow without bound, so they age out; a lecture's TIMELINE and its poll results
+// do not, because they are a few hundred short rows and are exactly what somebody
+// wants three years later when asked what a course covered.
+//
+// Unset means keep everything, which is the right default for a box one person
+// runs for their own teaching: a retention policy that deleted a term's photos
+// because nobody had read the documentation would be the worse mistake.
+const LECTURE_RETENTION_DAYS = Number(process.env.LECTURE_RETENTION_DAYS || 0);
+
+function pruneLectureFiles() {
+  if (!db || !DATA_DIR || !(LECTURE_RETENTION_DAYS > 0)) return;
+  try {
+    const { removed, bytes } = lectures.pruneFiles(db, DATA_DIR, { days: LECTURE_RETENTION_DAYS });
+    if (removed) {
+      console.log(`podium: retention removed ${removed} session file(s) older than `
+        + `${LECTURE_RETENTION_DAYS} days, freeing ${Math.round(bytes / 1024 / 1024)} MB`);
+    }
+  } catch (err) {
+    console.error(`podium: session retention sweep failed (${err.message})`);
+  }
+}
+
+const retentionSweep = db ? setInterval(pruneLectureFiles, 24 * 60 * 60 * 1000) : null;
+retentionSweep?.unref();
+
 /** Say out loud which of the three authentication configurations is live. */
 function describeAuth() {
   if (!STATIC) return 'relay only';
@@ -585,8 +612,20 @@ function describeAuth() {
   return db ? 'open - no accounts yet, run podium-admin user add' : 'open';
 }
 
-server.on('close', () => { clearInterval(heartbeat); if (sessionSweep) clearInterval(sessionSweep); });
+server.on('close', () => {
+  clearInterval(heartbeat);
+  if (sessionSweep) clearInterval(sessionSweep);
+  if (retentionSweep) clearInterval(retentionSweep);
+});
 server.listen(PORT, HOST || undefined, () => {
   console.log(`podium relay on ${HOST || '*'}:${PORT}${STATIC ? ` (serving ${STATIC})` : ' (relay only)'}`);
   console.log(`podium auth: ${describeAuth()}${db ? `, data in ${store.dataDirFromEnv()}` : ''}`);
+  if (db) {
+    console.log(`podium sessions: ${LECTURE_RETENTION_DAYS > 0
+      ? `photos and exported pages are kept for ${LECTURE_RETENTION_DAYS} days; timelines are kept indefinitely`
+      : 'kept indefinitely (set LECTURE_RETENTION_DAYS to age the bulky parts out)'}`);
+  }
+  // Once at startup as well as daily: a box that is only up during term would
+  // otherwise never reach the first daily sweep.
+  pruneLectureFiles();
 });
