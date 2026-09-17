@@ -7,12 +7,13 @@
 // migrations that run once, a password that cannot be read back, a session
 // that stops working when its account does. A mock would be testing itself.
 
-import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, chmodSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 process.removeAllListeners('warning');   // the node:sqlite experimental notice
@@ -22,6 +23,7 @@ const accounts = require('../server/accounts.js');
 const api = require('../server/api.js');
 const lectures = require('../server/lectures.js');
 const courses = require('../server/courses.js');
+const doctor = require('../server/doctor.js');
 
 const fails = [];
 const ok = (label, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + label); if (!cond) fails.push(label); };
@@ -809,6 +811,63 @@ ok('nothing filed under it is touched',
     .get('psy101').n === 2);
 courses.update(db, admin, 'psy101', { archived: false });
 ok('bringing it back is the same gesture in reverse', courses.list(db, ta).some((c) => c.code === 'psy101'));
+
+console.log('\n-- the doctor --');
+
+const seen = (found, title) => found.find((item) => item.title === title);
+
+ok('a healthy database passes its own checks',
+  doctor.checkSchema(db).level === 'ok' && doctor.checkIntegrity(db).level === 'ok');
+ok('and a data directory nobody else can read passes too',
+  doctor.checkPermissions(dataDir).level === 'ok');
+
+// The two failures this command exists to catch on a real box.
+const looseDir = path.join(root, 'loose');
+mkdirSync(looseDir, { recursive: true, mode: 0o755 });
+chmodSync(looseDir, 0o755);
+ok(`a world-readable data directory is called out (${doctor.checkPermissions(looseDir).detail})`,
+  doctor.checkPermissions(looseDir).level === 'bad');
+
+ok('an instance with an administrator who can sign in is fine',
+  doctor.checkAccounts(db).level === 'ok');
+const admins = accounts.listUsers(db).filter((row) => row.isAdmin && !row.disabled);
+for (const person of admins) accounts.setDisabled(db, person.username, true);
+ok('one with none is not, because nobody can manage it from a browser',
+  doctor.checkAccounts(db).level === 'bad');
+for (const person of admins) accounts.setDisabled(db, person.username, false);
+
+// Bytes on disk with nothing pointing at them: harmless, and the shape a
+// hand-edited data directory leaves.
+const strayShard = path.join(dataDir, 'media', 'zz');
+mkdirSync(strayShard, { recursive: true });
+writeFileSync(path.join(strayShard, 'z'.repeat(64)), 'not known to the database');
+ok(`an unreferenced file on disk is a warning, not a failure (${doctor.checkMedia(db, dataDir).detail})`,
+  doctor.checkMedia(db, dataDir).level === 'warn');
+
+// A row pointing at bytes that are not there is the other way round, and is
+// the one that means something went missing.
+const ghost = createHash('sha256').update('a file that was deleted by hand').digest('hex');
+db.prepare('INSERT INTO media (sha256, bytes, content_type, created_at) VALUES (?, ?, ?, ?)')
+  .run(ghost, 10, 'image/png', Date.now());
+ok('a stored file missing from disk is a failure',
+  doctor.checkMedia(db, dataDir).level === 'bad');
+db.prepare('DELETE FROM media WHERE sha256 = ?').run(ghost);
+
+const report = await doctor.run({
+  db, dataDir, releaseDir: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+  healthUrl: '', certPath: '',
+});
+ok(`the whole run answers every check (${report.map((item) => item.title).join(', ')})`,
+  ['node', 'schema', 'database', 'accounts', 'media', 'storage', 'permissions', 'disk', 'build', 'certificate', 'service']
+    .every((title) => !!seen(report, title)));
+ok('and reads the build out of the release it is part of',
+  /build \d+/.test(seen(report, 'build').detail));
+
+const lines = [];
+const code = doctor.report(report, (line) => lines.push(line));
+ok('a run with nothing broken exits 0 even when it has warnings',
+  code === (report.some((item) => item.level === 'bad') ? 1 : 0));
+ok('and every finding gets a line somebody can read', lines.length >= report.length);
 
 db.close();
 rmSync(root, { recursive: true, force: true });

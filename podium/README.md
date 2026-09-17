@@ -1197,7 +1197,27 @@ which live on disk beside it. A real backup is the whole data directory; see
 [deploy/](deploy/README.md).
 
 `podium-admin.js` still does all of this from a shell, and remains the right tool for
-installing and for getting back in. See [VPS.md](VPS.md).
+installing, for scripting and for getting back in. It also has the two commands that
+have no page:
+
+```bash
+node podium-admin.js doctor        # is this box alright?
+```
+
+checks Node and SQLite, the schema, database integrity, free disk, the data directory's
+permissions, files with no row and rows with no file, whether anybody can still
+administer the instance, storage against the retention setting, certificate expiry,
+whether the service answers — and whether the build that is *running* is the build that
+was *deployed*, which is the one that costs an afternoon: `current` is a symlink and a
+service resolves it once, at start. It exits 0 when nothing is broken and 1 when
+something needs attention, so it can be a cron line.
+
+```bash
+sudo ./deploy/backup.sh            # database snapshot + media + env, rotated and verified
+sudo ./deploy/restore.sh <archive>
+```
+
+See [deploy/](deploy/README.md) and [VPS.md](VPS.md).
 
 ## Your lecture library
 
@@ -1586,7 +1606,7 @@ it to run on.
 ```bash
 node podium/test/protocol.test.mjs          # the state machine, no browser needed
 node podium/test/plan.test.mjs              # the lecture-plan document, likewise
-node podium/test/store.test.mjs             # the server's database and accounts, likewise
+node podium/test/store.test.mjs             # the server's storage, accounts, courses and doctor
 cd podium/server && npm install             # once
 node podium/test/e2e.mjs                    # needs: npm i playwright
 node podium/test/e2e.mjs --only ink         # ...or just the sections you are working on

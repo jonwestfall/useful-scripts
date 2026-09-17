@@ -4812,6 +4812,15 @@ for (const p of alwaysOpen) {
 ok('a poll can still be created with no credentials, same as join.html needs',
   (await fetch(`${authBase}/poll`, { method: 'POST' })).status === 200);
 
+// The one number a running process will tell anybody without a login, and the
+// only way to find out that a deploy flipped the symlink without restarting the
+// service - see podium-admin doctor.
+const health = await fetch(`${authBase}/healthz`).then((r) => r.text());
+const buildOnDisk = fs.readFileSync(path.join(ROOT, 'assets', 'js', 'protocol.js'), 'utf8')
+  .match(/BUILD\s*=\s*(\d+)/)[1];
+ok(`/healthz names the build this process is actually serving ("${health.trim()}")`,
+  new RegExp(`\\bbuild ${buildOnDisk}\\b`).test(health));
+
 ok('the wrong password is refused, not just any Basic header',
   (await fetch(`${authBase}/control.html`, basic('podium', 'nope'))).status === 401);
 ok('the right username and password get the page through',

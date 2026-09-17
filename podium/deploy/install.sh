@@ -149,6 +149,8 @@ Podium is installed.
   config     $CONFIG_DIR/podium.env
   data       $DATA_DIR
   accounts   sudo -u $PODIUM_USER DATA_DIR=$DATA_DIR node $PREFIX/current/server/podium-admin.js user list
+  check      sudo -u $PODIUM_USER DATA_DIR=$DATA_DIR node $PREFIX/current/server/podium-admin.js doctor
+  backup     sudo $PREFIX/current/deploy/backup.sh
   update     $here/deploy/update.sh $here
 
 It is listening on 127.0.0.1:$PORT and expects a TLS terminator in front of it.

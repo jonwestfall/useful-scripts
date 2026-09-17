@@ -30,6 +30,11 @@ jobs:
         working-directory: podium
       - run: node test/store.test.mjs
         working-directory: podium
+      # The scripts nobody runs until the day they are needed, which is the
+      # worst day to find a typo in one.
+      - name: Check the deploy scripts parse
+        run: bash -n deploy/install.sh deploy/update.sh deploy/backup.sh deploy/restore.sh
+        working-directory: podium
 
   e2e:
     name: End-to-end (Playwright)

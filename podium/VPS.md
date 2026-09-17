@@ -207,6 +207,9 @@ was redirected.
 ## Phases
 
 Each phase is meant to be independently shippable and independently useful.
+All of them have now shipped; each carries an "as built" note where what was
+built differs from what was planned, because the differences are the
+interesting part.
 
 ### Phase 1 — accounts, and the server's own memory ✅
 
@@ -451,11 +454,62 @@ beside the database, so restoring it alone gives you every entry pointing at
 bytes that are not there. Backing up the whole data directory is what
 `deploy/` documents, and the ops script in phase 6 is where it gets automated.
 
-### Phase 6 — operations
+### Phase 6 — operations ✅
 
-Backup script and a documented restore. Log rotation. A `podium doctor` that
-checks the things that actually go wrong: disk space, database integrity,
-certificate expiry, whether the service worker and the deployed build agree.
+`deploy/backup.sh`, `deploy/restore.sh`, and `podium-admin doctor`.
+
+**Backup** takes three things and needs all three: a `VACUUM INTO` snapshot of
+the database, the `media/` tree, and `podium.env`. `VACUUM INTO` rather than
+`cp` is the whole reason it is a script — SQLite in WAL mode is several files,
+and a copy taken mid-write restores, opens, and is quietly wrong. The archive is
+`0600` (password hashes, every room's passphrase, possibly `AUTH_PASSWORD`),
+keeps the last fourteen, and is read back before anything is pruned: a backup
+nobody has ever opened is a hope rather than a backup. It needs nothing on the
+box beyond `tar` and Podium's own Node, whose built-in SQLite takes the snapshot
+when `sqlite3` is not installed — which is the choice from the top of this file
+paying for itself in a place it was not chosen for.
+
+**Restore** stops the service, moves the current data directory *aside* rather
+than deleting it (a restore against the wrong archive happens at three in the
+morning), puts the database and `media/` back together, and starts it again. The
+database and the media tree go back together or not at all: the database holds
+the index and `media/` holds the bytes each row points at, so restoring one
+alone gives you an instance that opens perfectly, lists everything, and hands
+you a broken image for all of it. The code is not restored and does not need to
+be — releases come from git, and since migrations only ever add, restoring into
+a newer release migrates on startup while restoring into an older one is refused
+by the server itself.
+
+**`podium-admin doctor`** is the list somebody would work through by hand at the
+point where "it was fine last term" stops being true: Node and `node:sqlite`,
+schema version, `integrity_check` and foreign keys, free disk, whether the data
+directory is still `0700`, media files with no row and rows with no file,
+whether anybody is left who can administer this from a browser, storage against
+the retention setting, certificate expiry, and whether the service answers. Three
+levels, because it is meant to be a cron line: `ok`, `warn` (exit 0), `bad`
+(exit 1).
+
+The check worth the whole command is the last one, and the sketch above had it
+slightly wrong. "Whether the service worker and the deployed build agree" is a
+*browser* problem, and the pages already solve it — each one reads its own BUILD
+against the served copy and says so on screen. The server-side version is worse
+and quieter: **`current` is a symlink and a service resolves it once, at start.**
+Flip it without restarting and every file on disk is the new release, every
+diagnostic agrees, and the code answering requests is last week's. So `/healthz`
+now reports the build the running process actually resolved, and `doctor`
+compares that against the release it is itself part of. Asked over `/healthz`
+rather than by fetching `protocol.js`, because on an instance with accounts that
+file is behind the login gate and answers 401 — which would have made the check
+useless on exactly the deployments it matters most for.
+
+**Logs** needed no rotation in the end, which is the right answer rather than a
+missing one. Podium writes no log files: the service logs to the journal, which
+rotates itself and can be capped in `journald.conf`; nginx's logs are rotated by
+the package that ships nginx, and the site template turns access logging off for
+`/healthz` so a monitor polling every ten seconds does not fill a disk with proof
+that it is fine. The relay deliberately logs nothing per request or per message —
+it moves ciphertext for rooms it cannot read, and a record of who connected when
+is one it has no business keeping.
 
 ## Installation
 

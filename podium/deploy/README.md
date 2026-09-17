@@ -140,19 +140,109 @@ server is yours alone unless you file it under a course, and a plan filed under
 a course can be opened and taught from by its members but rewritten only by
 whoever wrote it.
 
-## Backing up
+## Backups
 
 Everything that matters is under one directory, which was the point of putting
-it there:
+it there. Releases are not worth backing up — they come from git.
 
 ```bash
-systemctl stop podium
-tar czf podium-$(date +%F).tar.gz -C /var/lib podium
-systemctl start podium
+sudo ./deploy/backup.sh                       # writes /var/backups/podium/podium-<stamp>.tar.gz
+sudo BACKUP_DIR=/srv/backups ./deploy/backup.sh
 ```
 
-The stop is only needed for a guaranteed-consistent SQLite copy; if you would
-rather not interrupt anything, `sqlite3 /var/lib/podium/podium.db ".backup ..."`
-does it live.
+Three things go in, and all three are needed: a **snapshot of the database**
+(`VACUUM INTO`, not `cp` — SQLite in WAL mode is several files, and a copy taken
+mid-write restores, opens, and is quietly wrong), the **`media/` tree** (the
+bytes every library entry and session photo points at), and **`podium.env`**.
+The archive is written `0600` because it holds password hashes, every room's
+passphrase, and possibly `AUTH_PASSWORD`. It keeps the last `KEEP_BACKUPS`
+(default 14) and reads the archive back before pruning, because a backup nobody
+has ever opened is a hope rather than a backup.
 
-Releases are not worth backing up — they come from git.
+Nightly, once you are happy with it:
+
+```
+15 3 * * *  root  /opt/podium/current/deploy/backup.sh >/var/log/podium-backup.log 2>&1
+```
+
+A backup on the same disk as the thing it is backing up protects you from a
+mistake, not from the disk. Copy the archives off the box.
+
+## Restoring
+
+```bash
+sudo ./deploy/restore.sh /var/backups/podium/podium-20260917T2014.tar.gz
+sudo RESTORE_ENV=1 ./deploy/restore.sh <archive>     # also put podium.env back
+```
+
+It stops the service, moves the current data directory aside as
+`podium.replaced-<stamp>` (rather than deleting it — a restore against the wrong
+archive happens at three in the morning), puts the database and `media/` back
+together, and starts the service again.
+
+**The database and `media/` have to go back together.** The database holds the
+index — every library item, every session's list of files — and `media/` holds
+the bytes those rows point at. Restore one without the other and Podium opens
+perfectly, lists everything, and hands you a broken image for all of it.
+
+The code is not restored and does not need to be: a release comes from
+`update.sh`, and the schema only ever moves forward, so restoring into a *newer*
+release is fine — it migrates at startup — and restoring into an older one is
+refused by the server itself rather than silently half-working.
+
+Then check it:
+
+```bash
+sudo -u podium DATA_DIR=/var/lib/podium node /opt/podium/current/server/podium-admin.js doctor
+```
+
+## Checking up on it
+
+```bash
+sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js doctor
+sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js doctor \
+  --health-url http://127.0.0.1:8080/healthz --cert /etc/letsencrypt/live/podium.example.com/fullchain.pem
+```
+
+The list somebody would work through by hand at the point where "it was fine
+last term" stops being true: Node and `node:sqlite`, the schema version, SQLite's
+own `integrity_check` and foreign keys, free disk, whether the data directory is
+still `0700`, media files with no row and rows with no file, whether anybody is
+left who can administer this from a browser, what storage is being used against
+the retention setting, certificate expiry, and whether the service answers.
+
+And one that is easy to miss and costs an afternoon: **the build the running
+process is serving versus the release that is deployed.** `current` is a symlink,
+and a service resolves it once — at start. Flip it without restarting and every
+file on disk is the new release, every diagnostic agrees, and the code answering
+requests is last week's. `/healthz` reports the build the process actually
+resolved, so `doctor` can compare the two and say `systemctl restart`.
+
+It exits 0 when nothing is broken (warnings included) and 1 when something needs
+attention, so it can be a cron line:
+
+```
+30 6 * * *  root  /usr/bin/node /opt/podium/current/server/podium-admin.js doctor || mail -s 'podium doctor' you@example.com
+```
+
+## Logs
+
+Podium writes no log files of its own. The service logs to the journal, which
+rotates itself:
+
+```bash
+journalctl -u podium.service -f            # follow
+journalctl -u podium.service -n 200        # the last 200 lines
+journalctl -u podium.service --since -1h
+```
+
+If the journal is growing more than the box can afford, cap it in
+`/etc/systemd/journald.conf` — `SystemMaxUse=200M` is generous for this — and
+`systemctl restart systemd-journald`. nginx's own access and error logs are
+rotated by the `logrotate` snippet the distribution's nginx package ships; the
+site template turns access logging off for `/healthz` so a monitor polling every
+ten seconds does not fill a disk with proof that it is fine.
+
+The relay does not log a line per request or per message, deliberately: it moves
+ciphertext for rooms it cannot read, and a log of who connected when is a record
+it has no business keeping.

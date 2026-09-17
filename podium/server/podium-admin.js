@@ -25,8 +25,12 @@ process.on('warning', (warning) => {
   console.warn(warning.stack || String(warning));
 });
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const store = require('./store.js');
 const accounts = require('./accounts.js');
+const doctor = require('./doctor.js');
 const lectures = require('./lectures.js');
 const settings = require('./settings.js');
 
@@ -47,6 +51,7 @@ const USAGE = `podium-admin — accounts and courses for a server-backed Podium
   sessions prune
   lectures list [--limit 20]
   lectures prune --days <n>
+  doctor [--health-url http://127.0.0.1:8080/healthz] [--cert /path/fullchain.pem]
 
 Options
   --data-dir <path>    where the database lives (default: $DATA_DIR)
@@ -138,7 +143,7 @@ async function main(argv) {
   // open() throws with a reason of its own when a configured directory cannot
   // be used; main()'s catch prints it. null means only "no directory given",
   // which the check above has already ruled out.
-  const db = store.open(require('node:path').resolve(dataDir));
+  const db = store.open(path.resolve(dataDir));
 
   const say = (text) => process.stdout.write(`${text}\n`);
 
@@ -296,8 +301,39 @@ async function main(argv) {
     return 0;
   }
 
+  // Answers with an exit status as well as words, so it can be a cron line:
+  // 0 for fine (warnings included), 1 for something that needs attention.
+  if (group === 'doctor') {
+    const found = await doctor.run({
+      db,
+      dataDir,
+      // The release this copy of podium-admin is part of, which is the whole
+      // point of asking from here: it is the code that was deployed, and the
+      // question is whether the running service agrees.
+      releaseDir: path.resolve(__dirname, '..'),
+      healthUrl: flags['health-url'] || healthUrlFromEnvFile(),
+      certPath: flags.cert || '',
+    });
+    return doctor.report(found);
+  }
+
   process.stderr.write(USAGE);
   return 2;
+}
+
+/**
+ * Where to knock, worked out the way update.sh does: the port out of the
+ * service's own environment file. Saves passing --health-url on every run on
+ * the one deployment the installer sets up.
+ */
+function healthUrlFromEnvFile() {
+  for (const file of [process.env.PODIUM_ENV, '/etc/podium/podium.env'].filter(Boolean)) {
+    try {
+      const port = fs.readFileSync(file, 'utf8').match(/^PORT=(\d+)/m)?.[1];
+      if (port) return `http://127.0.0.1:${port}/healthz`;
+    } catch { /* not this one */ }
+  }
+  return '';
 }
 
 main(process.argv.slice(2))
