@@ -1,12 +1,20 @@
-// Connection settings, resolved from three places (later wins):
+// Connection settings, resolved from four places (later wins):
 //   1. config.json committed next to the pages (optional, convenient)
-//   2. localStorage on this device
-//   3. the URL hash, which is how the pairing QR configures a new device
+//   2. a course on the server, when this Podium came from one and you are
+//      signed in - which is what makes setting up a new iPad a login
+//   3. localStorage on this device
+//   4. the URL hash, which is how the pairing QR configures a new device
 //
 // The hash is used because fragments are never sent to a server: the pairing
 // link can carry the passphrase without it landing in any access log.
+//
+// The server sits BELOW localStorage on purpose. Adopting a course's settings
+// is for a device that has none of its own; a device somebody has already set
+// up keeps what they set, and no amount of server-side change reaches out and
+// re-points it mid-term.
 
 import { uid } from './util.js';
+import { serverInfo } from './server.js';
 
 const LS_KEY = 'podium.config.v2';
 
@@ -46,6 +54,27 @@ async function fromFile() {
   }
 }
 
+/**
+ * The courses on this server whose settings this account may use. Empty for
+ * every other way of running Podium, which is what keeps the rest of this file
+ * behaving exactly as it always has.
+ *
+ * Asked only when the capabilities probe says the feature is there, so a
+ * static host is never sent a request that would 404.
+ */
+async function fromServer() {
+  try {
+    const info = await serverInfo();
+    if (!info.features.includes('settings')) return [];
+    const res = await fetch('/api/settings', { credentials: 'same-origin' });
+    if (!res.ok) return [];
+    const { courses } = await res.json();
+    return Array.isArray(courses) ? courses : [];
+  } catch {
+    return [];
+  }
+}
+
 function fromHash() {
   const hash = location.hash.replace(/^#/, '');
   if (!hash) return {};
@@ -69,7 +98,25 @@ function clean(obj) {
 }
 
 export async function loadConfig() {
-  const cfg = { ...DEFAULTS, ...clean(await fromFile()), ...clean(fromStorage()), ...clean(fromHash()) };
+  const [file, courses] = await Promise.all([fromFile(), fromServer()]);
+  // Exactly one course's settings are adopted without asking: that is the
+  // "log in and go" case, and there is nothing to choose between. Several and
+  // nothing is adopted - the setup form shows them as buttons instead (see
+  // serverCourses below), because picking the wrong room is the kind of
+  // mistake you find out about in front of a class.
+  const fromCourse = courses.length === 1 ? courses[0].settings : {};
+  const stored = fromStorage();
+  const adopting = Object.keys(fromCourse).length > 0 && !Object.keys(clean(stored)).length;
+  const cfg = {
+    ...DEFAULTS,
+    ...clean(file),
+    ...clean(fromCourse),
+    ...clean(stored),
+    ...clean(fromHash()),
+  };
+  // Carried for the setup form, never stored: clean() drops it on the way to
+  // localStorage, the same as `generated` below.
+  cfg.serverCourses = courses;
   // A brand-new device gets a room and a passphrase invented for it so the
   // setup form has something to offer rather than two empty boxes. They are a
   // suggestion, not a decision - which is what `generated` records, so
@@ -78,6 +125,18 @@ export async function loadConfig() {
   cfg.generated = { room: !cfg.room, passphrase: !cfg.passphrase };
   if (!cfg.room) cfg.room = `room-${uid(5)}`;
   if (!cfg.passphrase) cfg.passphrase = uid(10);
+  // A device that just took its settings from a course keeps them, the same as
+  // one configured by a pairing link does. Without this the config would live
+  // only as long as the page: every load would have to reach /api/settings,
+  // and the first time the classroom Wi-Fi went down the offline shell would
+  // open to a setup form instead of a controller - which is the one situation
+  // the offline shell exists for.
+  //
+  // It does mean a rotated passphrase does not reach an already-set-up device
+  // on its own. That is the same as it has always been, and the same as the
+  // pairing QR: rotating the key is a thing you then hand out.
+  if (adopting) saveConfig(cfg);
+
   // A device configured by a pairing link should keep those settings, and the
   // hash should not linger in the address bar or in a bookmark.
   if (location.hash) {

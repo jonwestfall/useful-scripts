@@ -18,6 +18,7 @@
   <input id="plan-course" class="course-input" type="text" placeholder="Course" aria-label="Course">
   <span class="spacer"></span>
   <span id="save-state" class="hint"></span>
+  <span id="session-badge" class="session-badge" hidden></span>
   <a href="control.html" class="linkish">Controller</a>
   <a href="display.html" class="linkish">Display</a>
 </div>
@@ -42,6 +43,24 @@
       <p class="hint" id="plan-size"></p>
       <button id="plan-duplicate" type="button">Duplicate</button>
       <button id="plan-delete" type="button" class="danger-outline">Delete this lecture</button>
+    </div>
+    <!-- Only when this Podium came from a server of its own. The file above
+         keeps working either way, and is still the only thing that works on
+         GitHub Pages or from a folder. -->
+    <div id="plan-server" class="col-actions" hidden>
+      <hr>
+      <h3>This server</h3>
+      <button id="plan-push" type="button" class="big-button">Send this lecture to the server</button>
+      <p class="hint" id="plan-push-note" role="status"></p>
+      <div class="inline">
+        <select id="plan-pull-pick" aria-label="A lecture on the server"></select>
+        <button id="plan-pull" type="button">Open</button>
+      </div>
+      <p class="hint">
+        A lecture sent here is on the iPad in class without a file to carry.
+        Filing it under a course shares it with that course; otherwise it is
+        yours alone.
+      </p>
     </div>
     <hr>
     <p class="hint">

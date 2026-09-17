@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex">
+<title>Admin — Podium</title>
+<link rel="stylesheet" href="assets/css/podium.css">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<!-- The page for things you do sitting down. The controller is built for one
+     hand in front of a class; file management is the opposite of that, so it
+     lives here instead of cramping the tab bar you actually teach from.
+
+     On a Podium with no server behind it - GitHub Pages, a folder on disk -
+     this page loads and says so, rather than pretending. -->
+</head>
+<body class="plan admin">
+
+<div class="topbar">
+  <a class="brand" href="index.html" title="Back to Podium">PODIUM</a>
+  <span class="tag">Admin</span>
+  <span class="spacer"></span>
+  <span id="session-badge" class="session-badge" hidden></span>
+  <a href="control.html" class="linkish">Controller</a>
+  <a href="plan.html" class="linkish">Planning</a>
+</div>
+
+<div id="no-server" class="admin-wrap" hidden>
+  <div class="card">
+    <h2>This Podium has no server behind it</h2>
+    <p class="hint">
+      These pages are running as static files, so there is nothing here to
+      manage — the library is <code>content/manifest.json</code>, edited and
+      committed like the rest of the repository.
+    </p>
+    <p class="hint">
+      A library you can upload to needs the self-hosted relay with a
+      <code>DATA_DIR</code>. See <code>VPS.md</code>.
+    </p>
+  </div>
+</div>
+
+<div id="admin" class="admin-wrap" hidden>
+
+  <section class="card">
+    <h2>Add to the library</h2>
+    <p class="hint" id="upload-help">Decks, PDFs, images, audio and video.</p>
+    <div class="admin-form">
+      <label class="field">
+        <span>File</span>
+        <input id="up-file" type="file">
+      </label>
+      <label class="field">
+        <span>Title</span>
+        <input id="up-title" type="text" placeholder="Taken from the filename if left blank">
+      </label>
+      <label class="field">
+        <span>Course</span>
+        <select id="up-course"></select>
+      </label>
+      <label class="field">
+        <span>Group</span>
+        <input id="up-group" type="text" placeholder="Week 1">
+      </label>
+    </div>
+    <div class="admin-actions">
+      <button id="up-go" type="button">Upload</button>
+      <span class="hint" id="up-note" role="status"></span>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="admin-head">
+      <h2>Library</h2>
+      <input id="lib-search" type="search" placeholder="Filter by title, course or type" aria-label="Filter the library">
+    </div>
+    <p class="hint" id="usage"></p>
+    <div id="items"></div>
+  </section>
+
+</div>
+
+<script type="module" src="assets/js/admin.js"></script>
+</body>
+</html>

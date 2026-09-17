@@ -375,6 +375,32 @@ body.control.is-frozen { background: #171006; }
 #status[data-status='error']::before, #status[data-status='mismatch']::before { color: var(--live); }
 #display-state.is-bad { color: #ffb3b3; }
 .topbar button { min-height: 34px; padding: 0 10px; font-size: 13px; }
+/* Who is signed in, on a server that has accounts. Empty and hidden on every
+   other deployment, so it costs nothing in the bar it is not needed in. */
+/* The admin page. Same furniture as the planning page (body.plan), with a
+   column of cards rather than an editor - it is a page you read down. */
+.admin-wrap { max-width: 56rem; margin: 18px auto; padding: 0 14px; display: grid; gap: 14px; }
+.admin-wrap .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+.admin-wrap h2 { margin: 0 0 6px; font-size: 16px; }
+.admin-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.admin-head h2 { flex: 1; }
+.admin-head input { min-width: 14rem; }
+.admin-form { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); margin-top: 10px; }
+.admin-form .field { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
+.admin-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.admin-actions .is-bad { color: #ffb3b3; }
+.admin-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 0; border-top: 1px solid var(--line);
+}
+.admin-title { flex: 1; color: var(--ink); }
+.admin-meta { color: var(--dim); font-size: 12px; }
+.admin-del { min-height: 32px; padding: 0 10px; font-size: 12px; }
+.admin-del[data-armed='yes'] { background: var(--live); border-color: var(--live); color: #fff; }
+
+.session-badge { display: flex; align-items: center; gap: 8px; }
+.session-badge .session-who { color: var(--ink); }
+.topbar .session-badge button { min-height: 28px; padding: 0 9px; font-size: 12px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .workspace { display: flex; flex: 1; min-height: 0; }
@@ -867,6 +893,7 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
    when something is wrong, and let the buttons shrink. */
 @media (max-width: 640px) {
   .topbar .brand, .topbar .room-info, #peer-count { display: none; }
+  .topbar .session-badge .session-who { display: none; }
   .bottombar { gap: 6px; }
   .bottombar button { min-width: 0; padding: 0 8px; }
   .bottombar .vol { flex: 1; min-width: 76px; gap: 6px; }

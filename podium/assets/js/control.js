@@ -13,11 +13,18 @@ import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, appl
 import { createZip } from './zip.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
+import { mountSessionBadge, serverInfo } from './server.js';
 
 const LIB_KEY = 'podium.library.v1';
 
 let cfg = await loadConfig();
 let bus = null;
+
+// Does nothing unless this Podium came from a server with accounts, which is
+// the whole arrangement: one set of pages, extra affordances only where the
+// thing serving them can back them. Not awaited - a slow probe must not hold
+// up a controller someone is standing in front of a class with.
+mountSessionBadge($('#session-badge'));
 let state = initialState();
 let telemetry = { time: 0, duration: 0, playing: false };
 let telemetryAt = Date.now();
@@ -268,8 +275,35 @@ function planLibraryItems() {
   }));
 }
 
+// Uploaded to a server of your own, rather than committed to the repository.
+// An ADDITIONAL source, never a replacement: content/manifest.json is still
+// read, still merged, and still the only one that exists on GitHub Pages.
+// Silence on any failure is deliberate - a library that cannot be reached is
+// a smaller problem than a controller that will not start because of it.
+async function loadServerLibrary() {
+  try {
+    const info = await serverInfo();
+    if (!info.features.includes('library')) return [];
+    const res = await fetch('/api/library', { credentials: 'same-origin' });
+    if (!res.ok) return [];
+    const { items } = await res.json();
+    // Bookkeeping the projector has no use for is dropped here rather than
+    // being carried into the protocol state as unexplained extra keys.
+    return (items || []).map(({ id, filename, bytes, createdAt, createdBy, course, ...item }) => ({
+      ...item,
+      // A course becomes the group heading when nothing more specific was
+      // given, which is what makes the existing filter box a course filter.
+      group: item.group || (course ? course.toUpperCase() : 'Library'),
+      serverId: id,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 async function loadLibrary() {
   let fromFile = [];
+  const fromServer = loadServerLibrary();
   try {
     const res = await fetch(cfg.manifest, { cache: 'no-cache' });
     if (res.ok) {
@@ -282,6 +316,9 @@ async function loadLibrary() {
     // always one scroll away.
     ...planLibraryItems(),
     ...BUILT_INS.map((i) => ({ ...i, group: 'Quick' })),
+    // Then what you put on your own server, ahead of the examples that ship
+    // with Podium: one of those is Tuesday's lecture and the other is a demo.
+    ...(await fromServer),
     ...fromFile.map((i) => ({ ...i, group: i.group || 'Library' })),
     ...loadCustom().map((i) => ({ ...i, group: 'Saved', custom: true })),
   ];
@@ -294,7 +331,10 @@ function renderLibrary() {
   grid.replaceChildren();
   const groups = new Map();
   for (const item of library) {
-    if (filter && !`${item.title} ${item.type} ${item.note || ''}`.toLowerCase().includes(filter)) continue;
+    // The group is in the haystack so that typing a course code narrows the
+    // library to that course - the "filter, not a mode switch" the server-side
+    // library was designed around (see VPS.md).
+    if (filter && !`${item.title} ${item.type} ${item.group || ''} ${item.note || ''}`.toLowerCase().includes(filter)) continue;
     if (!groups.has(item.group)) groups.set(item.group, []);
     groups.get(item.group).push(item);
   }
@@ -3076,6 +3116,18 @@ async function connect() {
 function tab(name) {
   $$('.tab').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
   $$('.panel').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+  // The list of lectures on the server is asked for again every time the tab
+  // carrying it is opened. Reading it once at startup would mean a lecture
+  // sent from the desk five minutes ago was invisible here until a reload -
+  // and reloading the controller mid-lecture is exactly what nobody wants to
+  // discover they have to do.
+  // The plan controls live in Library, not Settings - a lecture plan is
+  // content, not configuration. Its list of what is on the server is asked for
+  // again every time that tab opens, because reading it once at startup would
+  // mean a lecture sent from the desk five minutes ago stayed invisible until
+  // a reload, and reloading the controller mid-lecture is exactly what nobody
+  // wants to find out they have to do.
+  if (name === 'library' && !$('#plan-server').hidden) refreshServerPlans();
   // Every panel shares one scrolling container (.panels), so a tab switch
   // alone does not reset it - scrolled halfway down a long Library before
   // tapping Ink lands the Ink tab starting from that same halfway point,
@@ -3760,6 +3812,25 @@ function showSetup() {
   };
   form.elements.transport.addEventListener('change', onTransport);
   onTransport();
+
+  // More than one course on this server has settings this account may use, so
+  // nothing was adopted automatically (loadConfig only does that when there is
+  // exactly one and no choice to make). Offer them: each button fills the form
+  // in, leaving the person to look at it and press Save, rather than silently
+  // re-pointing a controller at a room.
+  const courses = cfg.serverCourses || [];
+  $('#setup-courses').hidden = courses.length < 2;
+  $('#setup-course-buttons').replaceChildren(...courses.map((course) => el('button', {
+    type: 'button',
+    onclick: () => {
+      for (const [key, value] of Object.entries(course.settings)) {
+        const field = form.elements[key];
+        if (field) field.value = value;
+      }
+      onTransport();
+      $('#setup-error').textContent = `Filled in from ${course.title}. Check it and save.`;
+    },
+  }, course.title || course.course)));
   form.addEventListener('submit', (ev) => {
     ev.preventDefault();
     // `generated: null` because submitting this form IS the choice: the room
@@ -3808,6 +3879,48 @@ $('#plan-file').addEventListener('change', async (ev) => {
   } catch (err) {
     $('#plan-note').textContent = `That file did not load: ${err.message}`;
   }
+});
+
+// The same thing without the file: a lecture built at the desk and sent to the
+// server is already here. Absent a server, none of this appears and the file
+// picker above is the whole story.
+async function refreshServerPlans() {
+  try {
+    const res = await fetch('/api/plans', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const { plans } = await res.json();
+    const pick = $('#plan-server-pick');
+    pick.replaceChildren(...(plans || []).map((row) => el('option', { value: String(row.id) },
+      [row.title, row.course && `(${row.course})`].filter(Boolean).join(' '))));
+    if (!(plans || []).length) pick.append(el('option', { value: '' }, 'Nothing saved yet'));
+  } catch { /* the file picker above is unaffected */ }
+}
+
+$('#plan-server-open').addEventListener('click', async () => {
+  const id = $('#plan-server-pick').value;
+  if (!id) return;
+  $('#plan-note').textContent = 'Opening…';
+  try {
+    const res = await fetch(`/api/plans/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not open');
+    const doc = body.plan.doc;
+    const { plan, warnings } = readPlan(typeof doc === 'string' ? doc : JSON.stringify(doc));
+    await adoptPlan(plan);
+    await loadLibrary();
+    tab('library');
+    $('#plan-note').textContent = warnings.length
+      ? `Loaded “${plan.title}”, with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}`
+      : `Loaded “${plan.title}”.`;
+  } catch (err) {
+    $('#plan-note').textContent = `That lecture did not open: ${err.message}`;
+  }
+});
+
+serverInfo().then((info) => {
+  if (!info.features.includes('plans')) return;
+  $('#plan-server').hidden = false;
+  refreshServerPlans();
 });
 
 $('#plan-clear').addEventListener('click', async () => {

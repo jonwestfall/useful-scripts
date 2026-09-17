@@ -34,17 +34,30 @@ const SHELL = /\.(?:html|css|js|mjs|webmanifest|json|woff2?)$/;
 // included - a deck that cannot render is the difference between a lecture and
 // no lecture.
 const WARM = [
-  './', 'index.html', 'display.html', 'control.html', 'plan.html',
+  './', 'index.html', 'display.html', 'control.html', 'plan.html', 'admin.html',
   'manifest-control.webmanifest', 'manifest-display.webmanifest',
   'assets/css/podium.css',
   'assets/vendor/qrcode.js', 'assets/vendor/marp.esm.js',
   'assets/icons/icon-192.png', 'assets/icons/apple-touch-icon.png',
   ...[
-    'bus', 'config', 'control', 'crypto', 'deck', 'display', 'plan', 'planfile',
-    'protocol', 'renderers', 'rtc', 'store', 'util', 'zip',
+    'admin', 'bus', 'config', 'control', 'crypto', 'deck', 'display', 'plan',
+    'planfile', 'protocol', 'renderers', 'rtc', 'server', 'store', 'util', 'zip',
   ].map((name) => `assets/js/${name}.js`),
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),
 ];
+
+// cache.add() would be shorter, and wrong: it stores whatever the fetch ends
+// up at, redirects followed. On a server with accounts, an update that happens
+// to run while signed out would warm every entry with the login page - filed
+// under control.html's key, index.html's key, and so on. Fetching and checking
+// before storing is the same guard the fetch handler applies, for the same
+// reason.
+async function warm(cache, path) {
+  try {
+    const res = await fetch(path, { credentials: 'same-origin' });
+    if (res.ok && !res.redirected && res.type === 'basic') await cache.put(path, res);
+  } catch { /* offline, or behind a gate: there is simply nothing to warm */ }
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -52,7 +65,7 @@ self.addEventListener('install', (event) => {
     // One at a time rather than cache.addAll, which rejects the whole install
     // if any single file 404s - a renamed module would otherwise leave the app
     // with no offline shell at all rather than one file short of a full one.
-    await Promise.all(WARM.map((path) => cache.add(path).catch(() => {})));
+    await Promise.all(WARM.map((path) => warm(cache, path)));
     await self.skipWaiting();
   })());
 });
@@ -79,9 +92,23 @@ self.addEventListener('fetch', (event) => {
       const fresh = await fetch(request);
       // Only a real same-origin answer is worth keeping; an opaque or errored
       // response cached here would be served back as though it were the page.
-      if (fresh && fresh.ok && fresh.type === 'basic') {
+      //
+      // `redirected` is the one that bites on a server with accounts: asking
+      // for control.html while signed out follows the redirect and comes back
+      // a perfectly valid, perfectly cacheable login page - which would then
+      // be stored under CONTROL.HTML's key and served in its place, offline,
+      // forever. A redirect is never the thing that was asked for.
+      if (fresh && fresh.ok && fresh.type === 'basic' && !fresh.redirected) {
         const cache = await caches.open(CACHE);
         cache.put(request, fresh.clone()).catch(() => {});
+      }
+      // A redirected response may not be handed back for a navigation at all:
+      // the document would be the login page while the address bar still said
+      // control.html, so browsers reject it outright. Re-issuing the redirect
+      // ourselves lets the browser do the navigating, and the address bar ends
+      // up saying what is actually on screen.
+      if (fresh && fresh.redirected && request.mode === 'navigate') {
+        return Response.redirect(fresh.url, 302);
       }
       return fresh;
     } catch (err) {

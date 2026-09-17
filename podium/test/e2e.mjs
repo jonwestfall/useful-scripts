@@ -13,6 +13,8 @@
 
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
+import http from 'node:http';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import zlib from 'node:zlib';
@@ -236,7 +238,18 @@ const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_IN
 // prove the room is told why it went quiet. The browser's own 404 is the point
 // of that test rather than a result, and naming the fixture keeps the allowance
 // narrow enough that a real 404 anywhere else still counts.
-const DELIBERATE = /not-a-real-file/;
+//
+// /api/login is the same shape of thing: a test types the wrong password on
+// purpose, and the 401 it gets back - which the browser logs as a failed
+// resource load - is the assertion, not a fault. Narrow on purpose: a 401 from
+// any OTHER url is still a failure.
+//
+// The 415 is the third of these: a test uploads an .html file to prove the
+// allow-list refuses it. Matched by its status text rather than by url,
+// because that status has exactly one source - library.js turning down a file
+// type - and an upload that broke for any other reason fails its assertion
+// instead of quietly passing.
+const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)/;
 
 const trap = (page, tag) => {
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
@@ -4806,6 +4819,323 @@ ok('the right username and password get the page through',
 
 authServer.kill();
 await new Promise((resolve) => authServer.on('exit', resolve));
+}
+
+if (want('signing in to a server with accounts')) {
+console.log('\n-- signing in to a server with accounts --');
+// A third server, with a DATA_DIR and a real account in it. The shared one has
+// neither, deliberately: accounts change how every page load in the suite
+// behaves, so the instance that has them is kept to this section.
+const acctPort = await freePort();
+const acctBase = `http://127.0.0.1:${acctPort}`;
+const acctData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-data-'));
+
+// The first account cannot come from a web form - a page that lets an
+// anonymous visitor make the first admin is a page that hands the box to
+// whoever finds it first - so it comes from the CLI, as it would on a real
+// install.
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'jon', '--admin', '--name', 'Jon W', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: acctData },
+  input: 'a good long password\n',
+});
+
+const acctServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  // AUTH_PASSWORD is set on purpose: accounts must win, and the Basic Auth
+  // door must be shut while they do.
+  env: { ...process.env, PORT: String(acctPort), STATIC: '../', DATA_DIR: acctData, AUTH_PASSWORD: 'should-be-ignored' },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+acctServer.stderr.on('data', (d) => process.stderr.write(`[acct-server] ${d}`));
+let startupLog = '';
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('accounts relay did not start')), 10000);
+  acctServer.stdout.on('data', (d) => {
+    startupLog += String(d);
+    if (startupLog.includes('podium auth:')) { clearTimeout(timer); resolve(); }
+  });
+  acctServer.on('exit', (code) => reject(new Error(`accounts relay exited with ${code}`)));
+});
+ok(`the server says out loud which gate is live ("${startupLog.trim().split('\n').pop()}")`,
+  /podium auth: accounts \(AUTH_PASSWORD is set but ignored/.test(startupLog));
+
+ok('the Basic Auth door is shut once there are accounts',
+  (await fetch(`${acctBase}/control.html`, {
+    headers: { authorization: `Basic ${Buffer.from('podium:should-be-ignored').toString('base64')}` },
+  })).status === 401);
+
+const caps = await fetch(`${acctBase}/api/capabilities`).then((r) => r.json());
+ok('the capabilities probe is answerable without signing in, and says so',
+  caps.podium === true && caps.auth.mode === 'accounts' && caps.auth.required === true && caps.user === null);
+
+// The audience page is the one thing that must never want an account.
+const acctCtx = await browser.newContext();
+await acctCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${acctPort}/podium`, room: 'acct-room', passphrase: 'signed in and locked' }));
+
+const joiner = await acctCtx.newPage();
+trap(joiner, 'acct join');
+await joiner.goto(`${acctBase}/join.html`);
+ok('a student reaches the join page with no account and no prompt',
+  await joiner.isVisible('#enter') && joiner.url().endsWith('/join.html'));
+await joiner.close();
+
+// A browser asking for a page it may not have gets a page back, not a native
+// credential dialog - which is the whole reason this is a cookie.
+const pad = await acctCtx.newPage();
+trap(pad, 'acct control');
+await pad.goto(`${acctBase}/control.html`);
+await pad.waitForSelector('#form');
+ok(`asking for the controller signed out lands on the login page (${new URL(pad.url()).pathname})`,
+  new URL(pad.url()).pathname === '/login.html');
+ok('carrying where you were trying to go', new URL(pad.url()).searchParams.get('next') === '/control.html');
+ok('and the login page styles itself, having nothing behind the gate to fetch',
+  await pad.evaluate(() => getComputedStyle(document.body).backgroundColor) === 'rgb(11, 13, 16)');
+
+await pad.fill('#username', 'jon');
+await pad.fill('#password', 'not the password');
+await pad.click('#go');
+await pad.waitForFunction(() => document.querySelector('#note')?.classList.contains('bad'), null, { timeout: 8000 });
+ok(`a wrong password says so and stays put ("${(await pad.textContent('#note')).trim()}")`,
+  new URL(pad.url()).pathname === '/login.html');
+ok('and clears the password rather than leaving it sitting there', await pad.inputValue('#password') === '');
+
+await pad.fill('#password', 'a good long password');
+await Promise.all([pad.waitForURL(/control\.html/), pad.click('#go')]);
+ok('the right password lands on the page that was asked for', /control\.html$/.test(pad.url()));
+
+await pad.waitForSelector('#session-badge .session-who');
+ok(`the controller says who is signed in ("${await pad.textContent('#session-badge .session-who')}")`,
+  (await pad.textContent('#session-badge .session-who')).trim() === 'Jon W');
+
+// --- the library, once there is a disk to keep it on ---------------------
+//
+// The whole point of the server-side library: a deck reaches the projector
+// without a git commit. Uploaded on one page, picked on another, shown on a
+// third.
+execFileSync(process.execPath, ['podium-admin.js', 'course', 'add', 'psy415', '--title', 'PSY 415'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData },
+});
+execFileSync(process.execPath, ['podium-admin.js', 'member', 'add', 'psy415', 'jon', '--role', 'owner'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData },
+});
+
+const desk = await acctCtx.newPage();
+trap(desk, 'acct admin');
+await desk.goto(`${acctBase}/admin.html`);
+await desk.waitForSelector('#admin:not([hidden])');
+ok('the admin page opens for a signed-in account', await desk.isVisible('#up-file'));
+ok(`and says what it will take (${(await desk.textContent('#upload-help')).slice(0, 40)}…)`,
+  /50 MB/.test(await desk.textContent('#upload-help')) && /\.md/.test(await desk.textContent('#upload-help')));
+
+const uploadDeck = path.join(acctData, 'uploaded-deck.md');
+fs.writeFileSync(uploadDeck, '# Uploaded In Class\n\nThis never went near git.\n\n---\n\n## The second slide\n');
+await desk.setInputFiles('#up-file', uploadDeck);
+await desk.fill('#up-title', 'Week 1 lecture');
+await desk.selectOption('#up-course', 'psy415');
+await desk.waitForSelector('.admin-row', { state: 'detached' }).catch(() => {});
+await desk.click('#up-go');
+await desk.waitForSelector('.admin-row');
+ok(`the upload lands in the library (${(await desk.textContent('.admin-row')).replace(/\s+/g, ' ').trim()})`,
+  (await desk.textContent('.admin-row')).includes('Week 1 lecture'));
+ok(`and the page accounts for the disk it used (${await desk.textContent('#usage')})`,
+  /1 file, /.test(await desk.textContent('#usage')));
+
+// A file Podium will not serve from its own origin, because a browser would
+// run it there with the session cookie in reach.
+const notAllowed = path.join(acctData, 'evil.html');
+fs.writeFileSync(notAllowed, '<script>alert(1)</script>');
+await desk.setInputFiles('#up-file', notAllowed);
+await desk.click('#up-go');
+await desk.waitForFunction(() => document.querySelector('#up-note')?.classList.contains('is-bad'), null, { timeout: 8000 });
+ok(`an html upload is refused with a reason ("${(await desk.textContent('#up-note')).trim()}")`,
+  /does not take html/.test(await desk.textContent('#up-note')));
+
+// Now the controller, which has to merge it in beside the shipped manifest.
+await pad.reload();
+await pad.waitForSelector('#library .tile');
+const groupNames = await pad.$$eval('#library .group', (els) => els.map((e) => e.textContent));
+ok(`the uploaded deck is filed under its course, not lumped in with the examples (${groupNames.join(', ')})`,
+  groupNames.includes('PSY415'));
+ok('and the decks that ship with Podium are still there beside it',
+  groupNames.includes('Working examples'));
+
+await pad.fill('#lib-filter', 'psy415');
+const filteredTitles = await pad.$$eval('#library .tile:not([hidden]) .tile-title', (els) => els.map((e) => e.textContent));
+ok(`typing a course code filters the library down to that course (${filteredTitles.join(', ')})`,
+  filteredTitles.length === 1 && filteredTitles[0] === 'Week 1 lecture');
+
+// And it has to actually work as a deck: fetched from /media, rendered by the
+// same Marp the projector uses.
+const acctScreen = await acctCtx.newPage();
+trap(acctScreen, 'acct display');
+await acctScreen.goto(`${acctBase}/display.html`);
+await acctScreen.click('#arm-button');
+await acctScreen.waitForSelector('#hud[data-status="online"]');
+
+await pad.click('#library .tile:not([hidden])');
+// Read out of the deck's shadow root, the same way the marp-decks section
+// does: the rendered slide is not in the host element's light DOM.
+await acctScreen.waitForFunction(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const svg = [...(host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || [])]
+    .find((s) => s.classList.contains('podium-on'));
+  return /Uploaded In Class/.test(svg?.querySelector('section')?.textContent || '');
+}, null, { timeout: 25000 });
+ok('and picking it puts it on the projector, rendered from the uploaded bytes', true);
+
+// --- plans and settings, the things you stop carrying -------------------
+
+// A lecture built at the desk and sent to the server is on the iPad in class
+// without a file in between. That is the whole of phase 3's first half.
+const planner = await acctCtx.newPage();
+trap(planner, 'acct plan');
+await planner.goto(`${acctBase}/plan.html`);
+await planner.waitForSelector('#plan-server:not([hidden])');
+ok('the planning page offers the server when there is one', true);
+
+await planner.fill('#plan-title', 'Day 6 — sent, not carried');
+await planner.fill('#plan-course', 'psy415');
+await planner.click('#plan-push');
+await planner.waitForFunction(() => /Sent/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+ok(`sending it says where it went ("${(await planner.textContent('#plan-push-note')).trim()}")`,
+  /shared with psy415/.test(await planner.textContent('#plan-push-note')));
+
+// A course the server has never heard of must not silently become a share.
+await planner.fill('#plan-course', 'not-a-real-course');
+await planner.click('#plan-push');
+await planner.waitForFunction(() => /yours alone/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+ok('a course this server does not have is saved privately, and says so rather than guessing',
+  /no course "not-a-real-course"/.test(await planner.textContent('#plan-push-note')));
+
+// And in class. Opening the Library tab is what re-reads the list, which is
+// the point: this controller was already open before the plan was sent, and
+// must not need a reload to see it.
+await pad.click('.tab[data-tab="library"]');
+await pad.waitForSelector('#plan-server:not([hidden])', { timeout: 8000 });
+await pad.waitForFunction(
+  () => [...document.querySelectorAll('#plan-server-pick option')].some((o) => o.textContent.includes('sent, not carried')),
+  null, { timeout: 8000 },
+);
+const offered = await pad.$$eval('#plan-server-pick option', (els) => els.map((e) => e.textContent));
+ok(`the controller lists what is on the server (${offered.join(', ')})`,
+  offered.some((t) => t.includes('Day 6 — sent, not carried')));
+
+await pad.selectOption('#plan-server-pick', { label: 'Day 6 — sent, not carried (psy415)' });
+await pad.click('#plan-server-open');
+await pad.waitForFunction(() => /Loaded/.test(document.querySelector('#plan-note')?.textContent || ''), null, { timeout: 10000 });
+ok(`opening it in class needs no file at all ("${(await pad.textContent('#plan-note')).trim()}")`,
+  /Day 6 — sent, not carried/.test(await pad.textContent('#plan-note')));
+
+await planner.close();
+
+// The second half: a device nobody has configured sets itself up from the
+// course it belongs to, which is what makes a new iPad a login rather than a
+// QR scan and a typed passphrase.
+execFileSync(process.execPath, ['podium-admin.js', 'course', 'settings', 'psy415',
+  '--transport', 'ws', '--room', 'psy415-live', '--ws-url', `ws://127.0.0.1:${acctPort}/podium`,
+  '--passphrase', 'handed over by the server'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData },
+});
+
+// A genuinely fresh browser: no localStorage, no pairing hash, nothing but a
+// login.
+const freshCtx = await browser.newContext();
+const fresh = await freshCtx.newPage();
+trap(fresh, 'fresh device');
+await fresh.goto(`${acctBase}/control.html`);
+await fresh.waitForSelector('#form');
+await fresh.fill('#username', 'jon');
+await fresh.fill('#password', 'a good long password');
+await Promise.all([fresh.waitForURL(/control\.html/), fresh.click('#go')]);
+
+await fresh.waitForSelector('#status[data-status="online"]', { timeout: 20000 });
+ok('a device with no settings at all signs in and is simply connected', true);
+const adopted = await fresh.evaluate(() => JSON.parse(localStorage.getItem('podium.config.v2') || '{}'));
+ok(`it adopted the course's room without anyone typing it (${adopted.room})`, adopted.room === 'psy415-live');
+ok('and the passphrase with it, which is what joining the room actually needs',
+  adopted.passphrase === 'handed over by the server');
+await freshCtx.close();
+
+// Two courses is a choice, and nothing is adopted silently: picking the wrong
+// room is a mistake you discover in front of a class.
+for (const args of [
+  ['course', 'add', 'psy101', '--title', 'PSY 101'],
+  ['member', 'add', 'psy101', 'jon', '--role', 'owner'],
+  ['course', 'settings', 'psy101', '--transport', 'ws', '--room', 'psy101-live',
+    '--ws-url', `ws://127.0.0.1:${acctPort}/podium`, '--passphrase', 'the other room'],
+]) {
+  execFileSync(process.execPath, ['podium-admin.js', ...args], {
+    cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData },
+  });
+}
+
+const twoCtx = await browser.newContext();
+const two = await twoCtx.newPage();
+trap(two, 'two-course device');
+await two.goto(`${acctBase}/control.html`);
+await two.waitForSelector('#form');
+await two.fill('#username', 'jon');
+await two.fill('#password', 'a good long password');
+await Promise.all([two.waitForURL(/control\.html/), two.click('#go')]);
+
+await two.waitForSelector('#setup-courses:not([hidden])', { timeout: 15000 });
+const choices = await two.$$eval('#setup-course-buttons button', (els) => els.map((e) => e.textContent));
+ok(`belonging to two courses offers the choice rather than guessing (${choices.join(', ')})`,
+  choices.includes('PSY 415') && choices.includes('PSY 101'));
+ok('and adopts neither on its own', await two.evaluate(() => !localStorage.getItem('podium.config.v2')));
+
+await two.click('#setup-course-buttons button:has-text("PSY 101")');
+ok('picking one fills the form in and leaves it to be looked at, not saved behind your back',
+  await two.inputValue('#c-room') === 'psy101-live'
+  && await two.evaluate(() => !localStorage.getItem('podium.config.v2')));
+await twoCtx.close();
+
+await desk.close();
+await acctScreen.close();
+
+// The hole Basic Auth could never close: a browser will not put an
+// Authorization header on a WebSocket handshake, but it sends cookies without
+// being asked. So the relay socket is gated now too.
+const upgradeStatus = (cookie) => new Promise((resolve) => {
+  const req = http.request({
+    host: '127.0.0.1', port: acctPort, path: '/podium?room=acct-room',
+    headers: {
+      connection: 'Upgrade', upgrade: 'websocket',
+      'sec-websocket-version': '13', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+      ...(cookie ? { cookie } : {}),
+    },
+  });
+  req.on('upgrade', (res, socket) => { socket.destroy(); resolve('upgraded'); });
+  req.on('response', (res) => { res.resume(); resolve(res.statusCode); });
+  req.on('error', () => resolve('error'));
+  req.end();
+});
+ok(`the relay socket refuses a stranger who knows the room name (${await upgradeStatus('')})`,
+  (await upgradeStatus('')) === 401);
+
+const signedInCookie = (await acctCtx.cookies())
+  .filter((c) => c.name === 'podium_session').map((c) => `${c.name}=${c.value}`).join('; ');
+ok('the session cookie is HttpOnly, so no page script can read or leak it',
+  (await acctCtx.cookies()).find((c) => c.name === 'podium_session')?.httpOnly === true);
+ok(`and the same socket opens for a signed-in one (${await upgradeStatus(signedInCookie)})`,
+  (await upgradeStatus(signedInCookie)) === 'upgraded');
+
+// Which means the controller it came from is really connected, not merely
+// showing a page.
+await pad.waitForSelector('#status[data-status="online"]', { timeout: 15000 });
+ok('so the signed-in controller actually reaches the relay', true);
+
+await Promise.all([pad.waitForURL(/login\.html/), pad.click('#session-badge button')]);
+ok('signing out goes back to the login page', /login\.html/.test(pad.url()));
+ok('and the controller is behind the gate again',
+  (await fetch(`${acctBase}/control.html`)).status === 401);
+
+await acctCtx.close();
+acctServer.kill();
+await new Promise((resolve) => acctServer.on('exit', resolve));
+fs.rmSync(acctData, { recursive: true, force: true });
 }
 
 if (want('back to the landing page')) {

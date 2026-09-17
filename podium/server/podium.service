@@ -16,6 +16,11 @@ Environment=PORT=8080
 # Put the pages behind a login (join.html stays open) - see README's Security section:
 #Environment=AUTH_PASSWORD=something-long-and-random
 #Environment=AUTH_USER=podium
+# Give it somewhere to remember things and it gains accounts, which supersede
+# AUTH_PASSWORD above. See VPS.md; deploy/install.sh sets all of this up for
+# you, and this file is the hand-rolled alternative.
+#Environment=DATA_DIR=/var/lib/podium
+#ReadWritePaths=/var/lib/podium
 ExecStart=/usr/bin/node podium-server.js
 Restart=always
 RestartSec=3

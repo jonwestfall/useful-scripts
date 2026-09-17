@@ -26,6 +26,9 @@
     <span id="peer-count"></span>
     <span id="plan-name" hidden></span>
     <span class="spacer"></span>
+    <!-- Only ever filled in when this Podium came from a server with accounts
+         (see server.js); on every other deployment it stays empty and hidden. -->
+    <span id="session-badge" class="session-badge" hidden></span>
     <!-- Splitting the screen: pick how many panels and how they're arranged,
          then which one Library taps, deck nav, and Ink currently address.
          Lives in the topbar rather than a row of its own so it costs no
@@ -169,6 +172,13 @@
             <input id="plan-file" type="file" accept=".json,application/json" hidden>
             <span id="plan-note" class="hint"></span>
             <button type="button" id="plan-clear" hidden>Remove plan</button>
+          </div>
+          <!-- When the server keeps plans, there is nothing to carry: the
+               lecture built at the desk is already here. Hidden entirely on
+               every other way of running Podium. -->
+          <div class="inline" id="plan-server" hidden>
+            <select id="plan-server-pick" aria-label="A lecture on the server"></select>
+            <button type="button" id="plan-server-open">Open</button>
           </div>
           <p class="hint" style="margin:0">
             Plans are built in <a href="plan.html">Planning</a> on your office machine and carried here as a file.
@@ -698,6 +708,15 @@
 
     <section class="settings-panel" data-settings-panel="connection">
       <p>Easiest path: open the display on the classroom PC, press <b>Pair a device</b> there, and scan the code. Otherwise fill this in by hand — the values must match the display exactly.</p>
+      <!-- Filled in only when this account belongs to more than one course
+           with settings on the server. One course is adopted automatically at
+           load (see loadConfig); several is a choice nobody else can make,
+           because picking the wrong room is a mistake you find out about in
+           front of a class. -->
+      <div id="setup-courses" class="field" hidden>
+        <label>Use a course's settings</label>
+        <div id="setup-course-buttons" class="inline"></div>
+      </div>
       <form id="setup-form">
         <div class="field">
           <label for="c-transport">Connection</label>

@@ -19,9 +19,10 @@ disk. There is no build step and no framework.
 the whole thing in plain English and walks through putting it online free on GitHub
 Pages in about twenty minutes — no terminal, no server, no card. This file is the
 full reference; that one is the road in. [ROADMAP.md](ROADMAP.md) is the plan for
-audience participation — students answering a question from their phones — and
-[OPEN-ISSUES.md](OPEN-ISSUES.md) is the short list of things believed fixed but
-not yet proved in a real room.
+audience participation — students answering a question from their phones —
+[VPS.md](VPS.md) is the plan for what a box of your own adds (accounts, an
+uploadable library, durable history), and [OPEN-ISSUES.md](OPEN-ISSUES.md) is the
+short list of things believed fixed but not yet proved in a real room.
 
 <details>
 <summary><b>What is in this file</b> (it is long; this is the map)</summary>
@@ -143,6 +144,14 @@ Serving the pages yourself off a plain domain means anyone who finds the URL can
 them, unlike GitHub Pages' effectively unguessable one — set `AUTH_PASSWORD` to put
 the whole app behind a login; see [Authentication](#authentication-self-hosted-only)
 under Security.
+
+Give it a `DATA_DIR` as well and it stops being only a pipe. Real accounts instead of
+one shared password, and a library you can **upload to from a browser** — decks, PDFs,
+images, audio and video up to 50 MB, filed under a course, appearing on the iPad
+without a git commit. Plans that are simply *there* in class, and durable session and
+poll history, are the phases still to come; [VPS.md](VPS.md) is the whole plan and
+[`deploy/`](deploy/README.md) has an installer and an update script for that layout.
+All of it is optional and none of it changes the other two routes.
 
 **A free public MQTT broker.** Zero signup, good for trying it out in five minutes.
 The default is `wss://broker.emqx.io:8084/mqtt`. Podium speaks MQTT 3.1.1, which every
@@ -1411,8 +1420,23 @@ touch the screen, whatever transport carries the messages. It says nothing about
 can even load the pages, which starts to matter once `podium-server.js` is serving
 them itself from a plain domain rather than GitHub Pages' effectively unguessable one.
 
-Set `AUTH_PASSWORD` (and optionally `AUTH_USER`, default `podium`) and the relay puts
-the whole app behind HTTP Basic Auth:
+There are two ways to answer that, and they are tried in a fixed order:
+
+1. **Accounts**, if this instance has any — a real login form, a session cookie, and
+   a username per person. This is the better one and the one to use on a box that is
+   staying up: it covers things Basic Auth cannot, including the relay's own
+   WebSocket connection, and it does not fight the offline shell. It needs a
+   `DATA_DIR`; see [VPS.md](VPS.md) and [deploy/](deploy/README.md).
+2. **`AUTH_PASSWORD`**, otherwise — one shared credential over HTTP Basic Auth,
+   described below. Simple, and enough if nothing is being stored.
+
+**Creating the first account turns the second one off.** The server says which is
+live at startup (`podium auth: …`), because two doors into one house, one of them
+weaker, is how instances get embarrassed.
+
+The rest of this section is about `AUTH_PASSWORD`. Set it (and optionally
+`AUTH_USER`, default `podium`) and the relay puts the whole app behind HTTP Basic
+Auth:
 
 ```bash
 AUTH_PASSWORD='something long and random' PORT=8080 STATIC=../ node podium-server.js
@@ -1440,17 +1464,20 @@ for, but the device scanning it (an iPad that has never visited the site) hits i
 Basic Auth prompt for `control.html` before Podium's own pairing fragment ever runs —
 one more one-time login, separate from the passphrase the QR carries.
 
-It cannot cover the relay's own WebSocket connection: browsers give page script no way
-to attach an `Authorization` header to a WebSocket handshake, so that route stays
-exactly as open as it always was, protected by the passphrase-derived encryption above
-rather than by this. Nothing here changes a GitHub Pages or Supabase Realtime setup —
-there is no server in either path for `AUTH_PASSWORD` to run on.
+Basic Auth cannot cover the relay's own WebSocket connection: browsers give page
+script no way to attach an `Authorization` header to a WebSocket handshake, so on this
+setting that route stays exactly as open as it always was, protected by the
+passphrase-derived encryption above rather than by this. A cookie has no such problem,
+which is why the accounts route above does gate the socket. Nothing here changes a
+GitHub Pages or Supabase Realtime setup — there is no server in either path for any of
+it to run on.
 
 ## Tests
 
 ```bash
 node podium/test/protocol.test.mjs          # the state machine, no browser needed
 node podium/test/plan.test.mjs              # the lecture-plan document, likewise
+node podium/test/store.test.mjs             # the server's database and accounts, likewise
 cd podium/server && npm install             # once
 node podium/test/e2e.mjs                    # needs: npm i playwright
 node podium/test/e2e.mjs --only ink         # ...or just the sections you are working on
@@ -1464,8 +1491,8 @@ can lean on what an earlier one left on screen, so a section that passes alone c
 still fail in the full run. Run all of it before pushing.
 
 **CI runs all of it too** (`.github/workflows/podium-tests.yml`), on every push to
-`main` and every pull request that touches `podium/**` — a fast job for the two unit
-suites, a slower one for the full Playwright run. Scoped to this folder so it never
+`main` and every pull request that touches `podium/**` — a fast job for the
+browser-free suites, a slower one for the full Playwright run. Scoped to this folder so it never
 fires on the unrelated scripts living elsewhere in this repo.
 
 The end-to-end test starts the relay, drives a display and two controllers in real
@@ -1555,8 +1582,28 @@ proves the self-hosted server's authentication gate too: every page and asset
 Basic Auth is supposed to cover comes back 401 with no credentials and 200
 with the right ones, a wrong password is refused rather than any password
 being accepted, and `join.html`, its script, `/healthz`, and the relay's
-`/poll` routes stay reachable with no credentials at all regardless.
-509 checks.
+`/poll` routes stay reachable with no credentials at all regardless. And it
+drives a real sign-in on an instance that has accounts: that asking for the
+controller signed out lands on the login *page* rather than a browser prompt,
+carrying where you were trying to go; that the page styles itself, having
+nothing behind the gate to fetch; that a wrong password says so and clears
+itself; that the right one lands on the page originally asked for and the bar
+then says who you are; that the session cookie is `HttpOnly`; that the relay
+socket refuses a stranger who knows the room name but opens for a signed-in
+cookie — the hole Basic Auth could never close — and that signing out puts the
+gate back. It drives the server-side library end to end too: a deck uploaded on
+the admin page, with no git commit anywhere in sight, turns up on the controller
+filed under its course, is narrowed to by typing that course code into the
+ordinary filter box, and renders on the projector from the uploaded bytes —
+while an `.html` upload is refused with a reason, because uploads are served
+from Podium's own origin and a file a browser would execute there would run
+with the session cookie in reach. And it proves the two things a server-backed
+Podium stops you carrying: a lecture built on the planning page and sent to the
+server is listed on a controller that was already open, opens there with no file
+in between, and says plainly when the course you typed is not one this server
+has rather than guessing; and a browser with no settings whatsoever signs in and
+is simply connected, having taken its room and passphrase from the course it
+belongs to. 546 checks.
 
 ## Layout
 

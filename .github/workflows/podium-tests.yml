@@ -15,17 +15,20 @@ on:
 
 jobs:
   unit:
-    name: Unit tests (protocol, plan)
+    name: Unit tests (protocol, plan, store)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
+          # 22 or newer: the server's storage uses the built-in node:sqlite.
           node-version: 22
       - run: node test/protocol.test.mjs
         working-directory: podium
       - run: node test/plan.test.mjs
+        working-directory: podium
+      - run: node test/store.test.mjs
         working-directory: podium
 
   e2e:

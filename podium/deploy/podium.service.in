@@ -1,0 +1,28 @@
+# Template. deploy/install.sh substitutes the @NAMES@ and writes the result to
+# /etc/systemd/system/podium.service.
+[Unit]
+Description=Podium relay
+After=network.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=@PREFIX@/current/server
+EnvironmentFile=@CONFIG_DIR@/podium.env
+ExecStart=/usr/bin/node podium-server.js
+Restart=always
+RestartSec=3
+
+# The data directory is the only thing this service has any business writing.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=@DATA_DIR@
+
+[Install]
+WantedBy=multi-user.target

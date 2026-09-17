@@ -20,6 +20,9 @@ import {
 import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle } from './deck.js';
 import { BUILD, MAX_TIMERS } from './protocol.js';
+import { mountSessionBadge, serverInfo } from './server.js';
+
+mountSessionBadge($('#session-badge'));
 
 let plan = null;
 let selectedId = null;
@@ -601,6 +604,77 @@ $('#plan-import-file').addEventListener('change', async (ev) => {
   } catch (err) {
     warn(`That file did not open: ${err.message}`);
   }
+});
+
+// --- and the same two things, to a server that keeps them --------------------
+//
+// Deliberately beside the file rather than instead of it. A plan file is still
+// the only thing that works on GitHub Pages, from a folder, or on a train.
+
+let serverCourses = [];
+
+async function refreshServerPlans() {
+  try {
+    const res = await fetch('/api/plans', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json();
+    serverCourses = data.courses || [];
+    const pick = $('#plan-pull-pick');
+    pick.replaceChildren();
+    for (const row of data.plans || []) {
+      const label = [row.title, row.course && `(${row.course})`, row.owner && `— ${row.owner}`]
+        .filter(Boolean).join(' ');
+      pick.append(el('option', { value: String(row.id) }, label));
+    }
+    if (!(data.plans || []).length) pick.append(el('option', { value: '' }, 'Nothing saved here yet'));
+  } catch { /* the file buttons above still work, which is the point */ }
+}
+
+$('#plan-push').addEventListener('click', async () => {
+  await commit();
+  const note = $('#plan-push-note');
+  // The planning page's Course box is free text; the server only accepts a
+  // course you are a member of. Rather than silently dropping it or silently
+  // saving somewhere unexpected, match what we can and say what happened.
+  const wanted = String(plan.course || '').trim().toLowerCase();
+  const matched = serverCourses.find((c) => c.code === wanted);
+  try {
+    const res = await fetch('/api/plans', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: plan.title, course: matched?.code || '', doc: planToJson(plan) }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not work');
+    note.textContent = matched
+      ? `Sent — on the iPad now, shared with ${matched.code}.`
+      : `Sent — on the iPad now, and yours alone${wanted ? ` (there is no course "${wanted}" here to file it under)` : ''}.`;
+    await refreshServerPlans();
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
+$('#plan-pull').addEventListener('click', async () => {
+  const id = $('#plan-pull-pick').value;
+  if (!id) return;
+  try {
+    const res = await fetch(`/api/plans/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not open');
+    const { plan: loaded, warnings } = readPlan(typeof body.plan.doc === 'string' ? body.plan.doc : JSON.stringify(body.plan.doc));
+    await newPlan(loaded);
+    warn(warnings.length ? `Opened with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}` : '');
+  } catch (err) {
+    warn(`That lecture did not open: ${err.message}`);
+  }
+});
+
+serverInfo().then((info) => {
+  if (!info.features.includes('plans')) return;
+  $('#plan-server').hidden = false;
+  refreshServerPlans();
 });
 
 $('#plan-new').addEventListener('click', () => newPlan());

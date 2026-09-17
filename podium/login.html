@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex">
+<title>Sign in — Podium</title>
+<!-- Self-contained on purpose, exactly like join.html and for a sharper
+     reason: this is the page that gets you THROUGH the gate, so nothing it
+     needs may sit behind it. No stylesheet, no module, no shared asset - one
+     file, which is the only thing the server has to leave open besides the
+     audience page.
+
+     A page and not a browser prompt, because HTTP Basic Auth is what this
+     replaces: Safari raises native dialogs on background fetches of icons and
+     webmanifests, will not show one at all when a service worker is in the
+     way, and cannot attach credentials to a WebSocket handshake. A cookie has
+     none of those problems. See VPS.md. -->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d10; --panel: #151a21; --line: #273040; --ink: #e8ecf2;
+    --dim: #93a0b4; --accent: #4c8dff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 16px calc(24px + env(safe-area-inset-bottom));
+    background: var(--bg); color: var(--ink);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 24rem; margin-inline: auto;
+  }
+  .brand { font-weight: 700; letter-spacing: .18em; font-size: 15px; color: var(--dim); }
+  h1 { font-size: 21px; margin: 10px 0 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  label { display: block; font-size: 14px; color: var(--dim); margin: 12px 0 6px; }
+  label:first-of-type { margin-top: 0; }
+  input, button {
+    font: inherit; color: var(--ink); background: #0f141b;
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+    width: 100%; -webkit-appearance: none;
+  }
+  button {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+    font-weight: 600; cursor: pointer; margin-top: 18px; min-height: 48px;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  .note { margin: 14px 0 0; font-size: 14px; color: var(--dim); min-height: 1.4em; }
+  .note.bad { color: #ff9d9d; }
+  .foot { margin-top: 20px; font-size: 13px; color: var(--dim); text-align: center; }
+</style>
+</head>
+<body>
+
+<p class="brand">PODIUM</p>
+<h1>Sign in</h1>
+
+<form id="form" class="card">
+  <label for="username">Username</label>
+  <input id="username" name="username" autocomplete="username" autocapitalize="none"
+         autocorrect="off" spellcheck="false" required>
+
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+  <button id="go" type="submit">Sign in</button>
+  <p class="note" id="note" role="status"></p>
+</form>
+
+<p class="foot">Answering a poll? You do not need an account —<br>open the join page and enter the code on the screen.</p>
+
+<script>
+(function () {
+  var form = document.getElementById('form');
+  var note = document.getElementById('note');
+  var go = document.getElementById('go');
+
+  // Where to land afterwards. Read here only to be sent back to the server,
+  // which validates it again - a redirect target that came out of a query
+  // string is exactly the kind of thing that turns a login into an open
+  // redirect, so neither end trusts it on its own.
+  var next = new URLSearchParams(location.search).get('next') || '';
+
+  function say(text, bad) {
+    note.textContent = text;
+    note.className = 'note' + (bad ? ' bad' : '');
+  }
+
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    go.disabled = true;
+    say('Signing in…', false);
+    fetch('/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value,
+        next: next,
+      }),
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (body) {
+        if (res.ok) { location.replace(body.next || '/index.html'); return; }
+        go.disabled = false;
+        say(body.error || 'That did not work.', true);
+        document.getElementById('password').value = '';
+      });
+    }).catch(function () {
+      go.disabled = false;
+      say('Could not reach the server.', true);
+    });
+  });
+
+  document.getElementById('username').focus();
+})();
+</script>
+</body>
+</html>

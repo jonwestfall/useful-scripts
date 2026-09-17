@@ -14,19 +14,48 @@
 // exception, it is confined to the /poll routes, nothing it touches is ever
 // written to disk, and none of it outlives this process.
 //
+// Give it a DATA_DIR and it gains a fourth: remembering things. That is the
+// server-backed deployment, and it is entirely optional - see VPS.md.
+//
 //   PORT=8080            port to listen on
+//   HOST=127.0.0.1       address to bind (omit to accept from anywhere)
 //   STATIC=../           directory to serve (omit to run relay-only)
 //   ORIGIN=https://a.b   comma-separated allowed Origins (omit to allow any)
+//   DATA_DIR=/var/lib/podium   where accounts and uploads live (omit for none)
 //   AUTH_PASSWORD=...    put the pages (not join.html) behind HTTP Basic Auth
 //   AUTH_USER=podium     username to go with it (default: podium)
+
+// node:sqlite is experimental in Node 22 and says so, once, on stderr. It is
+// an accurate warning about a module whose API may change and a useless one in
+// a log that someone has to read every morning, so it is swallowed by name
+// here and every other warning is printed exactly as Node would have.
+//
+// Node prints warnings through a listener of its own, so adding one is not
+// enough - the default has to come off first. Deliberately narrow: anything
+// that is not this one specific notice still reaches the log.
+process.removeAllListeners('warning');
+process.on('warning', (warning) => {
+  if (warning.name === 'ExperimentalWarning' && /SQLite/i.test(warning.message)) return;
+  console.warn(warning.stack || String(warning));
+});
 
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { WebSocketServer } = require('ws');
+const store = require('./store.js');
+const accounts = require('./accounts.js');
+const api = require('./api.js');
+const library = require('./library.js');
 
 const PORT = Number(process.env.PORT || 8080);
+// Unset means every interface, which is what running this on a laptop for a
+// room on the same Wi-Fi needs. A deployment with a TLS terminator in front
+// wants 127.0.0.1 so the only way in is through it; deploy/install.sh writes
+// that into the environment file, because on that box it is the right answer
+// and the wildcard would expose the plain-HTTP port alongside the proxy.
+const HOST = process.env.HOST || '';
 const STATIC = process.env.STATIC ? path.resolve(__dirname, process.env.STATIC) : null;
 const ORIGINS = process.env.ORIGIN ? process.env.ORIGIN.split(',').map((s) => s.trim()) : null;
 
@@ -35,28 +64,57 @@ const MAX_PER_ROOM = 12;
 
 // --- authentication (self-hosted pages only) ---------------------------------
 //
-// Off by default, like everything else here. Setting AUTH_PASSWORD puts every
-// page this process serves behind HTTP Basic Auth - the landing page, the
-// display, the controller, the planning page, and every asset any of them
-// load - which matters once this box is serving them itself from a plain
-// domain rather than GitHub Pages' effectively unguessable URL. The room
-// passphrase above is what authorizes *control*; this is a coarser gate on
-// who can even load the tool at all.
+// Off by default, like everything else here. Two ways to turn it on, and they
+// are tried in a fixed order (see api.js): accounts in the database if there
+// are any, otherwise AUTH_PASSWORD's HTTP Basic Auth if that is set. Either
+// way it gates every page this process serves - the landing page, the display,
+// the controller, the planning page, and every asset any of them load - which
+// matters once this box is serving them itself from a plain domain rather than
+// GitHub Pages' effectively unguessable URL. The room passphrase is what
+// authorizes *control*; this is a coarser gate on who can load the tool at all.
 //
 // join.html is the deliberate exception, along with what it needs to run
 // (assets/js/join.js) and the relay's own /poll routes: a room full of
 // students answering a question must never be asked to log in, and has no
 // password to give anyway - see the comment at the top of handlePoll.
+// login.html is open for the obvious reason, and is self-contained so that
+// nothing it needs is behind the gate it exists to get you through.
 // /favicon.ico is open too, so a browser's automatic request for one on the
 // (credential-free) join page gets a plain 404 rather than a login challenge.
 //
-// This cannot reach the relay's own WebSocket route: browsers give page
-// script no way to attach an Authorization header to a WebSocket handshake.
-// That route stays exactly as open as it always was, protected by the
-// passphrase-derived encryption rather than by this.
+// Basic Auth cannot reach the relay's own WebSocket route - browsers give page
+// script no way to attach an Authorization header to a handshake. A cookie has
+// no such problem, so once there are accounts the socket is gated too, which
+// closes the one hole the AUTH_PASSWORD version had to leave open.
 const AUTH_USER = process.env.AUTH_USER || 'podium';
 const AUTH_PASSWORD = process.env.AUTH_PASSWORD || '';
-const AUTH_OPEN_PATHS = new Set(['/join.html', '/assets/js/join.js', '/favicon.ico']);
+const AUTH_OPEN_PATHS = new Set(['/join.html', '/assets/js/join.js', '/login.html', '/favicon.ico']);
+
+const DATA_DIR = store.dataDirFromEnv();
+
+// Configured storage that will not open is a hard stop, not a warning. Whether
+// there is a database is what decides whether the account gate governs, so
+// carrying on without one would answer "is this instance protected?" with
+// "no" - quietly, at the exact moment something is already wrong with the box.
+let db = null;
+try {
+  db = store.open(DATA_DIR);
+} catch (err) {
+  console.error(`podium: ${err.message}`);
+  console.error('podium: DATA_DIR is set, so refusing to start without it - a server that has forgotten its accounts is an open one.');
+  process.exit(1);
+}
+
+// Deliberately every account, disabled ones included: see countUsers.
+const hasAccounts = () => !!db && accounts.countUsers(db) > 0;
+const authContext = {
+  db,
+  dataDir: DATA_DIR,
+  hasAccounts,
+  basicPassword: AUTH_PASSWORD,
+  isBasicAuthorized: (req) => isAuthorized(req),
+  openPaths: AUTH_OPEN_PATHS,
+};
 
 function timingSafeEqualString(given, want) {
   const a = Buffer.from(given);
@@ -134,21 +192,7 @@ function pollJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-function readJson(req, limit = 64 * 1024) {
-  return new Promise((resolve, reject) => {
-    let size = 0;
-    const chunks = [];
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size > limit) { reject(new Error('too large')); req.destroy(); return; }
-      chunks.push(chunk);
-    });
-    req.on('end', () => {
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new Error('not JSON')); }
-    });
-    req.on('error', reject);
-  });
-}
+const { readJson } = api;
 
 // What a phone is told: the question, and nothing else. Whether the room sees
 // the answers is the presenter's call, made on the display - so the tally
@@ -327,14 +371,23 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // Answered whether or not this process serves the pages: a display on
+  // GitHub Pages pointed at this relay still needs to be able to ask what it
+  // can do here.
+  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+    api.handleApi(req, res, url, authContext).catch(() => {
+      try { api.json(res, 500, { error: 'request failed' }); } catch { /* response already begun */ }
+    });
+    return;
+  }
+  // Uploaded files. Served from this origin, which is why the headers below
+  // are not optional - see serveMedia.
+  if (url.pathname.startsWith('/media/')) { serveMedia(req, res, url); return; }
+
   if (!STATIC) { res.writeHead(404); res.end('not found'); return; }
 
   const requested = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  if (AUTH_PASSWORD && !AUTH_OPEN_PATHS.has(requested) && !isAuthorized(req)) {
-    res.writeHead(401, { 'www-authenticate': 'Basic realm="Podium", charset="UTF-8"' });
-    res.end('authentication required');
-    return;
-  }
+  if (!api.gate(req, res, requested, authContext)) return;
   const resolved = path.resolve(STATIC, `.${requested === '/' ? '/index.html' : requested}`);
   // Never serve outside the static root, whatever the request says.
   if (resolved !== STATIC && !resolved.startsWith(STATIC + path.sep)) {
@@ -349,14 +402,79 @@ const server = http.createServer((req, res) => {
   });
 });
 
+/**
+ * An uploaded file, from the library.
+ *
+ * These bytes came from a person, and they are served from the same origin as
+ * the controller and the display - so if a browser could ever be talked into
+ * executing one, it would run with the session cookie and the projector inside
+ * its reach. Three things stop that, and all three matter:
+ *
+ *   - library.js only accepts extensions that nothing executes (no .html,
+ *     .svg, .js, .xml), and the type served is the one the extension implies,
+ *     never the one the uploader declared;
+ *   - nosniff, so a browser cannot decide a .png is really something else;
+ *   - a sandboxing CSP, which leaves anything that slipped past the first two
+ *     with no scripts, no origin, and nothing to talk to.
+ *
+ * The path carries the SHA-256 of the contents, so the bytes behind a URL can
+ * never change and the cache can be told to keep them forever.
+ */
+function serveMedia(req, res, url) {
+  if (!db) { res.writeHead(404); res.end('not found'); return; }
+  const user = accounts.sessionUser(db, api.cookieToken(req));
+  if (!user) { api.json(res, 401, { error: 'not signed in' }); return; }
+
+  const sha256 = url.pathname.split('/')[2] || '';
+  if (!/^[0-9a-f]{64}$/.test(sha256)) { res.writeHead(404); res.end('not found'); return; }
+  if (!library.mayReadMedia(db, user, sha256)) { res.writeHead(404); res.end('not found'); return; }
+
+  const row = db.prepare('SELECT * FROM media WHERE sha256 = ?').get(sha256);
+  const file = library.mediaPath(DATA_DIR, sha256);
+
+  // The bytes behind a hash never change, so the temptation is to let the
+  // browser keep them for a year. That would be wrong: a cached copy is served
+  // without asking this process anything, so it would outlive being removed
+  // from the course, the item being deleted, and signing out. `no-cache` still
+  // lets the browser STORE it - it just has to ask first, and asking is where
+  // the check above happens. An ETag makes that question cheap: one 304 rather
+  // than a lecture's worth of video again.
+  const etag = `"${sha256}"`;
+  if (req.headers['if-none-match'] === etag) {
+    res.writeHead(304, { etag, 'cache-control': 'private, no-cache' });
+    res.end();
+    return;
+  }
+
+  // The type follows the name in the URL rather than the row, because one set
+  // of bytes can be shared by several items: media is deduplicated by hash, so
+  // the same file uploaded as a .md and again as a .pdf has one row carrying
+  // whichever type arrived first. Deriving it from the requested filename, and
+  // only ever through the same allow-list the upload went through, gives each
+  // item the type its own name implies.
+  const byName = library.uploadKindFor(decodeURIComponent(url.pathname.split('/')[3] || ''));
+
+  fs.stat(file, (err, info) => {
+    if (err || !info.isFile()) { res.writeHead(404); res.end('not found'); return; }
+    serve(req, res, file, info.size, {
+      'content-type': byName?.type || row.content_type,
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'; sandbox",
+      'cache-control': 'private, no-cache',
+      etag,
+    });
+  });
+}
+
 // Range support is not optional here: without it a browser reports a video's
 // duration as Infinity and refuses to seek, so scrubbing a self-hosted clip
 // from the iPad would silently do nothing.
-function serve(req, res, file, size) {
+function serve(req, res, file, size, overrides = {}) {
   const headers = {
     'content-type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
     'accept-ranges': 'bytes',
     'cache-control': 'no-cache',
+    ...overrides,
   };
 
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
@@ -396,6 +514,19 @@ server.on('upgrade', (req, socket, head) => {
 
   if (!room) { socket.destroy(); return; }
   if (ORIGINS && origin && !ORIGINS.includes(origin)) { socket.destroy(); return; }
+  // The one thing HTTP Basic Auth could never cover. A browser will not let
+  // page script set an Authorization header on a handshake, but it attaches
+  // cookies to a same-origin one without being asked - so once this instance
+  // has accounts, knowing a room name is no longer enough to join its relay.
+  //
+  // A deployment that serves the pages from somewhere else (GitHub Pages
+  // talking to this relay) has no same-origin cookie to send: such an instance
+  // wants ORIGIN rather than accounts. See VPS.md.
+  if (hasAccounts() && !accounts.sessionUser(db, api.cookieToken(req))) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     const peers = rooms.get(room) || new Set();
@@ -430,7 +561,32 @@ const heartbeat = setInterval(() => {
   }
 }, 25000);
 
-server.on('close', () => clearInterval(heartbeat));
-server.listen(PORT, () => {
-  console.log(`podium relay on :${PORT}${STATIC ? ` (serving ${STATIC})` : ' (relay only)'}`);
+// Expired rows are harmless but they accumulate for as long as the box runs,
+// and a login table nobody ever sweeps is a login table nobody can read.
+const sessionSweep = db ? setInterval(() => {
+  try { accounts.pruneSessions(db); } catch { /* the next sweep can have it */ }
+}, 60 * 60 * 1000) : null;
+sessionSweep?.unref();
+
+/** Say out loud which of the three authentication configurations is live. */
+function describeAuth() {
+  if (!STATIC) return 'relay only';
+  if (hasAccounts()) {
+    // Worth saying out loud: with every account disabled the gate is still up
+    // and nobody can get through it, which is the right failure but a
+    // confusing one to debug from the outside.
+    const noneEnabled = accounts.countEnabledUsers(db) === 0
+      ? ' - every account is disabled, so nobody can sign in until one is enabled' : '';
+    return AUTH_PASSWORD
+      ? `accounts (AUTH_PASSWORD is set but ignored: accounts take precedence)${noneEnabled}`
+      : `accounts${noneEnabled}`;
+  }
+  if (AUTH_PASSWORD) return 'shared password';
+  return db ? 'open - no accounts yet, run podium-admin user add' : 'open';
+}
+
+server.on('close', () => { clearInterval(heartbeat); if (sessionSweep) clearInterval(sessionSweep); });
+server.listen(PORT, HOST || undefined, () => {
+  console.log(`podium relay on ${HOST || '*'}:${PORT}${STATIC ? ` (serving ${STATIC})` : ' (relay only)'}`);
+  console.log(`podium auth: ${describeAuth()}${db ? `, data in ${store.dataDirFromEnv()}` : ''}`);
 });
