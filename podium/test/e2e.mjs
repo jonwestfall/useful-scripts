@@ -4147,12 +4147,21 @@ ok('and turns urgent under 30 seconds left, the same as an ordinary timer',
   await screen.evaluate(() => document.querySelector('.r-timer').classList.contains('is-urgent')));
 await pad.click('#music-play');
 await screen.waitForFunction(() => document.querySelector('audio#music').paused, null, { timeout: 5000 });
-const frozen = await screen.textContent('.r-timer-value');
-
 // The controller's own preview has no <audio> of its own, so it has to be
 // reading the broadcast musicNow rather than measuring anything locally.
 await pad.click('.tab[data-tab="now"]');
 await pad.waitForSelector('.r-timer', { timeout: 8000 });
+// Both ends settle on the paused position, but not in the same tick - the
+// display's element can still read the second before the pause at the moment
+// its own <audio> first reports paused, and the broadcast that follows is
+// what the controller draws. So compare what they settle on. Re-read the
+// display each time rather than holding the first value: a stale target is
+// how this waits out its whole timeout and then reports the drift anyway.
+let frozen = await screen.textContent('.r-timer-value');
+for (let i = 0; i < 40 && (await pad.textContent('.r-timer-value')) !== frozen; i++) {
+  await pad.waitForTimeout(100);
+  frozen = await screen.textContent('.r-timer-value');
+}
 ok(`a controller previews the same real countdown, from musicNow (${frozen})`, (await pad.textContent('.r-timer-value')) === frozen);
 await ctx.close();
 }
@@ -5228,13 +5237,29 @@ await acctScreen.waitForFunction(
   () => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 });
 ok('ink drawn during a server-backed lecture reaches the display', true);
 
+// Pin down WHICH lecture before standing down. Everything below reads the
+// list back, and once this one closes a later lecture can sit at index 0 -
+// so hold the id rather than an index that only happens to point here now.
+const inkLectureId = await desk.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.find((l) => !l.endedAt)?.id;
+});
+
+// What the display's own upload did, watched from outside it: a stand-down
+// that files nothing and one whose upload was turned down look identical in
+// the lecture's file list, and they are opposite bugs.
+const inkPosts = [];
+acctScreen.on('response', (r) => {
+  if (/\/api\/lectures\/\d+\/files\?name=ink\.json/.test(r.url())) inkPosts.push(r.status());
+});
+
 // E is stand down - the way back out of a lecture without a "quit" key a
 // stray press could hit.
 await acctScreen.keyboard.press('e');
-await desk.waitForFunction(async () => {
+await desk.waitForFunction(async (id) => {
   const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
-  return lectures[0]?.endedAt > 0;
-}, null, { timeout: 15000 });
+  return lectures.find((l) => l.id === id)?.endedAt > 0;
+}, inkLectureId, { timeout: 15000 });
 ok('and standing down closes it', true);
 
 // And the strokes really are in it. Read back through /media rather than
@@ -5242,17 +5267,35 @@ ok('and standing down closes it', true);
 // exactly the failure this is here to catch - snapshotInk filtered on the
 // wrong property for the whole life of the feature, so every lecture filed
 // nothing and every suite still passed.
-const filedInk = await desk.evaluate(async () => {
-  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
-  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' })
-    .then((r) => r.json());
-  const row = (lecture.files || []).find((f) => f.name === 'ink.json');
-  if (!row) return { found: false };
-  const body = await fetch(row.url, { credentials: 'same-origin' }).then((r) => r.json());
-  const surfaces = Object.values(body.bySurface || {});
-  return { found: true, surfaces: surfaces.length, strokes: surfaces.reduce((n, s) => n + (s.strokes?.length || 0), 0) };
-});
-ok(`the display files its own ink with the lecture (${filedInk.surfaces} surface(s), ${filedInk.strokes} stroke(s))`,
+const filedInk = await desk.evaluate(async (id) => {
+  // The row appears when the upload lands, which is not the same instant as
+  // the endedAt the wait above watched for - poll rather than take one look.
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    const { lecture } = await fetch(`/api/lectures/${id}`, { credentials: 'same-origin' })
+      .then((r) => r.json());
+    const row = (lecture.files || []).find((f) => f.name === 'ink.json');
+    if (row) {
+      const body = await fetch(row.url, { credentials: 'same-origin' }).then((r) => r.json());
+      const surfaces = Object.values(body.bySurface || {});
+      return {
+        found: true,
+        surfaces: surfaces.length,
+        strokes: surfaces.reduce((n, s) => n + (s.strokes?.length || 0), 0),
+      };
+    }
+    if (Date.now() > deadline) {
+      // Say what IS filed: "no ink.json" plus the names beside it is a
+      // diagnosis, where a bare undefined is a second debugging session.
+      return { found: false, surfaces: 0, strokes: 0, filed: (lecture.files || []).map((f) => f.name) };
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}, inkLectureId);
+acctScreen.removeAllListeners('response');
+ok(filedInk.found
+  ? `the display files its own ink with the lecture (${filedInk.surfaces} surface(s), ${filedInk.strokes} stroke(s))`
+  : `the display files its own ink with the lecture (no ink.json; upload: ${inkPosts.join(', ') || 'never sent'}; filed: ${filedInk.filed.join(', ') || 'nothing'})`,
   filedInk.found && filedInk.surfaces > 0 && filedInk.strokes > 0);
 
 // Everything below this point that reads "the" session - the timeline check,
