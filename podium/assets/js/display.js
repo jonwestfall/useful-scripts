@@ -1122,6 +1122,45 @@ async function startRecording() {
   } catch { /* no network: the lecture runs, only the record is lost */ }
 }
 
+// 404 (no such lecture) or 409 (already ended) from any lecture-scoped
+// request means this id is never going to accept anything again - not a
+// blip to retry through. Two ways to get here that are NOT "the room went
+// quiet": the inactivity sweep closed it out from under a display that lost
+// its network right as the deadline passed, or - the one this exists for -
+// a SECOND display sharing the same room stood down first. Standing down is
+// a local, per-machine action (see standDown/the 'e' key), never broadcast,
+// so with more than one display live in a room, the other one has no way to
+// know the shared lecture it was still writing to just ended.
+function lectureGone(status) {
+  return status === 404 || status === 409;
+}
+
+// Drops the dead id and, if this display is still armed, opens a fresh
+// lecture so recording keeps going rather than silently writing into a void
+// for the rest of class. Whatever was still queued for the dead id is not
+// carried over by name - it simply sits in eventQueue, untagged, and rides
+// out under the new id on the next flush, same as a real gap in a single
+// lecture's own timeline already can. Routed through
+// queueRecordingTransition so this can never race an actual E press or a
+// fresh Go live landing at the same moment - see that queue's own comment
+// for why racing start/stop is the failure mode it exists to prevent.
+function recoverRecording(id) {
+  queueRecordingTransition(async () => {
+    if (lectureId !== id) return; // already moved on by the time this ran
+    lectureId = null;
+    state.lectureId = null;
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+    commit();
+    if (!state.armed) return;
+    await startRecording();
+    // Nothing left over this display's own retry cadence for however long
+    // this room stays on the current slide - push the backlog now instead
+    // of leaving it to wait on the next surface change.
+    if (lectureId && eventQueue.length) flushEvents(lectureId);
+  });
+}
+
 // "Still here", on a timer, for as long as this display is live.
 //
 // The server closes a lecture nobody has heard from in a while, because most
@@ -1138,10 +1177,13 @@ function startHeartbeat(id) {
   clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(() => {
     if (lectureId !== id) { clearInterval(heartbeatTimer); heartbeatTimer = null; return; }
-    // Failures are ignored on purpose: one lost beat is not the end of a
-    // lecture, and the next one is a minute away. What the server does with a
-    // long silence is the server's decision to make.
-    postJson(lectureUrl(id, '/alive'), {}).catch(() => {});
+    // A lost beat is ignored - the next one is a minute away - but a beat
+    // that actually LANDS and comes back saying this lecture is gone is not
+    // something to wait out: nothing this display posts from here on on this
+    // id will ever be accepted either.
+    postJson(lectureUrl(id, '/alive'), {})
+      .then((res) => { if (!res.ok && lectureGone(res.status)) recoverRecording(id); })
+      .catch(() => {});
   }, LECTURE_ALIVE_MS);
 }
 
@@ -1367,6 +1409,7 @@ function settleSurface() {
 async function flushEvents(id) {
   if (!id || !eventQueue.length) return;
   if (flushPromise) { await flushPromise; return flushEvents(id); }
+  let gone = false;
   flushPromise = (async () => {
     const batch = eventQueue.slice(0, RECORD_BATCH);
     try {
@@ -1375,6 +1418,10 @@ async function flushEvents(id) {
       // queue alone and the next one carries the same entries - which is the
       // whole reason this is a queue and not a request per slide.
       if (res.ok) eventQueue = eventQueue.slice(batch.length);
+      // Not a "retry later" failure: this id will never take another event.
+      // Stop rescheduling against it below and let recoverRecording open one
+      // that will.
+      else if (lectureGone(res.status)) gone = true;
     } catch { /* keep them */ }
   })();
   try {
@@ -1382,6 +1429,7 @@ async function flushEvents(id) {
   } finally {
     flushPromise = null;
   }
+  if (gone) { recoverRecording(id); return; }
   if (eventQueue.length && !flushTimer) {
     flushTimer = setTimeout(() => { flushTimer = null; flushEvents(id); }, RECORD_FLUSH_MS);
   }
@@ -1723,6 +1771,15 @@ async function connect() {
       }
       if (msg.t === 'rtc') { camera.handle(msg); return; }
       if (msg.t === 'sync') { broadcast(); return; }
+      // The manual, controller-driven way to end class - "Finish session &
+      // save" on the Photos tab - alongside the local 'e' key and the
+      // server's own inactivity close. Unlike 'e', this is broadcast: with
+      // more than one display live in the room (see issue #26), it is the
+      // one action that reaches every one of them together, rather than
+      // ending the shared recording on whichever machine nobody happened to
+      // press E on while every other display quietly outlives it - see
+      // recoverRecording above for what that used to cost.
+      if (msg.t === 'session-end') { standDown(); return; }
       if (msg.t === 'laser') { showLaser(msg); return; }
       if (msg.t === 'ink-pull') {
         // A controller whose digest does not match this screen's: hand it the
