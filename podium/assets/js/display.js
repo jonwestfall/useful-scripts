@@ -22,6 +22,7 @@ import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { encodeToFit } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
 import { createCameraReceiver } from './rtc.js';
+import { serverInfo } from './server.js';
 
 const HEARTBEAT_MS = 2000;
 const TELEMETRY_MS = 400;
@@ -990,6 +991,348 @@ async function tickPolls() {
 }
 setInterval(tickPolls, POLL_TICK_MS);
 
+// --- the session record ------------------------------------------------------
+//
+// What was on the projector, written down so it can be read back weeks later.
+//
+// THIS SCREEN writes it, and that is not a preference. Every message Podium
+// puts on a relay is encrypted in the browser under the room passphrase, so a
+// relay keeping its own log would have a pile of ciphertext and no idea what
+// any of it showed. The display is the one device holding the decrypted state,
+// and on a server-backed deployment it is also a signed-in page - so it is the
+// only thing in the system that CAN keep this record. See server/lectures.js.
+//
+// Entirely optional, and silent when it is not available: a Podium served from
+// GitHub Pages, a USB stick or a relay with no database never gets past the
+// capabilities probe below, and nothing on this screen changes.
+
+const RECORD_FLUSH_MS = 5000;
+// At most one timeline entry per this long. Stepping through forty slides
+// should leave a record of where the lecture DWELLED, not forty rows - so a
+// change inside the gap replaces the one waiting rather than adding its own.
+const RECORD_MIN_GAP_MS = 15000;
+const RECORD_QUEUE_MAX = 200;
+const RECORD_BATCH = 100;
+
+let lectureId = null;       // the lecture being written, while live
+let eventQueue = [];
+let flushTimer = null;
+let flushPromise = null;    // the in-flight flush, so a caller can await it rather than bail
+let lastSurface = null;     // the ink surface key the last entry described
+let lastEventAt = 0;
+let pendingEvent = null;
+let pendingTimer = null;
+
+// Said on the screen the room can see, rather than left to the docs: what goes
+// on the projector being written down is the sort of thing people should not
+// have to go looking for.
+serverInfo().then((info) => {
+  if (!info.features.includes('sessions')) return;
+  const note = $('#arm-record');
+  note.textContent = 'This lecture is saved to the server: what went on screen, your ink and any poll results. Photos are kept only if a controller is set to keep them.';
+  note.hidden = false;
+});
+
+const lectureUrl = (id, suffix = '') => `/api/lectures/${encodeURIComponent(id)}${suffix}`;
+
+const postJson = (url, body) => fetch(url, {
+  method: 'POST',
+  credentials: 'same-origin',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+// Slide and page numbers are stored 0- and 1-based respectively inside an item
+// (see inkSurfaceKey); both are written here as a human would say them.
+function recordDetail(item) {
+  const detail = { type: item?.type || 'black' };
+  if (item?.type === 'deck') detail.slide = (Number(item.slide) || 0) + 1;
+  if (item?.type === 'slides') detail.slide = (Number(item.slide) || 0) + 1;
+  if (item?.type === 'pdf') detail.page = Number(item.page) || 1;
+  if (item?.type === 'poll' && item.pollId) detail.pollId = item.pollId;
+  return detail;
+}
+
+// Go live and stand down each fire their recording half (startRecording /
+// stopRecording) without the caller awaiting it - goLive() itself is not
+// async, and a keyboard shortcut can trigger either at any moment. Mashed
+// quickly enough, that fire-and-forget shape is a real race: a stand-down can
+// run stopRecording() while a PRIOR startRecording() is still waiting on its
+// POST, see lectureId as not yet set, and return having done nothing - and
+// when that POST later resolves it opens a lecture nobody ever closes. Worse,
+// a Go live straight after a stand-down can start drawing ink for a NEW
+// lecture while the PREVIOUS stopRecording() is still awaiting its own
+// flush - and fileInk() snapshots whatever state.ink holds at the moment it
+// runs, so the old lecture's file can end up holding the new lecture's ink.
+//
+// queueRecordingTransition is the fix for both: every start and every stop
+// goes through this one chain, so a transition never begins until the
+// previous one - start or stop - has completely finished. Mashing the button
+// just queues the transitions instead of racing them.
+let recordingChain = Promise.resolve();
+function queueRecordingTransition(fn) {
+  recordingChain = recordingChain.then(fn, fn);
+  return recordingChain;
+}
+
+async function startRecording() {
+  if (lectureId) return;
+  // Awaited rather than read off a flag the probe sets when it lands: Go live
+  // can be clicked in the same second the page opened, and a lecture that went
+  // unrecorded because of a race is exactly the kind of thing nobody would
+  // notice until they went looking for it. serverInfo() only asks once.
+  if (!(await serverInfo()).features.includes('sessions')) return;
+  try {
+    const res = await postJson('/api/lectures', { room: cfg.room });
+    if (!res.ok) return;
+    const { lecture } = await res.json();
+    lectureId = lecture.id;
+    state.lectureId = lecture.id;
+    lastSurface = null;
+    lastEventAt = 0;
+    // Broadcast it: a controller ending a poll files the tally under this id.
+    // commit() notes what is already on screen as the timeline's first entry.
+    commit();
+  } catch { /* no network: the lecture runs, only the record is lost */ }
+}
+
+async function stopRecording() {
+  const id = lectureId;
+  if (!id) return;
+  lectureId = null;
+  state.lectureId = null;
+  // Broadcast now, the same way startRecording broadcasts the id it just set
+  // - standDown()'s own commit() (which sets state.armed = false) already ran
+  // before this transition even started (queueRecordingTransition queues it
+  // as a microtask), so without this, a controller keeps believing the just-
+  // ended lecture is still the live one: state.armed correctly says the room
+  // stood down, but state.lectureId does not, and a photo or poll taken in
+  // the gap before the NEXT Go live can still pass a recordingNow()-style
+  // check and get filed against a lecture that has already ended.
+  commit();
+  clearTimeout(pendingTimer);
+  // A retry timer left over from an earlier failed flush in THIS lecture is
+  // about to be superseded by the drain below - cancel it, rather than let it
+  // fire later against whatever eventQueue and flushEvents' closure happen to
+  // hold by then.
+  clearTimeout(flushTimer);
+  flushTimer = null;
+  if (pendingEvent) { eventQueue.push(pendingEvent); pendingEvent = null; }
+  // Snapshotted synchronously, before any await below - not read from
+  // state.ink later, inside fileInk, once this function has already yielded.
+  // queueRecordingTransition serializes the recording subsystem's own
+  // start/stop calls, but goLive() flips state.armed back on (and drawing
+  // along with it) the instant it runs, and nothing about this chain stops a
+  // fresh Go Live from happening while this stand-down is still awaiting its
+  // flush below. Reading state.ink after that await is exactly how a new
+  // lecture's ink ends up filed under the old one's id.
+  const inkSurfaces = snapshotInk();
+  // A few immediate tries rather than flushEvents' usual scheduled retry:
+  // queueRecordingTransition will not let the next Go live begin until this
+  // function returns, so anything still queued after that point would only
+  // ever be retried by a timer firing once a DIFFERENT lecture is already
+  // live and pushing its own events into this same queue - which is how a
+  // leftover batch here ends up posted under, or mixed into, the wrong
+  // lecture's record. flushEvents awaits any flush already in flight (from
+  // the periodic timer, running independently of this transition) rather
+  // than bailing out from under it, so this genuinely waits for it to land.
+  for (let attempt = 0; attempt < 3 && eventQueue.length; attempt++) {
+    await flushEvents(id);
+  }
+  // Each of those attempts can itself reschedule flushTimer (see flushEvents)
+  // if it failed - bound to `id`, which is safe on its own, but that timer
+  // would still fire against the ONE global eventQueue, which a new lecture
+  // may already be pushing its own events into by then. Cancel it again now
+  // that the queue is genuinely empty, rather than let it post a later
+  // lecture's events under this one's id.
+  clearTimeout(flushTimer);
+  flushTimer = null;
+  // Whatever still would not go, by now, goes with this lecture rather than
+  // bleeding into the next one's queue - the same trade the network-down
+  // case already makes for ink and files: the record stops early, it never
+  // reads as the wrong lecture's.
+  eventQueue = [];
+  await fileInk(id, inkSurfaces);
+  try { await postJson(lectureUrl(id, '/end'), { at: Date.now() }); } catch { /* it stays open */ }
+}
+
+// What fileInk actually keeps: every surface with at least one stroke on it,
+// as of right now. Pulled out so stopRecording can call this synchronously,
+// before any await - see the comment there for why that timing matters.
+function snapshotInk() {
+  return Object.fromEntries(
+    Object.entries(state.ink.bySurface || {}).filter(([, strokes]) => strokes?.length),
+  );
+}
+
+// Ink, as strokes, at the end of the lecture.
+//
+// This screen is the only device that has all of it, which is why exporting a
+// session has always begun by pulling it across the relay from here. Filing it
+// with the lecture means the annotations survive the tab closing even when
+// nobody exported - and, unlike a rasterized page, the strokes are small: a
+// heavily drawn-on lecture is tens of kilobytes of JSON.
+//
+// It is the raw record, not the picture. Rebuilding an annotated slide needs
+// the deck behind it, which is the controller's job and is what an export
+// files alongside this.
+//
+// `surfaces` is always the caller's own snapshot (see snapshotInk and the
+// comment in stopRecording on why it is taken before any await) - never
+// rebuilt from state.ink here, which by the time this runs may already
+// belong to a lecture that went live after this one stood down.
+async function fileInk(id, surfaces) {
+  if (!Object.keys(surfaces).length) return;
+  const body = JSON.stringify({ room: cfg.room, savedAt: Date.now(), bySurface: surfaces });
+  // The cap is the server's (16 MB); stopping short of it here means the
+  // lecture keeps a smaller record rather than the server turning the whole
+  // thing down over one enormous surface.
+  if (body.length > 15 * 1024 * 1024) return;
+  try {
+    await fetch(lectureUrl(id, '/files?name=ink.json&kind=ink'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body,
+    });
+  } catch { /* the ink is still on this screen, and still in localStorage */ }
+}
+
+/**
+ * Note what the room is looking at now, if it is something new.
+ *
+ * Called from commit(), so it runs on every state change there is - which is
+ * why the first thing it does is the cheap comparison. The ink surface key is
+ * what "something new" means here, deliberately: it already knows that slide 4
+ * of a deck is a different thing from slide 5, and that re-staging the same
+ * message is not.
+ */
+function noteSurface() {
+  if (!lectureId || !state.armed) return;
+  const item = state.program;
+  const primaryKey = inkSurfaceKey(item);
+  // A split layout can change what B, C or D show - or the layout itself -
+  // with panel A untouched, and the room saw that happen; panel A's own key
+  // used to be the whole timeline, which meant a lecture run entirely from a
+  // split screen could go by with nothing recorded at all. The layout and
+  // every active panel beyond A factor into whether this counts as new.
+  const panels = activePanels();
+  const key = [state.layout, primaryKey, ...panels.map((p) => inkSurfaceKey(p.item))].join('|');
+  if (key === lastSurface) return;
+  const opening = lastSurface === null;
+  lastSurface = key;
+  // Going live with nothing up yet is not a moment in the lecture. Later
+  // blackouts are - "the projector went dark at 10:42" is real - so only the
+  // opening one is dropped, and only when the whole screen opens black: a
+  // split layout showing anything else already IS something happening.
+  if (opening && state.layout === 'single' && primaryKey === 'black') return;
+  // A client-generated id, sent with the event every time it is (re)posted -
+  // see the client_id comment in store.js's migration. Invented once, here,
+  // rather than at flush time, so a retried flush resends the SAME id for the
+  // SAME event instead of minting a new one that would defeat the dedup.
+  pendingEvent = {
+    id: uid(10), at: Date.now(), kind: 'program', title: itemTitle(item),
+    detail: {
+      ...recordDetail(item),
+      // Recorded alongside panel A's own detail rather than as a separate
+      // event: the timeline is "what was on the projector", and on a split
+      // screen that is all of it at once, not one panel at a time.
+      ...(panels.length
+        ? { layout: state.layout, panels: panels.map((p) => ({ title: itemTitle(p.item), ...recordDetail(p.item) })) }
+        : {}),
+    },
+  };
+  clearTimeout(pendingTimer);
+  pendingTimer = setTimeout(settleSurface, Math.max(0, RECORD_MIN_GAP_MS - (Date.now() - lastEventAt)));
+}
+
+function settleSurface() {
+  if (!pendingEvent || !lectureId) return;
+  // Captured now rather than read again inside the flush timer's closure
+  // below: by the time that timer fires, lectureId may belong to a different
+  // lecture (a stand-down and a fresh Go live both change it), and this
+  // entry belongs to the lecture that was live when it was queued.
+  const id = lectureId;
+  lastEventAt = Date.now();
+  // `at` is when the item went up, not when the gap expired: the entry should
+  // say when the room started looking at this, not when this code got round
+  // to writing it down.
+  eventQueue.push(pendingEvent);
+  pendingEvent = null;
+  if (eventQueue.length > RECORD_QUEUE_MAX) {
+    const dropped = eventQueue.length - RECORD_QUEUE_MAX;
+    eventQueue.splice(0, dropped);
+    // The network being down long enough to fill this queue is exactly the
+    // kind of gap `truncated` exists to flag - but that flag is the SERVER's,
+    // set when its own much larger cap is hit, and it has no way to know
+    // entries never reached it at all. Silently trimming here would leave the
+    // timeline reading as continuous through a gap nobody was told about, so
+    // the gap gets a row of its own instead - the one thing every reader of
+    // the timeline (admin.html, a downloaded session.txt) already knows how
+    // to show.
+    eventQueue.unshift({
+      id: uid(10),
+      at: eventQueue[0]?.at ?? Date.now(),
+      kind: 'note',
+      title: `${dropped} earlier moment${dropped === 1 ? '' : 's'} lost - the network was down long enough to fill this screen's own queue`,
+      detail: {},
+    });
+  }
+  // Bound to `id`, the lecture this entry belongs to and the one settleSurface
+  // was called for - not the mutable `lectureId`, which a stand-down clears
+  // and a fresh Go live then points at a different lecture entirely before
+  // this timer ever fires. See stopRecording for the other half of this: it
+  // cancels this very timer on the way out, so the only way it fires is while
+  // `id` is still the live lecture.
+  if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = null; flushEvents(id); }, RECORD_FLUSH_MS);
+}
+
+/**
+ * Send whatever is queued for `id`. Awaits (rather than skips past) a flush
+ * already in flight - from the periodic timer, say - so that a caller like
+ * stopRecording that truly needs the queue drained before it returns is not
+ * told "done" by a guard that only meant "someone else is already doing
+ * this". `id` is always the lecture the CALLER intends to flush for, which
+ * may no longer be the live one (stopRecording calls this after clearing
+ * lectureId) - the request is addressed by id, not by whatever is live now.
+ */
+async function flushEvents(id) {
+  if (!id || !eventQueue.length) return;
+  if (flushPromise) { await flushPromise; return flushEvents(id); }
+  flushPromise = (async () => {
+    const batch = eventQueue.slice(0, RECORD_BATCH);
+    try {
+      const res = await postJson(lectureUrl(id, '/events'), { events: batch });
+      // Only drop them once the server has them. A flush that fails leaves the
+      // queue alone and the next one carries the same entries - which is the
+      // whole reason this is a queue and not a request per slide.
+      if (res.ok) eventQueue = eventQueue.slice(batch.length);
+    } catch { /* keep them */ }
+  })();
+  try {
+    await flushPromise;
+  } finally {
+    flushPromise = null;
+  }
+  if (eventQueue.length && !flushTimer) {
+    flushTimer = setTimeout(() => { flushTimer = null; flushEvents(id); }, RECORD_FLUSH_MS);
+  }
+}
+
+// A closing tab has no time for a fetch, and the last thing that happened is
+// exactly what has not been sent yet. sendBeacon is the one request a browser
+// promises to finish after the page is gone; it carries same-origin cookies,
+// which is what makes it authenticate at all.
+function beaconEvents() {
+  if (!lectureId) return;
+  const events = [...eventQueue, ...(pendingEvent ? [pendingEvent] : [])].slice(0, RECORD_BATCH);
+  if (!events.length) return;
+  try {
+    navigator.sendBeacon?.(lectureUrl(lectureId, '/events'),
+      new Blob([JSON.stringify({ events })], { type: 'application/json' }));
+  } catch { /* nothing more to try from a page that is leaving */ }
+}
+
 // --- rendering the rest of the chrome --------------------------------------
 
 function render() {
@@ -1159,6 +1502,7 @@ function saveStateSoon() {
 function flushPersistence() {
   saveInkNow();
   saveStateNow();
+  beaconEvents();
 }
 window.addEventListener('pagehide', flushPersistence);
 
@@ -1209,6 +1553,7 @@ function commit() {
   broadcastSoon();
   saveInkSoon();
   saveStateSoon();
+  noteSurface();
 }
 
 // Ink is the one payload that can be far larger than a relay message will
@@ -1459,6 +1804,7 @@ function goLive() {
 
   sizeInk();
   commit();
+  queueRecordingTransition(startRecording);
   return finishGoLive([audio, context, fullscreen]);
 }
 
@@ -1481,6 +1827,7 @@ async function standDown() {
   document.body.classList.remove('is-live');
   state.armed = false;
   commit();
+  queueRecordingTransition(stopRecording);
   try { await exitFullscreen(); } catch { /* already windowed */ }
 }
 

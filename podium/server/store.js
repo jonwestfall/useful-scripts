@@ -151,6 +151,129 @@ const MIGRATIONS = [
       CREATE INDEX plans_by_course ON plans(course_id);
     `);
   },
+
+  function toV4(db) {
+    db.exec(`
+      -- One run of the room: Go live to stand down. The DISPLAY writes these,
+      -- not the relay, and that is not a preference - the relay only ever sees
+      -- ciphertext, so it could not tell you what was on screen if it wanted
+      -- to. The display is the one device that holds the decrypted state, and
+      -- on a server-backed deployment it is also a signed-in page, so it is
+      -- the only thing in the system able to keep this record at all.
+      --
+      -- course_id is resolved from the ROOM at start time: the course whose
+      -- stored settings name this room, among the courses the account
+      -- starting it may use. NULL means no course matched, and then the same
+      -- rule as plans applies - it is private to whoever ran it. A record of
+      -- your own teaching is not something colleagues should find by default.
+      CREATE TABLE lectures (
+        id         INTEGER PRIMARY KEY,
+        course_id  INTEGER REFERENCES courses(id) ON DELETE SET NULL,
+        room       TEXT    NOT NULL DEFAULT '',
+        title      TEXT    NOT NULL DEFAULT '',
+        started_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        started_at INTEGER NOT NULL,
+        ended_at   INTEGER,
+        -- Set when the event cap was reached. A timeline that silently stops
+        -- halfway would be read as "the lecture ended there".
+        truncated  INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX lectures_by_course ON lectures(course_id);
+      CREATE INDEX lectures_by_owner ON lectures(started_by);
+      CREATE INDEX lectures_by_start ON lectures(started_at);
+
+      -- Append-only. Nothing is ever updated in place, and an event's end is
+      -- simply the next one's start (or the lecture's ended_at for the last),
+      -- so a display that loses the network or the power leaves a timeline
+      -- that is short rather than one that is wrong.
+      CREATE TABLE lecture_events (
+        id         INTEGER PRIMARY KEY,
+        lecture_id INTEGER NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+        at         INTEGER NOT NULL,
+        kind       TEXT    NOT NULL,
+        title      TEXT    NOT NULL DEFAULT '',
+        detail     TEXT    NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX lecture_events_by_lecture ON lecture_events(lecture_id, at);
+
+      -- The tally as it stood when the poll was ended, which is the only
+      -- moment it exists anywhere: the relay deletes a poll as it closes, and
+      -- until now the only copy was the controller's localStorage. This is
+      -- what makes "re-export that CSV weeks later" possible.
+      CREATE TABLE lecture_polls (
+        id         INTEGER PRIMARY KEY,
+        lecture_id INTEGER NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+        poll_id    TEXT    NOT NULL,
+        kind       TEXT    NOT NULL DEFAULT 'choice',
+        question   TEXT    NOT NULL DEFAULT '',
+        results    TEXT    NOT NULL DEFAULT '{}',
+        voters     INTEGER NOT NULL DEFAULT 0,
+        ended_at   INTEGER NOT NULL,
+        -- The same poll ended twice (two controllers in the room, or a retry
+        -- after a failed post) is one row, not two.
+        UNIQUE (lecture_id, poll_id)
+      );
+      CREATE INDEX lecture_polls_by_lecture ON lecture_polls(lecture_id, ended_at);
+    `);
+  },
+
+  function toV5(db) {
+    db.exec(`
+      -- The bulky half of a session: the photos taken in the room, the ink as
+      -- strokes, and the rasterized pages the controller builds when it exports
+      -- - annotated slides, boards drawn on, poll CSVs, the session.txt that
+      -- says what is in it. Each row is one file inside what used to be a zip
+      -- that existed only on whichever device pressed Export.
+      --
+      -- The bytes go in the SAME content-addressed media store the library uses,
+      -- so a photo filed twice (an export after a re-export) is stored once and
+      -- removing either copy can never pull the bytes out from under the other.
+      -- That is also why library.js's forgetMediaIfUnused and mayReadMedia both
+      -- had to learn about this table: "unused" and "may read" are now questions
+      -- with two places to look.
+      --
+      -- name is the path the file has inside the zip, and it is unique per
+      -- lecture: exporting a second time REPLACES what the first export left
+      -- rather than accumulating two of everything.
+      CREATE TABLE lecture_files (
+        id         INTEGER PRIMARY KEY,
+        lecture_id INTEGER NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+        media_id   INTEGER NOT NULL REFERENCES media(id),
+        kind       TEXT    NOT NULL,          -- photo | ink | session
+        name       TEXT    NOT NULL,
+        created_at INTEGER NOT NULL,
+        created_by INTEGER REFERENCES users(id),
+        UNIQUE (lecture_id, name)
+      );
+      CREATE INDEX lecture_files_by_lecture ON lecture_files(lecture_id);
+      CREATE INDEX lecture_files_by_media ON lecture_files(media_id);
+    `);
+  },
+
+  function toV6(db) {
+    db.exec(`
+      -- A retried POST is not the same thing as a second event. The display
+      -- queues a batch and re-sends it whenever a flush's response is lost -
+      -- deliberately, since the alternative is losing the batch outright - but
+      -- a lost RESPONSE does not mean a lost REQUEST: the insert can have
+      -- already committed here, and the same batch arrives again a few
+      -- seconds later. Without something to recognise "I already have this
+      -- one", a flaky connection duplicates rows in a timeline that is
+      -- supposed to be the reliable record.
+      --
+      -- client_id is that something: an id the display invents once per
+      -- event, at the moment it decides to record one, and sends with it
+      -- every time that event is (re)posted. Nullable, because an event with
+      -- no id (an older display, or one of the rare paths that does not carry
+      -- one) simply is not deduplicated - the same "opt in, never opt
+      -- everyone into a stricter rule at once" shape client_id-less rows
+      -- always had. The partial unique index is what makes the same
+      -- (lecture, client_id) pair a no-op on a retry instead of a duplicate.
+      ALTER TABLE lecture_events ADD COLUMN client_id TEXT;
+      CREATE UNIQUE INDEX lecture_events_by_client
+        ON lecture_events(lecture_id, client_id) WHERE client_id IS NOT NULL;
+    `);
+  },
 ];
 
 function migrate(db) {
@@ -191,7 +314,8 @@ function migrate(db) {
 }
 
 /**
- * Open (creating if needed) the database under `dataDir`.
+ * Open the database under `dataDir`, creating it (and the directory) unless
+ * told not to.
  *
  * Returns null for one reason only: no dataDir was configured, which means
  * "store nothing" and is a supported way to run the relay. Everything else
@@ -203,8 +327,14 @@ function migrate(db) {
  * future - must NOT quietly look the same as "this box stores nothing". It
  * would take the gate down with it and leave the pages open to anyone. The
  * caller is expected to refuse to start.
+ *
+ * `create: false` is for podium-admin's doctor, which exists to diagnose
+ * exactly the box where DATA_DIR is missing or mistyped - opening this the
+ * ordinary way would silently create a fresh, empty database right there and
+ * report a clean bill of health on the wrong directory. With this off, a
+ * missing podium.db throws instead of being conjured into existence.
  */
-function open(dataDir) {
+function open(dataDir, { create = true } = {}) {
   if (!dataDir) return null;
   let DatabaseSync;
   try {
@@ -212,20 +342,27 @@ function open(dataDir) {
   } catch {
     throw new Error('this Node has no node:sqlite (Podium needs 22.5 or newer to store anything)');
   }
+  const dbFile = path.join(dataDir, 'podium.db');
+  if (!create && !fs.existsSync(dbFile)) {
+    throw new Error(`no database at ${dbFile} - check DATA_DIR`);
+  }
   try {
-    // 0700: the database holds password hashes and the room passphrase.
-    // mkdirSync's mode only applies to a directory it actually creates, so an
-    // operator pointing DATA_DIR at an existing 0755 directory would otherwise
-    // leave all of that readable by every local account. Tightened either way,
-    // and not fatal if it cannot be - a deliberate ACL is the operator's call,
-    // and refusing to start over it would be worse than saying so.
-    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-    try {
-      fs.chmodSync(dataDir, 0o700);
-    } catch (err) {
-      console.error(`podium: could not tighten permissions on ${dataDir} (${err.code}) - check who can read it`);
+    if (create) {
+      // 0700: the database holds password hashes and the room passphrase.
+      // mkdirSync's mode only applies to a directory it actually creates, so
+      // an operator pointing DATA_DIR at an existing 0755 directory would
+      // otherwise leave all of that readable by every local account.
+      // Tightened either way, and not fatal if it cannot be - a deliberate
+      // ACL is the operator's call, and refusing to start over it would be
+      // worse than saying so.
+      fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+      try {
+        fs.chmodSync(dataDir, 0o700);
+      } catch (err) {
+        console.error(`podium: could not tighten permissions on ${dataDir} (${err.code}) - check who can read it`);
+      }
     }
-    const db = new DatabaseSync(path.join(dataDir, 'podium.db'));
+    const db = new DatabaseSync(dbFile);
     // WAL so a long read cannot block the write that a login is; a busy
     // timeout so the CLI adding a user while the server runs waits its turn
     // rather than failing outright.

@@ -249,7 +249,30 @@ const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_IN
 // because that status has exactly one source - library.js turning down a file
 // type - and an upload that broke for any other reason fails its assertion
 // instead of quietly passing.
-const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)/;
+//
+// favicon.ico is not deliberate in the same sense - nothing here is testing
+// it - but it is not a result either: Podium serves no favicon by design (see
+// "stays reachable with no credentials (404)" in the auth-gate section, which
+// asserts exactly this response), and a browser fetching it unprompted on
+// every fresh origin this suite signs into is standard behaviour, not
+// something any page here caused. Narrowed to that one path so a real 404
+// anywhere else - including a real 404 that happens to be ABOUT a favicon a
+// test actually cares about - still fails its own assertion.
+const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)|404 \(Not Found\).*favicon\.ico/;
+
+// A fourth deliberate case - a PATCH to /api/lectures/<id> forced to answer
+// 403, to prove a rejected rename reverts the field rather than leaving it
+// looking saved - does not fit DELIBERATE above: matching on status and path
+// alone would also swallow a real forbidden GET, DELETE, or a sibling route
+// like /api/lectures/<id>/files, /events or /polls (all contain the same
+// "/api/lectures/<digits>" substring), hiding a genuine permission
+// regression anywhere under that prefix for the rest of the suite. This flag
+// is armed only for the duration of that one interception (see the rename
+// test itself) so the allowance covers exactly the request it is testing.
+let expectingLectureRenameForbidden = false;
+// Anchored at the end (where = text + " " + url, so the url is always last):
+// a sibling route always has more path after the id, which this cannot match.
+const LECTURE_RENAME_FORBIDDEN = /403 \(Forbidden\).*\/api\/lectures\/\d+$/;
 
 const trap = (page, tag) => {
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
@@ -257,6 +280,7 @@ const trap = (page, tag) => {
     if (m.type() !== 'error') return;
     const where = `${m.text()} ${m.location()?.url || ''}`;
     if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where)) return;
+    if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     errors.push(`${tag} console: ${m.text()}`);
   });
 };
@@ -4812,6 +4836,15 @@ for (const p of alwaysOpen) {
 ok('a poll can still be created with no credentials, same as join.html needs',
   (await fetch(`${authBase}/poll`, { method: 'POST' })).status === 200);
 
+// The one number a running process will tell anybody without a login, and the
+// only way to find out that a deploy flipped the symlink without restarting the
+// service - see podium-admin doctor.
+const health = await fetch(`${authBase}/healthz`).then((r) => r.text());
+const buildOnDisk = fs.readFileSync(path.join(ROOT, 'assets', 'js', 'protocol.js'), 'utf8')
+  .match(/BUILD\s*=\s*(\d+)/)[1];
+ok(`/healthz names the build this process is actually serving ("${health.trim()}")`,
+  new RegExp(`\\bbuild ${buildOnDisk}\\b`).test(health));
+
 ok('the wrong password is refused, not just any Basic header',
   (await fetch(`${authBase}/control.html`, basic('podium', 'nope'))).status === 401);
 ok('the right username and password get the page through',
@@ -4934,11 +4967,14 @@ fs.writeFileSync(uploadDeck, '# Uploaded In Class\n\nThis never went near git.\n
 await desk.setInputFiles('#up-file', uploadDeck);
 await desk.fill('#up-title', 'Week 1 lecture');
 await desk.selectOption('#up-course', 'psy415');
-await desk.waitForSelector('.admin-row', { state: 'detached' }).catch(() => {});
+await desk.waitForSelector('#items .admin-row', { state: 'detached' }).catch(() => {});
 await desk.click('#up-go');
-await desk.waitForSelector('.admin-row');
-ok(`the upload lands in the library (${(await desk.textContent('.admin-row')).replace(/\s+/g, ' ').trim()})`,
-  (await desk.textContent('.admin-row')).includes('Week 1 lecture'));
+// Scoped to the library list: the admin page has rows for people, courses and
+// past sessions too, and "the first .admin-row on the page" is not a thing this
+// test ever meant.
+await desk.waitForSelector('#items .admin-row');
+ok(`the upload lands in the library (${(await desk.textContent('#items .admin-row')).replace(/\s+/g, ' ').trim()})`,
+  (await desk.textContent('#items .admin-row')).includes('Week 1 lecture'));
 ok(`and the page accounts for the disk it used (${await desk.textContent('#usage')})`,
   /1 file, /.test(await desk.textContent('#usage')));
 
@@ -5091,6 +5127,221 @@ ok('picking one fills the form in and leaves it to be looked at, not saved behin
   await two.inputValue('#c-room') === 'psy101-live'
   && await two.evaluate(() => !localStorage.getItem('podium.config.v2')));
 await twoCtx.close();
+
+// --- what happened in the room -----------------------------------------
+//
+// The display wrote a timeline while the deck above was on screen. Nothing
+// else could have: the relay only ever sees ciphertext (see
+// server/lectures.js), so a lecture is only ever recorded by the one device
+// that holds the decrypted state.
+await desk.waitForFunction(async () => {
+  const res = await fetch('/api/lectures', { credentials: 'same-origin' });
+  if (!res.ok) return false;
+  const { lectures } = await res.json();
+  return lectures.length === 1 && lectures[0].events > 0;
+}, null, { timeout: 20000 });
+ok('going live starts a session record, and what went on the projector lands in it', true);
+
+// --- the bulky half: a photo, and the export that outlives the tablet ------
+//
+// A photo is somebody else's picture more often than not, so the server keeping
+// it is a switch you can see rather than a new default nobody was told about.
+await pad.click('.tab[data-tab="photos"]');
+ok('a server-backed controller offers the choice about keeping photos, and starts with it off',
+  await pad.isVisible('#photo-keep-row') && !await pad.isChecked('#photo-keep'));
+
+// Off is the default, so this lecture has to ask for its photos.
+await pad.check('#photo-keep');
+await pad.click('#photo-panel');
+await pad.waitForSelector('#photo-strip .shot', { timeout: 20000 });
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' })
+    .then((r) => r.json());
+  return (lecture.files || []).some((f) => f.kind === 'photo');
+}, null, { timeout: 20000 });
+ok('a photo taken in the room is filed with the lecture as it is taken', true);
+
+// And the export, which is what makes a past lecture downloadable in March
+// from a browser that was never in the room.
+const acctZip = pad.waitForEvent('download', { timeout: 60000 });
+await pad.click('#photo-export');
+await (await acctZip).saveAs(path.join(HERE, 'fixtures', 'acct-session.zip'));
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' })
+    .then((r) => r.json());
+  return (lecture.files || []).some((f) => f.name === 'session.txt');
+}, null, { timeout: 30000 });
+ok('and everything the export built is filed with it too', true);
+
+// E is stand down - the way back out of a lecture without a "quit" key a
+// stray press could hit.
+await acctScreen.keyboard.press('e');
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures[0]?.endedAt > 0;
+}, null, { timeout: 15000 });
+ok('and standing down closes it', true);
+// Everything below this point that reads "the" session - the timeline check,
+// the session-zip rebuild - assumes this is the only lecture in the list. Run
+// inside the page so it carries the (HttpOnly) session cookie automatically,
+// recorded now so the second lecture opened below (purely to prove the photo
+// switch resets) can be cleaned back up rather than sitting ahead of this one.
+const firstLectureId = await desk.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures[0]?.id;
+});
+
+// The ordinary flow is teach, stand down, THEN find the export button - and
+// standing down is exactly what clears state.lectureId. An export built in
+// that window still has to be filed under the lecture that just ended (see
+// lastKnownLectureId in control.js), not silently dropped.
+const filedAfterStandDown = [];
+pad.on('request', (r) => { if (/\/api\/lectures\/\d+\/files/.test(r.url())) filedAfterStandDown.push(r.url()); });
+const postStandDownZip = pad.waitForEvent('download', { timeout: 60000 });
+await pad.click('.tab[data-tab="photos"]');
+await pad.click('#photo-export');
+await (await postStandDownZip).saveAs(path.join(HERE, 'fixtures', 'acct-session-late.zip'));
+pad.removeAllListeners('request');
+ok(`an export built after standing down still gets filed under the lecture that just ended (${filedAfterStandDown.length} file request(s))`,
+  filedAfterStandDown.length > 0);
+
+// The switch on the Photos tab is THIS LECTURE ONLY (see syncKeepPhotosOverride
+// in control.js) - checking it above must not silently carry into the next one.
+await acctScreen.click('#arm-button');
+await acctScreen.waitForSelector('#hud[data-status="online"]');
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.some((l) => !l.endedAt);
+}, null, { timeout: 15000 });
+// A couple of the display's ~2s state heartbeats, which is what actually
+// carries the new (null, then fresh) lectureId to this controller and runs
+// the render pass that re-checks the override - see renderPhotos.
+await pad.waitForTimeout(4500);
+ok('a new lecture starts with the photo switch back at the device default, not the last one picked',
+  !(await pad.isChecked('#photo-keep')));
+await acctScreen.keyboard.press('e');
+
+// Clean up the lecture that existed only to prove the reset above, so the
+// checks that follow find exactly the one lecture they expect - see
+// firstLectureId.
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.every((l) => l.endedAt);
+}, null, { timeout: 15000 });
+await desk.evaluate(async (keepId) => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  await Promise.all(lectures.filter((l) => l.id !== keepId)
+    .map((l) => fetch(`/api/lectures/${l.id}`, { method: 'DELETE', credentials: 'same-origin' })));
+}, firstLectureId);
+
+await desk.reload();
+await desk.waitForSelector('#sessions-card:not([hidden]) .admin-row');
+const sessionMeta = await desk.textContent('#sessions .admin-meta');
+ok(`the admin page lists the session with what it knows about it (${sessionMeta.replace(/\s+/g, ' ').trim()})`,
+  /acct-room/.test(sessionMeta) && /moment/.test(sessionMeta));
+
+await desk.click('#sessions .admin-row .admin-small');
+await desk.waitForSelector('.timeline-row');
+const timeline = await desk.$$eval('.timeline-row .timeline-what', (els) => els.map((e) => e.textContent));
+// The deck's own name, not the library tile's: staging a deck titles it from
+// its front matter or its first heading (see frontMatterTitle), and the
+// timeline records what the item was called on screen rather than inventing a
+// second name for the same thing.
+ok(`opening it shows what was covered, by name (${timeline.join(', ')})`,
+  timeline.includes('Uploaded In Class'));
+
+// Naming one is how "Tue 14:00" becomes something you can find again.
+// --- running the place from the admin page ---------------------------------
+//
+// Everything below was a shell command until phase 5: an account, a course,
+// somebody in it, and the room that course connects to.
+await desk.waitForSelector('#people-card:not([hidden])');
+await desk.fill('#new-user', 'sam');
+await desk.fill('#new-name', 'Sam Okafor');
+await desk.fill('#new-pass', 'sams password here');
+await desk.click('#new-user-go');
+// The note text is set synchronously, before addPerson() awaits its own
+// refreshPeople() - waiting on the note alone can win a race against the row
+// actually landing in the DOM. Wait for the row itself.
+await desk.waitForSelector('#people .admin-row:has-text("sam")', { timeout: 8000 });
+const peopleRows = await desk.$$eval('#people .admin-row .admin-title', (els) => els.map((e) => e.textContent));
+ok(`an account can be made without a shell (${peopleRows.join(', ')})`,
+  peopleRows.some((t) => t.includes('Sam Okafor (sam)')));
+
+// Signing yourself out of the page you are standing on is never what the click
+// meant, so it is not offered.
+const ownRow = await desk.$('#people .admin-row:has(.admin-title:text-is("Jon W (jon)"))');
+ok('your own row offers no way to disable or demote yourself',
+  await ownRow.$('button:has-text("Disable")') === null
+  && await ownRow.$eval('input[type=checkbox]', (i) => i.disabled) === true);
+
+await desk.click('#courses-card .admin-row:has(.admin-title:text-is("PSY 415")) button:has-text("Open")');
+await desk.waitForSelector('#courses .session-body');
+await desk.selectOption('#courses .session-body select', 'sam');
+await desk.click('#courses .session-body button:has-text("Add to the course")');
+await desk.waitForFunction(
+  () => [...document.querySelectorAll('#courses .session-body .admin-title')].some((e) => e.textContent.includes('(sam)')),
+  null, { timeout: 8000 },
+);
+ok('and put into a course from the same page', true);
+
+// The room a course connects to, which is what makes joining it enough to set
+// a device up.
+const passField = '#courses .session-body [data-setting="passphrase"]';
+ok(`the course's room and key are there to be read by somebody who runs it (${await desk.inputValue('#courses .session-body [data-setting="room"]')})`,
+  await desk.inputValue('#courses .session-body [data-setting="room"]') === 'psy415-live'
+  && await desk.inputValue(passField) === 'handed over by the server');
+const before = await desk.inputValue(passField);
+await desk.click('#courses .session-body button:has-text("New passphrase")');
+ok('rotating it is one button, because that is how you take a room back',
+  await desk.inputValue(passField) !== before);
+// Only the field changed - nothing is saved until Save is clicked - but leave
+// it reading what the server actually holds rather than a key nobody has.
+await desk.fill(passField, before);
+
+ok(`the page says what the box is holding (${(await desk.textContent('#storage-note')).slice(0, 60)}…)`,
+  /Library: 1 file/.test(await desk.textContent('#storage-note'))
+  && /database:/.test(await desk.textContent('#storage-note')));
+
+const backup = desk.waitForEvent('download', { timeout: 30000 });
+await desk.click('#backup-go');
+const backupFile = await backup;
+ok(`a copy of the database comes out in one click (${backupFile.suggestedFilename()})`,
+  /^podium-\d{4}-\d{2}-\d{2}.*\.db$/.test(backupFile.suggestedFilename()));
+
+// The record, rebuilt into the same zip by a page that was never in the room.
+const rebuilt = desk.waitForEvent('download', { timeout: 40000 });
+await desk.click('#sessions .session-body button:has-text("Download the session")');
+const rebuiltFile = await rebuilt;
+ok(`a past lecture downloads as a session zip again (${rebuiltFile.suggestedFilename()})`,
+  /\.zip$/.test(rebuiltFile.suggestedFilename()));
+
+await desk.fill('#sessions .admin-name', 'Day 6 — Weighing the Evidence');
+await desk.dispatchEvent('#sessions .admin-name', 'change');
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures[0]?.title === 'Day 6 — Weighing the Evidence';
+}, null, { timeout: 8000 });
+ok('and naming it sticks', true);
+
+// A rename the server actually refuses (or a dropped connection) must not
+// leave the field looking like it saved when it did not.
+expectingLectureRenameForbidden = true;
+await desk.route('**/api/lectures/*', (route) => {
+  if (route.request().method() === 'PATCH') return route.fulfill({ status: 403, json: { error: 'no' } });
+  return route.continue();
+});
+await desk.fill('#sessions .admin-name', 'A rename that will be refused');
+await desk.dispatchEvent('#sessions .admin-name', 'change');
+await desk.waitForFunction(
+  () => document.querySelector('#sessions .admin-name')?.value === 'Day 6 — Weighing the Evidence',
+  null, { timeout: 8000 },
+);
+ok('a rejected rename reverts the field rather than leaving it looking saved', true);
+await desk.unroute('**/api/lectures/*');
+expectingLectureRenameForbidden = false;
 
 await desk.close();
 await acctScreen.close();

@@ -19,12 +19,17 @@
 
 'use strict';
 
-// Owner, or a member of the course it has been filed under, or an admin.
+// Owner, or a member of the course it has been filed under (while that course
+// is not archived), or an admin. Archiving is documented as making everything
+// filed under a course stop being listed to its members - so the archived
+// check gates only the membership branch; the author keeps their own plan
+// regardless, the same as they would if they simply left the course. `c` is
+// SELECT_PLANS's own join of courses.
 // ?1 = user id, ?2 = 1 for an admin.
 const VISIBLE = `(
   p.owner_id = ?1
   OR ?2 = 1
-  OR (p.course_id IS NOT NULL
+  OR (p.course_id IS NOT NULL AND c.archived_at IS NULL
       AND EXISTS (SELECT 1 FROM course_members cm WHERE cm.course_id = p.course_id AND cm.user_id = ?1))
 )`;
 
@@ -83,6 +88,13 @@ function courseIdFor(db, user, code) {
     const member = db.prepare('SELECT 1 AS ok FROM course_members WHERE course_id = ? AND user_id = ?')
       .get(course.id, user.id);
     if (!member) throw Object.assign(new Error(`no course with the code ${code}`), { status: 400 });
+  }
+  // The same rail library.js's courseIdFor enforces, and for the same reason:
+  // VISIBLE already stops answering for an archived course's plans, so filing
+  // one there would "succeed" into a plan that disappears from its own
+  // sharing scope the instant it is saved.
+  if (course.archived_at) {
+    throw Object.assign(new Error(`${course.code} is archived and cannot be filed under any more`), { status: 409 });
   }
   return course.id;
 }

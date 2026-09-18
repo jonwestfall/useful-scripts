@@ -7,12 +7,14 @@
 // migrations that run once, a password that cannot be read back, a session
 // that stops working when its account does. A mock would be testing itself.
 
-import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, chmodSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 process.removeAllListeners('warning');   // the node:sqlite experimental notice
@@ -20,6 +22,9 @@ process.removeAllListeners('warning');   // the node:sqlite experimental notice
 const store = require('../server/store.js');
 const accounts = require('../server/accounts.js');
 const api = require('../server/api.js');
+const lectures = require('../server/lectures.js');
+const courses = require('../server/courses.js');
+const doctor = require('../server/doctor.js');
 
 const fails = [];
 const ok = (label, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + label); if (!cond) fails.push(label); };
@@ -46,6 +51,23 @@ ok('a data directory of null means "store nothing" rather than an error', store.
 ok('DATA_DIR unset is the same answer', store.dataDirFromEnv({}) === null);
 ok('DATA_DIR set resolves to an absolute path',
   path.isAbsolute(store.dataDirFromEnv({ DATA_DIR: 'relative/bits' })));
+
+// { create: false } is podium-admin doctor's own open path - it must not
+// conjure a fresh database into existence for a DATA_DIR that is missing or
+// mistyped, which is exactly the box doctor is trying to diagnose.
+const notYetADataDir = path.join(root, 'not-yet-a-data-dir');
+let noCreateFailure = '';
+try { store.open(notYetADataDir, { create: false }); } catch (err) { noCreateFailure = err.message; }
+ok('create:false on a directory with no database throws rather than creating one',
+  /no database/.test(noCreateFailure));
+ok('and it really created nothing there', !existsSync(notYetADataDir));
+
+const alreadyThereDir = path.join(root, 'already-there-data-dir');
+store.open(alreadyThereDir).close();
+const reopened = store.open(alreadyThereDir, { create: false });
+ok('but create:false against a database that already exists opens it exactly as normal',
+  reopened.prepare('PRAGMA user_version').get().user_version === store.SCHEMA_VERSION);
+reopened.close();
 
 // Whether a database exists is what decides whether the account gate governs,
 // so "configured but unusable" must never look like "deliberately stateless".
@@ -460,6 +482,17 @@ try { plans.savePlan(db, owner, { title: 'Enormous', doc: { blob: 'x'.repeat(pla
 catch (err) { refusedPlan = err.message; }
 ok('a plan too large to store is refused rather than stored', /too large/.test(refusedPlan));
 
+// The same rail library.js's courseIdFor enforces: filing something new under
+// an archived course must be refused outright, not left to succeed into a
+// plan that immediately disappears from its own sharing scope (VISIBLE
+// already excludes archived courses for a member).
+courses.update(db, admin, 'psy415', { archived: true });
+refusedPlan = '';
+try { plans.savePlan(db, owner, { title: 'Too late', courseCode: 'psy415', doc: {} }); }
+catch (err) { refusedPlan = err.message; }
+ok('a plan cannot be filed under an archived course either', /archived/.test(refusedPlan));
+courses.update(db, admin, 'psy415', { archived: false });
+
 plans.deletePlan(db, owner, draft.id);
 ok('removing a plan takes it out of the listing', !plansSeenBy(owner).includes('Half-written'));
 
@@ -504,6 +537,836 @@ ok('an admin is handed every course that has settings', settings.forUser(db, adm
 settings.write(db, owner, 'psy415', { transport: 'ws', room: 'psy415-room', passphrase: 'rotated', wsUrl: 'ws://localhost/podium' });
 ok('rotating the passphrase is how you take it back from someone who has left',
   settings.forUser(db, ta)[0].settings.passphrase === 'rotated');
+
+// includeArchived is what lets an admin manage an archived course's settings
+// (podium-admin.js's `course settings` CLI command, and admin.html's own
+// card) without first reading back nothing and then saving over everything
+// that was there - see the comment on forUser for why it defaults off.
+courses.update(db, admin, 'psy415', { archived: true });
+ok('forUser excludes an archived course by default - the safe answer for courseIdForRoom and an ordinary device',
+  !settings.forUser(db, admin).some((c) => c.course === 'psy415'));
+const archivedPsy415 = settings.forUser(db, admin, { includeArchived: true }).find((c) => c.course === 'psy415');
+ok('but includeArchived finds it with everything still there, not just the field about to be changed',
+  archivedPsy415?.settings.room === 'psy415-room' && archivedPsy415.settings.passphrase === 'rotated');
+courses.update(db, admin, 'psy415', { archived: false });
+
+console.log('\n-- what happened in the room --');
+
+// The room name is psy415's, which is how a lecture finds its course: the
+// display never sends a course code, it sends the room it is in.
+const lecture = lectures.startLecture(db, owner, { room: 'psy415-room' });
+ok('starting a lecture files it under the course whose settings name that room',
+  lecture.course === 'psy415');
+ok('and records who started it', lecture.ownerId === owner.id && !lecture.endedAt);
+
+const elsewhere = lectures.startLecture(db, owner, { room: 'some-other-room' });
+ok('a room no course claims produces a lecture with no course at all', elsewhere.course === null);
+
+ok('a member of the course can see it', lectures.listLectures(db, ta).some((l) => l.id === lecture.id));
+ok('and cannot see the one held in a room that belongs to nobody',
+  !lectures.listLectures(db, ta).some((l) => l.id === elsewhere.id));
+ok('somebody outside the course sees neither', lectures.listLectures(db, outsider).length === 0);
+ok('an admin sees both', lectures.listLectures(db, admin).length === 2);
+
+// Two courses that end up sharing a room setting - a copy-pasted config, most
+// likely - must not have a lecture guess between them. Picking whichever
+// sorts first would expose it to the wrong course's members; no course id at
+// all is the safe answer, the same one an unclaimed room gives.
+courses.create(db, admin, { code: 'ambig-a', title: 'Ambiguous A' });
+courses.create(db, admin, { code: 'ambig-b', title: 'Ambiguous B' });
+courses.addMember(db, admin, 'ambig-a', { username: owner.username, role: 'owner' });
+courses.addMember(db, admin, 'ambig-b', { username: owner.username, role: 'owner' });
+settings.write(db, owner, 'ambig-a', { transport: 'ws', room: 'shared-room', passphrase: 'a', wsUrl: 'ws://localhost/podium' });
+settings.write(db, owner, 'ambig-b', { transport: 'ws', room: 'shared-room', passphrase: 'b', wsUrl: 'ws://localhost/podium' });
+const ambiguous = lectures.startLecture(db, owner, { room: 'shared-room' });
+ok('a room two courses both claim resolves to neither, rather than guessing which one', ambiguous.course === null);
+
+const started = Date.now();
+lectures.appendEvents(db, owner, lecture.id, [
+  { at: started, kind: 'program', title: 'Week 6', detail: { type: 'deck', slide: 1 } },
+  { at: started + 60000, kind: 'program', title: 'Week 6', detail: { type: 'deck', slide: 12 } },
+]);
+const readBack = lectures.getLecture(db, ta, lecture.id);
+ok('the timeline reads back in order, to anyone who can see the lecture',
+  readBack.timeline.length === 2 && readBack.timeline[0].detail.slide === 1);
+ok('and the detail survives the round trip as an object, not a string',
+  readBack.timeline[1].detail.slide === 12);
+
+// The display's clock is not the one the timeline is read against.
+lectures.appendEvents(db, owner, lecture.id, [
+  { at: started + 40 * 24 * 3600 * 1000, kind: 'program', title: 'Tomorrow' },
+  { at: 1, kind: 'program', title: 'Long ago' },
+]);
+const clamped = lectures.getLecture(db, owner, lecture.id).timeline;
+ok('an event dated after now is pulled back to now, not stored as the future',
+  clamped[3].at <= Date.now() && clamped[3].title === 'Tomorrow');
+ok('and one dated before the lecture began is pulled forward to its start',
+  clamped.find((e) => e.title === 'Long ago').at === lecture.startedAt);
+
+// A retried flush - the display cannot tell "the request never arrived" from
+// "the response got lost" - resends the same batch, id and all. That must
+// cost nothing, not a duplicate row.
+const retryAt = Date.now();
+const first = lectures.appendEvents(db, owner, lecture.id, [
+  { id: 'evt-retry-1', at: retryAt, kind: 'program', title: 'Slide the network ate the reply for' },
+]);
+ok('a freshly filed event is stored', first.stored === 1);
+const retried = lectures.appendEvents(db, owner, lecture.id, [
+  { id: 'evt-retry-1', at: retryAt, kind: 'program', title: 'Slide the network ate the reply for' },
+]);
+ok('and resending the exact same batch (a retry) stores nothing the second time', retried.stored === 0);
+ok('so the timeline holds one row for it, not two',
+  lectures.getLecture(db, owner, lecture.id).timeline.filter((e) => e.title.startsWith('Slide the network ate')).length === 1);
+
+// An id is a courtesy from the display, not a requirement - an older one, or
+// any path that does not generate one, must keep working exactly as before.
+const noIdBatch = [{ at: Date.now(), kind: 'program', title: 'No client id at all' }];
+lectures.appendEvents(db, owner, lecture.id, noIdBatch);
+const noIdAgain = lectures.appendEvents(db, owner, lecture.id, noIdBatch);
+ok('an event with no id is never deduplicated against another event with no id',
+  noIdAgain.stored === 1
+  && lectures.getLecture(db, owner, lecture.id).timeline.filter((e) => e.title === 'No client id at all').length === 2);
+
+// Two DIFFERENT lectures reusing the same id (two displays, or the same
+// display's counter starting over) must not collide with each other.
+// A room of its own, so this does not interact with the room-reuse (stale
+// lecture closing) tests further down the file, which use 'some-other-room'.
+const otherLecture = lectures.startLecture(db, owner, { room: 'dedup-test-room' });
+lectures.appendEvents(db, owner, otherLecture.id, [{ id: 'evt-retry-1', at: Date.now(), kind: 'program', title: 'A different lecture, same id' }]);
+ok('the same client id in a different lecture is a different event, not a collision',
+  lectures.getLecture(db, owner, otherLecture.id).timeline.some((e) => e.title === 'A different lecture, same id'));
+
+let refusedEvents = '';
+try { lectures.appendEvents(db, outsider, lecture.id, [{ kind: 'program', title: 'sneak' }]); }
+catch (err) { refusedEvents = err.message; }
+ok('someone who cannot see a lecture cannot write to it either, and is told no more than that',
+  /no such lecture/.test(refusedEvents));
+
+// A TA's controller ending a poll is the case this permission exists for: the
+// display may well be signed in as somebody else entirely.
+lectures.recordPoll(db, ta, lecture.id, {
+  pollId: 'p1', kind: 'choice', question: 'Which is the confound?',
+  options: ['a', 'b'], counts: [3, 9], voters: 12, endedAt: started + 120000,
+});
+lectures.recordPoll(db, ta, lecture.id, {
+  pollId: 'p1', kind: 'choice', question: 'Which is the confound?',
+  options: ['a', 'b'], counts: [3, 11], voters: 14, endedAt: started + 121000,
+});
+const withPoll = lectures.getLecture(db, owner, lecture.id);
+ok('a poll a TA ended is filed under the instructor\'s lecture', withPoll.pollResults.length === 1);
+ok('and the same poll sent twice updates rather than duplicating',
+  withPoll.pollResults[0].voters === 14 && withPoll.pollResults[0].counts[1] === 11);
+ok('the tally comes back in the shape the CSV exporter wants',
+  withPoll.pollResults[0].options[0] === 'a' && Array.isArray(withPoll.pollResults[0].answers));
+
+// Same voter count, different results - a voter changing their answer
+// without changing the total, or two controllers racing to end the same
+// poll. >= alone would let whichever lands last win regardless of which is
+// actually newer; ended_at is the tiebreaker that decides it instead.
+//
+// Real Date.now() values throughout, not large synthetic offsets from
+// `started`: recordPoll clamps endedAt to [lecture.started_at, now] the same
+// way endLecture does, so an offset far enough in the future to distinguish
+// "older" from "newer" would collapse to the same clamped value as its
+// neighbours instead of preserving the ordering this test depends on.
+const tieFirst = Date.now();
+lectures.recordPoll(db, ta, lecture.id, {
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [5, 5], voters: 10, endedAt: tieFirst,
+});
+lectures.recordPoll(db, ta, lecture.id, {
+  // A stale retry: same count, but an OLDER ended_at - must not win.
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [10, 0], voters: 10, endedAt: tieFirst - 1,
+});
+ok('a same-count retry with an OLDER ended_at cannot overwrite the tally it is retrying',
+  lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p2').counts[0] === 5);
+const tieNewer = Date.now();
+lectures.recordPoll(db, ta, lecture.id, {
+  // Genuinely newer, still tied on count - must win.
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [4, 6], voters: 10, endedAt: tieNewer,
+});
+ok('but a same-count result with a NEWER ended_at does overwrite it',
+  lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p2').counts[0] === 4);
+lectures.recordPoll(db, ta, lecture.id, {
+  // A strictly lower count, however new, must still lose - a poll only gains votes.
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [0, 1], voters: 1, endedAt: Date.now(),
+});
+ok('and a lower voter count never wins even with the newest ended_at of all',
+  lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p2').voters === 10);
+
+// Counts and voters come straight from the request; `Number(n) || 0` alone
+// lets a negative one through unchanged (only 0/NaN/'' fall back to 0), which
+// would store and later display as a negative tally.
+lectures.recordPoll(db, ta, lecture.id, {
+  pollId: 'p3', kind: 'choice', question: 'Negative input', options: ['a', 'b'], counts: [-5, 3], voters: -2, endedAt: Date.now(),
+});
+const negativePoll = lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p3');
+ok('a negative vote count is clamped to zero rather than stored as sent',
+  negativePoll.counts[0] === 0 && negativePoll.counts[1] === 3);
+ok('and a negative voters total is clamped the same way', negativePoll.voters === 0);
+
+let refusedDelete = '';
+try { lectures.deleteLecture(db, ta, lecture.id); } catch (err) { refusedDelete = err.message; }
+ok('a member who can read a lecture still cannot remove it', /only whoever ran this lecture/.test(refusedDelete));
+ok('a course owner can, which is the same rule the library runs on',
+  !!lectures.deleteLecture(db, owner, lectures.startLecture(db, owner, { room: 'psy415-room' }).id));
+
+// Go live, decide the projector is fine, stand down again: no record.
+const glance = lectures.startLecture(db, owner, { room: 'psy415-room' });
+const ended = lectures.endLecture(db, owner, glance.id, { at: Date.now() });
+ok('a lecture that recorded nothing is discarded rather than kept', ended.discarded === true);
+ok('and is really gone', !lectures.getLecture(db, admin, glance.id));
+
+// Not an hour after it started (that would be in the future relative to this
+// test run, and endLecture now clamps `at` to the lecture's own lifetime) -
+// just a specific timestamp, to prove it is honoured rather than silently
+// replaced with "now".
+const closeAt = Date.now();
+const closed = lectures.endLecture(db, owner, lecture.id, { at: closeAt });
+ok('one that recorded something is ended, not discarded', !closed.discarded && closed.endedAt === closeAt);
+
+// A batch delayed past /end, or a controller's poll tally arriving after
+// stand-down, has no open lecture left to extend - unlike a file upload,
+// which stays available after the fact for the post-class export.
+let refusedEventsAfterEnd = '';
+try { lectures.appendEvents(db, owner, lecture.id, [{ kind: 'program', title: 'too late' }]); }
+catch (err) { refusedEventsAfterEnd = err.message; }
+ok('a batch of events delivered after the lecture has ended is refused, not silently reopening the timeline',
+  /already ended/.test(refusedEventsAfterEnd));
+let refusedPollAfterEnd = '';
+try {
+  lectures.recordPoll(db, owner, lecture.id, {
+    pollId: 'late-poll', kind: 'choice', options: ['a'], counts: [1], voters: 1, endedAt: Date.now(),
+  });
+} catch (err) { refusedPollAfterEnd = err.message; }
+ok('a poll tally delivered after the lecture has ended is refused the same way',
+  /already ended/.test(refusedPollAfterEnd));
+
+// A caller sending an `at` outside the lecture's own lifetime - a bad clock,
+// or a bogus value - must not be able to record it as still open (a falsy
+// endedAt from `at: 0`) or as having run into the future.
+const clampLecture = lectures.startLecture(db, owner, { room: 'clamp-room' });
+lectures.appendEvents(db, owner, clampLecture.id, [{ kind: 'program', title: 'anything, so this is not discarded' }]);
+const closedAtZero = lectures.endLecture(db, owner, clampLecture.id, { at: 0 });
+ok('ending a lecture with at:0 clamps to when it started, not to "still open"',
+  closedAtZero.endedAt === clampLecture.startedAt);
+const futureLecture = lectures.startLecture(db, owner, { room: 'clamp-room-2' });
+lectures.appendEvents(db, owner, futureLecture.id, [{ kind: 'program', title: 'anything, so this is not discarded' }]);
+const beforeFutureClose = Date.now();
+const closedInFuture = lectures.endLecture(db, owner, futureLecture.id, { at: Date.now() + 3600000 });
+ok('and an at in the future clamps to now, not to a lecture that ran ahead of the clock',
+  closedInFuture.endedAt >= beforeFutureClose && closedInFuture.endedAt <= Date.now());
+
+// recordPoll's own endedAt needs the same clamp: startLecture's stale-close
+// logic uses the latest poll's ended_at (see the "poll but no timeline
+// event" test above), so a future value from a controller with a fast clock
+// could make a stale lecture appear to end after it was even asked about.
+const clampPollLecture = lectures.startLecture(db, owner, { room: 'clamp-room-3' });
+lectures.recordPoll(db, owner, clampPollLecture.id, {
+  pollId: 'clamp-poll', kind: 'choice', options: ['a'], counts: [1], voters: 1, endedAt: Date.now() + 3600000,
+});
+const clampedPoll = lectures.getLecture(db, owner, clampPollLecture.id).pollResults[0];
+ok('a poll ended in the future has its own endedAt clamped to now',
+  clampedPoll.endedAt <= Date.now());
+
+// The second Go live in the same room, after a display whose tab was closed
+// without ever standing down.
+const abandoned = lectures.startLecture(db, owner, { room: 'lost-power' });
+// Backdated so that "ended at the last thing it recorded" is distinguishable
+// from both "ended when it started" and "ended now", which a lecture that ran
+// for two milliseconds inside a test would not be.
+db.prepare('UPDATE lectures SET started_at = ? WHERE id = ?').run(Date.now() - 3600000, abandoned.id);
+const lastSeen = Date.now() - 1800000;
+lectures.appendEvents(db, owner, abandoned.id, [{ at: lastSeen, kind: 'program', title: 'Half a lecture' }]);
+const afterAbandoning = lectures.startLecture(db, owner, { room: 'lost-power' });
+ok('going live again in the same room closes the lecture left open',
+  lectures.getLecture(db, owner, abandoned.id).endedAt === lastSeen);
+ok('at the last thing it recorded, not at now - it did not run until this morning',
+  lectures.getLecture(db, owner, abandoned.id).endedAt < afterAbandoning.startedAt - 60000);
+ok('and the new one is open', !afterAbandoning.endedAt);
+
+// A stale lecture that ran a poll but never got a timeline event recorded -
+// a display left on the arming screen while a controller ran a poll through
+// it - still has a real end time: the poll's, not the moment it happened to
+// go live. Before this was fixed, the fallback below only ever looked at the
+// last EVENT and fell all the way back to started_at, understating how long
+// the room was actually in use.
+const pollOnly = lectures.startLecture(db, owner, { room: 'poll-only-room' });
+db.prepare('UPDATE lectures SET started_at = ? WHERE id = ?').run(Date.now() - 3600000, pollOnly.id);
+const pollOnlyEndedAt = Date.now() - 900000;
+lectures.recordPoll(db, owner, pollOnly.id, {
+  pollId: 'stale-p1', kind: 'choice', question: 'Any questions?', options: ['a'], counts: [1], voters: 1,
+  endedAt: pollOnlyEndedAt,
+});
+lectures.startLecture(db, owner, { room: 'poll-only-room' });
+ok('a stale lecture with a poll but no timeline event closes at the poll\'s end time, not its own start',
+  lectures.getLecture(db, owner, pollOnly.id).endedAt === pollOnlyEndedAt);
+
+lectures.startLecture(db, owner, { room: 'some-other-room' });
+ok('an abandoned lecture that recorded nothing is discarded rather than left as a stub',
+  lectures.getLecture(db, owner, elsewhere.id) === null);
+
+// A photo can exist before the first timeline event or poll - fileInk and a
+// photo upload both happen independently of appendEvents - so the same
+// discard has to release media too, not just leave it orphaned on disk.
+const glancedRoom = 'glanced-at-room';
+const glanced = lectures.startLecture(db, owner, { room: glancedRoom, dataDir });
+const glancedPhoto = await library.storeUpload(dataDir, Readable.from([Buffer.from('checked the projector works')]));
+lectures.addFile(db, owner, glanced.id, {
+  name: 'photos/01-check.jpg', kind: 'photo',
+  sha256: glancedPhoto.sha256, bytes: glancedPhoto.bytes, contentType: 'image/jpeg', dataDir,
+});
+ok('the file is there before anything discards the lecture', existsSync(library.mediaPath(dataDir, glancedPhoto.sha256)));
+// Going live again in the same room is the abandoned-lecture path; standing
+// down normally with nothing recorded (endLecture) is the other one.
+lectures.startLecture(db, owner, { room: glancedRoom, dataDir });
+ok('a lecture discarded for recording nothing does not leak the bytes its files pointed at',
+  !existsSync(library.mediaPath(dataDir, glancedPhoto.sha256)));
+
+const glancedAgain = lectures.startLecture(db, owner, { room: glancedRoom, dataDir });
+const glancedPhoto2 = await library.storeUpload(dataDir, Readable.from([Buffer.from('checked it again')]));
+lectures.addFile(db, owner, glancedAgain.id, {
+  name: 'photos/01-check.jpg', kind: 'photo',
+  sha256: glancedPhoto2.sha256, bytes: glancedPhoto2.bytes, contentType: 'image/jpeg', dataDir,
+});
+lectures.endLecture(db, owner, glancedAgain.id, { dataDir });
+ok('and standing down with nothing recorded releases the same way',
+  !existsSync(library.mediaPath(dataDir, glancedPhoto2.sha256)));
+
+// The cap exists so that one wedged display cannot fill the disk.
+const flood = lectures.startLecture(db, owner, { room: 'psy415-room' });
+let kept = 0;
+for (let i = 0; i < Math.ceil((lectures.MAX_EVENTS + 200) / lectures.MAX_EVENTS_PER_POST); i++) {
+  kept += lectures.appendEvents(db, owner, flood.id, Array.from(
+    { length: lectures.MAX_EVENTS_PER_POST }, (_, n) => ({ kind: 'program', title: `item ${i}-${n}` }),
+  )).stored;
+}
+ok(`the timeline stops at the cap (${kept} stored)`, kept === lectures.MAX_EVENTS);
+ok('and says so, so a record that stops halfway is not read as a lecture that ended there',
+  lectures.getLecture(db, owner, flood.id).truncated === true);
+lectures.deleteLecture(db, owner, flood.id);
+ok('removing a lecture takes its timeline with it',
+  db.prepare('SELECT COUNT(*) AS n FROM lecture_events WHERE lecture_id = ?').get(flood.id).n === 0);
+
+console.log('\n-- what a session keeps: photos, ink, exported pages --');
+
+const session4b = lectures.startLecture(db, owner, { room: 'psy415-room' });
+const photoBytes = Buffer.from('not really a jpeg, but bytes are bytes');
+const photo = await library.storeUpload(dataDir, Readable.from([photoBytes]));
+
+ok('an unknown extension is refused before a byte is read', lectures.keepableType('lecture.html') === null);
+ok('and .svg with it, for the same reason the library refuses it', lectures.keepableType('board.svg') === null);
+ok('a png is taken, with the type coming from the name rather than the caller',
+  lectures.keepableType('slides/day-6/slide-01.PNG') === 'image/png');
+
+lectures.addFile(db, owner, session4b.id, {
+  name: 'photos/01-a worksheet.jpg', kind: 'photo',
+  sha256: photo.sha256, bytes: photo.bytes, contentType: 'image/jpeg', dataDir,
+});
+const withFile = lectures.getLecture(db, owner, session4b.id);
+ok(`the file comes back with the lecture (${withFile.files[0]?.name})`,
+  withFile.files.length === 1 && withFile.files[0].kind === 'photo');
+ok('under a content-addressed url, the same shape the library uses',
+  withFile.files[0].url === `/media/${photo.sha256}/01-a%20worksheet.jpg`);
+
+// The name is the path inside the zip and the only thing a caller picks, so it
+// is cleaned rather than trusted.
+const climbed = await library.storeUpload(dataDir, Readable.from([Buffer.from('another file')]));
+const named = lectures.addFile(db, owner, session4b.id, {
+  name: '../../etc/photos/../sneaky.png', kind: 'photo',
+  sha256: climbed.sha256, bytes: climbed.bytes, contentType: 'image/png', dataDir,
+});
+ok(`a name that tries to climb out of the zip is cleaned, not obeyed (${named.name})`,
+  !named.name.includes('..') && named.name.endsWith('sneaky.png'));
+
+// A TA's controller files a photo under the instructor's lecture: the same
+// permission the poll route runs on.
+ok('a member of the course can file a photo too',
+  !!lectures.addFile(db, ta, session4b.id, {
+    name: 'photos/02-the board.jpg', kind: 'photo',
+    sha256: photo.sha256, bytes: photo.bytes, contentType: 'image/jpeg', dataDir,
+  }));
+let refusedFile = '';
+try {
+  lectures.addFile(db, outsider, session4b.id, {
+    name: 'photos/03-nope.jpg', kind: 'photo',
+    sha256: photo.sha256, bytes: photo.bytes, contentType: 'image/jpeg', dataDir,
+  });
+} catch (err) { refusedFile = err.message; }
+ok('an outsider cannot, and learns nothing about whether the lecture exists',
+  /no such lecture/.test(refusedFile));
+
+// The same photo filed twice is one set of bytes: media is shared with the
+// library, which is exactly why forgetMediaIfUnused had to learn about this.
+ok('the same bytes filed twice are stored once',
+  db.prepare('SELECT COUNT(*) AS n FROM media WHERE sha256 = ?').get(photo.sha256).n === 1);
+
+ok('anyone who can see the lecture can fetch its files', library.mayReadMedia(db, ta, photo.sha256));
+ok('and someone who cannot, cannot', !library.mayReadMedia(db, outsider, photo.sha256));
+
+// A rejected upload - over the space cap here - must not leave its bytes
+// orphaned: storeUpload has already written them by the time addFile's own
+// caps can refuse, and the caller (receiveLectureFile in api.js) cleans up
+// with forgetMediaIfUnused, which can only find bytes that already have a
+// media row. addFile registers that row before checking the caps for exactly
+// this reason.
+const tooBigUpload = await library.storeUpload(dataDir, Readable.from([Buffer.from('a file that claims to be enormous')]));
+let refusedForSpace = '';
+try {
+  lectures.addFile(db, owner, session4b.id, {
+    name: 'photos/too-big.jpg', kind: 'photo',
+    sha256: tooBigUpload.sha256, bytes: lectures.MAX_LECTURE_BYTES + 1, contentType: 'image/jpeg', dataDir,
+  });
+} catch (err) { refusedForSpace = err.message; }
+ok('a file that would bust the space cap is refused', /space one session may use/.test(refusedForSpace));
+ok('but its media row already exists, so the cleanup path that follows can actually find it',
+  !!db.prepare('SELECT 1 AS ok FROM media WHERE sha256 = ?').get(tooBigUpload.sha256));
+ok('and forgetMediaIfUnused does remove it - nothing else points at these bytes',
+  library.forgetMediaIfUnused(db, dataDir, tooBigUpload.sha256) && !existsSync(library.mediaPath(dataDir, tooBigUpload.sha256)));
+
+// Re-exporting replaces rather than accumulating, and frees what it replaced.
+const redone = await library.storeUpload(dataDir, Readable.from([Buffer.from('a better rasterization')]));
+lectures.addFile(db, owner, session4b.id, {
+  name: 'photos/01-a worksheet.jpg', kind: 'photo',
+  sha256: redone.sha256, bytes: redone.bytes, contentType: 'image/jpeg', dataDir,
+});
+ok('exporting again replaces a file rather than adding a second of it',
+  lectures.getLecture(db, owner, session4b.id).files.filter((f) => f.name === 'photos/01-a worksheet.jpg').length === 1);
+ok('and the bytes it replaced are still there, because another file still points at them',
+  existsSync(library.mediaPath(dataDir, photo.sha256)));
+
+// A library item sharing a photo's bytes: removing the lecture must not take
+// the library's copy with it, and vice versa.
+const sharedItem = library.addItem(db, owner, {
+  kind: 'image', title: 'The same worksheet', filename: 'worksheet.jpg',
+  mediaId: library.rememberMedia(db, owner, { sha256: redone.sha256, bytes: redone.bytes, contentType: 'image/jpeg' }),
+});
+lectures.deleteLecture(db, owner, session4b.id, { dataDir });
+ok('removing a lecture takes its files with it',
+  db.prepare('SELECT COUNT(*) AS n FROM lecture_files').get().n === 0);
+ok('but not bytes the library is still using',
+  existsSync(library.mediaPath(dataDir, redone.sha256)) && !!library.getItem(db, owner, sharedItem.id));
+ok('while bytes nothing points at any more do go',
+  !existsSync(library.mediaPath(dataDir, photo.sha256)));
+
+console.log('\n-- the retention control --');
+
+const longAgo = lectures.startLecture(db, owner, { room: 'psy415-room' });
+db.prepare('UPDATE lectures SET started_at = ? WHERE id = ?')
+  .run(Date.now() - 200 * 24 * 3600 * 1000, longAgo.id);
+lectures.appendEvents(db, owner, longAgo.id, [{ kind: 'program', title: 'Week 2, two terms ago' }]);
+const aged = await library.storeUpload(dataDir, Readable.from([Buffer.from('a photo from last year')]));
+lectures.addFile(db, owner, longAgo.id, {
+  name: 'photos/01-last year.jpg', kind: 'photo',
+  sha256: aged.sha256, bytes: aged.bytes, contentType: 'image/jpeg', dataDir,
+});
+
+const recent = lectures.startLecture(db, owner, { room: 'some-other-room' });
+const fresh = await library.storeUpload(dataDir, Readable.from([Buffer.from('a photo from this week')]));
+lectures.addFile(db, owner, recent.id, {
+  name: 'photos/01-this week.jpg', kind: 'photo',
+  sha256: fresh.sha256, bytes: fresh.bytes, contentType: 'image/jpeg', dataDir,
+});
+
+ok('no retention set means nothing is ever removed', lectures.pruneFiles(db, dataDir, { days: 0 }).removed === 0);
+
+const pruned = lectures.pruneFiles(db, dataDir, { days: 90 });
+ok(`pruning drops the files of lectures past the cut-off (${pruned.removed} file, ${pruned.bytes} bytes)`,
+  pruned.removed === 1 && pruned.bytes === aged.bytes);
+ok('and the bytes really leave the disk', !existsSync(library.mediaPath(dataDir, aged.sha256)));
+ok('a recent lecture keeps its photos', existsSync(library.mediaPath(dataDir, fresh.sha256)));
+
+// The whole point of the asymmetry: the bulk ages out, the record does not.
+const survivor = lectures.getLecture(db, owner, longAgo.id);
+ok('the pruned lecture is still there, with its timeline intact',
+  !!survivor && survivor.timeline.length === 1 && survivor.files.length === 0);
+
+ok('usage counts what the sessions are actually costing',
+  lectures.usage(db).files === 1 && lectures.usage(db).bytes === fresh.bytes);
+
+// GET /api/lectures bolts usage onto a response whose lecture LIST is already
+// scoped to what the caller may see - the figure has to match, or a course
+// member learns the size of every private session on the box. Passing a user
+// scopes it the same way; omitting one (as the admin-only Storage route and
+// the CLI do) still gets the real total.
+ok("a non-admin's own usage matches the global total when every file is theirs",
+  lectures.usage(db, owner).files === 1 && lectures.usage(db, owner).bytes === fresh.bytes);
+ok('but someone who cannot see that lecture at all sees none of its usage',
+  lectures.usage(db, ta).files === 0 && lectures.usage(db, ta).bytes === 0);
+ok('an admin passed explicitly still gets the real total, not a scoped one',
+  lectures.usage(db, admin).files === 1);
+
+// The store is content-addressed: the same bytes can be filed under a second
+// name in the same lecture (a photo re-uploaded, say). Counted by
+// lecture_files row rather than by the distinct media row underneath, a
+// member's own usage would show those bytes twice - inflated past what is
+// actually on disk, and out of step with the admin-only global total right
+// above, which already counts by media row.
+lectures.addFile(db, owner, recent.id, {
+  name: 'photos/02-this week again.jpg', kind: 'photo',
+  sha256: fresh.sha256, bytes: fresh.bytes, contentType: 'image/jpeg', dataDir,
+});
+ok("a non-admin's usage counts shared bytes once, not once per file that points at them",
+  lectures.usage(db, owner).files === 1 && lectures.usage(db, owner).bytes === fresh.bytes);
+// Cleaned back up so the removeFile tests just below see the single file
+// they expect, rather than the second name added only to prove the count above.
+lectures.removeFile(db, owner, recent.id, 'photos/02-this week again.jpg', { dataDir });
+
+// removeFile is the other half of addFile's upsert: a name a later export no
+// longer produces AT ALL (a photo the keep-switch has since turned off, one
+// aged out of history) rather than one it is replacing by landing on the
+// same name.
+const removedFile = lectures.removeFile(db, owner, recent.id, 'photos/01-this week.jpg', { dataDir });
+ok('removeFile takes the named file out of the lecture',
+  removedFile.removed === true && lectures.getLecture(db, owner, recent.id).files.length === 0);
+ok('and frees the bytes nothing else points at', !existsSync(library.mediaPath(dataDir, fresh.sha256)));
+ok('removing a name that was never there is a harmless no-op',
+  lectures.removeFile(db, owner, recent.id, 'photos/never-existed.jpg', { dataDir }).removed === false);
+
+console.log('\n-- running the place: accounts and courses --');
+
+// The rail that matters most: an instance with no enabled administrator cannot
+// be administered from a browser at all. Earlier sections left more than one
+// admin behind, so this starts by getting down to the case being tested.
+for (const person of accounts.listUsers(db)) {
+  if (person.isAdmin && person.username !== 'root') accounts.setAdmin(db, person.username, false);
+}
+ok('there is one administrator to lose', accounts.countEnabledAdmins(db) === 1);
+let stranded = '';
+try { accounts.assertAnotherAdminRemains(db, 'root', 'disabling it'); } catch (err) { stranded = err.message; }
+ok(`disabling the only administrator is refused from the browser path (${stranded.slice(0, 48)}…)`,
+  /only administrator who can sign in/.test(stranded));
+ok('but the CLI path is not held to it - a shell is the credential, and "that account is compromised" must work',
+  (() => { accounts.setDisabled(db, 'root', true); const off = accounts.countEnabledAdmins(db) === 0;
+    accounts.setDisabled(db, 'root', false); return off; })());
+
+const sidekick = await accounts.createUser(db, { username: 'sam', password: 'sams password here' });
+accounts.setAdmin(db, 'sam', true);
+ok('with a second administrator the rail lets go', (() => {
+  try { accounts.assertAnotherAdminRemains(db, 'root', 'disabling it'); return true; } catch { return false; }
+})());
+accounts.setAdmin(db, 'sam', false);
+ok('and comes back when the second one is demoted', (() => {
+  try { accounts.assertAnotherAdminRemains(db, 'root', 'disabling it'); return false; } catch { return true; }
+})());
+
+ok('an account listing says when each was last seen and how many sessions it holds',
+  accounts.listUsers(db).every((row) => 'lastSeen' in row && 'activeSessions' in row));
+ok('and never carries a password hash anywhere near the browser',
+  !JSON.stringify(accounts.listUsers(db)).includes('scrypt$'));
+
+// Courses: made by admins, run by owners.
+const made = courses.create(db, admin, { code: 'PSY101', title: 'PSY 101' });
+ok(`a course code is folded to lower case, because it is typed into a filter box (${made.code})`,
+  made.code === 'psy101');
+let refusedCourse = '';
+try { courses.create(db, ta, { code: 'sneaky' }); } catch (err) { refusedCourse = err.message; }
+ok('a member cannot invent a course to file things under', /only an administrator/.test(refusedCourse));
+refusedCourse = '';
+try { courses.create(db, admin, { code: 'not a code' }); } catch (err) { refusedCourse = err.message; }
+ok('nor can an administrator invent one that cannot be typed', /course code is 1-64/.test(refusedCourse));
+refusedCourse = '';
+try { courses.create(db, admin, { code: 'psy101' }); } catch (err) { refusedCourse = err.message; }
+ok('and the same code twice is refused rather than silently merged', /already a course/.test(refusedCourse));
+
+courses.addMember(db, admin, 'psy101', { username: 'sam', role: 'owner' });
+courses.addMember(db, admin, 'psy101', { username: 'ta' });
+const sam = accounts.publicUser(accounts.findUser(db, 'sam'));
+ok('an owner sees who else is in their course', (courses.list(db, sam).find((c) => c.code === 'psy101')?.people || []).length === 2);
+ok('a plain member is not handed the membership list',
+  courses.list(db, ta).find((c) => c.code === 'psy101')?.people === undefined);
+
+let refusedMember = '';
+try { courses.addMember(db, ta, 'psy101', { username: 'outsider' }); } catch (err) { refusedMember = err.message; }
+ok('and cannot add anybody', /that you can change/.test(refusedMember));
+refusedMember = '';
+try { courses.removeMember(db, sam, 'psy101', 'sam'); } catch (err) { refusedMember = err.message; }
+ok('an owner cannot remove the last owner and leave a course nobody runs',
+  /only owner of psy101/.test(refusedMember));
+
+// "Make a member" on your own row is a demotion by another name - the page
+// offers it as exactly that - so it has to be caught by the same rail
+// removeMember enforces, not just the Remove button.
+let refusedDemote = '';
+try { courses.addMember(db, sam, 'psy101', { username: 'sam', role: 'member' }); } catch (err) { refusedDemote = err.message; }
+ok('and the same rail catches demoting the last owner via "Make a member", not just Remove',
+  /only owner of psy101/.test(refusedDemote));
+ok('sam is still an owner after the refused attempt',
+  courses.list(db, sam).find((c) => c.code === 'psy101')?.role === 'owner');
+
+ok('but can remove a member', courses.removeMember(db, sam, 'psy101', 'ta').length === 1);
+
+// Archiving is as close to deleting as Podium gets, and deliberately keeps
+// everything filed under the course.
+courses.addMember(db, admin, 'psy101', { username: 'ta' });
+
+// One of each kind of thing a course can hold, so archiving is checked against
+// all three access paths Copilot found only some of - not just membership.
+const archLibItem = library.addItem(db, sam, { kind: 'text', title: 'Syllabus', courseCode: 'psy101', props: {} });
+const archPlan = plans.savePlan(db, sam, { title: 'Week 1', courseCode: 'psy101', doc: '{}' });
+const psy101Id = db.prepare('SELECT id FROM courses WHERE code = ?').get('psy101').id;
+db.prepare('INSERT INTO lectures (course_id, room, title, started_by, started_at) VALUES (?, ?, ?, ?, ?)')
+  .run(psy101Id, 'psy101-room', 'Week 1 lecture', sam.id, Date.now());
+const archLecture = db.prepare('SELECT id FROM lectures WHERE room = ?').get('psy101-room');
+
+courses.update(db, admin, 'psy101', { archived: true });
+ok('an archived course is still listed to an administrator, who is the one who can bring it back',
+  courses.list(db, admin).find((c) => c.code === 'psy101')?.archived === true);
+ok('and is not listed to its members any more', !courses.list(db, ta).some((c) => c.code === 'psy101'));
+ok('nothing filed under it is touched',
+  db.prepare('SELECT COUNT(*) AS n FROM course_members WHERE course_id = (SELECT id FROM courses WHERE code = ?)')
+    .get('psy101').n === 2);
+
+// The three access paths archiving is supposed to close for a plain member -
+// ta is a member of psy101 throughout, never the item's owner, so this is
+// purely the membership branch of each VISIBLE.
+ok('a library item filed under an archived course stops being listed to a member',
+  !library.listItems(db, ta).some((it) => it.id === archLibItem.id));
+ok('and a plan filed under it does the same',
+  !plans.listPlans(db, ta).some((pl) => pl.id === archPlan.id));
+ok('and so does a lecture held in it',
+  !lectures.listLectures(db, ta).some((l) => l.id === archLecture.id));
+ok('an administrator still sees all three', library.listItems(db, admin).some((it) => it.id === archLibItem.id)
+  && plans.listPlans(db, admin).some((pl) => pl.id === archPlan.id)
+  && lectures.listLectures(db, admin).some((l) => l.id === archLecture.id));
+ok('the plan is still there for its own author, the same as leaving the course would leave it',
+  plans.listPlans(db, sam).some((pl) => pl.id === archPlan.id));
+
+courses.update(db, admin, 'psy101', { archived: false });
+ok('bringing it back is the same gesture in reverse', courses.list(db, ta).some((c) => c.code === 'psy101'));
+ok('and all three are visible to the member again',
+  library.listItems(db, ta).some((it) => it.id === archLibItem.id)
+  && plans.listPlans(db, ta).some((pl) => pl.id === archPlan.id)
+  && lectures.listLectures(db, ta).some((l) => l.id === archLecture.id));
+
+// mayReadMedia's lecture-media branch is hand-duplicated SQL (see the comment
+// there), not a reuse of lectures.js's VISIBLE - so it gets its own check
+// rather than trusting that the two stayed in sync.
+const archUpload = await library.storeUpload(dataDir, Readable.from([Buffer.from('a slide from an archived course')]));
+lectures.addFile(db, sam, archLecture.id, {
+  name: 'photos/01-slide.jpg', kind: 'photo',
+  sha256: archUpload.sha256, bytes: archUpload.bytes, contentType: 'image/jpeg', dataDir,
+});
+ok('a member can read a session file from that lecture while the course is active',
+  library.mayReadMedia(db, ta, archUpload.sha256));
+courses.update(db, admin, 'psy101', { archived: true });
+ok('but not once the course is archived',
+  !library.mayReadMedia(db, ta, archUpload.sha256));
+ok('an administrator still can', library.mayReadMedia(db, admin, archUpload.sha256));
+
+// Reading is one thing; filing something NEW under an archived course while
+// it is archived is worse than a write that silently vanishes - VISIBLE
+// already refuses to list it back, so the write has to be refused outright
+// instead of succeeding into a row nothing can ever read.
+let refusedArchivedWrite = '';
+try { library.addItem(db, sam, { kind: 'text', title: 'Too late', courseCode: 'psy101', props: {} }); }
+catch (err) { refusedArchivedWrite = err.message; }
+ok('filing something new under an archived course is refused, not silently unreadable',
+  /archived/.test(refusedArchivedWrite));
+let refusedArchivedWriteAdmin = '';
+try { library.addItem(db, admin, { kind: 'text', title: 'Too late', courseCode: 'psy101', props: {} }); }
+catch (err) { refusedArchivedWriteAdmin = err.message; }
+ok('even an administrator cannot file something new under an archived course',
+  /archived/.test(refusedArchivedWriteAdmin));
+
+courses.update(db, admin, 'psy101', { archived: false });
+ok('and the member again once it is brought back', library.mayReadMedia(db, ta, archUpload.sha256));
+
+console.log('\n-- the doctor --');
+
+const seen = (found, title) => found.find((item) => item.title === title);
+
+ok('a healthy database passes its own checks',
+  doctor.checkSchema(db).level === 'ok' && doctor.checkIntegrity(db).level === 'ok');
+ok('and a data directory nobody else can read passes too',
+  doctor.checkPermissions(dataDir).level === 'ok');
+
+// The two failures this command exists to catch on a real box.
+const looseDir = path.join(root, 'loose');
+mkdirSync(looseDir, { recursive: true, mode: 0o755 });
+chmodSync(looseDir, 0o755);
+ok(`a world-readable data directory is called out (${doctor.checkPermissions(looseDir).detail})`,
+  doctor.checkPermissions(looseDir).level === 'bad');
+
+ok('an instance with an administrator who can sign in is fine',
+  doctor.checkAccounts(db).level === 'ok');
+const admins = accounts.listUsers(db).filter((row) => row.isAdmin && !row.disabled);
+for (const person of admins) accounts.setDisabled(db, person.username, true);
+ok('one with none is not, because nobody can manage it from a browser',
+  doctor.checkAccounts(db).level === 'bad');
+for (const person of admins) accounts.setDisabled(db, person.username, false);
+
+// Accounts take precedence over AUTH_PASSWORD when there are any (see
+// podium-server.js), but with zero accounts at all AUTH_PASSWORD is exactly
+// the supported fallback the pages use instead - not the wide-open case this
+// check exists to catch. That needs a database with no accounts whatsoever,
+// not merely disabled ones (which is the case just above, and correctly
+// stays 'bad' even with a password set, since disabled admins still can't
+// sign in).
+const noAccountsDir = mkdtempSync(path.join(tmpdir(), 'podium-doctor-noaccounts-'));
+const noAccountsDb = store.open(noAccountsDir);
+ok('with zero accounts and no password, still the wide-open case',
+  doctor.checkAccounts(noAccountsDb).level === 'bad');
+ok('but a configured shared password makes the same instance a healthy one',
+  doctor.checkAccounts(noAccountsDb, { AUTH_PASSWORD: 'shared secret' }).level === 'ok');
+noAccountsDb.close();
+rmSync(noAccountsDir, { recursive: true, force: true });
+
+// Bytes on disk with nothing pointing at them: harmless, and the shape a
+// hand-edited data directory leaves.
+const strayShard = path.join(dataDir, 'media', 'zz');
+mkdirSync(strayShard, { recursive: true });
+writeFileSync(path.join(strayShard, 'z'.repeat(64)), 'not known to the database');
+ok(`an unreferenced file on disk is a warning, not a failure (${doctor.checkMedia(db, dataDir).detail})`,
+  doctor.checkMedia(db, dataDir).level === 'warn');
+
+// A row pointing at bytes that are not there is the other way round, and is
+// the one that means something went missing.
+const ghost = createHash('sha256').update('a file that was deleted by hand').digest('hex');
+db.prepare('INSERT INTO media (sha256, bytes, content_type, created_at) VALUES (?, ?, ?, ?)')
+  .run(ghost, 10, 'image/png', Date.now());
+ok('a stored file missing from disk is a failure',
+  doctor.checkMedia(db, dataDir).level === 'bad');
+db.prepare('DELETE FROM media WHERE sha256 = ?').run(ghost);
+
+// A directory sitting where a file should be: fs.existsSync alone would call
+// this "present", but nothing can ever read image bytes out of a directory,
+// so this is exactly the missing-from-disk failure above, not a pass.
+const dirGhost = createHash('sha256').update('a path that is a directory, not a file').digest('hex');
+const dirGhostPath = library.mediaPath(dataDir, dirGhost);
+mkdirSync(dirGhostPath, { recursive: true });
+db.prepare('INSERT INTO media (sha256, bytes, content_type, created_at) VALUES (?, ?, ?, ?)')
+  .run(dirGhost, 10, 'image/png', Date.now());
+ok('a directory standing in for a stored file is treated as missing, not present',
+  doctor.checkMedia(db, dataDir).level === 'bad');
+db.prepare('DELETE FROM media WHERE sha256 = ?').run(dirGhost);
+rmSync(dirGhostPath, { recursive: true, force: true });
+
+// A media row neither the library nor a lecture points at: forgetMediaIfUnused
+// checks exactly those two tables to decide "nothing wants this any more", so
+// a row that never got as far as either one - a crash between rememberMedia
+// and the row that would reference it - is invisible to it, and to the
+// missing-from-disk check above too, since the bytes genuinely are there.
+const orphanSha = createHash('sha256').update('bytes nobody ever filed anywhere').digest('hex');
+const orphanShard = path.join(dataDir, 'media', orphanSha.slice(0, 2));
+mkdirSync(orphanShard, { recursive: true });
+writeFileSync(path.join(orphanShard, orphanSha), 'orphaned bytes');
+db.prepare('INSERT INTO media (sha256, bytes, content_type, created_at) VALUES (?, ?, ?, ?)')
+  .run(orphanSha, 14, 'text/plain', Date.now());
+ok('a media row neither the library nor a lecture points at is flagged too',
+  /database row\(s\)/.test(doctor.checkMedia(db, dataDir).detail) && doctor.checkMedia(db, dataDir).level === 'warn');
+db.prepare('DELETE FROM media WHERE sha256 = ?').run(orphanSha);
+
+const report = await doctor.run({
+  db, dataDir, releaseDir: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+  healthUrl: '', certPath: '',
+});
+ok(`the whole run answers every check (${report.map((item) => item.title).join(', ')})`,
+  ['node', 'schema', 'database', 'accounts', 'media', 'storage', 'permissions', 'disk', 'build', 'certificate', 'service']
+    .every((title) => !!seen(report, title)));
+ok('and reads the build out of the release it is part of',
+  /build \d+/.test(seen(report, 'build').detail));
+
+const lines = [];
+const code = doctor.report(report, (line) => lines.push(line));
+ok('a run with nothing broken exits 0 even when it has warnings',
+  code === (report.some((item) => item.level === 'bad') ? 1 : 0));
+ok('and every finding gets a line somebody can read', lines.length >= report.length);
+
+// A database that will not open at all - the recovery scenario doctor exists
+// for - has to be a finding, not a crash that pre-empts every other check.
+const openError = new Error('this database is at schema version 999 but this release only knows 5');
+const brokenReport = await doctor.run({
+  db: null, openError, dataDir,
+  releaseDir: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+  healthUrl: '', certPath: '',
+});
+ok(`an unopenable database is reported, not thrown (${seen(brokenReport, 'database').detail.slice(0, 40)}…)`,
+  seen(brokenReport, 'database').level === 'bad' && /schema version 999/.test(seen(brokenReport, 'database').detail));
+ok('and the checks that do not need the database still run',
+  seen(brokenReport, 'node') && seen(brokenReport, 'permissions') && seen(brokenReport, 'disk'));
+
+// checkStorage reads whatever env object it is handed - the CLI's job (see
+// envFile() in podium-admin.js) is making sure that object actually has
+// LECTURE_RETENTION_DAYS on it even when the shell running `doctor` never
+// sourced podium.env itself.
+ok('with no retention configured, storage says everything is kept',
+  /everything kept/.test(doctor.checkStorage(db, {}).detail));
+ok('and with it set, storage says for how long',
+  /kept 180 days/.test(doctor.checkStorage(db, { LECTURE_RETENTION_DAYS: '180' }).detail));
+// pruneFiles (lectures.js) treats anything <= 0 as no retention at all - so
+// doctor has to agree, rather than reading a negative value as truthy and
+// reporting "kept -1 days" as a clean bill of health.
+ok('a negative retention value is treated the same as none set, not reported as valid',
+  /everything kept/.test(doctor.checkStorage(db, { LECTURE_RETENTION_DAYS: '-1' }).detail));
+
+console.log('\n-- doctor, from the command line --');
+
+// The CLI itself: does `podium-admin.js doctor` actually load podium.env for
+// the retention line, and does it survive a database it cannot open. Spawned
+// rather than called in-process because both of these are about main()'s own
+// wiring (envFile(), the try/catch around store.open()), not about doctor.js.
+const cliRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'server');
+const envFile = path.join(root, 'podium-cli.env');
+// No PORT here on purpose: setting one makes doctor try to reach a real
+// service at that port for the build/health checks, which nothing is
+// listening on in this test and would turn this into a check of the
+// network rather than of the env-file loading this is actually testing.
+writeFileSync(envFile, `LECTURE_RETENTION_DAYS=42\n`);
+const cliOut = execFileSync(process.execPath, ['podium-admin.js', 'doctor'], {
+  cwd: cliRoot, env: { ...process.env, DATA_DIR: dataDir, PODIUM_ENV: envFile },
+}).toString();
+ok(`the CLI reads the retention setting out of podium.env (storage line: "${cliOut.match(/storage.*/)?.[0]}")`,
+  /kept 42 days/.test(cliOut));
+
+const crashDir = mkdtempSync(path.join(tmpdir(), 'podium-doctor-crash-'));
+{
+  const crashDb = store.open(crashDir);
+  crashDb.exec('PRAGMA user_version = 999');
+  crashDb.close();
+}
+let crashOut = '';
+let crashStatus = 0;
+try {
+  execFileSync(process.execPath, ['podium-admin.js', 'doctor'], {
+    cwd: cliRoot, env: { ...process.env, DATA_DIR: crashDir },
+  });
+} catch (err) {
+  crashOut = String(err.stdout || '');
+  crashStatus = err.status;
+}
+ok('doctor on a database from a newer release reports it rather than crashing',
+  crashStatus === 1 && /will not open/.test(crashOut) && /schema version 999/.test(crashOut));
+
+// The other recovery scenario doctor exists for: DATA_DIR is missing or
+// mistyped. store.open()'s ordinary path would create a fresh, empty
+// database right there and report a clean bill of health on the wrong
+// directory - doctor asks for a non-creating open instead, specifically so
+// this reports the real problem rather than quietly manufacturing "fine".
+const missingDir = path.join(root, 'missing-data-dir-for-doctor');
+let missingOut = '';
+let missingStatus = 0;
+try {
+  execFileSync(process.execPath, ['podium-admin.js', 'doctor'], {
+    cwd: cliRoot, env: { ...process.env, DATA_DIR: missingDir },
+  });
+} catch (err) {
+  missingOut = String(err.stdout || '');
+  missingStatus = err.status;
+}
+ok('doctor on a missing/mistyped DATA_DIR reports it rather than quietly creating one',
+  missingStatus === 1 && /no database/.test(missingOut));
+ok('and it really did not create anything there', !existsSync(missingDir));
+ok('and every other command still fails loudly on the same database, as it always has', (() => {
+  try {
+    execFileSync(process.execPath, ['podium-admin.js', 'user', 'list'], {
+      cwd: cliRoot, env: { ...process.env, DATA_DIR: crashDir }, stdio: 'pipe',
+    });
+    return false;
+  } catch (err) {
+    return err.status === 1 && /schema version 999/.test(String(err.stderr || ''));
+  }
+})());
+rmSync(crashDir, { recursive: true, force: true });
 
 db.close();
 rmSync(root, { recursive: true, force: true });

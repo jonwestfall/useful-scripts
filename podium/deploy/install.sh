@@ -73,6 +73,13 @@ DATA_DIR=$DATA_DIR
 # Only consulted when there are NO accounts. Creating the first account with
 # podium-admin turns the cookie gate on and this off.
 #AUTH_PASSWORD=
+
+# How long a session record keeps its BULKY parts - the photos taken in the
+# room, the ink, and the pages an export rasterizes. Unset means keep them
+# forever. Timelines and poll results are never aged out by this: they are a few
+# hundred short rows, and they are what you want three years later when somebody
+# asks what the course covered.
+#LECTURE_RETENTION_DAYS=180
 EOF
   chmod 0640 "$CONFIG_DIR/podium.env"
   chgrp "$PODIUM_USER" "$CONFIG_DIR/podium.env"
@@ -142,6 +149,8 @@ Podium is installed.
   config     $CONFIG_DIR/podium.env
   data       $DATA_DIR
   accounts   sudo -u $PODIUM_USER DATA_DIR=$DATA_DIR node $PREFIX/current/server/podium-admin.js user list
+  check      sudo -u $PODIUM_USER DATA_DIR=$DATA_DIR node $PREFIX/current/server/podium-admin.js doctor
+  backup     sudo $PREFIX/current/deploy/backup.sh
   update     $here/deploy/update.sh $here
 
 It is listening on 127.0.0.1:$PORT and expects a TLS terminator in front of it.

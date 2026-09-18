@@ -18,8 +18,13 @@
 
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const accounts = require('./accounts.js');
+const courses = require('./courses.js');
 const library = require('./library.js');
+const lectures = require('./lectures.js');
 const plans = require('./plans.js');
 const settings = require('./settings.js');
 
@@ -123,7 +128,7 @@ function capabilities(ctx, user) {
   // installed instance with no accounts yet would offer an Admin page whose
   // every request answers 401 - a feature announced before it can be used.
   const features = ctx.db && ctx.hasAccounts()
-    ? ['auth', 'library', 'plans', 'settings']
+    ? ['auth', 'library', 'plans', 'settings', 'sessions', 'people']
     : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
@@ -202,8 +207,76 @@ async function handleApi(req, res, url, ctx) {
   const [head, ...rest] = route.split('/');
 
   try {
-    if (head === 'courses' && req.method === 'GET') {
-      json(res, 200, { courses: library.listCourses(ctx.db, user) });
+    if (head === 'courses' && !rest.length && req.method === 'GET') {
+      // Two shapes from one route: the flat list every page has always read
+      // (code, title, role), and - for a course this account runs - who is in
+      // it. See courses.list for why membership is not shown to everyone.
+      json(res, 200, { courses: courses.list(ctx.db, user) });
+      return true;
+    }
+
+    if (head === 'courses' && !rest.length && req.method === 'POST') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, { course: courses.create(ctx.db, user, { code: body.code, title: body.title }) });
+      return true;
+    }
+
+    if (head === 'courses' && rest.length === 1 && req.method === 'PATCH') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, {
+        course: courses.update(ctx.db, user, rest[0], { title: body.title, archived: body.archived }),
+      });
+      return true;
+    }
+
+    if (head === 'courses' && rest.length === 2 && rest[1] === 'members' && req.method === 'POST') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, { people: courses.addMember(ctx.db, user, rest[0], { username: body.username, role: body.role }) });
+      return true;
+    }
+
+    if (head === 'courses' && rest.length === 3 && rest[1] === 'members' && req.method === 'DELETE') {
+      json(res, 200, { people: courses.removeMember(ctx.db, user, rest[0], decodeURIComponent(rest[2])) });
+      return true;
+    }
+
+    // --- accounts ---------------------------------------------------------
+    //
+    // Administrators only, all of it. Who else has an account here is not a
+    // member's business, and neither is making one.
+
+    if (head === 'people') {
+      if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can manage accounts' }); return true; }
+
+      if (!rest.length && req.method === 'GET') {
+        json(res, 200, { people: accounts.listUsers(ctx.db), me: user.id });
+        return true;
+      }
+
+      if (!rest.length && req.method === 'POST') {
+        const body = await readJson(req, 8 * 1024);
+        json(res, 200, {
+          person: await accounts.createUser(ctx.db, {
+            username: body.username,
+            password: body.password,
+            displayName: body.displayName,
+            isAdmin: !!body.isAdmin,
+          }),
+        });
+        return true;
+      }
+
+      if (rest.length === 1 && req.method === 'PATCH') {
+        json(res, 200, { person: await changePerson(ctx, user, decodeURIComponent(rest[0]), await readJson(req, 8 * 1024)) });
+        return true;
+      }
+    }
+
+    // --- what the box is holding -------------------------------------------
+
+    if (head === 'storage' && req.method === 'GET') {
+      if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can see this' }); return true; }
+      json(res, 200, storageReport(ctx));
       return true;
     }
 
@@ -288,6 +361,94 @@ async function handleApi(req, res, url, ctx) {
       return true;
     }
 
+    // --- lectures: what happened in the room -------------------------------
+    //
+    // Written by the DISPLAY, which is the only device that holds the
+    // decrypted state, and by a controller as it ends a poll. The relay writes
+    // none of it and could not: it only ever sees ciphertext. See lectures.js.
+
+    if (head === 'lectures' && !rest.length && req.method === 'GET') {
+      json(res, 200, {
+        lectures: lectures.listLectures(ctx.db, user),
+        // Scoped to what this caller may see, the same as the lecture list
+        // just above it - the instance-wide total is the Storage card's own,
+        // admin-only question (see the comment on usage()).
+        usage: lectures.usage(ctx.db, user),
+        limits: { fileBytes: lectures.MAX_FILE_BYTES, lectureBytes: lectures.MAX_LECTURE_BYTES },
+      });
+      return true;
+    }
+
+    if (head === 'lectures' && !rest.length && req.method === 'POST') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, { lecture: lectures.startLecture(ctx.db, user, { room: body.room, title: body.title, dataDir: ctx.dataDir }) });
+      return true;
+    }
+
+    if (head === 'lectures' && rest.length === 1 && req.method === 'GET') {
+      const lecture = lectures.getLecture(ctx.db, user, rest[0]);
+      if (!lecture) { json(res, 404, { error: 'no such lecture' }); return true; }
+      json(res, 200, { lecture });
+      return true;
+    }
+
+    if (head === 'lectures' && rest.length === 1 && req.method === 'PATCH') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, {
+        lecture: lectures.renameLecture(ctx.db, user, rest[0], {
+          title: body.title,
+          courseCode: 'course' in body ? body.course : undefined,
+        }),
+      });
+      return true;
+    }
+
+    if (head === 'lectures' && rest.length === 1 && req.method === 'DELETE') {
+      json(res, 200, { removed: lectures.deleteLecture(ctx.db, user, rest[0], { dataDir: ctx.dataDir }).id });
+      return true;
+    }
+
+    // A batch, because the display queues events and flushes them every few
+    // seconds rather than spending a request on every slide.
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'events' && req.method === 'POST') {
+      const body = await readJson(req, 256 * 1024);
+      json(res, 200, lectures.appendEvents(ctx.db, user, rest[0], body.events));
+      return true;
+    }
+
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'polls' && req.method === 'POST') {
+      const body = await readJson(req, 512 * 1024);
+      json(res, 200, lectures.recordPoll(ctx.db, user, rest[0], body.poll || body));
+      return true;
+    }
+
+    // The bulky half: photos, ink, and the pages an export rasterizes. The file
+    // IS the body, as with a library upload and for the same reason - the two
+    // strings that go with it fit in a query string, and multipart would be the
+    // largest thing in this repository with no dependencies.
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'files' && req.method === 'POST') {
+      json(res, 200, { file: await receiveLectureFile(req, url, ctx, user, rest[0]) });
+      return true;
+    }
+
+    // Re-exporting is supposed to replace what a previous export left, not
+    // just add to it (see addFile's own comment on the same-name upsert) -
+    // but a file the newer export no longer produces at all (a photo the
+    // switch has since turned off, one deleted from the strip, a poll aged
+    // out of history) has no name for that upsert to replace. This is the
+    // other half: an explicit removal, same permission as filing one in the
+    // first place.
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'files' && req.method === 'DELETE') {
+      json(res, 200, lectures.removeFile(ctx.db, user, rest[0], url.searchParams.get('name'), { dataDir: ctx.dataDir }));
+      return true;
+    }
+
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'end' && req.method === 'POST') {
+      const body = await readJson(req, 8 * 1024).catch(() => ({}));
+      json(res, 200, { lecture: lectures.endLecture(ctx.db, user, rest[0], { at: body.at, dataDir: ctx.dataDir }) });
+      return true;
+    }
+
     // --- connection settings ----------------------------------------------
     //
     // This hands out room passphrases, which is the whole point of it: a
@@ -295,7 +456,15 @@ async function handleApi(req, res, url, ctx) {
     // what earns them, and writing them takes more than membership.
 
     if (head === 'settings' && !rest.length && req.method === 'GET') {
-      json(res, 200, { courses: settings.forUser(ctx.db, user) });
+      // Archived courses only for admin.html's own settings card asking for
+      // them by name (?archived=1) - never for an ordinary device's silent
+      // auto-setup (config.js hits this same route with no query string),
+      // which has no business being offered a course that is meant to have
+      // stopped being usable. forUser ignores the flag for a non-admin
+      // anyway, but the query string is also the only way a plain device
+      // could ask, so it is worth being deliberate about here too.
+      const includeArchived = url.searchParams.get('archived') === '1';
+      json(res, 200, { courses: settings.forUser(ctx.db, user, { includeArchived }) });
       return true;
     }
 
@@ -361,6 +530,122 @@ async function receiveUpload(req, url, ctx, user) {
     // The bytes are on disk and nothing ended up pointing at them. Content
     // addressing means this is safe to undo: if any other item shares the
     // hash, forgetMediaIfUnused leaves both alone.
+    library.forgetMediaIfUnused(ctx.db, ctx.dataDir, sha256);
+    throw err;
+  }
+}
+
+/**
+ * Change one account, from the admin page.
+ *
+ * Four separate things behind one route because they are four checkboxes on one
+ * row: the name, administrator or not, disabled or not, and a new password.
+ *
+ * The two that can strand the instance are refused HERE rather than in
+ * accounts.js, which is deliberate - see assertAnotherAdminRemains. A browser
+ * is where a slip happens; podium-admin at a shell is what a slip is recovered
+ * with, and it keeps its teeth.
+ */
+async function changePerson(ctx, user, username, body) {
+  const person = accounts.findUser(ctx.db, username);
+  if (!person) throw Object.assign(new Error(`no account called ${username}`), { status: 404 });
+
+  if (body.displayName !== undefined) accounts.setDisplayName(ctx.db, username, body.displayName);
+
+  if (body.isAdmin !== undefined && !!body.isAdmin !== !!person.is_admin) {
+    if (!body.isAdmin) {
+      // The admin.js client already hides this switch on your own row (see
+      // isMe there), but the route is the thing that actually has to hold -
+      // a client-side hidden checkbox is not a permission check.
+      if (person.id === user.id) {
+        throw Object.assign(new Error('you cannot take away your own administrator rights'), { status: 409 });
+      }
+      accounts.assertAnotherAdminRemains(ctx.db, username, 'taking that away');
+    }
+    accounts.setAdmin(ctx.db, username, !!body.isAdmin);
+  }
+
+  if (body.disabled !== undefined && !!body.disabled !== !!person.disabled_at) {
+    if (body.disabled) {
+      // Signing yourself out of the page you are standing on, permanently, is
+      // never what the click meant.
+      if (person.id === user.id) {
+        throw Object.assign(new Error('you cannot disable the account you are signed in as'), { status: 409 });
+      }
+      accounts.assertAnotherAdminRemains(ctx.db, username, 'disabling it');
+    }
+    accounts.setDisabled(ctx.db, username, !!body.disabled);
+  }
+
+  // Last, so that a request which also disables an account cannot leave it with
+  // a new password it can never use. setPassword drops every session that
+  // account had, which is the point of doing it in a hurry.
+  if (body.password) await accounts.setPassword(ctx.db, username, body.password);
+
+  return accounts.publicUser(accounts.findUser(ctx.db, username));
+}
+
+/**
+ * What this box is actually holding, in the three numbers an operator wants
+ * before they go looking for more disk: the library, the session records, and
+ * the database itself.
+ */
+function storageReport(ctx) {
+  // WAL mode (see store.open) keeps recently-written pages in podium.db-wal
+  // until the next checkpoint, plus a small -shm index alongside it - both
+  // real bytes on disk that podium.db alone does not account for, and on a
+  // busy instance they are not a rounding error.
+  let database = 0;
+  for (const suffix of ['', '-wal', '-shm']) {
+    try { database += fs.statSync(path.join(ctx.dataDir, `podium.db${suffix}`)).size; } catch { /* not there */ }
+  }
+  return {
+    library: library.usage(ctx.db),
+    sessions: lectures.usage(ctx.db),
+    database,
+    dataDir: ctx.dataDir,
+    // Media bytes live on disk beside the database, not inside it - so a copy
+    // of the database alone is not a backup, and the page says so.
+    // Matches doctor.checkStorage's own validation: only a finite, positive
+    // number is a real retention setting, the same thing pruneFiles itself
+    // requires - a stray "-1" must not be presented as a working setting.
+    retentionDays: (() => {
+      const days = Number(process.env.LECTURE_RETENTION_DAYS);
+      return Number.isFinite(days) && days > 0 ? days : null;
+    })(),
+  };
+}
+
+/**
+ * One file kept with a lecture: a photo, the ink, or a page from an export.
+ *
+ * Checked in the same order the library upload is, and for the same reason:
+ * everything answerable without reading the body is answered first, so a
+ * signed-in stranger cannot spend megabytes of disk per request on a lecture
+ * they may not touch and only be told no once it has all landed.
+ */
+async function receiveLectureFile(req, url, ctx, user, lectureId) {
+  const name = String(url.searchParams.get('name') || '');
+  const type = lectures.keepableType(name);
+  if (!type) {
+    throw Object.assign(new Error(
+      `a session keeps ${[...lectures.KEEPABLE.keys()].join(' ')} - not ${name.split('.').pop() || 'that'}`,
+    ), { status: 415 });
+  }
+  // Resolves the lecture and this account's right to write to it before a byte
+  // is read; addFile asks again afterwards, which is the check that counts.
+  if (!lectures.visibleLecture(ctx.db, user, lectureId)) {
+    throw Object.assign(new Error('no such lecture'), { status: 404 });
+  }
+
+  const { sha256, bytes } = await library.storeUpload(ctx.dataDir, req, { limit: lectures.MAX_FILE_BYTES });
+  try {
+    // The type comes from the name through our own allow-list, never from what
+    // the request declared - these bytes are served back from this origin, and
+    // what a browser is told they are must not be something a caller chose.
+    return lectures.addFile(ctx.db, user, lectureId,
+      { name, kind: url.searchParams.get('kind') || '', sha256, bytes, contentType: type, dataDir: ctx.dataDir });
+  } catch (err) {
     library.forgetMediaIfUnused(ctx.db, ctx.dataDir, sha256);
     throw err;
   }

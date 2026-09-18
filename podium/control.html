@@ -663,6 +663,14 @@
             written to this device unless you export it.
           </p>
           <hr style="border:0;border-top:1px solid var(--line);margin:6px 0">
+          <!-- Only on a Podium with a server that keeps sessions. A photo is
+               usually somebody else's - a worksheet, a board, a face - so the
+               server keeps none unless somebody says so. This switch is THIS
+               LECTURE only and is forgotten on reload; the default it starts
+               from lives in Settings > Presentation. -->
+          <div class="inline" id="photo-keep-row" hidden>
+            <label class="check"><input id="photo-keep" type="checkbox"> Keep photos on the server with this lecture</label>
+          </div>
           <div class="inline">
             <button id="photo-export" class="big-button" type="button" disabled>Export this session…</button>
           </div>
@@ -792,6 +800,16 @@
         Stops this iPad or phone from dimming or locking itself while the controller is
         open, the same way the display already stays awake once armed. Released the moment
         you leave this tab or the browser backgrounds it.
+      </p>
+
+      <label class="check"><input id="pref-keep-photos" type="checkbox"> Keep photos on the server by default</label>
+      <p class="hint">
+        Only on a self-hosted Podium that records sessions; it does nothing anywhere else.
+        Off means a photo of a worksheet or a board stays in this device's memory until you
+        export, which is how Podium has always behaved. On means each lecture keeps its
+        photos alongside its timeline, ink and poll results, so a past session can be
+        downloaded again from the Admin page. Either way the Photos tab can turn it off for
+        one lecture without changing what this sets.
       </p>
     </section>
 

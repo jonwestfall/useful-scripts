@@ -43,11 +43,13 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { Worker } = require('node:worker_threads');
 const { WebSocketServer } = require('ws');
 const store = require('./store.js');
 const accounts = require('./accounts.js');
 const api = require('./api.js');
 const library = require('./library.js');
+const lectures = require('./lectures.js');
 
 const PORT = Number(process.env.PORT || 8080);
 // Unset means every interface, which is what running this on a laptop for a
@@ -89,6 +91,28 @@ const MAX_PER_ROOM = 12;
 const AUTH_USER = process.env.AUTH_USER || 'podium';
 const AUTH_PASSWORD = process.env.AUTH_PASSWORD || '';
 const AUTH_OPEN_PATHS = new Set(['/join.html', '/assets/js/join.js', '/login.html', '/favicon.ico']);
+
+/**
+ * The build this PROCESS is serving, read once at startup and reported on
+ * /healthz.
+ *
+ * Not decoration. A release goes live by flipping a symlink, and a service
+ * resolves that symlink once - when it starts. Flip it without restarting and
+ * every file on disk is the new release, every diagnostic agrees, and the code
+ * answering requests is last week's. The only way to tell from outside is to
+ * ask the process itself, and /healthz is the one route that answers without a
+ * login (see podium-admin doctor, which compares this against the release it is
+ * part of). The number is on every page already; it is not a secret.
+ */
+const SERVED_BUILD = (() => {
+  if (!STATIC) return null;
+  try {
+    return Number(fs.readFileSync(path.join(STATIC, 'assets', 'js', 'protocol.js'), 'utf8')
+      .match(/BUILD\s*=\s*(\d+)/)?.[1]) || null;
+  } catch {
+    return null;
+  }
+})();
 
 const DATA_DIR = store.dataDirFromEnv();
 
@@ -361,7 +385,7 @@ async function handlePoll(req, res, url) {
 const server = http.createServer((req, res) => {
   if (req.url === '/healthz') {
     res.writeHead(200, { 'content-type': 'text/plain' });
-    res.end(`ok ${rooms.size} rooms, ${polls.size} polls\n`);
+    res.end(`ok build ${SERVED_BUILD ?? '?'}, ${rooms.size} rooms, ${polls.size} polls\n`);
     return;
   }
   const url = new URL(req.url, 'http://x');
@@ -374,6 +398,15 @@ const server = http.createServer((req, res) => {
   // Answered whether or not this process serves the pages: a display on
   // GitHub Pages pointed at this relay still needs to be able to ask what it
   // can do here.
+  // Not routed through handleApi because it answers with a file rather than
+  // JSON, and a consistent-looking API is not worth a second file-streaming
+  // path. See serveBackup.
+  if (url.pathname === '/api/backup' && req.method === 'GET') {
+    serveBackup(req, res).catch(() => {
+      try { api.json(res, 500, { error: 'could not take a copy of the database' }); } catch { /* response already begun */ }
+    });
+    return;
+  }
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
     api.handleApi(req, res, url, authContext).catch(() => {
       try { api.json(res, 500, { error: 'request failed' }); } catch { /* response already begun */ }
@@ -463,6 +496,100 @@ function serveMedia(req, res, url) {
       'cache-control': 'private, no-cache',
       etag,
     });
+  });
+}
+
+/**
+ * A copy of the database, taken safely while the server is running.
+ *
+ * `VACUUM INTO` is the reason this is three lines rather than a stop-the-world
+ * problem: SQLite writes a consistent snapshot of the whole database to a new
+ * file, taking its own locks, with WAL and concurrent writers and all. Copying
+ * podium.db with `cp` while the process is up would not be safe; this is.
+ *
+ * What it is NOT is a whole backup, and the page that offers it says so plainly:
+ * uploaded files and session photos live on disk beside the database, not inside
+ * it. The database alone restores your accounts, courses, settings, library
+ * ENTRIES and session timelines, and leaves every one of those entries pointing
+ * at bytes that are not there. Backing up the whole DATA_DIR is what deploy/
+ * documents.
+ *
+ * Administrators only. It carries password hashes and every room's passphrase.
+ */
+// The worker VACUUM INTO runs in. node:sqlite's DatabaseSync is exactly
+// that - synchronous - so running it on this process's own thread would
+// block the event loop for the whole snapshot: every relay message and every
+// other request on hold until an administrator's backup download finishes,
+// which for a large database is not a rounding error. A worker thread opens
+// its OWN connection to the same file (SQLite's WAL mode is built for
+// concurrent readers, which is all VACUUM INTO's source side needs) and does
+// the blocking work there, leaving this thread free to keep serving the room
+// while it runs.
+function vacuumInto(source, destination) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(`
+      const { parentPort, workerData } = require('node:worker_threads');
+      const { DatabaseSync } = require('node:sqlite');
+      try {
+        const db = new DatabaseSync(workerData.source, { readOnly: true });
+        // A quoted string literal, not a bound parameter: VACUUM INTO takes
+        // no parameters. Both paths are this process's own, built from
+        // DATA_DIR and random bytes, so there is nothing of anyone else's in
+        // them to quote wrong.
+        db.exec(\`VACUUM INTO '\${workerData.destination.replace(/'/g, "''")}'\`);
+        db.close();
+        parentPort.postMessage({ ok: true });
+      } catch (err) {
+        parentPort.postMessage({ ok: false, message: err.message });
+      }
+    `, { eval: true, workerData: { source, destination } });
+    worker.once('message', (msg) => {
+      worker.terminate();
+      if (msg.ok) resolve(); else reject(new Error(msg.message));
+    });
+    worker.once('error', (err) => { worker.terminate(); reject(err); });
+  });
+}
+
+async function serveBackup(req, res) {
+  if (!db || !DATA_DIR) { res.writeHead(404); res.end('not found'); return; }
+  const user = accounts.sessionUser(db, api.cookieToken(req));
+  if (!user) { api.json(res, 401, { error: 'not signed in' }); return; }
+  if (!user.isAdmin) { api.json(res, 403, { error: 'only an administrator can download a backup' }); return; }
+
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  const temp = path.join(DATA_DIR, `.backup-${crypto.randomBytes(6).toString('hex')}.db`);
+  // Declared before the VACUUM even runs, and used in its catch too: a
+  // VACUUM INTO that dies partway (a full disk, most likely) can still have
+  // written a partial file at `temp` before throwing, and leaving THAT behind
+  // is the same slow leak this whole cleanup exists to prevent - repeated
+  // failed downloads filling the disk the backup endpoint is meant to protect.
+  const drop = () => { try { fs.rmSync(temp, { force: true }); } catch { /* gone already, or never written */ } };
+  try {
+    await vacuumInto(path.join(DATA_DIR, 'podium.db'), temp);
+  } catch (err) {
+    drop();
+    console.error(`podium: backup failed (${err.message})`);
+    api.json(res, 500, { error: 'could not take a copy of the database' });
+    return;
+  }
+
+  fs.stat(temp, (err, info) => {
+    if (err) { drop(); api.json(res, 500, { error: 'could not take a copy of the database' }); return; }
+    res.writeHead(200, {
+      'content-type': 'application/vnd.sqlite3',
+      'content-length': info.size,
+      'content-disposition': `attachment; filename="podium-${stamp}.db"`,
+      'cache-control': 'no-store',
+    });
+    const stream = fs.createReadStream(temp);
+    stream.pipe(res);
+    // Whichever way this ends - sent, or a browser that went away mid-download
+    // - the snapshot goes. A DATA_DIR quietly filling with abandoned copies of
+    // itself is a good way to run a box out of disk.
+    stream.on('close', drop);
+    stream.on('error', () => { drop(); res.destroy(); });
+    res.on('close', drop);
   });
 }
 
@@ -568,6 +695,32 @@ const sessionSweep = db ? setInterval(() => {
 }, 60 * 60 * 1000) : null;
 sessionSweep?.unref();
 
+// The retention control. Photos and rasterized slides are the two payloads that
+// grow without bound, so they age out; a lecture's TIMELINE and its poll results
+// do not, because they are a few hundred short rows and are exactly what somebody
+// wants three years later when asked what a course covered.
+//
+// Unset means keep everything, which is the right default for a box one person
+// runs for their own teaching: a retention policy that deleted a term's photos
+// because nobody had read the documentation would be the worse mistake.
+const LECTURE_RETENTION_DAYS = Number(process.env.LECTURE_RETENTION_DAYS || 0);
+
+function pruneLectureFiles() {
+  if (!db || !DATA_DIR || !(LECTURE_RETENTION_DAYS > 0)) return;
+  try {
+    const { removed, bytes } = lectures.pruneFiles(db, DATA_DIR, { days: LECTURE_RETENTION_DAYS });
+    if (removed) {
+      console.log(`podium: retention removed ${removed} session file(s) older than `
+        + `${LECTURE_RETENTION_DAYS} days, freeing ${Math.round(bytes / 1024 / 1024)} MB`);
+    }
+  } catch (err) {
+    console.error(`podium: session retention sweep failed (${err.message})`);
+  }
+}
+
+const retentionSweep = db ? setInterval(pruneLectureFiles, 24 * 60 * 60 * 1000) : null;
+retentionSweep?.unref();
+
 /** Say out loud which of the three authentication configurations is live. */
 function describeAuth() {
   if (!STATIC) return 'relay only';
@@ -585,8 +738,20 @@ function describeAuth() {
   return db ? 'open - no accounts yet, run podium-admin user add' : 'open';
 }
 
-server.on('close', () => { clearInterval(heartbeat); if (sessionSweep) clearInterval(sessionSweep); });
+server.on('close', () => {
+  clearInterval(heartbeat);
+  if (sessionSweep) clearInterval(sessionSweep);
+  if (retentionSweep) clearInterval(retentionSweep);
+});
 server.listen(PORT, HOST || undefined, () => {
   console.log(`podium relay on ${HOST || '*'}:${PORT}${STATIC ? ` (serving ${STATIC})` : ' (relay only)'}`);
   console.log(`podium auth: ${describeAuth()}${db ? `, data in ${store.dataDirFromEnv()}` : ''}`);
+  if (db) {
+    console.log(`podium sessions: ${LECTURE_RETENTION_DAYS > 0
+      ? `photos and exported pages are kept for ${LECTURE_RETENTION_DAYS} days; timelines are kept indefinitely`
+      : 'kept indefinitely (set LECTURE_RETENTION_DAYS to age the bulky parts out)'}`);
+  }
+  // Once at startup as well as daily: a box that is only up during term would
+  // otherwise never reach the first daily sweep.
+  pruneLectureFiles();
 });

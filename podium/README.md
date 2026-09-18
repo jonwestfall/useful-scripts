@@ -991,8 +991,75 @@ than failing the export that holds the rest.
 Nothing here is written to the tablet until you press that button. Photos and the
 strip live in memory for the session, which is the right default for a picture of a
 student's work or a board mid-argument — and it means the zip, on the device you chose
-to save it to, is the only copy that outlives the class. On an iPad the download lands
+to save it to, is the only copy that outlives the class. (On a self-hosted Podium with
+accounts there is a second copy, on your own server — see *Session records* below, which
+is also where the switch for turning that off lives.) On an iPad the download lands
 in Files, from where the images can be moved into Photos like any other download.
+
+### Session records (self-hosted only)
+
+On a Podium with a server behind it (`DATA_DIR` and at least one account — see
+[VPS.md](VPS.md)), the display also writes down what it showed. Click **Go live** and a
+session record opens; the arming screen says so before you start, because a room should
+not have to read the documentation to find that out. Stand down (**E**) and it closes.
+
+What is kept is a timeline — what went on the projector, and when — plus the final tally
+of every poll you ended. Stepping quickly through slides does not produce a row per
+press: entries are at least fifteen seconds apart, so what you get is where the lecture
+*dwelled*.
+
+Alongside it, the bulky half: **your ink**, filed by the display as strokes when you stand
+down, **the photos** taken in the room if you have asked for them to be kept, and
+**everything an export builds** — the annotated slides, the boards, the poll CSVs, `session.txt` — filed
+when you press *Export this session*. Those are the same files the zip hands you, so a
+past lecture can be downloaded again as the same zip, from a browser that was never in the
+room.
+
+Photos are the exception, and they are **off by default**. A photo is usually somebody
+else's — a worksheet, a board mid-argument, a face at the back — and Podium's long-standing
+answer has been that they live in memory until you press Export, so nothing is stored that
+nobody asked for. Two switches, answering different questions:
+
+* **Settings → Presentation → Keep photos on the server by default** is the decision you
+  make once, in the office, for this device.
+* **Keep photos on the server with this lecture**, on the Photos tab, is this lecture only
+  — for the guest speaker, or the room with a camera pointed at the students. It starts
+  from the default and is forgotten on reload, so an exception never quietly becomes the
+  rule.
+
+Either way it governs both the photo filed as it is taken and the photos inside a filed
+export. Ink, poll results and the rest of an export are nobody else's picture and are kept
+whenever there is a lecture to keep them with. Both switches appear only on a Podium that
+keeps sessions.
+
+**The display writes this, not the relay, and it could not be otherwise.** Every message
+Podium puts on a relay is encrypted in the browser under the room passphrase, so a relay
+keeping its own log would hold a pile of ciphertext and no idea what any of it showed.
+The display is the one device that has the decrypted state — and, on a server-backed
+deployment, is also signed in. A poll's numbers come from the controller for the same
+reason: it is what ends a poll and the only device that ever holds the final counts.
+
+Read them back on **admin.html**, under *Past sessions*: open one for its timeline, give
+it a name so "Tue 14:00" becomes something you can find again, download the timeline as
+text, pull any poll's CSV out weeks later — which is the point, since the relay deletes a
+poll the moment it closes and until now the only copy was the controller's own browser —
+or **Download the session**, which packs everything the lecture kept back into the same
+zip, built in your browser by the same writer that made it on the day.
+
+Who sees what follows the same rule as lecture plans: a session held in a room that
+belongs to a course is visible to that course, and one held anywhere else is visible only
+to whoever ran it. Removing one is narrower still — whoever ran it, a course owner, or an
+admin.
+
+Photos and rasterized slides are the two payloads that grow without bound, so the server
+can age them out: set `LECTURE_RETENTION_DAYS` (see [deploy/](deploy/README.md)) and the
+files of lectures older than that are swept at startup and once a day, or run
+`podium-admin.js lectures prune --days 180` by hand. Unset means keep everything. Either
+way a lecture's **timeline and poll results are never aged out** — a few hundred short
+rows is not what fills a disk, and it is exactly what somebody wants three years later.
+
+None of this exists on GitHub Pages, on a USB stick, or against Supabase or MQTT. There is
+no server in those paths to hold it, the pages notice, and nothing about them changes.
 
 ## Planning a lecture in your office
 
@@ -1089,6 +1156,69 @@ nginx, say — is the thing protecting it. It holds no credentials and makes no
 security claim: anything stored on that machine is readable by anyone who can open
 that browser, and a plan file is plain JSON. Put it behind the same auth as the rest
 of Podium and treat the file like any other lecture prep.
+
+## The Admin page (self-hosted only)
+
+`admin.html` is the fourth page, and the only one you never open in front of a class.
+It appears as a working page only where there is a server behind it with at least one
+account; everywhere else it loads and says so. What is on it depends on who you are.
+
+**People** (administrators only). Add an account, set somebody's password, make
+somebody an administrator, disable an account that should stop working today. Each row
+says when that account was last seen and how many sessions it still holds — a session,
+not a device: signing in twice from the same browser counts twice, the same as two
+different devices would. Setting a password signs every one of those sessions out,
+which is the point of doing it in a hurry.
+
+Two things the page will not let you do: disable or demote **yourself** — the switches
+are simply not on your own row — and disable or demote the **last administrator who can
+sign in**. An instance with nobody able to administer it can only be fixed from a shell.
+That rail is on the web page and deliberately *not* in `podium-admin`, because a shell
+is the recovery path and "that account is compromised, turn it off now" should never be
+argued with.
+
+**Courses.** Everyone sees the courses they are in; open one you own and you get the
+whole of it in one place: who is in it, a way to add or promote or remove them, and the
+room that course connects to — transport, room name and passphrase, with a one-button
+rotate for when someone has left. That is what turns "Sam joins PSY 415" into "Sam's
+iPad sets itself up by logging in". Who is in a course is shown to whoever runs it, not
+to every member.
+
+Making and archiving courses is an administrator's. **Archiving** is as close to
+deleting as Podium gets: everything filed under the course — library items, plans,
+session records — stays exactly where it is and stops being listed. A term that is over
+should go quiet, not take its lecture recordings with it. Bringing it back is the same
+button.
+
+**Storage** (administrators only) says what the library, the session records and the
+database are costing, and offers one button: a copy of the database, taken safely while
+the server is running. Read the small print on it — that file holds accounts, courses,
+settings, library *entries* and session timelines, but **not the files themselves**,
+which live on disk beside it. A real backup is the whole data directory; see
+[deploy/](deploy/README.md).
+
+`podium-admin.js` still does all of this from a shell, and remains the right tool for
+installing, for scripting and for getting back in. It also has the two commands that
+have no page:
+
+```bash
+node podium-admin.js doctor        # is this box alright?
+```
+
+checks Node and SQLite, the schema, database integrity, free disk, the data directory's
+permissions, files with no row and rows with no file, whether anybody can still
+administer the instance, storage against the retention setting, certificate expiry,
+whether the service answers — and whether the build that is *running* is the build that
+was *deployed*, which is the one that costs an afternoon: `current` is a symlink and a
+service resolves it once, at start. It exits 0 when nothing is broken and 1 when
+something needs attention, so it can be a cron line.
+
+```bash
+sudo ./deploy/backup.sh            # database snapshot + media + env, rotated and verified
+sudo ./deploy/restore.sh <archive>
+```
+
+See [deploy/](deploy/README.md) and [VPS.md](VPS.md).
 
 ## Your lecture library
 
@@ -1477,7 +1607,7 @@ it to run on.
 ```bash
 node podium/test/protocol.test.mjs          # the state machine, no browser needed
 node podium/test/plan.test.mjs              # the lecture-plan document, likewise
-node podium/test/store.test.mjs             # the server's database and accounts, likewise
+node podium/test/store.test.mjs             # the server's storage, accounts, courses and doctor
 cd podium/server && npm install             # once
 node podium/test/e2e.mjs                    # needs: npm i playwright
 node podium/test/e2e.mjs --only ink         # ...or just the sections you are working on

@@ -85,10 +85,10 @@ function publicUser(row) {
 async function createUser(db, { username, password, displayName = '', isAdmin = false }) {
   const name = normalizeUsername(username);
   if (!USERNAME_RE.test(name)) {
-    throw new Error('username must be 1-64 characters of a-z, 0-9, dot, dash or underscore');
+    throw Object.assign(new Error('username must be 1-64 characters of a-z, 0-9, dot, dash or underscore'), { status: 400 });
   }
   if (String(password || '').length < 8) {
-    throw new Error('password must be at least 8 characters');
+    throw Object.assign(new Error('password must be at least 8 characters'), { status: 400 });
   }
   const hash = await hashPassword(password);
   try {
@@ -97,7 +97,9 @@ async function createUser(db, { username, password, displayName = '', isAdmin = 
     ).run(name, String(displayName || '').slice(0, 120), hash, isAdmin ? 1 : 0, Date.now());
     return publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(lastInsertRowid));
   } catch (err) {
-    if (/UNIQUE/i.test(err.message)) throw new Error(`there is already an account called ${name}`);
+    if (/UNIQUE/i.test(err.message)) {
+      throw Object.assign(new Error(`there is already an account called ${name}`), { status: 409 });
+    }
     throw err;
   }
 }
@@ -106,10 +108,22 @@ const findUser = (db, username) =>
   db.prepare('SELECT * FROM users WHERE username = ?').get(normalizeUsername(username));
 
 const listUsers = (db) =>
-  db.prepare('SELECT * FROM users ORDER BY username').all().map((row) => ({
+  db.prepare(`SELECT u.*,
+        (SELECT MAX(s.last_seen_at) FROM auth_sessions s WHERE s.user_id = u.id) AS last_seen,
+        (SELECT COUNT(*) FROM auth_sessions s WHERE s.user_id = u.id AND s.expires_at > ?) AS live_sessions
+      FROM users u ORDER BY u.username`).all(Date.now()).map((row) => ({
     ...publicUser(row),
     disabled: !!row.disabled_at,
     createdAt: row.created_at,
+    // When this account was last seen using the place, and how many
+    // still-valid login tokens it holds - NOT a device count, whatever it
+    // looks like at a glance: startSession mints a fresh token on every
+    // sign-in, so re-authenticating on the SAME device (a token that
+    // expired, a second tab) grows this the same as a genuinely different
+    // device would. Good enough to notice "several logins nobody
+    // recognizes"; not a census of hardware.
+    lastSeen: row.last_seen || null,
+    activeSessions: row.live_sessions,
   }));
 
 /**
@@ -133,12 +147,62 @@ const countUsers = (db) => db.prepare('SELECT COUNT(*) AS n FROM users').get().n
 const countEnabledUsers = (db) =>
   db.prepare('SELECT COUNT(*) AS n FROM users WHERE disabled_at IS NULL').get().n;
 
+/** Accounts that can sign in AND administer. The number that must not reach 0. */
+const countEnabledAdmins = (db) =>
+  db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1 AND disabled_at IS NULL').get().n;
+
+/**
+ * Refuse to take away the last way in - from a BROWSER.
+ *
+ * An instance with no enabled admin cannot be administered from the admin page
+ * at all: no accounts can be made, no courses, no settings. The way back is a
+ * shell on the box and podium-admin, which is a fine answer for an emergency
+ * and a poor one for a Tuesday-afternoon mis-click, so the two gestures that
+ * could cause it - disabling an admin and demoting one - are refused there.
+ *
+ * Called by the API and NOT by setDisabled/setAdmin below, which is the whole
+ * point: standing at a shell is the credential the CLI runs on, and "that
+ * account is compromised, turn it off now" must not be a thing Podium argues
+ * with. The rail is on the path where a slip is plausible, not on the path
+ * that exists to recover from one.
+ */
+function assertAnotherAdminRemains(db, username, what) {
+  const row = db.prepare('SELECT * FROM users WHERE username = ?').get(normalizeUsername(username));
+  if (!row || !row.is_admin || row.disabled_at) return;   // not an enabled admin: nothing to lose
+  if (countEnabledAdmins(db) > 1) return;
+  throw Object.assign(new Error(
+    `${row.username} is the only administrator who can sign in, so ${what} would leave nobody able`
+    + ' to manage this Podium from a browser. Make another administrator first.',
+  ), { status: 409 });
+}
+
+/** Grant or take away administrator rights. */
+function setAdmin(db, username, isAdmin) {
+  const name = normalizeUsername(username);
+  const row = db.prepare('SELECT * FROM users WHERE username = ?').get(name);
+  if (!row) throw Object.assign(new Error(`no account called ${name}`), { status: 404 });
+  db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, row.id);
+  return publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(row.id));
+}
+
+/** The name shown beside a session badge; nothing depends on it. */
+function setDisplayName(db, username, displayName) {
+  const name = normalizeUsername(username);
+  const { changes } = db.prepare('UPDATE users SET display_name = ? WHERE username = ?')
+    .run(String(displayName || '').slice(0, 120), name);
+  if (!changes) throw Object.assign(new Error(`no account called ${name}`), { status: 404 });
+}
+
 async function setPassword(db, username, password) {
-  if (String(password || '').length < 8) throw new Error('password must be at least 8 characters');
+  if (String(password || '').length < 8) {
+    throw Object.assign(new Error('password must be at least 8 characters'), { status: 400 });
+  }
   const hash = await hashPassword(password);
   const { changes } = db.prepare('UPDATE users SET password_hash = ? WHERE username = ?')
     .run(hash, normalizeUsername(username));
-  if (!changes) throw new Error(`no account called ${normalizeUsername(username)}`);
+  if (!changes) {
+    throw Object.assign(new Error(`no account called ${normalizeUsername(username)}`), { status: 404 });
+  }
   // Every existing login for that account stops working, which is the entire
   // reason someone changes a password in a hurry.
   db.prepare('DELETE FROM auth_sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)')
@@ -149,7 +213,7 @@ function setDisabled(db, username, disabled) {
   const name = normalizeUsername(username);
   const { changes } = db.prepare('UPDATE users SET disabled_at = ? WHERE username = ?')
     .run(disabled ? Date.now() : null, name);
-  if (!changes) throw new Error(`no account called ${name}`);
+  if (!changes) throw Object.assign(new Error(`no account called ${name}`), { status: 404 });
   if (disabled) {
     db.prepare('DELETE FROM auth_sessions WHERE user_id = (SELECT id FROM users WHERE username = ?)').run(name);
   }
@@ -280,7 +344,8 @@ async function login(db, username, password, { userAgent = '', ip = '' } = {}) {
 
 module.exports = {
   hashPassword, verifyPassword, normalizeUsername, publicUser,
-  createUser, findUser, listUsers, countUsers, countEnabledUsers, setPassword, setDisabled,
+  createUser, findUser, listUsers, countUsers, countEnabledUsers, countEnabledAdmins,
+  setPassword, setDisabled, setAdmin, setDisplayName, assertAnotherAdminRemains,
   startSession, sessionUser, endSession, pruneSessions, login,
   SESSION_MS,
 };
