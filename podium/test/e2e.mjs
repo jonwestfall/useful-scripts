@@ -4566,7 +4566,7 @@ trap(typedPhone, 'student typing the code');
 await typedPhone.goto(`${BASE}/join.html`);
 await typedPhone.fill('#code', created.code.toLowerCase());
 await typedPhone.click('#enter button[type="submit"]');
-await typedPhone.waitForFunction(() => !document.querySelector('#live')?.hidden, null, { timeout: 8000 });
+await typedPhone.waitForFunction(() => document.querySelector('#question')?.textContent === 'One word for how that felt?', null, { timeout: 8000 });
 ok('typing the code in lower case joins the same poll', (await typedPhone.textContent('#question')) === 'One word for how that felt?');
 await typedCtx.close();
 
