@@ -233,9 +233,13 @@ function checkStorage(db, env) {
  * on screen. This is the server-side half of the same question.
  */
 async function checkBuild(releaseDir, healthUrl) {
-  const onDisk = buildIn(path.join(releaseDir, 'assets', 'js', 'protocol.js'));
+  const { build: onDisk, version } = releaseIn(path.join(releaseDir, 'assets', 'js', 'protocol.js'));
+  // Named on every line below, because "what are you running" is the question
+  // somebody opens this report to answer, and a build number alone does not
+  // answer it in words anybody uses out loud.
+  const release = `Podium ${version ?? '?'}`;
   if (onDisk === null) return say('warn', 'build', `no protocol.js under ${releaseDir}`);
-  if (!healthUrl) return say('ok', 'build', `release is build ${onDisk} (nothing to compare it against)`);
+  if (!healthUrl) return say('ok', 'build', `${release}, build ${onDisk} (nothing to compare it against)`);
 
   // Asked of /healthz rather than by fetching protocol.js over HTTP, because on
   // an instance with accounts that file is behind the login gate and answers
@@ -254,22 +258,30 @@ async function checkBuild(releaseDir, healthUrl) {
   }
 
   if (served === undefined) {
-    return say('warn', 'build', `release is build ${onDisk}; the service does not report one`,
+    return say('warn', 'build', `${release}, build ${onDisk}; the service does not report one`,
       'It is older than this check, or is running as a relay with no pages to serve.');
   }
   if (Number(served) !== onDisk) {
-    return say('bad', 'build', `this release is build ${onDisk} but the running service has ${served}`,
+    return say('bad', 'build', `this release is ${release}, build ${onDisk}, but the running service has build ${served}`,
       'The deploy did not reach the running process - a symlink is resolved once, at start.'
       + ' systemctl restart podium.service');
   }
-  return say('ok', 'build', `build ${onDisk}, deployed and running`);
+  return say('ok', 'build', `${release}, build ${onDisk}, deployed and running`);
 }
 
-function buildIn(file) {
+// Both come out of the same file in one read: protocol.js is where the two
+// live (see the comments on BUILD and VERSION there), and they answer
+// different questions - which release this is, and whether the running
+// process is serving the same code as the release on disk.
+function releaseIn(file) {
   try {
-    return Number(fs.readFileSync(file, 'utf8').match(/BUILD\s*=\s*(\d+)/)?.[1] ?? NaN) || null;
+    const source = fs.readFileSync(file, 'utf8');
+    return {
+      build: Number(source.match(/BUILD\s*=\s*(\d+)/)?.[1] ?? NaN) || null,
+      version: source.match(/VERSION\s*=\s*['"]([^'"]+)['"]/)?.[1] || null,
+    };
   } catch {
-    return null;
+    return { build: null, version: null };
   }
 }
 

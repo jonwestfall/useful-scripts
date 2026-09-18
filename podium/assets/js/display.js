@@ -15,7 +15,7 @@ import {
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl } from './config.js';
 import { createBus } from './bus.js';
 import {
-  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD,
+  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
@@ -385,6 +385,7 @@ watchPixelRatio();
 // been left open since before a deploy - so it states its build in Settings,
 // reports it to controllers (see wireState), and checks on load whether the
 // copy it is running is one the server has already replaced.
+$('#version-number').textContent = VERSION;
 $('#build-number').textContent = String(BUILD);
 servedBuild().then((served) => {
   if (served === null || served === BUILD) return;
@@ -1013,6 +1014,17 @@ const RECORD_FLUSH_MS = 5000;
 const RECORD_MIN_GAP_MS = 15000;
 const RECORD_QUEUE_MAX = 200;
 const RECORD_BATCH = 100;
+// How often this screen tells the SERVER it is still teaching a lecture. Not
+// to be confused with HEARTBEAT_MS at the top of this file, which is the
+// relay's own much faster state broadcast to the controllers in the room -
+// this one is a single write to the database and the thing that keeps a
+// lecture out of the idle sweep.
+//
+// The server closes a lecture it has not heard from for its own, much longer,
+// window (IDLE_MS in server/lectures.js); this only has to sit comfortably
+// inside it, with room for several beats to go missing to a bad afternoon of
+// classroom wifi before anybody's lecture is declared over.
+const LECTURE_ALIVE_MS = 60 * 1000;
 
 let lectureId = null;       // the lecture being written, while live
 let eventQueue = [];
@@ -1020,6 +1032,12 @@ let flushTimer = null;
 let flushPromise = null;    // the in-flight flush, so a caller can await it rather than bail
 let lastSurface = null;     // the ink surface key the last entry described
 let lastEventAt = 0;
+let recordingSince = 0;     // when THIS lecture began recording - see snapshotInk
+let heartbeatTimer = null;  // says "still here" while live - see startHeartbeat
+// Set by "Clear this room's saved session": the next Go live opens its own
+// record instead of resuming one this room left open. Cleared once used, so
+// it governs that one Go live rather than every one after it.
+let startFresh = false;
 let pendingEvent = null;
 let pendingTimer = null;
 
@@ -1083,17 +1101,48 @@ async function startRecording() {
   // notice until they went looking for it. serverInfo() only asks once.
   if (!(await serverInfo()).features.includes('sessions')) return;
   try {
-    const res = await postJson('/api/lectures', { room: cfg.room });
+    const res = await postJson('/api/lectures', { room: cfg.room, fresh: startFresh });
+    startFresh = false;
     if (!res.ok) return;
     const { lecture } = await res.json();
     lectureId = lecture.id;
     state.lectureId = lecture.id;
     lastSurface = null;
     lastEventAt = 0;
+    // What snapshotInk measures "drawn during this lecture" against. Ink is
+    // deliberately kept across a stand-down (surviving a reload is the whole
+    // point - see "surviving a reload" below), so a board carried in from a
+    // previous lecture is on screen and must stay there; it just must not be
+    // filed under this lecture as though it were drawn here.
+    recordingSince = lecture.resumed ? (recordingSince || Date.now()) : Date.now();
+    startHeartbeat(lecture.id);
     // Broadcast it: a controller ending a poll files the tally under this id.
     // commit() notes what is already on screen as the timeline's first entry.
     commit();
   } catch { /* no network: the lecture runs, only the record is lost */ }
+}
+
+// "Still here", on a timer, for as long as this display is live.
+//
+// The server closes a lecture nobody has heard from in a while, because most
+// of the ways a class actually ends - a laptop shut, a tab closed, a machine
+// carried out of the room - never send anything at all. Standing down is the
+// precise answer and this is the backstop for when it never comes; without it
+// a crashed display leaves a session open in everybody's list, looking like a
+// class still in progress, until the next Go live in that room.
+//
+// Bound to the id it was started for rather than reading the global: a
+// heartbeat that outlived its lecture would otherwise keep the WRONG one
+// alive, which is the exact failure this is meant to prevent.
+function startHeartbeat(id) {
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(() => {
+    if (lectureId !== id) { clearInterval(heartbeatTimer); heartbeatTimer = null; return; }
+    // Failures are ignored on purpose: one lost beat is not the end of a
+    // lecture, and the next one is a minute away. What the server does with a
+    // long silence is the server's decision to make.
+    postJson(lectureUrl(id, '/alive'), {}).catch(() => {});
+  }, LECTURE_ALIVE_MS);
 }
 
 async function stopRecording() {
@@ -1101,6 +1150,8 @@ async function stopRecording() {
   if (!id) return;
   lectureId = null;
   state.lectureId = null;
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
   // Broadcast now, the same way startRecording broadcasts the id it just set
   // - standDown()'s own commit() (which sets state.armed = false) already ran
   // before this transition even started (queueRecordingTransition queues it
@@ -1160,8 +1211,25 @@ async function stopRecording() {
 // as of right now. Pulled out so stopRecording can call this synchronously,
 // before any await - see the comment there for why that timing matters.
 function snapshotInk() {
+  // Each value here is `{ strokes, touched }` (see touchSurface in
+  // protocol.js), not a bare strokes array. Filtering on the wrapper's own
+  // .length - always undefined - kept every surface out, so fileInk's
+  // "nothing to file" check always won and no lecture has ever filed its
+  // ink at all. That is the bug worth fixing here on its own.
+  //
+  // `touched` then scopes what is filed to this lecture. Ink survives a
+  // stand-down on purpose, so last week's annotations on a deck reused this
+  // week are still on screen - and must stay there - but filing them under
+  // today's lecture would put words in its mouth. touchSurface only stamps
+  // this on a real ink action, so it means "drawn on since", not "looked at".
+  //
+  // A surface drawn on in BOTH lectures still carries the older strokes with
+  // it: the strokes themselves are not individually stamped, and splitting
+  // them would need a per-lecture baseline this does not keep. The common
+  // case - a board from last week nobody touched today - is scoped right.
   return Object.fromEntries(
-    Object.entries(state.ink.bySurface || {}).filter(([, strokes]) => strokes?.length),
+    Object.entries(state.ink.bySurface || {})
+      .filter(([, surface]) => surface?.strokes?.length && surface.touched >= recordingSince),
   );
 }
 
@@ -1826,6 +1894,23 @@ async function standDown() {
   armEl.hidden = false;
   document.body.classList.remove('is-live');
   state.armed = false;
+  // The room has been dismissed, so it goes quiet with it. Background music
+  // is the one thing on this screen that keeps going with nothing visible
+  // driving it: the arming screen is up, every controller's transport is for
+  // a lecture that has ended, and the track just plays on. syncMusic() (via
+  // commit below) fades it out rather than cutting it, and the state change
+  // is broadcast, so the controllers stop showing it as playing too. Same
+  // reasoning as saveStateNow's `playing: false` - music that outlives the
+  // lecture is a surprise in a room that has gone quiet.
+  state.music.playing = false;
+  // And anything sounding on the projector itself, for the same reason: a
+  // clip left running plays on behind the arming screen, and no controller
+  // still shows a transport pointing at it. Paused rather than cleared, so
+  // this keeps the promise above - Go live picks the lecture straight back
+  // up, with the clip where the room left it rather than back at the start.
+  for (const item of [state.program, ...state.panels]) {
+    if (item && ['video', 'audio', 'youtube'].includes(item.type)) item.playing = false;
+  }
   commit();
   queueRecordingTransition(stopRecording);
   try { await exitFullscreen(); } catch { /* already windowed */ }
@@ -2070,6 +2155,11 @@ $('#arm-fresh-session').addEventListener('click', () => {
   try { localStorage.removeItem(inkStorageKey()); } catch { /* private mode */ }
   $('#arm-resume').hidden = true;
   $('#arm-fresh-session-note').textContent = 'Cleared.';
+  // And the session record with it: the next Go live opens a NEW lecture
+  // rather than resuming whatever this room still had open. Clearing the
+  // room's saved session and then filing the next class under the last one's
+  // record would be the same mistake in a place nobody would think to look.
+  startFresh = true;
   commit();
 });
 

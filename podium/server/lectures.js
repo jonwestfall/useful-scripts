@@ -251,24 +251,53 @@ function discardLecture(db, dataDir, lectureId) {
 }
 
 /**
- * Go live. Any lecture this account left open in this room is closed first -
- * a display whose tab was closed at four o'clock, or a machine that lost power
- * mid-lecture, never got to end its own.
+ * How long a lecture may go without the display saying anything before the
+ * server decides nobody is teaching it any more.
  *
- * It is closed at the last thing it RECORDED rather than at now, so a lecture
- * abandoned on Tuesday afternoon is not shown as having run until Thursday
- * morning; and one that recorded nothing at all is discarded outright, the
- * same as endLecture does, because an empty row is not a lecture anyone taught.
+ * Generous on purpose. This is not a disconnection timeout - it is the answer
+ * to "did that class ever actually end", and getting it wrong in the impatient
+ * direction closes a lecture that is still running because a lecture theatre's
+ * wifi dropped for four minutes. Erring the other way only means a record that
+ * ended at five past rather than five, which nobody will ever notice.
  */
-function startLecture(db, user, { room, title, dataDir } = {}) {
-  const now = Date.now();
-  const stale = db.prepare(`SELECT l.id, l.started_at,
+const IDLE_MS = 15 * 60 * 1000;
+const HEARTBEAT_MS = 60 * 1000;
+
+/**
+ * Go live.
+ *
+ * A lecture this account already has open in this room is RESUMED rather than
+ * replaced, as long as the display has been heard from inside the idle window.
+ * That is the case a display reload lands in: state survives the reload (see
+ * "surviving a reload" in display.js) but the lecture id does not, so the
+ * teacher presses Go live again to carry on with the same class - and before
+ * this, that opened a second record for one lecture, splitting its timeline in
+ * half at the moment the tab happened to reload.
+ *
+ * One that has gone quiet for longer than that is not this lecture; it is last
+ * week's, abandoned without a stand-down. Those are closed here as they always
+ * were - at the last thing they recorded rather than at now, so a lecture left
+ * open on Tuesday afternoon is not shown as having run until Thursday morning
+ * - and one that recorded nothing at all is discarded outright, the same as
+ * endLecture does, because an empty row is not a lecture anyone taught.
+ */
+function startLecture(db, user, { room, title, dataDir, resume = true, now = Date.now() } = {}) {
+  const open = db.prepare(`SELECT l.id, l.started_at, l.last_seen_at,
         (SELECT MAX(e.at) FROM lecture_events e WHERE e.lecture_id = l.id) AS last_at,
         (SELECT MAX(p.ended_at) FROM lecture_polls p WHERE p.lecture_id = l.id) AS last_poll_at,
         (SELECT COUNT(*) FROM lecture_polls p WHERE p.lecture_id = l.id) AS poll_count
       FROM lectures l
-     WHERE l.started_by = ? AND l.room = ? AND l.ended_at IS NULL`).all(user.id, String(room || ''));
-  for (const row of stale) {
+     WHERE l.started_by = ? AND l.room = ? AND l.ended_at IS NULL
+     ORDER BY l.started_at DESC`).all(user.id, String(room || ''));
+
+  // Newest first, so if more than one is somehow open the one resumed is the
+  // one that was most recently being taught.
+  const live = resume
+    ? open.find((row) => now - (row.last_seen_at ?? row.started_at) <= IDLE_MS)
+    : null;
+
+  for (const row of open) {
+    if (live && row.id === live.id) continue;
     if (!row.last_at && !row.poll_count) discardLecture(db, dataDir, row.id);
     // A stale lecture that ran a poll but never wrote a timeline event (a
     // display that only ever showed the arming screen while a poll ran
@@ -278,11 +307,66 @@ function startLecture(db, user, { room, title, dataDir } = {}) {
       .run(Math.max(row.last_at || 0, row.last_poll_at || 0) || row.started_at, row.id);
   }
 
+  if (live) {
+    db.prepare('UPDATE lectures SET last_seen_at = ? WHERE id = ?').run(now, live.id);
+    return { ...lectureRow(findLecture(db, user, live.id)), resumed: true };
+  }
+
   const { lastInsertRowid } = db.prepare(`INSERT INTO lectures
-      (course_id, room, title, started_by, started_at) VALUES (?, ?, ?, ?, ?)`)
+      (course_id, room, title, started_by, started_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)`)
     .run(courseIdForRoom(db, user, room), String(room || '').slice(0, 200),
-      String(title || '').slice(0, MAX_TITLE), user.id, now);
+      String(title || '').slice(0, MAX_TITLE), user.id, now, now);
   return lectureRow(findLecture(db, user, lastInsertRowid));
+}
+
+/**
+ * "Still here." Sent by the display every HEARTBEAT_MS while it is live, and
+ * the only thing that keeps closeIdleLectures below from deciding this lecture
+ * was abandoned.
+ *
+ * Deliberately cheap and deliberately not an event: it writes one column and
+ * says nothing about what is on screen. A room where nothing changes for
+ * twenty minutes - a long worked example on one board - is still a room with a
+ * class in it, so liveness cannot be inferred from the timeline.
+ */
+function keepAlive(db, user, id, { now = Date.now() } = {}) {
+  const lecture = findLecture(db, user, id);
+  if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
+  if (lecture.ended_at != null) throw Object.assign(new Error('that lecture has already ended'), { status: 409 });
+  db.prepare('UPDATE lectures SET last_seen_at = ? WHERE id = ?').run(now, lecture.id);
+  return { ok: true, idleMs: IDLE_MS };
+}
+
+/**
+ * Close whatever nobody is teaching any more.
+ *
+ * The backstop for every way a lecture can end without anybody saying so: a
+ * closed laptop, a browser that crashed, a power cut, a tab left open on a
+ * machine that went to sleep. Stand-down remains the precise answer and closes
+ * immediately; this one runs on a timer and catches the rest.
+ *
+ * Dated to last_seen_at, not to now - the lecture ended when the display
+ * stopped being there, not when this happened to notice. A lecture that
+ * recorded nothing is discarded, the same rule endLecture and startLecture
+ * already apply, so a Go live nobody ever taught from leaves no row behind.
+ */
+function closeIdleLectures(db, dataDir, { idleMs = IDLE_MS, now = Date.now() } = {}) {
+  const cutoff = now - idleMs;
+  const idle = db.prepare(`SELECT l.id, l.started_at, l.last_seen_at,
+        (SELECT MAX(e.at) FROM lecture_events e WHERE e.lecture_id = l.id) AS last_at,
+        (SELECT COUNT(*) FROM lecture_polls p WHERE p.lecture_id = l.id) AS poll_count
+      FROM lectures l
+     WHERE l.ended_at IS NULL AND COALESCE(l.last_seen_at, l.started_at) <= ?`).all(cutoff);
+
+  let closed = 0;
+  let discarded = 0;
+  for (const row of idle) {
+    if (!row.last_at && !row.poll_count) { discardLecture(db, dataDir, row.id); discarded += 1; continue; }
+    db.prepare('UPDATE lectures SET ended_at = ? WHERE id = ?')
+      .run(row.last_seen_at ?? row.started_at, row.id);
+    closed += 1;
+  }
+  return { closed, discarded };
 }
 
 /**
@@ -294,6 +378,21 @@ function endLecture(db, user, id, { at, dataDir } = {}) {
   const lecture = findLecture(db, user, id);
   if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
   const row = lectureRow(lecture);
+  // Findable is not the same permission as endable: anyone in the course can
+  // see this lecture (appendEvents and recordPoll deliberately lean on that,
+  // so a TA's controller can still file a poll under the instructor's own
+  // lecture), but stopping someone else's live session out from under them
+  // is the same act as deleting it, and gets the same narrower rule.
+  if (!mayDelete(db, user, row)) {
+    throw Object.assign(new Error(
+      'only whoever ran this lecture, a course owner, or an administrator can end it',
+    ), { status: 403 });
+  }
+  // A stale /end from a display that never learned this lecture was already
+  // closed - by a fresher Go live's own stale-lecture sweep, or a previous
+  // /end it merely never heard the response to - must not re-date a record
+  // that already has its real end time. Idempotent no-op instead.
+  if (row.endedAt != null) return row;
   if (!row.events && !row.polls) {
     // A photo or the ink can exist before the first timeline event or poll -
     // fileInk and a photo upload both happen independently of appendEvents -
@@ -681,7 +780,7 @@ function deleteLecture(db, user, id, { dataDir } = {}) {
 }
 
 module.exports = {
-  listLectures, getLecture, startLecture, endLecture, appendEvents, recordPoll,
+  listLectures, getLecture, startLecture, endLecture, appendEvents, recordPoll, keepAlive, closeIdleLectures, IDLE_MS, HEARTBEAT_MS,
   renameLecture, deleteLecture, mayDelete, courseIdForRoom,
   addFile, removeFile, listFiles, pruneFiles, usage, keepableType, cleanName, visibleLecture,
   MAX_EVENTS, MAX_EVENTS_PER_POST, MAX_POLLS,

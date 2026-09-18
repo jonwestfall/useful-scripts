@@ -1645,6 +1645,28 @@ await screen.waitForSelector('.r-audio', { timeout: 8000 })
 ok('with the background music undisturbed by it',
   await screen.evaluate(() => !document.querySelector('audio#music').paused));
 
+// Standing down ends the lecture, and the room has to go quiet with it.
+// Music that outlives the arming screen is a track with no control left on
+// screen for it, playing to a room that thinks it has been dismissed.
+await screen.keyboard.press('e');
+await screen.waitForSelector('#arm:not([hidden])', { timeout: 8000 });
+await screen.waitForFunction(() => document.querySelector('audio#music').paused, null, { timeout: 12000 })
+  .then(() => ok('standing down stops the background music, rather than leaving it playing to an empty room', true))
+  .catch(() => ok('standing down stops the background music, rather than leaving it playing to an empty room', false));
+// And the controllers are told, so the Music tab does not still offer Pause
+// for something that is no longer playing.
+await pad.waitForFunction(() => !document.querySelector('.music-quick-chip')?.classList.contains('is-on'), null, { timeout: 8000 })
+  .then(() => ok('and every controller is told it stopped', true))
+  .catch(() => ok('and every controller is told it stopped', false));
+// Background music is not the only thing that can still be sounding: the
+// clip on the projector is audible too, and it kept playing behind the
+// arming screen with no transport anywhere still pointing at it.
+await screen.waitForFunction(
+  () => [...document.querySelectorAll('audio:not(#music), video')].every((e) => e.paused),
+  null, { timeout: 8000 })
+  .then(() => ok('and the clip on the projector stops with it, not just the music', true))
+  .catch(() => ok('and the clip on the projector stops with it, not just the music', false));
+
 await ctx.close();
 }
 }
@@ -2970,6 +2992,16 @@ const settle = (pad, re) => pad.waitForFunction((src) => new RegExp(src).test(do
   ok(`the controller reads out the build next to the response time ("${label}")`, /Display connected.*build \d+/.test(label));
   ok('and does not cry wolf when they agree', !(await pad.$eval('#display-state', (n) => n.classList.contains('is-bad'))));
   ok('the display states its own build in Settings', /^\d+$/.test((await screen.textContent('#build-number')).trim()));
+  ok('and the release it is, beside it', /^\d+\.\d+$/.test((await screen.textContent('#version-number')).trim()));
+  // The gap this closes: the controller could tell you the DISPLAY's build,
+  // and only while one was connected, but never said a word about its own.
+  // It is the device in your hand and the one a bug report comes from.
+  await pad.click('#open-settings');
+  await pad.waitForSelector('#control-build');
+  const ownLine = (await pad.textContent('#control-build')).trim();
+  ok(`the controller states its own version and build in Settings ("${ownLine.split('\n')[0].trim()}")`,
+    /^\d+\.\d+$/.test((await pad.textContent('#control-version')).trim())
+    && /^\d+$/.test((await pad.textContent('#control-build-number')).trim()));
   await close();
 }
 {
@@ -4115,12 +4147,21 @@ ok('and turns urgent under 30 seconds left, the same as an ordinary timer',
   await screen.evaluate(() => document.querySelector('.r-timer').classList.contains('is-urgent')));
 await pad.click('#music-play');
 await screen.waitForFunction(() => document.querySelector('audio#music').paused, null, { timeout: 5000 });
-const frozen = await screen.textContent('.r-timer-value');
-
 // The controller's own preview has no <audio> of its own, so it has to be
 // reading the broadcast musicNow rather than measuring anything locally.
 await pad.click('.tab[data-tab="now"]');
 await pad.waitForSelector('.r-timer', { timeout: 8000 });
+// Both ends settle on the paused position, but not in the same tick - the
+// display's element can still read the second before the pause at the moment
+// its own <audio> first reports paused, and the broadcast that follows is
+// what the controller draws. So compare what they settle on. Re-read the
+// display each time rather than holding the first value: a stale target is
+// how this waits out its whole timeout and then reports the drift anyway.
+let frozen = await screen.textContent('.r-timer-value');
+for (let i = 0; i < 40 && (await pad.textContent('.r-timer-value')) !== frozen; i++) {
+  await pad.waitForTimeout(100);
+  frozen = await screen.textContent('.r-timer-value');
+}
 ok(`a controller previews the same real countdown, from musicNow (${frozen})`, (await pad.textContent('.r-timer-value')) === frozen);
 await ctx.close();
 }
@@ -5175,14 +5216,88 @@ await desk.waitForFunction(async () => {
 }, null, { timeout: 30000 });
 ok('and everything the export built is filed with it too', true);
 
+// Ink is the other half of what a lecture keeps, and the half no export is
+// needed for: the display files its own strokes at stand-down so the
+// annotations outlive the tab even when nobody pressed Export. Drawn after
+// the export above deliberately - this is about the display's own filing
+// path, not about what the controller rasterized into the zip.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad');
+const acctPad = await pad.$eval('#pad', (n) => {
+  const r = n.getBoundingClientRect();
+  return { x: r.x, y: r.y, w: r.width, h: r.height };
+});
+await pad.mouse.move(acctPad.x + acctPad.w * 0.25, acctPad.y + acctPad.h * 0.35);
+await pad.mouse.down();
+for (let i = 1; i <= 10; i++) {
+  await pad.mouse.move(acctPad.x + acctPad.w * (0.25 + i * 0.04), acctPad.y + acctPad.h * (0.35 + i * 0.03));
+}
+await pad.mouse.up();
+await acctScreen.waitForFunction(
+  () => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 });
+ok('ink drawn during a server-backed lecture reaches the display', true);
+
+// Pin down WHICH lecture before standing down. Everything below reads the
+// list back, and once this one closes a later lecture can sit at index 0 -
+// so hold the id rather than an index that only happens to point here now.
+const inkLectureId = await desk.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.find((l) => !l.endedAt)?.id;
+});
+
+// What the display's own upload did, watched from outside it: a stand-down
+// that files nothing and one whose upload was turned down look identical in
+// the lecture's file list, and they are opposite bugs.
+const inkPosts = [];
+acctScreen.on('response', (r) => {
+  if (/\/api\/lectures\/\d+\/files\?name=ink\.json/.test(r.url())) inkPosts.push(r.status());
+});
+
 // E is stand down - the way back out of a lecture without a "quit" key a
 // stray press could hit.
 await acctScreen.keyboard.press('e');
-await desk.waitForFunction(async () => {
+await desk.waitForFunction(async (id) => {
   const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
-  return lectures[0]?.endedAt > 0;
-}, null, { timeout: 15000 });
+  return lectures.find((l) => l.id === id)?.endedAt > 0;
+}, inkLectureId, { timeout: 15000 });
 ok('and standing down closes it', true);
+
+// And the strokes really are in it. Read back through /media rather than
+// trusting the row: a file that exists but holds an empty bySurface is
+// exactly the failure this is here to catch - snapshotInk filtered on the
+// wrong property for the whole life of the feature, so every lecture filed
+// nothing and every suite still passed.
+const filedInk = await desk.evaluate(async (id) => {
+  // The row appears when the upload lands, which is not the same instant as
+  // the endedAt the wait above watched for - poll rather than take one look.
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    const { lecture } = await fetch(`/api/lectures/${id}`, { credentials: 'same-origin' })
+      .then((r) => r.json());
+    const row = (lecture.files || []).find((f) => f.name === 'ink.json');
+    if (row) {
+      const body = await fetch(row.url, { credentials: 'same-origin' }).then((r) => r.json());
+      const surfaces = Object.values(body.bySurface || {});
+      return {
+        found: true,
+        surfaces: surfaces.length,
+        strokes: surfaces.reduce((n, s) => n + (s.strokes?.length || 0), 0),
+      };
+    }
+    if (Date.now() > deadline) {
+      // Say what IS filed: "no ink.json" plus the names beside it is a
+      // diagnosis, where a bare undefined is a second debugging session.
+      return { found: false, surfaces: 0, strokes: 0, filed: (lecture.files || []).map((f) => f.name) };
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}, inkLectureId);
+acctScreen.removeAllListeners('response');
+ok(filedInk.found
+  ? `the display files its own ink with the lecture (${filedInk.surfaces} surface(s), ${filedInk.strokes} stroke(s))`
+  : `the display files its own ink with the lecture (no ink.json; upload: ${inkPosts.join(', ') || 'never sent'}; filed: ${filedInk.filed.join(', ') || 'nothing'})`,
+  filedInk.found && filedInk.surfaces > 0 && filedInk.strokes > 0);
+
 // Everything below this point that reads "the" session - the timeline check,
 // the session-zip rebuild - assumes this is the only lecture in the list. Run
 // inside the page so it carries the (HttpOnly) session cookie automatically,

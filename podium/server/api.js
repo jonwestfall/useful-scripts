@@ -381,7 +381,15 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'lectures' && !rest.length && req.method === 'POST') {
       const body = await readJson(req, 8 * 1024);
-      json(res, 200, { lecture: lectures.startLecture(ctx.db, user, { room: body.room, title: body.title, dataDir: ctx.dataDir }) });
+      // `fresh` is the display saying this is a NEW class rather than the same
+      // one after a reload - what "Clear this room's saved session" on the
+      // arming screen means. Without it, a lecture still inside the idle
+      // window is resumed (see startLecture).
+      json(res, 200, {
+        lecture: lectures.startLecture(ctx.db, user, {
+          room: body.room, title: body.title, dataDir: ctx.dataDir, resume: !body.fresh,
+        }),
+      });
       return true;
     }
 
@@ -446,6 +454,16 @@ async function handleApi(req, res, url, ctx) {
     if (head === 'lectures' && rest.length === 2 && rest[1] === 'end' && req.method === 'POST') {
       const body = await readJson(req, 8 * 1024).catch(() => ({}));
       json(res, 200, { lecture: lectures.endLecture(ctx.db, user, rest[0], { at: body.at, dataDir: ctx.dataDir }) });
+      return true;
+    }
+
+    // "Still here." The display says this on a timer while it is live, and it
+    // is the only thing standing between a lecture and the idle sweep (see
+    // closeIdleLectures). No body, nothing to read: a class where nothing
+    // changes for twenty minutes is still a class, so this deliberately says
+    // nothing about what is on screen.
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'alive' && req.method === 'POST') {
+      json(res, 200, lectures.keepAlive(ctx.db, user, rest[0]));
       return true;
     }
 

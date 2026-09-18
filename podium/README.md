@@ -1003,6 +1003,25 @@ On a Podium with a server behind it (`DATA_DIR` and at least one account — see
 session record opens; the arming screen says so before you start, because a room should
 not have to read the documentation to find that out. Stand down (**E**) and it closes.
 
+**When a session is over**, precisely, because more classes end by a laptop being shut
+than by anybody pressing anything:
+
+- **Standing down ends it**, there and then, and the room goes quiet with it — the
+  background music stops and so does whatever clip was on the projector.
+- **A display that simply goes away also ends it.** While you are live the display tells
+  the server it is still there, about once a minute. Fifteen minutes of silence and the
+  server closes the lecture itself, dated to the last time the display *was* there rather
+  than to whenever it noticed. A closed laptop, a crashed tab, a machine carried out of
+  the room: all the same, and none of them leave a session sitting open in the list
+  looking like a class still in progress.
+- **Going live again mid-class picks the same session back up.** A display that reloads
+  forgets which lecture it was writing, so you press **Go live** again to carry on — and
+  that carries on with the same record rather than splitting one class into two. The
+  fifteen minutes is what tells the two apart: inside it, this is the same lecture;
+  outside it, last week's was abandoned and this is a new one.
+- **To insist on a new record**, use *Clear this room's saved session* on the arming
+  screen. That is what it now means for the record as well as the screen.
+
 What is kept is a timeline — what went on the projector, and when — plus the final tally
 of every poll you ended. Stepping quickly through slides does not produce a row per
 press: entries are at least fifteen seconds apart, so what you get is where the lecture
@@ -1054,7 +1073,7 @@ admin.
 Photos and rasterized slides are the two payloads that grow without bound, so the server
 can age them out: set `LECTURE_RETENTION_DAYS` (see [deploy/](deploy/README.md)) and the
 files of lectures older than that are swept at startup and once a day, or run
-`podium-admin.js lectures prune --days 180` by hand. Unset means keep everything. Either
+`server/podium-admin.js lectures prune --days 180` by hand. Unset means keep everything. Either
 way a lecture's **timeline and poll results are never aged out** — a few hundred short
 rows is not what fills a disk, and it is exactly what somebody wants three years later.
 
@@ -1202,7 +1221,7 @@ installing, for scripting and for getting back in. It also has the two commands 
 have no page:
 
 ```bash
-node podium-admin.js doctor        # is this box alright?
+node server/podium-admin.js doctor        # is this box alright?
 ```
 
 checks Node and SQLite, the schema, database integrity, free disk, the data directory's
@@ -1495,6 +1514,29 @@ as `Cannot reach the relay: Running build 3…` — a claim about the network, m
 exactly the moment someone is trying to debug the network. Version news has its own
 line.
 
+### Version and build: what am I running?
+
+Two numbers, answering two different questions, and both live in one place —
+`assets/js/protocol.js`, which is also the file every page and the server itself
+read them out of.
+
+**Version** is the release, the thing you say out loud and put in a bug report:
+Podium **1.0**. It moves when there is something worth calling a new release.
+
+**Build** is an integer that moves every deploy, and exists for one purpose: to
+tell whether the copy of the code in front of you is the one the server is handing
+out. It is described below.
+
+Where to read them:
+
+- **The controller**, in *Settings* — the device in your hand, so the one to quote.
+- **The display**, in *Settings*, beside *Clear settings & reload*.
+- **The planning page**, at the bottom.
+- **The server**, on `/healthz`: `ok Podium 1.0, build 23, 2 rooms, 0 polls`. No
+  login needed, which is what makes it answerable from a monitoring check.
+- **`podium-admin doctor`**, on its `build` line, which names the release and then
+  goes on to compare what is deployed against what the running process is serving.
+
 ### Builds, and telling when a device is running an old one
 
 The display and the controller are separate devices, each loading its own copy of
@@ -1508,7 +1550,7 @@ Every release bumps an integer build number, and three things check it:
 
 - **The controller's top bar** reads `Display connected · 214 ms · build 7`. That is
   the number to compare.
-- **The display's Settings**, under *Clear settings & reload*, states its own build.
+- **The display's Settings**, under *Clear settings & reload*, states its own version and build.
   If those two numbers differ, the lower one is stale and needs reloading — and the
   controller says so outright rather than leaving you to notice: *"Display is on
   build 5, this is build 7 — reload the display."* It names which end is behind,
