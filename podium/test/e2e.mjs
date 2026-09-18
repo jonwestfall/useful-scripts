@@ -254,7 +254,16 @@ const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_IN
 // it to answer 403, to prove a rejected rename reverts the field rather than
 // leaving it looking saved. Narrowed to that route rather than 403 in general,
 // so a real permission bug elsewhere still fails its own assertion.
-const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)|403 \(Forbidden\).*\/api\/lectures\/\d+/;
+//
+// favicon.ico is not deliberate in the same sense - nothing here is testing
+// it - but it is not a result either: Podium serves no favicon by design (see
+// "stays reachable with no credentials (404)" in the auth-gate section, which
+// asserts exactly this response), and a browser fetching it unprompted on
+// every fresh origin this suite signs into is standard behaviour, not
+// something any page here caused. Narrowed to that one path so a real 404
+// anywhere else - including a real 404 that happens to be ABOUT a favicon a
+// test actually cares about - still fails its own assertion.
+const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)|403 \(Forbidden\).*\/api\/lectures\/\d+|404 \(Not Found\).*favicon\.ico/;
 
 const trap = (page, tag) => {
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
