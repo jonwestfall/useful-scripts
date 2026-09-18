@@ -1850,6 +1850,23 @@ async function standDown() {
   armEl.hidden = false;
   document.body.classList.remove('is-live');
   state.armed = false;
+  // The room has been dismissed, so it goes quiet with it. Background music
+  // is the one thing on this screen that keeps going with nothing visible
+  // driving it: the arming screen is up, every controller's transport is for
+  // a lecture that has ended, and the track just plays on. syncMusic() (via
+  // commit below) fades it out rather than cutting it, and the state change
+  // is broadcast, so the controllers stop showing it as playing too. Same
+  // reasoning as saveStateNow's `playing: false` - music that outlives the
+  // lecture is a surprise in a room that has gone quiet.
+  state.music.playing = false;
+  // And anything sounding on the projector itself, for the same reason: a
+  // clip left running plays on behind the arming screen, and no controller
+  // still shows a transport pointing at it. Paused rather than cleared, so
+  // this keeps the promise above - Go live picks the lecture straight back
+  // up, with the clip where the room left it rather than back at the start.
+  for (const item of [state.program, ...state.panels]) {
+    if (item && ['video', 'audio', 'youtube'].includes(item.type)) item.playing = false;
+  }
   commit();
   queueRecordingTransition(stopRecording);
   try { await exitFullscreen(); } catch { /* already windowed */ }

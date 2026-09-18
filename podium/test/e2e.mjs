@@ -1645,6 +1645,28 @@ await screen.waitForSelector('.r-audio', { timeout: 8000 })
 ok('with the background music undisturbed by it',
   await screen.evaluate(() => !document.querySelector('audio#music').paused));
 
+// Standing down ends the lecture, and the room has to go quiet with it.
+// Music that outlives the arming screen is a track with no control left on
+// screen for it, playing to a room that thinks it has been dismissed.
+await screen.keyboard.press('e');
+await screen.waitForSelector('#arm:not([hidden])', { timeout: 8000 });
+await screen.waitForFunction(() => document.querySelector('audio#music').paused, null, { timeout: 12000 })
+  .then(() => ok('standing down stops the background music, rather than leaving it playing to an empty room', true))
+  .catch(() => ok('standing down stops the background music, rather than leaving it playing to an empty room', false));
+// And the controllers are told, so the Music tab does not still offer Pause
+// for something that is no longer playing.
+await pad.waitForFunction(() => !document.querySelector('.music-quick-chip')?.classList.contains('is-on'), null, { timeout: 8000 })
+  .then(() => ok('and every controller is told it stopped', true))
+  .catch(() => ok('and every controller is told it stopped', false));
+// Background music is not the only thing that can still be sounding: the
+// clip on the projector is audible too, and it kept playing behind the
+// arming screen with no transport anywhere still pointing at it.
+await screen.waitForFunction(
+  () => [...document.querySelectorAll('audio:not(#music), video')].every((e) => e.paused),
+  null, { timeout: 8000 })
+  .then(() => ok('and the clip on the projector stops with it, not just the music', true))
+  .catch(() => ok('and the clip on the projector stops with it, not just the music', false));
+
 await ctx.close();
 }
 }
