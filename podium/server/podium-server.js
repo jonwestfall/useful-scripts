@@ -104,13 +104,18 @@ const AUTH_OPEN_PATHS = new Set(['/join.html', '/assets/js/join.js', '/login.htm
  * login (see podium-admin doctor, which compares this against the release it is
  * part of). The number is on every page already; it is not a secret.
  */
-const SERVED_BUILD = (() => {
-  if (!STATIC) return null;
+const SERVED = (() => {
+  if (!STATIC) return { build: null, version: null };
   try {
-    return Number(fs.readFileSync(path.join(STATIC, 'assets', 'js', 'protocol.js'), 'utf8')
-      .match(/BUILD\s*=\s*(\d+)/)?.[1]) || null;
+    const source = fs.readFileSync(path.join(STATIC, 'assets', 'js', 'protocol.js'), 'utf8');
+    return {
+      build: Number(source.match(/BUILD\s*=\s*(\d+)/)?.[1]) || null,
+      // The release, for anybody asking what this box runs rather than
+      // chasing a stale cache - the question the build number cannot answer.
+      version: source.match(/VERSION\s*=\s*['"]([^'"]+)['"]/)?.[1] || null,
+    };
   } catch {
-    return null;
+    return { build: null, version: null };
   }
 })();
 
@@ -385,7 +390,9 @@ async function handlePoll(req, res, url) {
 const server = http.createServer((req, res) => {
   if (req.url === '/healthz') {
     res.writeHead(200, { 'content-type': 'text/plain' });
-    res.end(`ok build ${SERVED_BUILD ?? '?'}, ${rooms.size} rooms, ${polls.size} polls\n`);
+    // "build N" stays spelled exactly this way: doctor's checkBuild reads it
+    // back out of this line to compare against the release on disk.
+    res.end(`ok Podium ${SERVED.version ?? '?'}, build ${SERVED.build ?? '?'}, ${rooms.size} rooms, ${polls.size} polls\n`);
     return;
   }
   const url = new URL(req.url, 'http://x');

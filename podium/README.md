@@ -1495,6 +1495,29 @@ as `Cannot reach the relay: Running build 3…` — a claim about the network, m
 exactly the moment someone is trying to debug the network. Version news has its own
 line.
 
+### Version and build: what am I running?
+
+Two numbers, answering two different questions, and both live in one place —
+`assets/js/protocol.js`, which is also the file every page and the server itself
+read them out of.
+
+**Version** is the release, the thing you say out loud and put in a bug report:
+Podium **1.0**. It moves when there is something worth calling a new release.
+
+**Build** is an integer that moves every deploy, and exists for one purpose: to
+tell whether the copy of the code in front of you is the one the server is handing
+out. It is described below.
+
+Where to read them:
+
+- **The controller**, in *Settings* — the device in your hand, so the one to quote.
+- **The display**, in *Settings*, beside *Clear settings & reload*.
+- **The planning page**, at the bottom.
+- **The server**, on `/healthz`: `ok Podium 1.0, build 23, 2 rooms, 0 polls`. No
+  login needed, which is what makes it answerable from a monitoring check.
+- **`podium-admin doctor`**, on its `build` line, which names the release and then
+  goes on to compare what is deployed against what the running process is serving.
+
 ### Builds, and telling when a device is running an old one
 
 The display and the controller are separate devices, each loading its own copy of
@@ -1508,7 +1531,7 @@ Every release bumps an integer build number, and three things check it:
 
 - **The controller's top bar** reads `Display connected · 214 ms · build 7`. That is
   the number to compare.
-- **The display's Settings**, under *Clear settings & reload*, states its own build.
+- **The display's Settings**, under *Clear settings & reload*, states its own version and build.
   If those two numbers differ, the lower one is stale and needs reloading — and the
   controller says so outright rather than leaving you to notice: *"Display is on
   build 5, this is build 7 — reload the display."* It names which end is behind,

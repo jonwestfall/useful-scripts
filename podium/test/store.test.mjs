@@ -1293,6 +1293,11 @@ ok(`the whole run answers every check (${report.map((item) => item.title).join('
     .every((title) => !!seen(report, title)));
 ok('and reads the build out of the release it is part of',
   /build \d+/.test(seen(report, 'build').detail));
+// The question somebody actually opens this report to answer. A build number
+// on its own does not answer "what are you running" in words anybody says out
+// loud, and with the VPS deployment there is now a box to ask it about.
+ok(`and names the release, not just the build (${seen(report, 'build').detail})`,
+  /Podium \d+\.\d+/.test(seen(report, 'build').detail));
 
 const lines = [];
 const code = doctor.report(report, (line) => lines.push(line));

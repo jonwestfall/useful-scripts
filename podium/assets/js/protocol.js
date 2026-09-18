@@ -24,6 +24,21 @@
 // display's, and both show it on screen so you can read it off directly.
 export const BUILD = 23;
 
+// The release this is, as a person would say it out loud - what goes in a bug
+// report, what an administrator answers when asked what they are running.
+// BUILD above answers a different question, and the two are not
+// interchangeable: BUILD says "is this tab's copy of the code the same one
+// the server is handing out", which needs to change on every deploy and is
+// meaningless to anybody not chasing a stale cache. VERSION says "which
+// release of Podium is this", and moves only when there is something worth
+// calling a new release.
+//
+// Kept here, beside BUILD, because this is already the file every page and
+// the server itself read for the build (see servedBuild in util.js and
+// SERVED_BUILD in podium-server.js) - a second file to hold a version string
+// is a second file to forget to bump.
+export const VERSION = '1.0';
+
 export const BLACK = { type: 'black', title: 'Black' };
 
 // How many panels each layout actually shows - panel A (state.program) is

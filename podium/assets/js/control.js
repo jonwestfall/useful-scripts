@@ -6,7 +6,7 @@ import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, 
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
-  inkDigest, inkDigestsAgree, applyInkAction, BUILD, MAX_SET_ENTRIES } from './protocol.js';
+  inkDigest, inkDigestsAgree, applyInkAction, BUILD, VERSION, MAX_SET_ENTRIES } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
@@ -3988,10 +3988,19 @@ setInterval(() => { renderNow(); renderTimers(); renderConnection(); }, 250);
 // Is this tab itself the stale one? Reloading a page that a cache is still
 // answering for can leave you reloading forever without moving, so the
 // button below bypasses it explicitly rather than hoping.
+// Stated in Settings whether or not anything is wrong with it, because the
+// commonest reason to want it is a bug report rather than a stale cache, and
+// until now this page was the one that never said. The display has had its
+// own line in Settings all along; this is the same line, in the same place,
+// on the device actually in your hand.
+$('#control-version').textContent = VERSION;
+$('#control-build-number').textContent = String(BUILD);
 servedBuild().then((served) => {
   if (served === null || served === BUILD) return;
   $('#update-detail').textContent = `Running build ${BUILD}; the server is serving build ${served}.`;
   $('#update-banner').hidden = false;
+  $('#control-build-check').textContent = ` — but the server is serving build ${served}, so this page came from a cache. Reload it.`;
+  $('#control-build').classList.add('is-stale');
 });
 $('#update-reload').addEventListener('click', () => {
   // A cache-busting query on the page URL forces the HTML - and with it the

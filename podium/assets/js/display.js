@@ -15,7 +15,7 @@ import {
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl } from './config.js';
 import { createBus } from './bus.js';
 import {
-  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD,
+  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
@@ -385,6 +385,7 @@ watchPixelRatio();
 // been left open since before a deploy - so it states its build in Settings,
 // reports it to controllers (see wireState), and checks on load whether the
 // copy it is running is one the server has already replaced.
+$('#version-number').textContent = VERSION;
 $('#build-number').textContent = String(BUILD);
 servedBuild().then((served) => {
   if (served === null || served === BUILD) return;
