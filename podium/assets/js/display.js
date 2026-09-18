@@ -1053,6 +1053,28 @@ function recordDetail(item) {
   return detail;
 }
 
+// Go live and stand down each fire their recording half (startRecording /
+// stopRecording) without the caller awaiting it - goLive() itself is not
+// async, and a keyboard shortcut can trigger either at any moment. Mashed
+// quickly enough, that fire-and-forget shape is a real race: a stand-down can
+// run stopRecording() while a PRIOR startRecording() is still waiting on its
+// POST, see lectureId as not yet set, and return having done nothing - and
+// when that POST later resolves it opens a lecture nobody ever closes. Worse,
+// a Go live straight after a stand-down can start drawing ink for a NEW
+// lecture while the PREVIOUS stopRecording() is still awaiting its own
+// flush - and fileInk() snapshots whatever state.ink holds at the moment it
+// runs, so the old lecture's file can end up holding the new lecture's ink.
+//
+// queueRecordingTransition is the fix for both: every start and every stop
+// goes through this one chain, so a transition never begins until the
+// previous one - start or stop - has completely finished. Mashing the button
+// just queues the transitions instead of racing them.
+let recordingChain = Promise.resolve();
+function queueRecordingTransition(fn) {
+  recordingChain = recordingChain.then(fn, fn);
+  return recordingChain;
+}
+
 async function startRecording() {
   if (lectureId) return;
   // Awaited rather than read off a flag the probe sets when it lands: Go live
@@ -1137,7 +1159,11 @@ function noteSurface() {
   // blackouts are - "the projector went dark at 10:42" is real - so only the
   // opening one is dropped.
   if (opening && key === 'black') return;
-  pendingEvent = { at: Date.now(), kind: 'program', title: itemTitle(item), detail: recordDetail(item) };
+  // A client-generated id, sent with the event every time it is (re)posted -
+  // see the client_id comment in store.js's migration. Invented once, here,
+  // rather than at flush time, so a retried flush resends the SAME id for the
+  // SAME event instead of minting a new one that would defeat the dedup.
+  pendingEvent = { id: uid(10), at: Date.now(), kind: 'program', title: itemTitle(item), detail: recordDetail(item) };
   clearTimeout(pendingTimer);
   pendingTimer = setTimeout(settleSurface, Math.max(0, RECORD_MIN_GAP_MS - (Date.now() - lastEventAt)));
 }
@@ -1150,7 +1176,25 @@ function settleSurface() {
   // to writing it down.
   eventQueue.push(pendingEvent);
   pendingEvent = null;
-  if (eventQueue.length > RECORD_QUEUE_MAX) eventQueue.splice(0, eventQueue.length - RECORD_QUEUE_MAX);
+  if (eventQueue.length > RECORD_QUEUE_MAX) {
+    const dropped = eventQueue.length - RECORD_QUEUE_MAX;
+    eventQueue.splice(0, dropped);
+    // The network being down long enough to fill this queue is exactly the
+    // kind of gap `truncated` exists to flag - but that flag is the SERVER's,
+    // set when its own much larger cap is hit, and it has no way to know
+    // entries never reached it at all. Silently trimming here would leave the
+    // timeline reading as continuous through a gap nobody was told about, so
+    // the gap gets a row of its own instead - the one thing every reader of
+    // the timeline (admin.html, a downloaded session.txt) already knows how
+    // to show.
+    eventQueue.unshift({
+      id: uid(10),
+      at: eventQueue[0]?.at ?? Date.now(),
+      kind: 'note',
+      title: `${dropped} earlier moment${dropped === 1 ? '' : 's'} lost - the network was down long enough to fill this screen's own queue`,
+      detail: {},
+    });
+  }
   if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = null; flushEvents(lectureId); }, RECORD_FLUSH_MS);
 }
 
@@ -1657,7 +1701,7 @@ function goLive() {
 
   sizeInk();
   commit();
-  startRecording();
+  queueRecordingTransition(startRecording);
   return finishGoLive([audio, context, fullscreen]);
 }
 
@@ -1680,7 +1724,7 @@ async function standDown() {
   document.body.classList.remove('is-live');
   state.armed = false;
   commit();
-  stopRecording();
+  queueRecordingTransition(stopRecording);
   try { await exitFullscreen(); } catch { /* already windowed */ }
 }
 

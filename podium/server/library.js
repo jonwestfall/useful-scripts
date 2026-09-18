@@ -58,12 +58,18 @@ const mediaPath = (dataDir, sha256) => path.join(mediaDir(dataDir), sha256.slice
 // --- reading -----------------------------------------------------------------
 
 // The access rule, written once. A row is visible when it has no course, or
-// when the asker is a member of the course it has, or when the asker is an
-// admin. Everything that lists or fetches goes through this.
+// when the asker is a member of the course it has AND that course is not
+// archived, or when the asker is an admin. Archiving a course is documented
+// (VPS.md) as making everything filed under it stop being listed - so the
+// archived check gates the membership branch specifically, rather than being
+// a separate top-level condition, and an admin (who can also un-archive a
+// course) is never blocked by it. Everything that lists or fetches goes
+// through this; SELECT_ITEMS below is what makes `c` (courses) available here.
 const VISIBLE = `(
   li.course_id IS NULL
   OR ?2 = 1
-  OR EXISTS (SELECT 1 FROM course_members cm WHERE cm.course_id = li.course_id AND cm.user_id = ?1)
+  OR (c.archived_at IS NULL
+      AND EXISTS (SELECT 1 FROM course_members cm WHERE cm.course_id = li.course_id AND cm.user_id = ?1))
 )`;
 
 function itemRow(row) {
@@ -120,20 +126,25 @@ function getItem(db, user, id) {
 function mayReadMedia(db, user, sha256) {
   const row = db.prepare(`SELECT 1 AS ok FROM library_items li
       JOIN media m ON m.id = li.media_id
+      LEFT JOIN courses c ON c.id = li.course_id
      WHERE m.sha256 = ?3 AND li.deleted_at IS NULL AND ${VISIBLE} LIMIT 1`)
     .get(user.id, user.isAdmin ? 1 : 0, String(sha256));
   if (row) return true;
   // The other way to be allowed at these bytes: they are a file kept by a
   // lecture you can see. The lecture's own visibility rule is the one that
-  // decides (see server/lectures.js) - deliberately not this file's VISIBLE,
-  // which is the library's and inverts for a missing course.
+  // decides (see the VISIBLE comment in server/lectures.js) - deliberately
+  // not this file's VISIBLE, which is the library's and inverts for a missing
+  // course. Kept in sync with lectures.js's VISIBLE by hand rather than
+  // shared, because lectures.js already requires this file and the reverse
+  // require would be circular.
   const kept = db.prepare(`SELECT 1 AS ok FROM lecture_files lf
       JOIN media m ON m.id = lf.media_id
       JOIN lectures l ON l.id = lf.lecture_id
+      LEFT JOIN courses c ON c.id = l.course_id
      WHERE m.sha256 = ?3
        AND (l.started_by = ?1
             OR ?2 = 1
-            OR (l.course_id IS NOT NULL
+            OR (l.course_id IS NOT NULL AND c.archived_at IS NULL
                 AND EXISTS (SELECT 1 FROM course_members cm
                              WHERE cm.course_id = l.course_id AND cm.user_id = ?1)))
      LIMIT 1`)

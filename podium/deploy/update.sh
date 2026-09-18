@@ -77,7 +77,12 @@ node "$release_dir/test/store.test.mjs" >/dev/null
 chown -R root:root "$release_dir"
 find "$release_dir" -type d -exec chmod 0755 {} +
 find "$release_dir" -type f -exec chmod u=rw,go=r {} +
+# The two service entrypoints, and everything under deploy/ - backup.sh and
+# restore.sh are meant to be run directly (the installer's own summary and
+# deploy/README.md both say so), so they need their execute bit back same as
+# the entrypoints do.
 chmod 0755 "$release_dir/server/podium-server.js" "$release_dir/server/podium-admin.js"
+find "$release_dir/deploy" -maxdepth 1 -type f -name '*.sh' -exec chmod 0755 {} +
 
 echo "==> going live"
 ln -s "$release_dir" "$PREFIX/current.next"

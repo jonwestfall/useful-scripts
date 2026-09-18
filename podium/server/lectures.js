@@ -82,14 +82,22 @@ function cleanName(raw) {
   return parts.join('/').slice(0, 200);
 }
 
-// Owner, admin, or a member of the course it was filed under - the same rule
-// as a plan, and for the same reason. A lecture with no course is a record of
-// your own teaching, not something a colleague should find by browsing.
+// Owner, admin, or a member of the course it was filed under (while that
+// course is not archived) - the same rule as a plan, and for the same reason.
+// A lecture with no course is a record of your own teaching, not something a
+// colleague should find by browsing. The archived check gates only the
+// membership branch, so whoever ran the lecture keeps their own record; `c`
+// is SELECT_LECTURES's own join of courses.
+//
+// server/library.js's mayReadMedia duplicates this by hand for the
+// lecture-media branch, rather than sharing it, because lectures.js already
+// requires library.js and the reverse require would be circular - keep the
+// two in sync.
 // ?1 = user id, ?2 = 1 for an admin.
 const VISIBLE = `(
   l.started_by = ?1
   OR ?2 = 1
-  OR (l.course_id IS NOT NULL
+  OR (l.course_id IS NOT NULL AND c.archived_at IS NULL
       AND EXISTS (SELECT 1 FROM course_members cm WHERE cm.course_id = l.course_id AND cm.user_id = ?1))
 )`;
 
@@ -211,6 +219,33 @@ function getLecture(db, user, id) {
 }
 
 /**
+ * Delete a lecture row outright, releasing any media that row's own files
+ * were the last thing pointing at.
+ *
+ * The two steps are married into one function deliberately, and the order
+ * inside it matters: forgetMediaIfUnused decides "is this sha still in use"
+ * by looking at lecture_files, so it has to run AFTER the DELETE has cascaded
+ * this lecture's own rows away. Ask it first and a file this very lecture is
+ * about to stop referencing still counts as "in use" - by itself - and
+ * nothing is ever freed. Used for a stale lecture closed by the next Go live,
+ * one discarded for having recorded nothing, and an explicit removal from
+ * admin.html: the same shape every time a lecture row disappears.
+ *
+ * `dataDir` is optional and the release is a no-op without it, the same shape
+ * addFile already uses: a caller that has not been handed the data directory
+ * (a test exercising the schema alone, say) gets the row deleted and the
+ * bytes left alone rather than a crash.
+ */
+function discardLecture(db, dataDir, lectureId) {
+  const held = dataDir
+    ? db.prepare(`SELECT m.sha256 FROM lecture_files lf JOIN media m ON m.id = lf.media_id
+         WHERE lf.lecture_id = ?`).all(lectureId)
+    : [];
+  db.prepare('DELETE FROM lectures WHERE id = ?').run(lectureId);
+  for (const { sha256 } of held) library.forgetMediaIfUnused(db, dataDir, sha256);
+}
+
+/**
  * Go live. Any lecture this account left open in this room is closed first -
  * a display whose tab was closed at four o'clock, or a machine that lost power
  * mid-lecture, never got to end its own.
@@ -220,7 +255,7 @@ function getLecture(db, user, id) {
  * morning; and one that recorded nothing at all is discarded outright, the
  * same as endLecture does, because an empty row is not a lecture anyone taught.
  */
-function startLecture(db, user, { room, title } = {}) {
+function startLecture(db, user, { room, title, dataDir } = {}) {
   const now = Date.now();
   const stale = db.prepare(`SELECT l.id, l.started_at,
         (SELECT MAX(e.at) FROM lecture_events e WHERE e.lecture_id = l.id) AS last_at,
@@ -228,7 +263,7 @@ function startLecture(db, user, { room, title } = {}) {
       FROM lectures l
      WHERE l.started_by = ? AND l.room = ? AND l.ended_at IS NULL`).all(user.id, String(room || ''));
   for (const row of stale) {
-    if (!row.last_at && !row.poll_count) db.prepare('DELETE FROM lectures WHERE id = ?').run(row.id);
+    if (!row.last_at && !row.poll_count) discardLecture(db, dataDir, row.id);
     else db.prepare('UPDATE lectures SET ended_at = ? WHERE id = ?').run(row.last_at || row.started_at, row.id);
   }
 
@@ -244,18 +279,28 @@ function startLecture(db, user, { room, title } = {}) {
  * ended: clicking Go live to check the projector works, then closing it again,
  * should not leave a row in anybody's session browser.
  */
-function endLecture(db, user, id, { at } = {}) {
+function endLecture(db, user, id, { at, dataDir } = {}) {
   const lecture = findLecture(db, user, id);
   if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
   const row = lectureRow(lecture);
   if (!row.events && !row.polls) {
-    db.prepare('DELETE FROM lectures WHERE id = ?').run(row.id);
+    // A photo or the ink can exist before the first timeline event or poll -
+    // fileInk and a photo upload both happen independently of appendEvents -
+    // so "recorded nothing" is judged by events and polls but the files still
+    // have to be released the same way an explicit delete releases them.
+    discardLecture(db, dataDir, row.id);
     return { ...row, endedAt: at || Date.now(), discarded: true };
   }
   const when = Number.isFinite(at) ? at : Date.now();
   db.prepare('UPDATE lectures SET ended_at = ? WHERE id = ?').run(when, row.id);
   return { ...row, endedAt: when };
 }
+
+// A plausible-looking client id or nothing at all - an older display, or one
+// of the rare paths that never generates one, sends no client_id, and that
+// event is simply never deduplicated (see the migration in store.js for why
+// that is fine rather than a hole).
+const CLIENT_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 function cleanEvent(raw, now, startedAt) {
   const kind = EVENT_KINDS.has(raw?.kind) ? raw.kind : 'program';
@@ -271,7 +316,8 @@ function cleanEvent(raw, now, startedAt) {
     const text = JSON.stringify(raw.detail);
     if (Buffer.byteLength(text) <= MAX_DETAIL_BYTES) detail = text;
   }
-  return { at, kind, title: String(raw?.title || '').slice(0, MAX_TITLE), detail };
+  const clientId = typeof raw?.id === 'string' && CLIENT_ID_RE.test(raw.id) ? raw.id : null;
+  return { at, kind, title: String(raw?.title || '').slice(0, MAX_TITLE), detail, clientId };
 }
 
 /**
@@ -286,7 +332,16 @@ function appendEvents(db, user, id, events) {
   if (!list.length) return { stored: 0, truncated: !!lecture.truncated };
 
   const now = Date.now();
-  const insert = db.prepare('INSERT INTO lecture_events (lecture_id, at, kind, title, detail) VALUES (?, ?, ?, ?, ?)');
+  // ON CONFLICT DO NOTHING is the whole fix for a retried flush: the display
+  // resends a batch whenever it cannot tell whether the last attempt's
+  // response was merely lost, and without this a lost response duplicates
+  // every event in that batch. The WHERE clause has to repeat the partial
+  // index's own condition - SQLite will not infer it - and it is exactly what
+  // makes an event with no client_id (see cleanEvent) insert unconditionally
+  // instead of colliding with every other client_id-less row in the lecture.
+  const insert = db.prepare(`INSERT INTO lecture_events (lecture_id, at, kind, title, detail, client_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(lecture_id, client_id) WHERE client_id IS NOT NULL DO NOTHING`);
   let room = MAX_EVENTS - lecture.event_count;
   let stored = 0;
   db.exec('BEGIN');
@@ -294,19 +349,30 @@ function appendEvents(db, user, id, events) {
     for (const raw of list) {
       if (room <= 0) break;
       const event = cleanEvent(raw, now, lecture.started_at);
-      insert.run(lecture.id, event.at, event.kind, event.title, event.detail);
+      const { changes } = insert.run(lecture.id, event.at, event.kind, event.title, event.detail, event.clientId);
+      // A duplicate (changes === 0) costs neither a slot in the cap nor a
+      // count towards `stored` - a retry that lands a second time must not
+      // look like it used up room a genuinely new event would need next.
+      if (!changes) continue;
       room -= 1;
       stored += 1;
     }
-    if (stored < list.length && !lecture.truncated) {
+    // Flagged whenever the cap was actually reached, not just when this
+    // particular batch had leftovers: a batch that exactly fills the last
+    // `room` slots (stored === list.length) still leaves the lecture with no
+    // room for the next event, and that is the same "stops halfway" a caller
+    // needs to know about - it would otherwise only get flagged on the NEXT
+    // request, by which point the timeline has already been read as complete.
+    const atCap = room <= 0;
+    if (atCap && !lecture.truncated) {
       db.prepare('UPDATE lectures SET truncated = 1 WHERE id = ?').run(lecture.id);
     }
     db.exec('COMMIT');
+    return { stored, truncated: !!lecture.truncated || atCap };
   } catch (err) {
     try { db.exec('ROLLBACK'); } catch { /* already rolled back by the failure */ }
     throw err;
   }
-  return { stored, truncated: !!lecture.truncated || stored < list.length };
 }
 
 /**
@@ -344,13 +410,20 @@ function recordPoll(db, user, id, poll) {
   }
 
   // Ended twice - two controllers in the room, or a retry after a post that
-  // failed on the way back - is one row. The later tally wins, because a poll
-  // only ever gains votes.
+  // failed on the way back - is one row. The later tally is meant to win,
+  // because a poll only ever gains votes - but "later" has to mean "more
+  // votes counted", not "arrived at the server more recently": two
+  // controllers racing to end the same poll, or a retried request landing
+  // after a fresher one, can deliver the smaller count second. The WHERE
+  // clause makes the update conditional on the incoming row actually being
+  // the further-along one, so a stale tally can never stomp a newer one -
+  // it just quietly no-ops.
   db.prepare(`INSERT INTO lecture_polls (lecture_id, poll_id, kind, question, results, voters, ended_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(lecture_id, poll_id) DO UPDATE SET
         kind = excluded.kind, question = excluded.question,
-        results = excluded.results, voters = excluded.voters, ended_at = excluded.ended_at`)
+        results = excluded.results, voters = excluded.voters, ended_at = excluded.ended_at
+      WHERE excluded.voters >= lecture_polls.voters`)
     .run(lecture.id, pollId,
       poll?.kind === 'text' ? 'text' : 'choice',
       String(poll?.question || '').slice(0, 1000),
@@ -461,7 +534,9 @@ function renameLecture(db, user, id, { title, courseCode } = {}) {
   const lecture = findLecture(db, user, id);
   if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
   if (!mayDelete(db, user, lectureRow(lecture))) {
-    throw Object.assign(new Error('only whoever ran this lecture can change it'), { status: 403 });
+    throw Object.assign(new Error(
+      'only whoever ran this lecture, a course owner, or an administrator can change it',
+    ), { status: 403 });
   }
   const sets = [];
   const values = [];
@@ -478,28 +553,28 @@ function renameLecture(db, user, id, { title, courseCode } = {}) {
 
 /**
  * Removed outright rather than marked deleted, unlike a library item or a
- * plan. There is nothing here anyone can point at later - no media rows, no
- * bytes on disk shared with something else - and a session record kept after
- * somebody asked for it to go is the opposite of what the retention control
- * this sits under is for.
+ * plan. A session record kept after somebody asked for it to go is the
+ * opposite of what the retention control this sits under is for - and unlike
+ * a library item, there is nothing else in the system that files something
+ * under a lecture id, so there is no "soft delete, keep it findable" case to
+ * preserve. The media bytes are handled explicitly below, because they ARE
+ * shared with the library store now (see the lecture_files comment in
+ * store.js) and are only actually freed once nothing else points at them.
  */
 function deleteLecture(db, user, id, { dataDir } = {}) {
   const lecture = findLecture(db, user, id);
   if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
   const row = lectureRow(lecture);
   if (!mayDelete(db, user, row)) {
-    throw Object.assign(new Error('only whoever ran this lecture can remove it'), { status: 403 });
+    throw Object.assign(new Error(
+      'only whoever ran this lecture, a course owner, or an administrator can remove it',
+    ), { status: 403 });
   }
   // The children go with it: every child table is ON DELETE CASCADE, and
   // PRAGMA foreign_keys is on (see store.js). The BYTES do not follow on their
   // own, though - they live in the shared media store, so each one is offered
   // back afterwards and kept if anything else still points at it.
-  const held = dataDir
-    ? db.prepare(`SELECT m.sha256 FROM lecture_files lf JOIN media m ON m.id = lf.media_id
-         WHERE lf.lecture_id = ?`).all(row.id)
-    : [];
-  db.prepare('DELETE FROM lectures WHERE id = ?').run(row.id);
-  for (const { sha256 } of held) library.forgetMediaIfUnused(db, dataDir, sha256);
+  discardLecture(db, dataDir, row.id);
   return row;
 }
 

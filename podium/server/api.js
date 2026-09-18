@@ -378,7 +378,7 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'lectures' && !rest.length && req.method === 'POST') {
       const body = await readJson(req, 8 * 1024);
-      json(res, 200, { lecture: lectures.startLecture(ctx.db, user, { room: body.room, title: body.title }) });
+      json(res, 200, { lecture: lectures.startLecture(ctx.db, user, { room: body.room, title: body.title, dataDir: ctx.dataDir }) });
       return true;
     }
 
@@ -430,7 +430,7 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'lectures' && rest.length === 2 && rest[1] === 'end' && req.method === 'POST') {
       const body = await readJson(req, 8 * 1024).catch(() => ({}));
-      json(res, 200, { lecture: lectures.endLecture(ctx.db, user, rest[0], { at: body.at }) });
+      json(res, 200, { lecture: lectures.endLecture(ctx.db, user, rest[0], { at: body.at, dataDir: ctx.dataDir }) });
       return true;
     }
 
@@ -530,7 +530,15 @@ async function changePerson(ctx, user, username, body) {
   if (body.displayName !== undefined) accounts.setDisplayName(ctx.db, username, body.displayName);
 
   if (body.isAdmin !== undefined && !!body.isAdmin !== !!person.is_admin) {
-    if (!body.isAdmin) accounts.assertAnotherAdminRemains(ctx.db, username, 'taking that away');
+    if (!body.isAdmin) {
+      // The admin.js client already hides this switch on your own row (see
+      // isMe there), but the route is the thing that actually has to hold -
+      // a client-side hidden checkbox is not a permission check.
+      if (person.id === user.id) {
+        throw Object.assign(new Error('you cannot take away your own administrator rights'), { status: 409 });
+      }
+      accounts.assertAnotherAdminRemains(ctx.db, username, 'taking that away');
+    }
     accounts.setAdmin(ctx.db, username, !!body.isAdmin);
   }
 

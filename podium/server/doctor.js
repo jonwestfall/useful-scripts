@@ -289,7 +289,7 @@ async function checkService(healthUrl) {
  * read them. `db` may be null, in which case the database checks say so rather
  * than being silently skipped.
  */
-async function run({ db, dataDir, releaseDir, healthUrl, certPath, env = process.env } = {}) {
+async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, env = process.env } = {}) {
   const found = [];
   const attempt = async (work) => {
     try { found.push(await work()); } catch (err) {
@@ -298,7 +298,16 @@ async function run({ db, dataDir, releaseDir, healthUrl, certPath, env = process
   };
 
   await attempt(() => checkNode());
-  if (!db) {
+  if (openError) {
+    // The recovery scenario this command exists for: a database that will not
+    // open at all - a future schema, a corrupt file, a permissions problem
+    // deep enough that even opening it fails. The caller (podium-admin.js)
+    // catches store.open()'s own throw and hands it here rather than letting
+    // it pre-empt every other check, which is what "doctor" is for: reporting
+    // the failure, not crashing on it before it can be reported.
+    found.push(say('bad', 'database', `will not open: ${openError.message}`,
+      'See the message above for what it says - a schema from a newer release means deploy that release again; a corrupt file means restore from a backup.'));
+  } else if (!db) {
     found.push(say('bad', 'database', `no database under ${dataDir || 'DATA_DIR'}`,
       'Set DATA_DIR, or pass --data-dir.'));
   } else {

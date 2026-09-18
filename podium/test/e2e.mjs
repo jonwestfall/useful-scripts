@@ -249,7 +249,12 @@ const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_IN
 // because that status has exactly one source - library.js turning down a file
 // type - and an upload that broke for any other reason fails its assertion
 // instead of quietly passing.
-const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)/;
+//
+// The fourth deliberately intercepts a PATCH to /api/lectures/<id> and forces
+// it to answer 403, to prove a rejected rename reverts the field rather than
+// leaving it looking saved. Narrowed to that route rather than 403 in general,
+// so a real permission bug elsewhere still fails its own assertion.
+const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)|403 \(Forbidden\).*\/api\/lectures\/\d+/;
 
 const trap = (page, tag) => {
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
@@ -5159,6 +5164,58 @@ await desk.waitForFunction(async () => {
   return lectures[0]?.endedAt > 0;
 }, null, { timeout: 15000 });
 ok('and standing down closes it', true);
+// Everything below this point that reads "the" session - the timeline check,
+// the session-zip rebuild - assumes this is the only lecture in the list. Run
+// inside the page so it carries the (HttpOnly) session cookie automatically,
+// recorded now so the second lecture opened below (purely to prove the photo
+// switch resets) can be cleaned back up rather than sitting ahead of this one.
+const firstLectureId = await desk.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures[0]?.id;
+});
+
+// The ordinary flow is teach, stand down, THEN find the export button - and
+// standing down is exactly what clears state.lectureId. An export built in
+// that window still has to be filed under the lecture that just ended (see
+// lastKnownLectureId in control.js), not silently dropped.
+const filedAfterStandDown = [];
+pad.on('request', (r) => { if (/\/api\/lectures\/\d+\/files/.test(r.url())) filedAfterStandDown.push(r.url()); });
+const postStandDownZip = pad.waitForEvent('download', { timeout: 60000 });
+await pad.click('.tab[data-tab="photos"]');
+await pad.click('#photo-export');
+await (await postStandDownZip).saveAs(path.join(HERE, 'fixtures', 'acct-session-late.zip'));
+pad.removeAllListeners('request');
+ok(`an export built after standing down still gets filed under the lecture that just ended (${filedAfterStandDown.length} file request(s))`,
+  filedAfterStandDown.length > 0);
+
+// The switch on the Photos tab is THIS LECTURE ONLY (see syncKeepPhotosOverride
+// in control.js) - checking it above must not silently carry into the next one.
+await acctScreen.click('#arm-button');
+await acctScreen.waitForSelector('#hud[data-status="online"]');
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.some((l) => !l.endedAt);
+}, null, { timeout: 15000 });
+// A couple of the display's ~2s state heartbeats, which is what actually
+// carries the new (null, then fresh) lectureId to this controller and runs
+// the render pass that re-checks the override - see renderPhotos.
+await pad.waitForTimeout(4500);
+ok('a new lecture starts with the photo switch back at the device default, not the last one picked',
+  !(await pad.isChecked('#photo-keep')));
+await acctScreen.keyboard.press('e');
+
+// Clean up the lecture that existed only to prove the reset above, so the
+// checks that follow find exactly the one lecture they expect - see
+// firstLectureId.
+await desk.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.every((l) => l.endedAt);
+}, null, { timeout: 15000 });
+await desk.evaluate(async (keepId) => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  await Promise.all(lectures.filter((l) => l.id !== keepId)
+    .map((l) => fetch(`/api/lectures/${l.id}`, { method: 'DELETE', credentials: 'same-origin' })));
+}, firstLectureId);
 
 await desk.reload();
 await desk.waitForSelector('#sessions-card:not([hidden]) .admin-row');
@@ -5186,7 +5243,10 @@ await desk.fill('#new-user', 'sam');
 await desk.fill('#new-name', 'Sam Okafor');
 await desk.fill('#new-pass', 'sams password here');
 await desk.click('#new-user-go');
-await desk.waitForFunction(() => /Added sam/.test(document.querySelector('#people-note')?.textContent || ''), null, { timeout: 8000 });
+// The note text is set synchronously, before addPerson() awaits its own
+// refreshPeople() - waiting on the note alone can win a race against the row
+// actually landing in the DOM. Wait for the row itself.
+await desk.waitForSelector('#people .admin-row:has-text("sam")', { timeout: 8000 });
 const peopleRows = await desk.$$eval('#people .admin-row .admin-title', (els) => els.map((e) => e.textContent));
 ok(`an account can be made without a shell (${peopleRows.join(', ')})`,
   peopleRows.some((t) => t.includes('Sam Okafor (sam)')));
@@ -5246,6 +5306,21 @@ await desk.waitForFunction(async () => {
   return lectures[0]?.title === 'Day 6 — Weighing the Evidence';
 }, null, { timeout: 8000 });
 ok('and naming it sticks', true);
+
+// A rename the server actually refuses (or a dropped connection) must not
+// leave the field looking like it saved when it did not.
+await desk.route('**/api/lectures/*', (route) => {
+  if (route.request().method() === 'PATCH') return route.fulfill({ status: 403, json: { error: 'no' } });
+  return route.continue();
+});
+await desk.fill('#sessions .admin-name', 'A rename that will be refused');
+await desk.dispatchEvent('#sessions .admin-name', 'change');
+await desk.waitForFunction(
+  () => document.querySelector('#sessions .admin-name')?.value === 'Day 6 — Weighing the Evidence',
+  null, { timeout: 8000 },
+);
+ok('a rejected rename reverts the field rather than leaving it looking saved', true);
+await desk.unroute('**/api/lectures/*');
 
 await desk.close();
 await acctScreen.close();

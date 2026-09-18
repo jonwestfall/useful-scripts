@@ -364,7 +364,7 @@ async function toggleSession(lecture) {
   }
 }
 
-function renameSession(lecture, value) {
+function renameSession(lecture, value, field) {
   const title = value.trim();
   if (title === (lecture.title || '')) return;
   fetch(`/api/lectures/${lecture.id}`, {
@@ -372,7 +372,16 @@ function renameSession(lecture, value) {
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ title }),
-  }).then(() => { lecture.title = title; }).catch(() => { /* the field keeps what was typed */ });
+  }).then((res) => {
+    if (!res.ok) throw new Error('rejected');
+    lecture.title = title;
+  }).catch(() => {
+    // A 403 (a member other than the runner, somehow reaching a control that
+    // should not be theirs) or a dropped connection both land here: the
+    // server never actually saved this, so the field showing it as saved
+    // would be a lie. Put back what it actually is rather than what was typed.
+    if (field) field.value = lecture.title || '';
+  });
 }
 
 // Two taps, same as the library: a session record cannot be got back.
@@ -428,7 +437,7 @@ function renderSessions() {
       row.append(el('input', {
         class: 'admin-name', type: 'text', value: lecture.title || '',
         placeholder: when, 'aria-label': `Name for the session on ${when}`,
-        onchange: (ev) => renameSession(lecture, ev.target.value),
+        onchange: (ev) => renameSession(lecture, ev.target.value, ev.target),
       }));
     } else {
       row.append(el('span', { class: 'admin-title' }, lecture.title || when));

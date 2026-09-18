@@ -249,6 +249,31 @@ const MIGRATIONS = [
       CREATE INDEX lecture_files_by_media ON lecture_files(media_id);
     `);
   },
+
+  function toV6(db) {
+    db.exec(`
+      -- A retried POST is not the same thing as a second event. The display
+      -- queues a batch and re-sends it whenever a flush's response is lost -
+      -- deliberately, since the alternative is losing the batch outright - but
+      -- a lost RESPONSE does not mean a lost REQUEST: the insert can have
+      -- already committed here, and the same batch arrives again a few
+      -- seconds later. Without something to recognise "I already have this
+      -- one", a flaky connection duplicates rows in a timeline that is
+      -- supposed to be the reliable record.
+      --
+      -- client_id is that something: an id the display invents once per
+      -- event, at the moment it decides to record one, and sends with it
+      -- every time that event is (re)posted. Nullable, because an event with
+      -- no id (an older display, or one of the rare paths that does not carry
+      -- one) simply is not deduplicated - the same "opt in, never opt
+      -- everyone into a stricter rule at once" shape client_id-less rows
+      -- always had. The partial unique index is what makes the same
+      -- (lecture, client_id) pair a no-op on a retry instead of a duplicate.
+      ALTER TABLE lecture_events ADD COLUMN client_id TEXT;
+      CREATE UNIQUE INDEX lecture_events_by_client
+        ON lecture_events(lecture_id, client_id) WHERE client_id IS NOT NULL;
+    `);
+  },
 ];
 
 function migrate(db) {

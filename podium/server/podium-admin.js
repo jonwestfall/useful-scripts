@@ -143,7 +143,20 @@ async function main(argv) {
   // open() throws with a reason of its own when a configured directory cannot
   // be used; main()'s catch prints it. null means only "no directory given",
   // which the check above has already ruled out.
-  const db = store.open(path.resolve(dataDir));
+  //
+  // Except for `doctor`: a database that will not open - a future schema, a
+  // corrupt file - is exactly the situation that command exists to diagnose,
+  // so letting the throw here pre-empt it would mean the one command meant to
+  // survive a broken box dies before it can say anything. Every other command
+  // still needs a working database and fails loudly, as it always has.
+  let db = null;
+  let dbOpenError = null;
+  try {
+    db = store.open(path.resolve(dataDir));
+  } catch (err) {
+    if (group !== 'doctor') throw err;
+    dbOpenError = err;
+  }
 
   const say = (text) => process.stdout.write(`${text}\n`);
 
@@ -307,12 +320,19 @@ async function main(argv) {
     const found = await doctor.run({
       db,
       dataDir,
+      openError: dbOpenError,
       // The release this copy of podium-admin is part of, which is the whole
       // point of asking from here: it is the code that was deployed, and the
       // question is whether the running service agrees.
       releaseDir: path.resolve(__dirname, '..'),
       healthUrl: flags['health-url'] || healthUrlFromEnvFile(),
       certPath: flags.cert || '',
+      // process.env alone misses whatever this service only ever gets from
+      // its systemd EnvironmentFile - LECTURE_RETENTION_DAYS chief among them
+      // - since a bare `node podium-admin.js doctor` never sources that file
+      // the way the unit does. File values fill in what process.env does not
+      // already have; an operator's own exported env still wins.
+      env: { ...envFile(), ...process.env },
     });
     return doctor.report(found);
   }
@@ -321,19 +341,38 @@ async function main(argv) {
   return 2;
 }
 
+/** The service's own systemd EnvironmentFile, wherever it can be found. */
+function envFilePath() {
+  return [process.env.PODIUM_ENV, '/etc/podium/podium.env'].filter(Boolean).find((f) => fs.existsSync(f)) || '';
+}
+
 /**
  * Where to knock, worked out the way update.sh does: the port out of the
  * service's own environment file. Saves passing --health-url on every run on
  * the one deployment the installer sets up.
  */
 function healthUrlFromEnvFile() {
-  for (const file of [process.env.PODIUM_ENV, '/etc/podium/podium.env'].filter(Boolean)) {
-    try {
-      const port = fs.readFileSync(file, 'utf8').match(/^PORT=(\d+)/m)?.[1];
-      if (port) return `http://127.0.0.1:${port}/healthz`;
-    } catch { /* not this one */ }
-  }
-  return '';
+  const port = envFile().PORT;
+  return port ? `http://127.0.0.1:${port}/healthz` : '';
+}
+
+/**
+ * A minimal parser for the KEY=VALUE lines a systemd EnvironmentFile holds -
+ * exactly the shape deploy/install.sh writes to podium.env. Not a general
+ * dotenv implementation: no quoting, no export keyword, because the file this
+ * reads is one Podium writes for itself.
+ */
+function envFile() {
+  const file = envFilePath();
+  if (!file) return {};
+  const out = {};
+  try {
+    for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line.trim());
+      if (match) out[match[1]] = match[2];
+    }
+  } catch { /* file listed but unreadable - doctor's permissions check covers that */ }
+  return out;
 }
 
 main(process.argv.slice(2))

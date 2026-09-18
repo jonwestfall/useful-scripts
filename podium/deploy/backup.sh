@@ -5,17 +5,30 @@
 #
 # Three things, and all three matter:
 #
-#   1. the database          accounts, courses, connection settings, the library
+#   1. media/                the actual bytes - uploads, session photos, the
+#                            pages an export rasterized (copied FIRST; see below)
+#   2. the database          accounts, courses, connection settings, the library
 #                            index, lecture plans, every session record
-#   2. media/                the actual bytes - uploads, session photos, the
-#                            pages an export rasterized
 #   3. the service's env     PORT, DATA_DIR, ORIGIN, LECTURE_RETENTION_DAYS
 #
-# The database is taken with `VACUUM INTO` rather than `cp`, and that is the
-# whole reason this is a script rather than a line in a crontab. SQLite in WAL
+# The database is taken with `VACUUM INTO` rather than `cp`, and that is half
+# the reason this is a script rather than a line in a crontab. SQLite in WAL
 # mode is several files and a copy taken mid-write is a copy of a half-written
 # database - which restores, opens, and is quietly wrong. VACUUM INTO asks
 # SQLite for a consistent snapshot while the service keeps running.
+#
+# The other half is the ORDER: media is copied before the database snapshot is
+# taken, not after. The service keeps running throughout, so treat the two as
+# taken at slightly different instants - and an instant apart in THIS order is
+# the safe direction. An upload always writes its bytes before the database row
+# that points at them, and a delete always removes the row before the bytes, so
+# a database snapshot taken AFTER the media copy can only be looking at a
+# slightly newer or slightly smaller world than what was captured, never one
+# where it references bytes that were never captured at all. Reverse the order
+# and a retention sweep or a delete landing in the gap can leave the database
+# pointing at media this backup never copied - a "missing from disk" failure in
+# podium-admin doctor on the restored copy, not the harmless "extra file
+# nothing points at" one this order risks instead.
 #
 # The env file is copied because it holds the ORIGIN and the retention setting,
 # which are configuration rather than data - but note that it may also hold
@@ -60,6 +73,35 @@ trap 'rm -rf -- "$work"' EXIT
 install -d -m 0700 "$work/podium-$stamp"
 out="$work/podium-$stamp"
 
+# Media is copied BEFORE the database snapshot, and that order is deliberate,
+# not incidental - it is the one thing standing between this being a
+# consistent point-in-time backup and not. The service keeps running and
+# writing throughout: an upload always writes its bytes before the row that
+# points at them (see storeUpload/addFile), and retention or a delete always
+# removes the ROW before the bytes (see forgetMediaIfUnused's callers). So
+# whichever of the two snapshots below runs second sees a database that is
+# never AHEAD of the files on disk - a row this backup's database knows about
+# either has its bytes captured already, or was deleted (row and bytes both)
+# after this backup's database snapshot was taken and so is not in it either
+# way. Reverse the order and the opposite, worse failure becomes possible: a
+# retention sweep deleting a file between the two snapshots would leave the
+# database pointing at bytes that plain do not exist in this backup - a "media
+# missing from disk" failure in podium-admin doctor, not the harmless "extra
+# unreferenced file" one.
+echo "==> copying media"
+if [[ -d "$DATA_DIR/media" ]]; then
+  # Content-addressed, so nothing here is ever modified in place: a file either
+  # exists under its hash or does not. That makes a plain copy safe even while
+  # uploads are arriving - a half-written one is still under its .incoming name
+  # and is skipped.
+  #
+  # tar rather than rsync, deliberately: this script should run on a box that
+  # has had nothing installed on it beyond Node, and tar is always there.
+  tar -C "$DATA_DIR" --exclude '.incoming-*' -cf - media | tar -C "$out" -xf -
+else
+  echo 'backup: nothing under media/ yet' >&2
+fi
+
 echo "==> snapshotting the database"
 if [[ -f "$DATA_DIR/podium.db" ]]; then
   if [[ -z "${node_sqlite:-}" ]]; then
@@ -81,20 +123,6 @@ JS
   fi
 else
   echo 'backup: no database yet; carrying on with the files' >&2
-fi
-
-echo "==> copying media"
-if [[ -d "$DATA_DIR/media" ]]; then
-  # Content-addressed, so nothing here is ever modified in place: a file either
-  # exists under its hash or does not. That makes a plain copy safe even while
-  # uploads are arriving - a half-written one is still under its .incoming name
-  # and is skipped.
-  #
-  # tar rather than rsync, deliberately: this script should run on a box that
-  # has had nothing installed on it beyond Node, and tar is always there.
-  tar -C "$DATA_DIR" --exclude '.incoming-*' -cf - media | tar -C "$out" -xf -
-else
-  echo 'backup: nothing under media/ yet' >&2
 fi
 
 if [[ -f "$CONFIG_DIR/podium.env" ]]; then

@@ -518,18 +518,24 @@ function serveBackup(req, res) {
 
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
   const temp = path.join(DATA_DIR, `.backup-${crypto.randomBytes(6).toString('hex')}.db`);
+  // Declared before the VACUUM even runs, and used in its catch too: a
+  // VACUUM INTO that dies partway (a full disk, most likely) can still have
+  // written a partial file at `temp` before throwing, and leaving THAT behind
+  // is the same slow leak this whole cleanup exists to prevent - repeated
+  // failed downloads filling the disk the backup endpoint is meant to protect.
+  const drop = () => { try { fs.rmSync(temp, { force: true }); } catch { /* gone already, or never written */ } };
   try {
     // A quoted string literal, not a bound parameter: VACUUM INTO takes no
     // parameters. The path is this process's own, built from DATA_DIR and
     // random bytes, so there is nothing of anyone else's in it to quote wrong.
     db.exec(`VACUUM INTO '${temp.replace(/'/g, "''")}'`);
   } catch (err) {
+    drop();
     console.error(`podium: backup failed (${err.message})`);
     api.json(res, 500, { error: 'could not take a copy of the database' });
     return;
   }
 
-  const drop = () => { try { fs.rmSync(temp, { force: true }); } catch { /* gone already */ } };
   fs.stat(temp, (err, info) => {
     if (err) { drop(); api.json(res, 500, { error: 'could not take a copy of the database' }); return; }
     res.writeHead(200, {

@@ -1232,7 +1232,13 @@ async function exportSession() {
  * than it might is not a reason to fail the export.
  */
 async function fileExportWithLecture(files, status) {
-  if (!recordingNow()) return;
+  // lastKnownLectureId, not recordingNow()/state.lectureId: the ordinary flow
+  // is teach, stand down, THEN export, and standing down is exactly what
+  // clears state.lectureId (see stopRecording in display.js). Gating this the
+  // same way photos and polls are gated would mean a normal post-class export
+  // never gets filed - see the comment on lastKnownLectureId above.
+  const lectureId = lastKnownLectureId;
+  if (!serverKeepsSessions || !lectureId) return;
   let sent = 0;
   let failed = 0;
   for (const file of files) {
@@ -1243,7 +1249,7 @@ async function fileExportWithLecture(files, status) {
       : file.name.endsWith('.jpg') ? 'image/jpeg'
         : file.name.endsWith('.csv') ? 'text/csv'
           : 'text/plain';
-    if (await fileWithLecture(file.name, 'session', file.data, type)) sent += 1;
+    if (await fileWithLecture(file.name, 'session', file.data, type, lectureId)) sent += 1;
     else failed += 1;
   }
   if (failed) status.textContent = `Kept ${sent} of ${sent + failed} files on the server; building the zip…`;
@@ -1549,6 +1555,18 @@ serverInfo().then((info) => {
 
 const recordingNow = () => serverKeepsSessions && !!state.lectureId;
 
+// The lecture an export should be filed under, which is NOT always the live
+// one: the ordinary flow is teach, press E to stand down, THEN find the
+// export button - and standing down is exactly what sets state.lectureId back
+// to null (see stopRecording in display.js). Gating the export on
+// recordingNow() the way photos and polls are gated would mean a normal
+// post-class export is never filed, despite every other kept file promising
+// it will be. This tracks the most recent lecture this controller has seen,
+// live or just-ended, and only moves on once a NEW one actually starts -
+// updated from the bus's own state handler below, the one place state.lectureId
+// changes.
+let lastKnownLectureId = null;
+
 // Photos are the one payload here that is somebody else's: a worksheet, a
 // board mid-argument, a face at the back of the room. Podium's long-standing
 // answer was that they live in memory until you press Export, so the server
@@ -1566,11 +1584,40 @@ const recordingNow = () => serverKeepsSessions && !!state.lectureId;
 // filed export. Ink, poll CSVs and the rest of an export are not anyone else's
 // picture and are kept whenever there is a lecture to keep them with.
 let keepPhotosThisSession = null;      // null = whatever the default says
+// Which lecture that override belongs to - undefined until the first check,
+// so the very first lecture of a fresh page load does not itself look like a
+// change. Compared against lastKnownLectureId (see syncKeepPhotosOverride
+// below, and the comment on lastKnownLectureId above) rather than the live
+// state.lectureId, so that an exception picked during a lecture still applies
+// to the export built just after standing down from it - and gets cleared
+// only once a genuinely new lecture starts.
+let keepPhotosLectureId;
 
-const photosKept = () => keepPhotosThisSession ?? presentation.keepPhotos;
+// "This lecture only" has to mean it: called from every reader of the
+// override, not just the render loop, because the decision that matters most
+// - does THIS photo get filed - happens at the moment a photo is taken, which
+// is not necessarily a moment renderAll() has just run.
+//
+// Compared against lastKnownLectureId, deliberately NOT the live
+// state.lectureId: standing down sets state.lectureId back to null, and an
+// export built in the minute after standing down still has to respect the
+// choice made during the lecture it is exporting (see fileExportWithLecture).
+// lastKnownLectureId only moves on once a genuinely new lecture starts, which
+// is the actual moment "this lecture only" should stop applying.
+function syncKeepPhotosOverride() {
+  if (lastKnownLectureId === keepPhotosLectureId) return;
+  keepPhotosLectureId = lastKnownLectureId;
+  keepPhotosThisSession = null;
+}
+
+function photosKept() {
+  syncKeepPhotosOverride();
+  return keepPhotosThisSession ?? presentation.keepPhotos;
+}
 
 function setKeepPhotos(on) {
   keepPhotosThisSession = !!on;
+  keepPhotosLectureId = lastKnownLectureId;
   renderKeepPhotos();
 }
 
@@ -1591,10 +1638,18 @@ function filePollWithLecture(entry) {
   }).catch(() => { /* the copy in history is the one that mattered */ });
 }
 
-/** One file of the session's record. `data` is a Blob or a Uint8Array. */
-function fileWithLecture(name, kind, data, type) {
-  if (!recordingNow()) return Promise.resolve(false);
-  return fetch(`/api/lectures/${encodeURIComponent(state.lectureId)}/files`
+/**
+ * One file of the session's record. `data` is a Blob or a Uint8Array.
+ *
+ * `lectureId` defaults to the live one, which is right for a photo taken
+ * during class - recordingNow() already refuses to file anything when there
+ * is no live lecture. The export path below passes lastKnownLectureId
+ * explicitly instead, because it has to keep working for a few minutes after
+ * state.lectureId has already gone back to null.
+ */
+function fileWithLecture(name, kind, data, type, lectureId = state.lectureId) {
+  if (!serverKeepsSessions || !lectureId) return Promise.resolve(false);
+  return fetch(`/api/lectures/${encodeURIComponent(lectureId)}/files`
     + `?name=${encodeURIComponent(name)}&kind=${encodeURIComponent(kind)}`, {
     method: 'POST',
     credentials: 'same-origin',
@@ -2493,6 +2548,10 @@ function forgetPhoto(id) {
 // strips only when they would actually look different. Rebuilding twice a
 // second would throw away and re-decode two dozen data-URL <img>s for nothing.
 function renderPhotos() {
+  // Runs every heartbeat, which is what keeps the checkbox from silently
+  // lagging behind a lecture change even when nobody has touched the Photos
+  // tab since - see syncKeepPhotosOverride.
+  renderKeepPhotos();
   const strips = $$('.shots');
   const empty = !photos.length;
   $$('.shots-empty').forEach((n) => { n.hidden = !empty; });
@@ -3149,6 +3208,10 @@ async function connect() {
     onMessage: (msg) => {
       if (msg.t === 'state') {
         state = { ...state, ...msg.state };
+        // See lastKnownLectureId above: captured here, the one place
+        // state.lectureId changes, so it survives the display clearing it at
+        // stand-down and only moves on once a genuinely new lecture starts.
+        if (state.lectureId) lastKnownLectureId = state.lectureId;
         telemetry = msg.telemetry || telemetry;
         telemetryAt = Date.now();
         trackRecent();

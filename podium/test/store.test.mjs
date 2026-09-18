@@ -13,6 +13,7 @@ import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
@@ -549,6 +550,39 @@ ok('an event dated after now is pulled back to now, not stored as the future',
 ok('and one dated before the lecture began is pulled forward to its start',
   clamped.find((e) => e.title === 'Long ago').at === lecture.startedAt);
 
+// A retried flush - the display cannot tell "the request never arrived" from
+// "the response got lost" - resends the same batch, id and all. That must
+// cost nothing, not a duplicate row.
+const retryAt = Date.now();
+const first = lectures.appendEvents(db, owner, lecture.id, [
+  { id: 'evt-retry-1', at: retryAt, kind: 'program', title: 'Slide the network ate the reply for' },
+]);
+ok('a freshly filed event is stored', first.stored === 1);
+const retried = lectures.appendEvents(db, owner, lecture.id, [
+  { id: 'evt-retry-1', at: retryAt, kind: 'program', title: 'Slide the network ate the reply for' },
+]);
+ok('and resending the exact same batch (a retry) stores nothing the second time', retried.stored === 0);
+ok('so the timeline holds one row for it, not two',
+  lectures.getLecture(db, owner, lecture.id).timeline.filter((e) => e.title.startsWith('Slide the network ate')).length === 1);
+
+// An id is a courtesy from the display, not a requirement - an older one, or
+// any path that does not generate one, must keep working exactly as before.
+const noIdBatch = [{ at: Date.now(), kind: 'program', title: 'No client id at all' }];
+lectures.appendEvents(db, owner, lecture.id, noIdBatch);
+const noIdAgain = lectures.appendEvents(db, owner, lecture.id, noIdBatch);
+ok('an event with no id is never deduplicated against another event with no id',
+  noIdAgain.stored === 1
+  && lectures.getLecture(db, owner, lecture.id).timeline.filter((e) => e.title === 'No client id at all').length === 2);
+
+// Two DIFFERENT lectures reusing the same id (two displays, or the same
+// display's counter starting over) must not collide with each other.
+// A room of its own, so this does not interact with the room-reuse (stale
+// lecture closing) tests further down the file, which use 'some-other-room'.
+const otherLecture = lectures.startLecture(db, owner, { room: 'dedup-test-room' });
+lectures.appendEvents(db, owner, otherLecture.id, [{ id: 'evt-retry-1', at: Date.now(), kind: 'program', title: 'A different lecture, same id' }]);
+ok('the same client id in a different lecture is a different event, not a collision',
+  lectures.getLecture(db, owner, otherLecture.id).timeline.some((e) => e.title === 'A different lecture, same id'));
+
 let refusedEvents = '';
 try { lectures.appendEvents(db, outsider, lecture.id, [{ kind: 'program', title: 'sneak' }]); }
 catch (err) { refusedEvents = err.message; }
@@ -605,6 +639,33 @@ ok('and the new one is open', !afterAbandoning.endedAt);
 lectures.startLecture(db, owner, { room: 'some-other-room' });
 ok('an abandoned lecture that recorded nothing is discarded rather than left as a stub',
   lectures.getLecture(db, owner, elsewhere.id) === null);
+
+// A photo can exist before the first timeline event or poll - fileInk and a
+// photo upload both happen independently of appendEvents - so the same
+// discard has to release media too, not just leave it orphaned on disk.
+const glancedRoom = 'glanced-at-room';
+const glanced = lectures.startLecture(db, owner, { room: glancedRoom, dataDir });
+const glancedPhoto = await library.storeUpload(dataDir, Readable.from([Buffer.from('checked the projector works')]));
+lectures.addFile(db, owner, glanced.id, {
+  name: 'photos/01-check.jpg', kind: 'photo',
+  sha256: glancedPhoto.sha256, bytes: glancedPhoto.bytes, contentType: 'image/jpeg', dataDir,
+});
+ok('the file is there before anything discards the lecture', existsSync(library.mediaPath(dataDir, glancedPhoto.sha256)));
+// Going live again in the same room is the abandoned-lecture path; standing
+// down normally with nothing recorded (endLecture) is the other one.
+lectures.startLecture(db, owner, { room: glancedRoom, dataDir });
+ok('a lecture discarded for recording nothing does not leak the bytes its files pointed at',
+  !existsSync(library.mediaPath(dataDir, glancedPhoto.sha256)));
+
+const glancedAgain = lectures.startLecture(db, owner, { room: glancedRoom, dataDir });
+const glancedPhoto2 = await library.storeUpload(dataDir, Readable.from([Buffer.from('checked it again')]));
+lectures.addFile(db, owner, glancedAgain.id, {
+  name: 'photos/01-check.jpg', kind: 'photo',
+  sha256: glancedPhoto2.sha256, bytes: glancedPhoto2.bytes, contentType: 'image/jpeg', dataDir,
+});
+lectures.endLecture(db, owner, glancedAgain.id, { dataDir });
+ok('and standing down with nothing recorded releases the same way',
+  !existsSync(library.mediaPath(dataDir, glancedPhoto2.sha256)));
 
 // The cap exists so that one wedged display cannot fill the disk.
 const flood = lectures.startLecture(db, owner, { room: 'psy415-room' });
@@ -802,6 +863,16 @@ ok('but can remove a member', courses.removeMember(db, sam, 'psy101', 'ta').leng
 // Archiving is as close to deleting as Podium gets, and deliberately keeps
 // everything filed under the course.
 courses.addMember(db, admin, 'psy101', { username: 'ta' });
+
+// One of each kind of thing a course can hold, so archiving is checked against
+// all three access paths Copilot found only some of - not just membership.
+const archLibItem = library.addItem(db, sam, { kind: 'text', title: 'Syllabus', courseCode: 'psy101', props: {} });
+const archPlan = plans.savePlan(db, sam, { title: 'Week 1', courseCode: 'psy101', doc: '{}' });
+const psy101Id = db.prepare('SELECT id FROM courses WHERE code = ?').get('psy101').id;
+db.prepare('INSERT INTO lectures (course_id, room, title, started_by, started_at) VALUES (?, ?, ?, ?, ?)')
+  .run(psy101Id, 'psy101-room', 'Week 1 lecture', sam.id, Date.now());
+const archLecture = db.prepare('SELECT id FROM lectures WHERE room = ?').get('psy101-room');
+
 courses.update(db, admin, 'psy101', { archived: true });
 ok('an archived course is still listed to an administrator, who is the one who can bring it back',
   courses.list(db, admin).find((c) => c.code === 'psy101')?.archived === true);
@@ -809,8 +880,45 @@ ok('and is not listed to its members any more', !courses.list(db, ta).some((c) =
 ok('nothing filed under it is touched',
   db.prepare('SELECT COUNT(*) AS n FROM course_members WHERE course_id = (SELECT id FROM courses WHERE code = ?)')
     .get('psy101').n === 2);
+
+// The three access paths archiving is supposed to close for a plain member -
+// ta is a member of psy101 throughout, never the item's owner, so this is
+// purely the membership branch of each VISIBLE.
+ok('a library item filed under an archived course stops being listed to a member',
+  !library.listItems(db, ta).some((it) => it.id === archLibItem.id));
+ok('and a plan filed under it does the same',
+  !plans.listPlans(db, ta).some((pl) => pl.id === archPlan.id));
+ok('and so does a lecture held in it',
+  !lectures.listLectures(db, ta).some((l) => l.id === archLecture.id));
+ok('an administrator still sees all three', library.listItems(db, admin).some((it) => it.id === archLibItem.id)
+  && plans.listPlans(db, admin).some((pl) => pl.id === archPlan.id)
+  && lectures.listLectures(db, admin).some((l) => l.id === archLecture.id));
+ok('the plan is still there for its own author, the same as leaving the course would leave it',
+  plans.listPlans(db, sam).some((pl) => pl.id === archPlan.id));
+
 courses.update(db, admin, 'psy101', { archived: false });
 ok('bringing it back is the same gesture in reverse', courses.list(db, ta).some((c) => c.code === 'psy101'));
+ok('and all three are visible to the member again',
+  library.listItems(db, ta).some((it) => it.id === archLibItem.id)
+  && plans.listPlans(db, ta).some((pl) => pl.id === archPlan.id)
+  && lectures.listLectures(db, ta).some((l) => l.id === archLecture.id));
+
+// mayReadMedia's lecture-media branch is hand-duplicated SQL (see the comment
+// there), not a reuse of lectures.js's VISIBLE - so it gets its own check
+// rather than trusting that the two stayed in sync.
+const archUpload = await library.storeUpload(dataDir, Readable.from([Buffer.from('a slide from an archived course')]));
+lectures.addFile(db, sam, archLecture.id, {
+  name: 'photos/01-slide.jpg', kind: 'photo',
+  sha256: archUpload.sha256, bytes: archUpload.bytes, contentType: 'image/jpeg', dataDir,
+});
+ok('a member can read a session file from that lecture while the course is active',
+  library.mayReadMedia(db, ta, archUpload.sha256));
+courses.update(db, admin, 'psy101', { archived: true });
+ok('but not once the course is archived',
+  !library.mayReadMedia(db, ta, archUpload.sha256));
+ok('an administrator still can', library.mayReadMedia(db, admin, archUpload.sha256));
+courses.update(db, admin, 'psy101', { archived: false });
+ok('and the member again once it is brought back', library.mayReadMedia(db, ta, archUpload.sha256));
 
 console.log('\n-- the doctor --');
 
@@ -868,6 +976,77 @@ const code = doctor.report(report, (line) => lines.push(line));
 ok('a run with nothing broken exits 0 even when it has warnings',
   code === (report.some((item) => item.level === 'bad') ? 1 : 0));
 ok('and every finding gets a line somebody can read', lines.length >= report.length);
+
+// A database that will not open at all - the recovery scenario doctor exists
+// for - has to be a finding, not a crash that pre-empts every other check.
+const openError = new Error('this database is at schema version 999 but this release only knows 5');
+const brokenReport = await doctor.run({
+  db: null, openError, dataDir,
+  releaseDir: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
+  healthUrl: '', certPath: '',
+});
+ok(`an unopenable database is reported, not thrown (${seen(brokenReport, 'database').detail.slice(0, 40)}…)`,
+  seen(brokenReport, 'database').level === 'bad' && /schema version 999/.test(seen(brokenReport, 'database').detail));
+ok('and the checks that do not need the database still run',
+  seen(brokenReport, 'node') && seen(brokenReport, 'permissions') && seen(brokenReport, 'disk'));
+
+// checkStorage reads whatever env object it is handed - the CLI's job (see
+// envFile() in podium-admin.js) is making sure that object actually has
+// LECTURE_RETENTION_DAYS on it even when the shell running `doctor` never
+// sourced podium.env itself.
+ok('with no retention configured, storage says everything is kept',
+  /everything kept/.test(doctor.checkStorage(db, {}).detail));
+ok('and with it set, storage says for how long',
+  /kept 180 days/.test(doctor.checkStorage(db, { LECTURE_RETENTION_DAYS: '180' }).detail));
+
+console.log('\n-- doctor, from the command line --');
+
+// The CLI itself: does `podium-admin.js doctor` actually load podium.env for
+// the retention line, and does it survive a database it cannot open. Spawned
+// rather than called in-process because both of these are about main()'s own
+// wiring (envFile(), the try/catch around store.open()), not about doctor.js.
+const cliRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'server');
+const envFile = path.join(root, 'podium-cli.env');
+// No PORT here on purpose: setting one makes doctor try to reach a real
+// service at that port for the build/health checks, which nothing is
+// listening on in this test and would turn this into a check of the
+// network rather than of the env-file loading this is actually testing.
+writeFileSync(envFile, `LECTURE_RETENTION_DAYS=42\n`);
+const cliOut = execFileSync(process.execPath, ['podium-admin.js', 'doctor'], {
+  cwd: cliRoot, env: { ...process.env, DATA_DIR: dataDir, PODIUM_ENV: envFile },
+}).toString();
+ok(`the CLI reads the retention setting out of podium.env (storage line: "${cliOut.match(/storage.*/)?.[0]}")`,
+  /kept 42 days/.test(cliOut));
+
+const crashDir = mkdtempSync(path.join(tmpdir(), 'podium-doctor-crash-'));
+{
+  const crashDb = store.open(crashDir);
+  crashDb.exec('PRAGMA user_version = 999');
+  crashDb.close();
+}
+let crashOut = '';
+let crashStatus = 0;
+try {
+  execFileSync(process.execPath, ['podium-admin.js', 'doctor'], {
+    cwd: cliRoot, env: { ...process.env, DATA_DIR: crashDir },
+  });
+} catch (err) {
+  crashOut = String(err.stdout || '');
+  crashStatus = err.status;
+}
+ok('doctor on a database from a newer release reports it rather than crashing',
+  crashStatus === 1 && /will not open/.test(crashOut) && /schema version 999/.test(crashOut));
+ok('and every other command still fails loudly on the same database, as it always has', (() => {
+  try {
+    execFileSync(process.execPath, ['podium-admin.js', 'user', 'list'], {
+      cwd: cliRoot, env: { ...process.env, DATA_DIR: crashDir }, stdio: 'pipe',
+    });
+    return false;
+  } catch (err) {
+    return err.status === 1 && /schema version 999/.test(String(err.stderr || ''));
+  }
+})());
+rmSync(crashDir, { recursive: true, force: true });
 
 db.close();
 rmSync(root, { recursive: true, force: true });

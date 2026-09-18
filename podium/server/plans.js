@@ -19,12 +19,17 @@
 
 'use strict';
 
-// Owner, or a member of the course it has been filed under, or an admin.
+// Owner, or a member of the course it has been filed under (while that course
+// is not archived), or an admin. Archiving is documented as making everything
+// filed under a course stop being listed to its members - so the archived
+// check gates only the membership branch; the author keeps their own plan
+// regardless, the same as they would if they simply left the course. `c` is
+// SELECT_PLANS's own join of courses.
 // ?1 = user id, ?2 = 1 for an admin.
 const VISIBLE = `(
   p.owner_id = ?1
   OR ?2 = 1
-  OR (p.course_id IS NOT NULL
+  OR (p.course_id IS NOT NULL AND c.archived_at IS NULL
       AND EXISTS (SELECT 1 FROM course_members cm WHERE cm.course_id = p.course_id AND cm.user_id = ?1))
 )`;
 
