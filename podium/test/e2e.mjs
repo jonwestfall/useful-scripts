@@ -2992,6 +2992,16 @@ const settle = (pad, re) => pad.waitForFunction((src) => new RegExp(src).test(do
   ok(`the controller reads out the build next to the response time ("${label}")`, /Display connected.*build \d+/.test(label));
   ok('and does not cry wolf when they agree', !(await pad.$eval('#display-state', (n) => n.classList.contains('is-bad'))));
   ok('the display states its own build in Settings', /^\d+$/.test((await screen.textContent('#build-number')).trim()));
+  ok('and the release it is, beside it', /^\d+\.\d+$/.test((await screen.textContent('#version-number')).trim()));
+  // The gap this closes: the controller could tell you the DISPLAY's build,
+  // and only while one was connected, but never said a word about its own.
+  // It is the device in your hand and the one a bug report comes from.
+  await pad.click('#open-settings');
+  await pad.waitForSelector('#control-build');
+  const ownLine = (await pad.textContent('#control-build')).trim();
+  ok(`the controller states its own version and build in Settings ("${ownLine.split('\n')[0].trim()}")`,
+    /^\d+\.\d+$/.test((await pad.textContent('#control-version')).trim())
+    && /^\d+$/.test((await pad.textContent('#control-build-number')).trim()));
   await close();
 }
 {
