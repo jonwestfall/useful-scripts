@@ -554,6 +554,13 @@ console.log('\n-- what happened in the room --');
 
 // The room name is psy415's, which is how a lecture finds its course: the
 // display never sends a course code, it sends the room it is in.
+// A display that stopped saying it was there: the shape every "abandoned
+// lecture" case below actually has in the wild. Go live now RESUMES a lecture
+// still inside the idle window rather than replacing it (that is the reload
+// case), so a test about sweeping one up has to make it genuinely quiet
+// first rather than merely old.
+const goQuiet = (id, when) => db.prepare('UPDATE lectures SET last_seen_at = ? WHERE id = ?').run(when, id);
+
 const lecture = lectures.startLecture(db, owner, { room: 'psy415-room' });
 ok('starting a lecture files it under the course whose settings name that room',
   lecture.course === 'psy415');
@@ -805,12 +812,68 @@ const abandoned = lectures.startLecture(db, owner, { room: 'lost-power' });
 db.prepare('UPDATE lectures SET started_at = ? WHERE id = ?').run(Date.now() - 3600000, abandoned.id);
 const lastSeen = Date.now() - 1800000;
 lectures.appendEvents(db, owner, abandoned.id, [{ at: lastSeen, kind: 'program', title: 'Half a lecture' }]);
+goQuiet(abandoned.id, lastSeen);
 const afterAbandoning = lectures.startLecture(db, owner, { room: 'lost-power' });
 ok('going live again in the same room closes the lecture left open',
   lectures.getLecture(db, owner, abandoned.id).endedAt === lastSeen);
 ok('at the last thing it recorded, not at now - it did not run until this morning',
   lectures.getLecture(db, owner, abandoned.id).endedAt < afterAbandoning.startedAt - 60000);
 ok('and the new one is open', !afterAbandoning.endedAt);
+
+// The case that is NOT an abandoned lecture, and the reason the sweep is
+// dated rather than unconditional: a display reloads mid-class. Its state
+// survives (see "surviving a reload" in display.js) but its lecture id does
+// not, so the teacher presses Go live again to carry on with the same class.
+// Replacing the record there splits one lecture's timeline in half.
+const reloadRoom = 'reloaded-mid-class';
+const beforeReload = lectures.startLecture(db, owner, { room: reloadRoom });
+lectures.appendEvents(db, owner, beforeReload.id, [{ kind: 'program', title: 'Before the tab reloaded' }]);
+const afterReload = lectures.startLecture(db, owner, { room: reloadRoom });
+ok('going live again while the display is still being heard from resumes that lecture',
+  afterReload.id === beforeReload.id && afterReload.resumed === true);
+ok('and it is still open, with its timeline intact rather than started over',
+  !afterReload.endedAt && lectures.getLecture(db, owner, afterReload.id).timeline.length === 1);
+lectures.appendEvents(db, owner, afterReload.id, [{ kind: 'program', title: 'And after it' }]);
+ok('so both halves of the class are one record',
+  lectures.getLecture(db, owner, beforeReload.id).timeline.length === 2);
+
+// Starting black is the way to say "this is a new class, not the same one" -
+// the arming screen's own "Clear this room's saved session".
+const insisted = lectures.startLecture(db, owner, { room: reloadRoom, resume: false });
+ok('but asking for a fresh session opens a new record instead of resuming',
+  insisted.id !== beforeReload.id && !insisted.resumed);
+ok('and closes the one it replaced', !!lectures.getLecture(db, owner, beforeReload.id).endedAt);
+
+// The heartbeat, and what happens when it stops. This is the answer to every
+// way a class ends without anybody saying so: a closed laptop, a crash, a
+// machine carried out of the room.
+const beating = lectures.startLecture(db, owner, { room: 'still-teaching' });
+lectures.appendEvents(db, owner, beating.id, [{ kind: 'program', title: 'A long worked example' }]);
+const quiet = lectures.startLecture(db, owner, { room: 'went-home' });
+lectures.appendEvents(db, owner, quiet.id, [{ at: Date.now() - 1800000, kind: 'program', title: 'Thursday' }]);
+goQuiet(quiet.id, Date.now() - 1800000);
+lectures.keepAlive(db, owner, beating.id);
+const swept = lectures.closeIdleLectures(db, dataDir);
+ok(`the sweep closes a lecture nobody has been heard from in (${swept.closed} closed, ${swept.discarded} discarded)`,
+  !!lectures.getLecture(db, owner, quiet.id).endedAt);
+ok('and dates it to when the display was last there, not to when the sweep noticed',
+  lectures.getLecture(db, owner, quiet.id).endedAt < Date.now() - 1700000);
+ok('while one that is still saying "still here" is left alone',
+  !lectures.getLecture(db, owner, beating.id).endedAt);
+
+// A quiet lecture that recorded nothing is not worth a row, the same rule
+// stand-down and Go live already apply.
+const glanceGone = lectures.startLecture(db, owner, { room: 'glance-and-gone' });
+goQuiet(glanceGone.id, Date.now() - 3600000);
+lectures.closeIdleLectures(db, dataDir);
+ok('and one that recorded nothing at all is discarded, not closed',
+  lectures.getLecture(db, admin, glanceGone.id) === null);
+
+let refusedBeat = '';
+try { lectures.keepAlive(db, owner, quiet.id); } catch (err) { refusedBeat = err.message; }
+ok('a heartbeat for a lecture that has already ended is refused rather than reopening it',
+  /already ended/.test(refusedBeat));
+lectures.endLecture(db, owner, beating.id, { at: Date.now() });
 
 // A stale lecture that ran a poll but never got a timeline event recorded -
 // a display left on the arming screen while a controller ran a poll through
@@ -825,10 +888,12 @@ lectures.recordPoll(db, owner, pollOnly.id, {
   pollId: 'stale-p1', kind: 'choice', question: 'Any questions?', options: ['a'], counts: [1], voters: 1,
   endedAt: pollOnlyEndedAt,
 });
+goQuiet(pollOnly.id, pollOnlyEndedAt);
 lectures.startLecture(db, owner, { room: 'poll-only-room' });
 ok('a stale lecture with a poll but no timeline event closes at the poll\'s end time, not its own start',
   lectures.getLecture(db, owner, pollOnly.id).endedAt === pollOnlyEndedAt);
 
+goQuiet(elsewhere.id, Date.now() - 3600000);
 lectures.startLecture(db, owner, { room: 'some-other-room' });
 ok('an abandoned lecture that recorded nothing is discarded rather than left as a stub',
   lectures.getLecture(db, owner, elsewhere.id) === null);
@@ -846,6 +911,7 @@ lectures.addFile(db, owner, glanced.id, {
 ok('the file is there before anything discards the lecture', existsSync(library.mediaPath(dataDir, glancedPhoto.sha256)));
 // Going live again in the same room is the abandoned-lecture path; standing
 // down normally with nothing recorded (endLecture) is the other one.
+goQuiet(glanced.id, Date.now() - 3600000);
 lectures.startLecture(db, owner, { room: glancedRoom, dataDir });
 ok('a lecture discarded for recording nothing does not leak the bytes its files pointed at',
   !existsSync(library.mediaPath(dataDir, glancedPhoto.sha256)));

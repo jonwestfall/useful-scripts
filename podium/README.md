@@ -1003,6 +1003,25 @@ On a Podium with a server behind it (`DATA_DIR` and at least one account — see
 session record opens; the arming screen says so before you start, because a room should
 not have to read the documentation to find that out. Stand down (**E**) and it closes.
 
+**When a session is over**, precisely, because more classes end by a laptop being shut
+than by anybody pressing anything:
+
+- **Standing down ends it**, there and then, and the room goes quiet with it — the
+  background music stops and so does whatever clip was on the projector.
+- **A display that simply goes away also ends it.** While you are live the display tells
+  the server it is still there, about once a minute. Fifteen minutes of silence and the
+  server closes the lecture itself, dated to the last time the display *was* there rather
+  than to whenever it noticed. A closed laptop, a crashed tab, a machine carried out of
+  the room: all the same, and none of them leave a session sitting open in the list
+  looking like a class still in progress.
+- **Going live again mid-class picks the same session back up.** A display that reloads
+  forgets which lecture it was writing, so you press **Go live** again to carry on — and
+  that carries on with the same record rather than splitting one class into two. The
+  fifteen minutes is what tells the two apart: inside it, this is the same lecture;
+  outside it, last week's was abandoned and this is a new one.
+- **To insist on a new record**, use *Clear this room's saved session* on the arming
+  screen. That is what it now means for the record as well as the screen.
+
 What is kept is a timeline — what went on the projector, and when — plus the final tally
 of every poll you ended. Stepping quickly through slides does not produce a row per
 press: entries are at least fifteen seconds apart, so what you get is where the lecture

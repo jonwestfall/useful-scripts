@@ -274,6 +274,26 @@ const MIGRATIONS = [
         ON lecture_events(lecture_id, client_id) WHERE client_id IS NOT NULL;
     `);
   },
+
+  (db) => {
+    db.exec(`
+      -- When the display last said it was still there. A lecture ends when
+      -- somebody stands down - but a tab closed, a laptop shut mid-class or a
+      -- browser that crashed never says so, and until now such a lecture sat
+      -- open until the NEXT Go live in that room swept it up, which might be
+      -- next week. This is what lets the server close one on its own, and
+      -- what it dates the end to: the last moment the display was known to be
+      -- there, rather than whenever the sweep happened to notice.
+      --
+      -- Backfilled to started_at rather than left NULL: an existing open
+      -- lecture from before this column has no better answer, and NULL would
+      -- make every one of them look infinitely idle and close on the first
+      -- sweep with an end time of nothing.
+      ALTER TABLE lectures ADD COLUMN last_seen_at INTEGER;
+      UPDATE lectures SET last_seen_at = started_at WHERE last_seen_at IS NULL;
+      CREATE INDEX lectures_open_by_seen ON lectures(last_seen_at) WHERE ended_at IS NULL;
+    `);
+  },
 ];
 
 function migrate(db) {

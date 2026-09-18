@@ -728,6 +728,31 @@ function pruneLectureFiles() {
 const retentionSweep = db ? setInterval(pruneLectureFiles, 24 * 60 * 60 * 1000) : null;
 retentionSweep?.unref();
 
+// Every way a lecture can end without anybody saying so: a closed laptop, a
+// browser that crashed, a machine that went to sleep between two classes in
+// the same room. Standing down remains the precise answer and closes one
+// immediately; this closes the rest, dated to the last time the display said
+// it was there rather than to whenever this ran.
+//
+// Once a minute, rather than only at the next Go live in that room - which
+// could be next week, and until then the session sits open in everybody's
+// list looking like a class still in progress.
+function sweepIdleLectures() {
+  if (!db) return;
+  try {
+    const { closed, discarded } = lectures.closeIdleLectures(db, DATA_DIR);
+    if (closed || discarded) {
+      console.log(`podium: closed ${closed} session(s) nobody was teaching any more`
+        + `${discarded ? `, and discarded ${discarded} that recorded nothing` : ''}`);
+    }
+  } catch (err) {
+    console.error(`podium: idle session sweep failed (${err.message})`);
+  }
+}
+
+const idleSweep = db ? setInterval(sweepIdleLectures, 60 * 1000) : null;
+idleSweep?.unref();
+
 /** Say out loud which of the three authentication configurations is live. */
 function describeAuth() {
   if (!STATIC) return 'relay only';
@@ -761,4 +786,8 @@ server.listen(PORT, HOST || undefined, () => {
   // Once at startup as well as daily: a box that is only up during term would
   // otherwise never reach the first daily sweep.
   pruneLectureFiles();
+  // And immediately, for the lectures this process's own predecessor left
+  // open: a crash or a restart mid-class is exactly the case the idle sweep
+  // exists for, and waiting a minute to notice serves nobody.
+  sweepIdleLectures();
 });

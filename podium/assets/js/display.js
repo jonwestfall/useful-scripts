@@ -1014,6 +1014,17 @@ const RECORD_FLUSH_MS = 5000;
 const RECORD_MIN_GAP_MS = 15000;
 const RECORD_QUEUE_MAX = 200;
 const RECORD_BATCH = 100;
+// How often this screen tells the SERVER it is still teaching a lecture. Not
+// to be confused with HEARTBEAT_MS at the top of this file, which is the
+// relay's own much faster state broadcast to the controllers in the room -
+// this one is a single write to the database and the thing that keeps a
+// lecture out of the idle sweep.
+//
+// The server closes a lecture it has not heard from for its own, much longer,
+// window (IDLE_MS in server/lectures.js); this only has to sit comfortably
+// inside it, with room for several beats to go missing to a bad afternoon of
+// classroom wifi before anybody's lecture is declared over.
+const LECTURE_ALIVE_MS = 60 * 1000;
 
 let lectureId = null;       // the lecture being written, while live
 let eventQueue = [];
@@ -1022,6 +1033,11 @@ let flushPromise = null;    // the in-flight flush, so a caller can await it rat
 let lastSurface = null;     // the ink surface key the last entry described
 let lastEventAt = 0;
 let recordingSince = 0;     // when THIS lecture began recording - see snapshotInk
+let heartbeatTimer = null;  // says "still here" while live - see startHeartbeat
+// Set by "Clear this room's saved session": the next Go live opens its own
+// record instead of resuming one this room left open. Cleared once used, so
+// it governs that one Go live rather than every one after it.
+let startFresh = false;
 let pendingEvent = null;
 let pendingTimer = null;
 
@@ -1085,7 +1101,8 @@ async function startRecording() {
   // notice until they went looking for it. serverInfo() only asks once.
   if (!(await serverInfo()).features.includes('sessions')) return;
   try {
-    const res = await postJson('/api/lectures', { room: cfg.room });
+    const res = await postJson('/api/lectures', { room: cfg.room, fresh: startFresh });
+    startFresh = false;
     if (!res.ok) return;
     const { lecture } = await res.json();
     lectureId = lecture.id;
@@ -1097,11 +1114,35 @@ async function startRecording() {
     // point - see "surviving a reload" below), so a board carried in from a
     // previous lecture is on screen and must stay there; it just must not be
     // filed under this lecture as though it were drawn here.
-    recordingSince = Date.now();
+    recordingSince = lecture.resumed ? (recordingSince || Date.now()) : Date.now();
+    startHeartbeat(lecture.id);
     // Broadcast it: a controller ending a poll files the tally under this id.
     // commit() notes what is already on screen as the timeline's first entry.
     commit();
   } catch { /* no network: the lecture runs, only the record is lost */ }
+}
+
+// "Still here", on a timer, for as long as this display is live.
+//
+// The server closes a lecture nobody has heard from in a while, because most
+// of the ways a class actually ends - a laptop shut, a tab closed, a machine
+// carried out of the room - never send anything at all. Standing down is the
+// precise answer and this is the backstop for when it never comes; without it
+// a crashed display leaves a session open in everybody's list, looking like a
+// class still in progress, until the next Go live in that room.
+//
+// Bound to the id it was started for rather than reading the global: a
+// heartbeat that outlived its lecture would otherwise keep the WRONG one
+// alive, which is the exact failure this is meant to prevent.
+function startHeartbeat(id) {
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(() => {
+    if (lectureId !== id) { clearInterval(heartbeatTimer); heartbeatTimer = null; return; }
+    // Failures are ignored on purpose: one lost beat is not the end of a
+    // lecture, and the next one is a minute away. What the server does with a
+    // long silence is the server's decision to make.
+    postJson(lectureUrl(id, '/alive'), {}).catch(() => {});
+  }, LECTURE_ALIVE_MS);
 }
 
 async function stopRecording() {
@@ -1109,6 +1150,8 @@ async function stopRecording() {
   if (!id) return;
   lectureId = null;
   state.lectureId = null;
+  clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
   // Broadcast now, the same way startRecording broadcasts the id it just set
   // - standDown()'s own commit() (which sets state.armed = false) already ran
   // before this transition even started (queueRecordingTransition queues it
@@ -2112,6 +2155,11 @@ $('#arm-fresh-session').addEventListener('click', () => {
   try { localStorage.removeItem(inkStorageKey()); } catch { /* private mode */ }
   $('#arm-resume').hidden = true;
   $('#arm-fresh-session-note').textContent = 'Cleared.';
+  // And the session record with it: the next Go live opens a NEW lecture
+  // rather than resuming whatever this room still had open. Clearing the
+  // room's saved session and then filing the next class under the last one's
+  // record would be the same mistake in a place nobody would think to look.
+  startFresh = true;
   commit();
 });
 
