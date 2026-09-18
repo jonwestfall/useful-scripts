@@ -683,6 +683,23 @@
             or image you drew on. Ink lives on the display, so it is pulled from there as the zip is
             built — keep the display connected.
           </p>
+          <hr style="border:0;border-top:1px solid var(--line);margin:6px 0">
+          <!-- Only on a Podium with a server that keeps sessions. The manual
+               answer to "is there a way to end class from here" - the server
+               closes a lecture nobody has heard from in fifteen minutes on
+               its own, but that is a backstop, not something to wait on when
+               class is plainly over. Broadcast, so it reaches every display
+               sharing this room together (see session-end in display.js) -
+               not just whichever one somebody walks up to and presses E on. -->
+          <div class="inline" id="finish-session-row" hidden>
+            <button id="finish-session" class="danger-outline" type="button" disabled>Finish session &amp; save</button>
+          </div>
+          <p class="hint" id="finish-session-hint" hidden>
+            Ends the lecture record on the server and sends every display in this room back to
+            its arming screen — the deliberate way to close class, next to the automatic close
+            after 15 minutes of silence.
+          </p>
+          <div id="finish-session-status" class="hint"></div>
         </section>
       </div>
     </main>

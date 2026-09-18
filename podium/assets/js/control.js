@@ -1694,6 +1694,17 @@ function renderKeepPhotos() {
   if (!row) return;
   row.hidden = !serverKeepsSessions;
   $('#photo-keep').checked = photosKept();
+  // Bundled here rather than given its own call site: every place that needs
+  // this refreshed (serverInfo() landing, every heartbeat via renderPhotos,
+  // the keep-photos checkbox handler) already calls renderKeepPhotos for the
+  // row right above it, and both toggle on the same two things - whether the
+  // server keeps sessions at all, and whether one is live right now.
+  const finishRow = $('#finish-session-row');
+  if (finishRow) {
+    finishRow.hidden = !serverKeepsSessions;
+    $('#finish-session-hint').hidden = !serverKeepsSessions;
+    $('#finish-session').disabled = !bus || !recordingNow();
+  }
 }
 
 function filePollWithLecture(entry) {
@@ -3935,6 +3946,16 @@ wireDangerButton($('#photo-clear'), 'Discard every photo', () => {
   for (const photo of [...photos]) forgetPhoto(photo.id);
   photoNote(n ? `Discarded ${n} photo${n === 1 ? '' : 's'}. What is on screen stays there.` : 'Nothing to discard.');
 }, { armedLabel: 'Tap again to discard' });
+// Broadcast rather than a request this controller waits on an answer for -
+// same as 'laser' and the other one-way signals in this file. There is no
+// per-display acknowledgement to show, so the status line says what was
+// sent, not what happened; standDown() on the far end is what actually ends
+// each display's own recording, and it is more than best-effort silent about
+// that the way an ordinary stand-down already is.
+wireDangerButton($('#finish-session'), 'Finish session & save', () => {
+  bus?.send({ t: 'session-end' });
+  $('#finish-session-status').textContent = 'Sent - every display in this room is ending its session and saving.';
+}, { armedLabel: 'Tap again to finish and save' });
 $('#photo-panel').addEventListener('click', () => askForShot(state.focus, `panel ${PANEL_LABELS[state.focus]}`));
 $('#photo-screen').addEventListener('click', () => askForShot('screen', 'the whole screen'));
 // Saving what you have just drawn, from where you drew it. The same thing

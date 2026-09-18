@@ -198,6 +198,20 @@ const fails = [];
 const errors = [];
 const ok = (label, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + label); if (!cond) fails.push(label); };
 
+// page.waitForFunction's own polling has come back resolved-but-wrong on a
+// background tab in a many-page context here - the direct fetch it drives
+// checks out fine called the same way through evaluate(), so this drives the
+// same check from here instead, on a plain timer. Prefer waitForFunction
+// everywhere it has proven reliable; reach for this only where it hasn't.
+async function pollUntil(page, fn, arg, { timeout = 15000, interval = 300 } = {}) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (await page.evaluate(fn, arg)) return;
+    if (Date.now() > deadline) throw new Error('pollUntil timed out');
+    await page.waitForTimeout(interval);
+  }
+}
+
 // Iterating on one section without sitting through the other thirty:
 //
 //   node podium/test/e2e.mjs --only ink        every section with "ink" in its name
@@ -274,6 +288,16 @@ let expectingLectureRenameForbidden = false;
 // a sibling route always has more path after the id, which this cannot match.
 const LECTURE_RENAME_FORBIDDEN = /403 \(Forbidden\).*\/api\/lectures\/\d+$/;
 
+// A fifth: a display's event flush answered 409 once its shared lecture has
+// been ended by another display (see recoverRecording in display.js) - the
+// multi-display section deliberately drives this to prove the display that
+// was never stood down notices and recovers, rather than beating on a dead
+// id forever. Same narrow-flag treatment as the rename case above, and for
+// the same reason: matching on status and path alone would also swallow a
+// genuine 409 from ending an already-ended lecture twice.
+let expectingRecoveryConflict = false;
+const RECOVERY_CONFLICT = /409 \(Conflict\).*\/api\/lectures\/\d+\/events$/;
+
 const trap = (page, tag) => {
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
   page.on('console', (m) => {
@@ -281,6 +305,7 @@ const trap = (page, tag) => {
     const where = `${m.text()} ${m.location()?.url || ''}`;
     if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where)) return;
     if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
+    if (expectingRecoveryConflict && RECOVERY_CONFLICT.test(where)) return;
     errors.push(`${tag} console: ${m.text()}`);
   });
 };
@@ -4541,7 +4566,7 @@ trap(typedPhone, 'student typing the code');
 await typedPhone.goto(`${BASE}/join.html`);
 await typedPhone.fill('#code', created.code.toLowerCase());
 await typedPhone.click('#enter button[type="submit"]');
-await typedPhone.waitForFunction(() => !document.querySelector('#live')?.hidden, null, { timeout: 8000 });
+await typedPhone.waitForFunction(() => document.querySelector('#question')?.textContent === 'One word for how that felt?', null, { timeout: 8000 });
 ok('typing the code in lower case joins the same poll', (await typedPhone.textContent('#question')) === 'One word for how that felt?');
 await typedCtx.close();
 
@@ -5502,6 +5527,175 @@ await acctCtx.close();
 acctServer.kill();
 await new Promise((resolve) => acctServer.on('exit', resolve));
 fs.rmSync(acctData, { recursive: true, force: true });
+}
+
+if (want('multiple displays and multiple controllers share one room')) {
+console.log('\n-- multiple displays and multiple controllers share one room --');
+// Its own server: recording state (lectureId, the heartbeat, the event
+// queue) lives in each DISPLAY's own module scope, never in the shared
+// broadcast state a controller reads (see wireState in display.js) - so the
+// only way to find out whether two displays sharing a room actually cope
+// with that is to run two of them for real, against a server that keeps
+// sessions.
+const multiPort = await freePort();
+const multiBase = `http://127.0.0.1:${multiPort}`;
+const multiData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-multi-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'mo', '--admin', '--name', 'Mo', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: multiData },
+  input: 'also a good long password\n',
+});
+const multiServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(multiPort), STATIC: '../', DATA_DIR: multiData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+multiServer.stderr.on('data', (d) => process.stderr.write(`[multi-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('multi-display relay did not start')), 10000);
+  let log = '';
+  multiServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  multiServer.on('exit', (code) => reject(new Error(`multi-display relay exited with ${code}`)));
+});
+
+// One context for everything below: cookies are per-context, and logging in
+// once on the first page is what leaves every later page in it already
+// signed in - the same shortcut the accounts section above relies on for
+// admin.html.
+const multiCtx = await browser.newContext();
+await multiCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${multiPort}/podium`, room: 'lecture-hall', passphrase: 'two projectors, one class' }));
+
+const ctrlA = await multiCtx.newPage();
+trap(ctrlA, 'multi controller A');
+await ctrlA.goto(`${multiBase}/control.html`);
+await ctrlA.waitForSelector('#form');
+await ctrlA.fill('#username', 'mo');
+await ctrlA.fill('#password', 'also a good long password');
+await Promise.all([ctrlA.waitForURL(/control\.html/), ctrlA.click('#go')]);
+await ctrlA.waitForSelector('#app:not([hidden])');
+
+// Two displays, same room, same account - the actual scenario issue #26
+// asks about: an overflow screen in the back of a lecture hall, or a second
+// projector for an adjoining room, both fed by the one iPad up front.
+const dispA = await multiCtx.newPage();
+trap(dispA, 'multi display A');
+await dispA.goto(`${multiBase}/display.html`);
+await dispA.click('#arm-button');
+await dispA.waitForSelector('#hud[data-status="online"]');
+const dispB = await multiCtx.newPage();
+trap(dispB, 'multi display B');
+await dispB.goto(`${multiBase}/display.html`);
+await dispB.click('#arm-button');
+await dispB.waitForSelector('#hud[data-status="online"]');
+
+// Content fan-out: one command from the controller, both displays act on
+// it - the part live testing had already shown working, checked here too
+// so a future regression here fails a suite instead of a projector. A real
+// layout change, not freeze: this also has to be the lecture's first
+// recorded moment, or standing down below finds nothing ever happened and
+// DISCARDS the record outright (see endLecture's own !events && !polls
+// branch) rather than simply ending it - exactly the ambiguity a real
+// class never has, since something is always on screen by the time anyone
+// stands down.
+await ctrlA.click('.layout-btn[data-layout="2h"]');
+await Promise.all([dispA, dispB].map((d) => d.waitForFunction(
+  () => document.querySelector('#stage')?.className === 'layout-2h', null, { timeout: 8000 })));
+ok('one command from the controller reaches both displays', true);
+
+// Each display opened its own recording independently (see startRecording) -
+// the two must have landed on the SAME lecture, not a pair of half-empty
+// ones each holding half the class. startLecture's own dedup (same account,
+// same room, no other open lecture) is what is actually under test here.
+const openLectures = () => ctrlA.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.filter((l) => !l.endedAt);
+});
+await ctrlA.waitForFunction(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.some((l) => !l.endedAt);
+}, null, { timeout: 15000 });
+const sharedLecture = await openLectures();
+ok(`two displays going live in the same room share one lecture, not two (${sharedLecture.length})`,
+  sharedLecture.length === 1);
+const sharedId = sharedLecture[0].id;
+
+// Wait out noteSurface's own settle-then-flush pipeline (RECORD_MIN_GAP_MS
+// then RECORD_FLUSH_MS in display.js) so the layout change above is actually
+// on the server, not just queued, before anyone stands down.
+await ctrlA.waitForFunction((id) => fetch(`/api/lectures/${id}`, { credentials: 'same-origin' })
+  .then((r) => r.json()).then(({ lecture }) => lecture.events > 0), sharedId, { timeout: 20000 });
+
+// A second controller, same room - the other half of #26. Existing coverage
+// (see "a second controller stays in step with the first") already proves
+// this for a single display; worth the one extra assertion here to show it
+// still holds with two displays answering it.
+const ctrlB = await multiCtx.newPage();
+trap(ctrlB, 'multi controller B');
+await ctrlB.goto(`${multiBase}/control.html`);
+await ctrlB.waitForSelector('#app:not([hidden])');
+await ctrlB.waitForFunction(
+  () => !document.querySelector('#display-state')?.textContent.includes('No display connected'),
+  null, { timeout: 10000 });
+ok('a second controller joining the same room sees two displays\' worth of state, correctly, as one', true);
+
+// Now the part live testing could not have caught: standing down is a LOCAL
+// action (the 'e' key, read only by the machine it is pressed on - see
+// standDown) but the lecture it closes is shared. Before the fix, display B
+// - still armed, still believing it is recording - would heartbeat and post
+// events into a lecture that no longer exists, forever, with nothing on
+// screen ever saying so.
+await dispA.keyboard.press('e');
+await ctrlA.waitForFunction((id) => fetch(`/api/lectures/${id}`, { credentials: 'same-origin' })
+  .then((r) => r.json()).then(({ lecture }) => lecture?.endedAt > 0), sharedId, { timeout: 15000 });
+ok('one display standing down ends the shared lecture', true);
+ok('the other display never stood itself down', await dispB.evaluate(() => document.body.classList.contains('is-live')));
+
+// B does not know yet - nothing broadcasts a stand-down (see the comment on
+// session-end in display.js for why that gap is exactly what the Finish
+// Session button is for). Force it to try to record something anyway: this
+// is what a real class does, a slide or two after the front of the room has
+// already quietly ended.
+expectingRecoveryConflict = true;
+await ctrlA.click('.layout-btn[data-layout="4"]');
+await ctrlA.waitForFunction(
+  () => document.querySelector('.layout-btn[data-layout="4"]')?.classList.contains('is-on'),
+  null, { timeout: 8000 });
+await dispB.waitForFunction(
+  () => document.querySelector('#stage')?.className === 'layout-4', null, { timeout: 8000 });
+
+// B's next event flush against the dead id comes back 404/409, and
+// recoverRecording opens a fresh lecture rather than writing into a void for
+// the rest of class - see lectureGone/recoverRecording in display.js. The
+// original persists (ended, not discarded - it holds the layout-2h moment
+// recorded above), so a genuinely new id is what proves this, not a reused
+// one: sharedId's own row is never touched by this recovery.
+await pollUntil(ctrlA, async (deadId) => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.some((l) => !l.endedAt && l.id !== deadId);
+}, sharedId, { timeout: 30000 });
+expectingRecoveryConflict = false;
+const healedLecture = (await openLectures())[0];
+ok(`the display nobody stood down recovers its own fresh lecture rather than recording into a void (id ${healedLecture?.id})`,
+  !!healedLecture && healedLecture.id !== sharedId);
+
+// The manual way to end class from the controller (see #26's second half),
+// exercised from the SECOND controller on purpose - either one can end it,
+// not just whichever opened the tab first.
+await ctrlB.click('.tab[data-tab="photos"]');
+await ctrlB.waitForSelector('#finish-session:not([disabled])', { timeout: 10000 });
+await ctrlB.click('#finish-session');
+await ctrlB.click('#finish-session');
+await dispB.waitForFunction(() => !document.querySelector('#arm').hidden, null, { timeout: 10000 });
+ok('Finish session & save, from either controller, stands the last live display down', true);
+await ctrlA.waitForFunction((id) => fetch(`/api/lectures/${id}`, { credentials: 'same-origin' })
+  .then((r) => r.json()).then(({ lecture }) => lecture?.endedAt > 0), healedLecture.id, { timeout: 15000 });
+ok('and the lecture it was recording ends with it', true);
+
+await multiCtx.close();
+multiServer.kill();
+await new Promise((resolve) => multiServer.on('exit', resolve));
+fs.rmSync(multiData, { recursive: true, force: true });
 }
 
 if (want('back to the landing page')) {

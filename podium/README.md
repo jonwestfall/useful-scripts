@@ -52,7 +52,8 @@ not in this repo's files.
 [music before class](#music-before-class) ·
 [the document camera](#the-document-camera-and-photos-taken-with-it) ·
 [keeping what was on screen](#keeping-what-was-on-screen) ·
-[getting back to where you were](#getting-back-to-where-you-were)
+[getting back to where you were](#getting-back-to-where-you-were) ·
+[multiple displays, multiple controllers](#multiple-displays-multiple-controllers)
 
 **When something is wrong** ·
 [the display isn't there](#when-the-controller-says-the-display-isnt-there) ·
@@ -605,6 +606,47 @@ the same deck file next term and yesterday's markup would still be sitting on sl
 — and wipes what is saved for this room so a later reload does not bring any of it
 back either.
 
+## Multiple displays, multiple controllers
+
+Nothing about the room, the passphrase, or the relay assumes there is exactly
+one of either. Every device that opens with the same room and passphrase is
+in the same class, and the relay fans every command out to all of them:
+
+- **A second display** — an overflow screen at the back of a hall, or a
+  projector in the room next door — opens `display.html`, arms, and from
+  then on shows exactly what the first one does. Neither is "the" display;
+  each independently applies the same commands from the controller and
+  converges on the same content, ink included.
+- **A second controller** picks up mid-lecture too (**a second controller
+  syncs to current state on join** is a suite assertion, not just a claim):
+  freeze, TAKE, a layout change, a poll ended from either one reaches both
+  displays and every other controller in the room the same way.
+
+**What is per-display, not shared:** whether a given screen is armed
+("live") is that one machine's own local state, not something the room
+agrees on — the arming screen you see on one projector says nothing about
+whether the other is up. Standing down (**E**) is the same: local to the
+physical machine it is pressed on. Press it on one projector in a two-screen
+room and only that one goes back to the arming screen; the other is still
+live, still showing the lecture, until someone tells it otherwise.
+
+**On a server-backed Podium, that local-only stand-down has one consequence
+worth knowing:** every live display in the room shares one lecture record
+(same account, same room — the server itself is what stops two of them
+splitting an afternoon into two half-empty rows). Standing one down ends
+that shared record. The other display, still teaching, notices on its own
+next heartbeat or the next thing recorded — it opens a fresh record rather
+than silently writing into one that no longer exists — but the room's timeline
+gets a hard seam right there, in the middle of class, that nobody asked for.
+**Finish session & save**, on the controller's Photos tab, is the answer:
+tap it (it is a two-tap, destructive-style button, the same as *Discard
+every photo*) and every display sharing the room stands down together,
+closing the record cleanly instead of leaving one display to notice on its
+own. It is also simply the deliberate way to end class from your hands
+rather than walking up to the machine and pressing **E** — see *Session
+records* below for the other way a lecture ends, on its own, after fifteen
+minutes of silence.
+
 ## Splitting the screen
 
 The layout picker lives in the topbar (five small icons, next to Settings): **full
@@ -1009,6 +1051,11 @@ than by anybody pressing anything:
 
 - **Standing down ends it**, there and then, and the room goes quiet with it — the
   background music stops and so does whatever clip was on the projector.
+- **Finish session & save**, on the controller's Photos tab, ends it too — the deliberate
+  way to close class from your hands rather than the display's own keyboard, and, in a
+  room with more than one display, the one that ends the record on all of them together
+  rather than just the one you happen to be standing next to. See *Multiple displays,
+  multiple controllers* above.
 - **A display that simply goes away also ends it.** While you are live the display tells
   the server it is still there, about once a minute. Fifteen minutes of silence and the
   server closes the lecture itself, dated to the last time the display *was* there rather
@@ -1420,7 +1467,10 @@ one worth remembering, because it shows you the rest:
 `E` is the end-of-class key: it drops out of fullscreen and puts the arming
 screen back up with the lecture still loaded behind it, so **Go live** picks up
 exactly where you were. The controller sees it too, and says *"Display open —
-click Go live on it"* rather than reporting the screen as missing.
+click Go live on it"* rather than reporting the screen as missing. It is local
+to the machine it is pressed on — in a room with a second display, that one
+does not hear about it (see *Multiple displays, multiple controllers*, and
+*Finish session & save* on the controller for the room-wide equivalent).
 
 `B` is a real navigation rather than a toggle, for when you are setting the room
 up and want back to the landing page without hunting for the browser's own
