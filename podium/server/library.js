@@ -174,6 +174,13 @@ function courseIdFor(db, user, code) {
     // something a non-member has any business learning.
     if (!member) throw Object.assign(new Error(`no course with the code ${code}`), { status: 400 });
   }
+  // Filing something new under an archived course is worse than refusing
+  // outright: VISIBLE already stops answering for one, so a write that
+  // "succeeds" here would insert a row that getItem() can then never find -
+  // a 200 response for an item that is quietly nowhere.
+  if (course.archived_at) {
+    throw Object.assign(new Error(`${course.code} is archived and cannot be filed under any more`), { status: 409 });
+  }
   return course.id;
 }
 

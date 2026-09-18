@@ -33,7 +33,31 @@ archive=${1:-}
 [[ -n "$archive" && -f "$archive" ]] || die "usage: restore.sh <archive.tar.gz>"
 
 work=$(mktemp -d)
-trap 'rm -rf -- "$work"' EXIT
+
+# If anything below fails AFTER the current data has been moved aside - a
+# full disk partway through the install/cp that follows, a bad archive, a
+# service that will not start again - this puts it straight back rather than
+# leaving DATA_DIR half-restored and the service down with the only good
+# copy sitting in .replaced. "Back to how it was, service running" is the one
+# property a restore gone wrong must never give up; $aside and $started are
+# both unset until the steps that set them actually run, so this is a no-op
+# on a clean exit or a failure before either of them happened.
+cleanup() {
+  local status=$?
+  rm -rf -- "$work"
+  if (( status != 0 )); then
+    if [[ -n "${aside:-}" && -e "${aside:-}" ]]; then
+      echo "restore: failed (exit $status) - putting $DATA_DIR back the way it was" >&2
+      rm -rf -- "$DATA_DIR"
+      mv -T "$aside" "$DATA_DIR"
+    fi
+    if [[ -n "${started:-}" ]]; then
+      echo "restore: starting $SERVICE again" >&2
+      systemctl start "$SERVICE" 2>/dev/null || true
+    fi
+  fi
+}
+trap cleanup EXIT
 tar -xzf "$archive" -C "$work"
 # mapfile rather than `find | head -1`: with `set -o pipefail`, head closing the
 # pipe early can make find die of SIGPIPE and take the whole script with it.

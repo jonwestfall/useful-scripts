@@ -52,6 +52,23 @@ ok('DATA_DIR unset is the same answer', store.dataDirFromEnv({}) === null);
 ok('DATA_DIR set resolves to an absolute path',
   path.isAbsolute(store.dataDirFromEnv({ DATA_DIR: 'relative/bits' })));
 
+// { create: false } is podium-admin doctor's own open path - it must not
+// conjure a fresh database into existence for a DATA_DIR that is missing or
+// mistyped, which is exactly the box doctor is trying to diagnose.
+const notYetADataDir = path.join(root, 'not-yet-a-data-dir');
+let noCreateFailure = '';
+try { store.open(notYetADataDir, { create: false }); } catch (err) { noCreateFailure = err.message; }
+ok('create:false on a directory with no database throws rather than creating one',
+  /no database/.test(noCreateFailure));
+ok('and it really created nothing there', !existsSync(notYetADataDir));
+
+const alreadyThereDir = path.join(root, 'already-there-data-dir');
+store.open(alreadyThereDir).close();
+const reopened = store.open(alreadyThereDir, { create: false });
+ok('but create:false against a database that already exists opens it exactly as normal',
+  reopened.prepare('PRAGMA user_version').get().user_version === store.SCHEMA_VERSION);
+reopened.close();
+
 // Whether a database exists is what decides whether the account gate governs,
 // so "configured but unusable" must never look like "deliberately stateless".
 // The first would hand an unprotected site to whoever asked next.
@@ -528,6 +545,19 @@ ok('and cannot see the one held in a room that belongs to nobody',
 ok('somebody outside the course sees neither', lectures.listLectures(db, outsider).length === 0);
 ok('an admin sees both', lectures.listLectures(db, admin).length === 2);
 
+// Two courses that end up sharing a room setting - a copy-pasted config, most
+// likely - must not have a lecture guess between them. Picking whichever
+// sorts first would expose it to the wrong course's members; no course id at
+// all is the safe answer, the same one an unclaimed room gives.
+courses.create(db, admin, { code: 'ambig-a', title: 'Ambiguous A' });
+courses.create(db, admin, { code: 'ambig-b', title: 'Ambiguous B' });
+courses.addMember(db, admin, 'ambig-a', { username: owner.username, role: 'owner' });
+courses.addMember(db, admin, 'ambig-b', { username: owner.username, role: 'owner' });
+settings.write(db, owner, 'ambig-a', { transport: 'ws', room: 'shared-room', passphrase: 'a', wsUrl: 'ws://localhost/podium' });
+settings.write(db, owner, 'ambig-b', { transport: 'ws', room: 'shared-room', passphrase: 'b', wsUrl: 'ws://localhost/podium' });
+const ambiguous = lectures.startLecture(db, owner, { room: 'shared-room' });
+ok('a room two courses both claim resolves to neither, rather than guessing which one', ambiguous.course === null);
+
 const started = Date.now();
 lectures.appendEvents(db, owner, lecture.id, [
   { at: started, kind: 'program', title: 'Week 6', detail: { type: 'deck', slide: 1 } },
@@ -606,6 +636,33 @@ ok('and the same poll sent twice updates rather than duplicating',
 ok('the tally comes back in the shape the CSV exporter wants',
   withPoll.pollResults[0].options[0] === 'a' && Array.isArray(withPoll.pollResults[0].answers));
 
+// Same voter count, different results - a voter changing their answer
+// without changing the total, or two controllers racing to end the same
+// poll. >= alone would let whichever lands last win regardless of which is
+// actually newer; ended_at is the tiebreaker that decides it instead.
+const tieBase = started + 200000;
+lectures.recordPoll(db, ta, lecture.id, {
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [5, 5], voters: 10, endedAt: tieBase,
+});
+lectures.recordPoll(db, ta, lecture.id, {
+  // A stale retry: same count, but an OLDER ended_at - must not win.
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [10, 0], voters: 10, endedAt: tieBase - 5000,
+});
+ok('a same-count retry with an OLDER ended_at cannot overwrite the tally it is retrying',
+  lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p2').counts[0] === 5);
+lectures.recordPoll(db, ta, lecture.id, {
+  // Genuinely newer, still tied on count - must win.
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [4, 6], voters: 10, endedAt: tieBase + 5000,
+});
+ok('but a same-count result with a NEWER ended_at does overwrite it',
+  lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p2').counts[0] === 4);
+lectures.recordPoll(db, ta, lecture.id, {
+  // A strictly lower count, however new, must still lose - a poll only gains votes.
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [0, 1], voters: 1, endedAt: tieBase + 999999,
+});
+ok('and a lower voter count never wins even with the newest ended_at of all',
+  lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p2').voters === 10);
+
 let refusedDelete = '';
 try { lectures.deleteLecture(db, ta, lecture.id); } catch (err) { refusedDelete = err.message; }
 ok('a member who can read a lecture still cannot remove it', /only whoever ran this lecture/.test(refusedDelete));
@@ -618,8 +675,28 @@ const ended = lectures.endLecture(db, owner, glance.id, { at: Date.now() });
 ok('a lecture that recorded nothing is discarded rather than kept', ended.discarded === true);
 ok('and is really gone', !lectures.getLecture(db, admin, glance.id));
 
-const closed = lectures.endLecture(db, owner, lecture.id, { at: started + 3600000 });
-ok('one that recorded something is ended, not discarded', !closed.discarded && closed.endedAt === started + 3600000);
+// Not an hour after it started (that would be in the future relative to this
+// test run, and endLecture now clamps `at` to the lecture's own lifetime) -
+// just a specific timestamp, to prove it is honoured rather than silently
+// replaced with "now".
+const closeAt = Date.now();
+const closed = lectures.endLecture(db, owner, lecture.id, { at: closeAt });
+ok('one that recorded something is ended, not discarded', !closed.discarded && closed.endedAt === closeAt);
+
+// A caller sending an `at` outside the lecture's own lifetime - a bad clock,
+// or a bogus value - must not be able to record it as still open (a falsy
+// endedAt from `at: 0`) or as having run into the future.
+const clampLecture = lectures.startLecture(db, owner, { room: 'clamp-room' });
+lectures.appendEvents(db, owner, clampLecture.id, [{ kind: 'program', title: 'anything, so this is not discarded' }]);
+const closedAtZero = lectures.endLecture(db, owner, clampLecture.id, { at: 0 });
+ok('ending a lecture with at:0 clamps to when it started, not to "still open"',
+  closedAtZero.endedAt === clampLecture.startedAt);
+const futureLecture = lectures.startLecture(db, owner, { room: 'clamp-room-2' });
+lectures.appendEvents(db, owner, futureLecture.id, [{ kind: 'program', title: 'anything, so this is not discarded' }]);
+const beforeFutureClose = Date.now();
+const closedInFuture = lectures.endLecture(db, owner, futureLecture.id, { at: Date.now() + 3600000 });
+ok('and an at in the future clamps to now, not to a lecture that ran ahead of the clock',
+  closedInFuture.endedAt >= beforeFutureClose && closedInFuture.endedAt <= Date.now());
 
 // The second Go live in the same room, after a display whose tab was closed
 // without ever standing down.
@@ -636,6 +713,24 @@ ok('going live again in the same room closes the lecture left open',
 ok('at the last thing it recorded, not at now - it did not run until this morning',
   lectures.getLecture(db, owner, abandoned.id).endedAt < afterAbandoning.startedAt - 60000);
 ok('and the new one is open', !afterAbandoning.endedAt);
+
+// A stale lecture that ran a poll but never got a timeline event recorded -
+// a display left on the arming screen while a controller ran a poll through
+// it - still has a real end time: the poll's, not the moment it happened to
+// go live. Before this was fixed, the fallback below only ever looked at the
+// last EVENT and fell all the way back to started_at, understating how long
+// the room was actually in use.
+const pollOnly = lectures.startLecture(db, owner, { room: 'poll-only-room' });
+db.prepare('UPDATE lectures SET started_at = ? WHERE id = ?').run(Date.now() - 3600000, pollOnly.id);
+const pollOnlyEndedAt = Date.now() - 900000;
+lectures.recordPoll(db, owner, pollOnly.id, {
+  pollId: 'stale-p1', kind: 'choice', question: 'Any questions?', options: ['a'], counts: [1], voters: 1,
+  endedAt: pollOnlyEndedAt,
+});
+lectures.startLecture(db, owner, { room: 'poll-only-room' });
+ok('a stale lecture with a poll but no timeline event closes at the poll\'s end time, not its own start',
+  lectures.getLecture(db, owner, pollOnly.id).endedAt === pollOnlyEndedAt);
+
 lectures.startLecture(db, owner, { room: 'some-other-room' });
 ok('an abandoned lecture that recorded nothing is discarded rather than left as a stub',
   lectures.getLecture(db, owner, elsewhere.id) === null);
@@ -858,6 +953,17 @@ refusedMember = '';
 try { courses.removeMember(db, sam, 'psy101', 'sam'); } catch (err) { refusedMember = err.message; }
 ok('an owner cannot remove the last owner and leave a course nobody runs',
   /only owner of psy101/.test(refusedMember));
+
+// "Make a member" on your own row is a demotion by another name - the page
+// offers it as exactly that - so it has to be caught by the same rail
+// removeMember enforces, not just the Remove button.
+let refusedDemote = '';
+try { courses.addMember(db, sam, 'psy101', { username: 'sam', role: 'member' }); } catch (err) { refusedDemote = err.message; }
+ok('and the same rail catches demoting the last owner via "Make a member", not just Remove',
+  /only owner of psy101/.test(refusedDemote));
+ok('sam is still an owner after the refused attempt',
+  courses.list(db, sam).find((c) => c.code === 'psy101')?.role === 'owner');
+
 ok('but can remove a member', courses.removeMember(db, sam, 'psy101', 'ta').length === 1);
 
 // Archiving is as close to deleting as Podium gets, and deliberately keeps
@@ -917,6 +1023,22 @@ courses.update(db, admin, 'psy101', { archived: true });
 ok('but not once the course is archived',
   !library.mayReadMedia(db, ta, archUpload.sha256));
 ok('an administrator still can', library.mayReadMedia(db, admin, archUpload.sha256));
+
+// Reading is one thing; filing something NEW under an archived course while
+// it is archived is worse than a write that silently vanishes - VISIBLE
+// already refuses to list it back, so the write has to be refused outright
+// instead of succeeding into a row nothing can ever read.
+let refusedArchivedWrite = '';
+try { library.addItem(db, sam, { kind: 'text', title: 'Too late', courseCode: 'psy101', props: {} }); }
+catch (err) { refusedArchivedWrite = err.message; }
+ok('filing something new under an archived course is refused, not silently unreadable',
+  /archived/.test(refusedArchivedWrite));
+let refusedArchivedWriteAdmin = '';
+try { library.addItem(db, admin, { kind: 'text', title: 'Too late', courseCode: 'psy101', props: {} }); }
+catch (err) { refusedArchivedWriteAdmin = err.message; }
+ok('even an administrator cannot file something new under an archived course',
+  /archived/.test(refusedArchivedWriteAdmin));
+
 courses.update(db, admin, 'psy101', { archived: false });
 ok('and the member again once it is brought back', library.mayReadMedia(db, ta, archUpload.sha256));
 
@@ -1036,6 +1158,26 @@ try {
 }
 ok('doctor on a database from a newer release reports it rather than crashing',
   crashStatus === 1 && /will not open/.test(crashOut) && /schema version 999/.test(crashOut));
+
+// The other recovery scenario doctor exists for: DATA_DIR is missing or
+// mistyped. store.open()'s ordinary path would create a fresh, empty
+// database right there and report a clean bill of health on the wrong
+// directory - doctor asks for a non-creating open instead, specifically so
+// this reports the real problem rather than quietly manufacturing "fine".
+const missingDir = path.join(root, 'missing-data-dir-for-doctor');
+let missingOut = '';
+let missingStatus = 0;
+try {
+  execFileSync(process.execPath, ['podium-admin.js', 'doctor'], {
+    cwd: cliRoot, env: { ...process.env, DATA_DIR: missingDir },
+  });
+} catch (err) {
+  missingOut = String(err.stdout || '');
+  missingStatus = err.status;
+}
+ok('doctor on a missing/mistyped DATA_DIR reports it rather than quietly creating one',
+  missingStatus === 1 && /no database/.test(missingOut));
+ok('and it really did not create anything there', !existsSync(missingDir));
 ok('and every other command still fails loudly on the same database, as it always has', (() => {
   try {
     execFileSync(process.execPath, ['podium-admin.js', 'user', 'list'], {

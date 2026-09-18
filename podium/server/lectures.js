@@ -146,9 +146,14 @@ function parseDetail(text) {
 function courseIdForRoom(db, user, room) {
   const wanted = String(room || '').trim();
   if (!wanted) return null;
-  const match = settings.forUser(db, user).find((row) => row.settings.room === wanted);
-  if (!match) return null;
-  const course = db.prepare('SELECT id FROM courses WHERE code = ?').get(match.course);
+  const matches = settings.forUser(db, user).filter((row) => row.settings.room === wanted);
+  // Two of this account's courses sharing a room is a misconfiguration, not
+  // a choice for this function to make silently - filing the lecture under
+  // whichever sorts first would expose it to the wrong course's members. No
+  // course id is a lecture that simply isn't filed under one, which is safe;
+  // guessing wrong is not.
+  if (matches.length !== 1) return null;
+  const course = db.prepare('SELECT id FROM courses WHERE code = ?').get(matches[0].course);
   return course ? course.id : null;
 }
 
@@ -259,12 +264,18 @@ function startLecture(db, user, { room, title, dataDir } = {}) {
   const now = Date.now();
   const stale = db.prepare(`SELECT l.id, l.started_at,
         (SELECT MAX(e.at) FROM lecture_events e WHERE e.lecture_id = l.id) AS last_at,
+        (SELECT MAX(p.ended_at) FROM lecture_polls p WHERE p.lecture_id = l.id) AS last_poll_at,
         (SELECT COUNT(*) FROM lecture_polls p WHERE p.lecture_id = l.id) AS poll_count
       FROM lectures l
      WHERE l.started_by = ? AND l.room = ? AND l.ended_at IS NULL`).all(user.id, String(room || ''));
   for (const row of stale) {
     if (!row.last_at && !row.poll_count) discardLecture(db, dataDir, row.id);
-    else db.prepare('UPDATE lectures SET ended_at = ? WHERE id = ?').run(row.last_at || row.started_at, row.id);
+    // A stale lecture that ran a poll but never wrote a timeline event (a
+    // display that only ever showed the arming screen while a poll ran
+    // through the controller) still has a real end time - the poll's, not
+    // the lecture's own started_at - so take whichever of the two is later.
+    else db.prepare('UPDATE lectures SET ended_at = ? WHERE id = ?')
+      .run(Math.max(row.last_at || 0, row.last_poll_at || 0) || row.started_at, row.id);
   }
 
   const { lastInsertRowid } = db.prepare(`INSERT INTO lectures
@@ -291,7 +302,10 @@ function endLecture(db, user, id, { at, dataDir } = {}) {
     discardLecture(db, dataDir, row.id);
     return { ...row, endedAt: at || Date.now(), discarded: true };
   }
-  const when = Number.isFinite(at) ? at : Date.now();
+  // Clamped to the lecture's own lifetime: an out-of-range `at` (0, or a
+  // clock in the future) would otherwise store a nonsensical end time that
+  // reads as still-open (endedAt falsy) or as a lecture that ran backwards.
+  const when = Number.isFinite(at) ? Math.min(Math.max(at, row.startedAt), Date.now()) : Date.now();
   db.prepare('UPDATE lectures SET ended_at = ? WHERE id = ?').run(when, row.id);
   return { ...row, endedAt: when };
 }
@@ -414,16 +428,20 @@ function recordPoll(db, user, id, poll) {
   // because a poll only ever gains votes - but "later" has to mean "more
   // votes counted", not "arrived at the server more recently": two
   // controllers racing to end the same poll, or a retried request landing
-  // after a fresher one, can deliver the smaller count second. The WHERE
-  // clause makes the update conditional on the incoming row actually being
-  // the further-along one, so a stale tally can never stomp a newer one -
-  // it just quietly no-ops.
+  // after a fresher one, can deliver the smaller count second. Voters alone
+  // is not quite enough, though: a voter changing their answer without
+  // changing the total leaves two rows tied on voters but disagreeing on
+  // results, and >= would let whichever lands last win regardless of which
+  // is actually newer. ended_at breaks that tie - accept a tied count only
+  // when it is at least as new - so a stale retry (same count, older
+  // ended_at) can no longer stomp a fresher result that happened to tie it.
   db.prepare(`INSERT INTO lecture_polls (lecture_id, poll_id, kind, question, results, voters, ended_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(lecture_id, poll_id) DO UPDATE SET
         kind = excluded.kind, question = excluded.question,
         results = excluded.results, voters = excluded.voters, ended_at = excluded.ended_at
-      WHERE excluded.voters >= lecture_polls.voters`)
+      WHERE excluded.voters > lecture_polls.voters
+         OR (excluded.voters = lecture_polls.voters AND excluded.ended_at >= lecture_polls.ended_at)`)
     .run(lecture.id, pollId,
       poll?.kind === 'text' ? 'text' : 'choice',
       String(poll?.question || '').slice(0, 1000),

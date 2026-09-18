@@ -52,17 +52,28 @@ function parse(text) {
 
 /**
  * Every course this user could set a device up from: the ones they are a
- * member of that actually have settings stored. An admin sees all of them.
+ * member of that actually have settings stored.
  *
- * The passphrase is in here. That is what the list is FOR - a device adopting
- * these is a device that can join the room - and it is why this route is
- * behind the session gate like everything else.
+ * `includeArchived` only ever matters for an admin - a member's own branch
+ * always excludes them, the same as courses.list() - and it defaults off:
+ * courseIdForRoom (lectures.js) matches a device's room against exactly this
+ * list to decide which course a lecture files under, and an archived
+ * course's stale room setting matching by coincidence should not be able to
+ * file a new lecture under it. admin.html's settings card is the one caller
+ * that opts in: it lets an admin open any course's row regardless of
+ * archived state, to manage membership or bring it back, and this is what
+ * fills in that row's connection card. Leaving archived ones out there would
+ * render the card blank for an archived course, and a Save from a blank form
+ * is a save that WIPES the room/transport/passphrase it never saw - write()
+ * replaces the whole stored object with whatever the form sent, on purpose,
+ * so it can also be used to clear a field.
  */
-function forUser(db, user) {
+function forUser(db, user, { includeArchived = false } = {}) {
+  const archivedOk = includeArchived && user.isAdmin;
   const rows = user.isAdmin
     ? db.prepare(`SELECT c.code, c.title, s.settings FROM course_settings s
           JOIN courses c ON c.id = s.course_id
-         WHERE c.archived_at IS NULL ORDER BY c.code`).all()
+         ${archivedOk ? '' : 'WHERE c.archived_at IS NULL'} ORDER BY c.code`).all()
     : db.prepare(`SELECT c.code, c.title, s.settings FROM course_settings s
           JOIN courses c ON c.id = s.course_id
           JOIN course_members cm ON cm.course_id = c.id AND cm.user_id = ?

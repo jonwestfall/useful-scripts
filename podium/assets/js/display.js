@@ -1017,7 +1017,7 @@ const RECORD_BATCH = 100;
 let lectureId = null;       // the lecture being written, while live
 let eventQueue = [];
 let flushTimer = null;
-let flushing = false;
+let flushPromise = null;    // the in-flight flush, so a caller can await it rather than bail
 let lastSurface = null;     // the ink surface key the last entry described
 let lastEventAt = 0;
 let pendingEvent = null;
@@ -1102,8 +1102,30 @@ async function stopRecording() {
   lectureId = null;
   state.lectureId = null;
   clearTimeout(pendingTimer);
+  // A retry timer left over from an earlier failed flush in THIS lecture is
+  // about to be superseded by the drain below - cancel it, rather than let it
+  // fire later against whatever eventQueue and flushEvents' closure happen to
+  // hold by then.
+  clearTimeout(flushTimer);
+  flushTimer = null;
   if (pendingEvent) { eventQueue.push(pendingEvent); pendingEvent = null; }
-  await flushEvents(id);
+  // A few immediate tries rather than flushEvents' usual scheduled retry:
+  // queueRecordingTransition will not let the next Go live begin until this
+  // function returns, so anything still queued after that point would only
+  // ever be retried by a timer firing once a DIFFERENT lecture is already
+  // live and pushing its own events into this same queue - which is how a
+  // leftover batch here ends up posted under, or mixed into, the wrong
+  // lecture's record. flushEvents awaits any flush already in flight (from
+  // the periodic timer, running independently of this transition) rather
+  // than bailing out from under it, so this genuinely waits for it to land.
+  for (let attempt = 0; attempt < 3 && eventQueue.length; attempt++) {
+    await flushEvents(id);
+  }
+  // Whatever still would not go, by now, goes with this lecture rather than
+  // bleeding into the next one's queue - the same trade the network-down
+  // case already makes for ink and files: the record stops early, it never
+  // reads as the wrong lecture's.
+  eventQueue = [];
   await fileInk(id);
   try { await postJson(lectureUrl(id, '/end'), { at: Date.now() }); } catch { /* it stays open */ }
 }
@@ -1170,6 +1192,11 @@ function noteSurface() {
 
 function settleSurface() {
   if (!pendingEvent || !lectureId) return;
+  // Captured now rather than read again inside the flush timer's closure
+  // below: by the time that timer fires, lectureId may belong to a different
+  // lecture (a stand-down and a fresh Go live both change it), and this
+  // entry belongs to the lecture that was live when it was queued.
+  const id = lectureId;
   lastEventAt = Date.now();
   // `at` is when the item went up, not when the gap expired: the entry should
   // say when the room started looking at this, not when this code got round
@@ -1195,24 +1222,44 @@ function settleSurface() {
       detail: {},
     });
   }
-  if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = null; flushEvents(lectureId); }, RECORD_FLUSH_MS);
+  // Bound to `id`, the lecture this entry belongs to and the one settleSurface
+  // was called for - not the mutable `lectureId`, which a stand-down clears
+  // and a fresh Go live then points at a different lecture entirely before
+  // this timer ever fires. See stopRecording for the other half of this: it
+  // cancels this very timer on the way out, so the only way it fires is while
+  // `id` is still the live lecture.
+  if (!flushTimer) flushTimer = setTimeout(() => { flushTimer = null; flushEvents(id); }, RECORD_FLUSH_MS);
 }
 
+/**
+ * Send whatever is queued for `id`. Awaits (rather than skips past) a flush
+ * already in flight - from the periodic timer, say - so that a caller like
+ * stopRecording that truly needs the queue drained before it returns is not
+ * told "done" by a guard that only meant "someone else is already doing
+ * this". `id` is always the lecture the CALLER intends to flush for, which
+ * may no longer be the live one (stopRecording calls this after clearing
+ * lectureId) - the request is addressed by id, not by whatever is live now.
+ */
 async function flushEvents(id) {
-  if (!id || flushing || !eventQueue.length) return;
-  flushing = true;
-  const batch = eventQueue.slice(0, RECORD_BATCH);
+  if (!id || !eventQueue.length) return;
+  if (flushPromise) { await flushPromise; return flushEvents(id); }
+  flushPromise = (async () => {
+    const batch = eventQueue.slice(0, RECORD_BATCH);
+    try {
+      const res = await postJson(lectureUrl(id, '/events'), { events: batch });
+      // Only drop them once the server has them. A flush that fails leaves the
+      // queue alone and the next one carries the same entries - which is the
+      // whole reason this is a queue and not a request per slide.
+      if (res.ok) eventQueue = eventQueue.slice(batch.length);
+    } catch { /* keep them */ }
+  })();
   try {
-    const res = await postJson(lectureUrl(id, '/events'), { events: batch });
-    // Only drop them once the server has them. A flush that fails leaves the
-    // queue alone and the next one carries the same entries - which is the
-    // whole reason this is a queue and not a request per slide.
-    if (res.ok) eventQueue = eventQueue.slice(batch.length);
-  } catch { /* keep them */ } finally {
-    flushing = false;
+    await flushPromise;
+  } finally {
+    flushPromise = null;
   }
   if (eventQueue.length && !flushTimer) {
-    flushTimer = setTimeout(() => { flushTimer = null; flushEvents(lectureId); }, RECORD_FLUSH_MS);
+    flushTimer = setTimeout(() => { flushTimer = null; flushEvents(id); }, RECORD_FLUSH_MS);
   }
 }
 

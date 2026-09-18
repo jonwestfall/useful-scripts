@@ -314,7 +314,8 @@ function migrate(db) {
 }
 
 /**
- * Open (creating if needed) the database under `dataDir`.
+ * Open the database under `dataDir`, creating it (and the directory) unless
+ * told not to.
  *
  * Returns null for one reason only: no dataDir was configured, which means
  * "store nothing" and is a supported way to run the relay. Everything else
@@ -326,8 +327,14 @@ function migrate(db) {
  * future - must NOT quietly look the same as "this box stores nothing". It
  * would take the gate down with it and leave the pages open to anyone. The
  * caller is expected to refuse to start.
+ *
+ * `create: false` is for podium-admin's doctor, which exists to diagnose
+ * exactly the box where DATA_DIR is missing or mistyped - opening this the
+ * ordinary way would silently create a fresh, empty database right there and
+ * report a clean bill of health on the wrong directory. With this off, a
+ * missing podium.db throws instead of being conjured into existence.
  */
-function open(dataDir) {
+function open(dataDir, { create = true } = {}) {
   if (!dataDir) return null;
   let DatabaseSync;
   try {
@@ -335,20 +342,27 @@ function open(dataDir) {
   } catch {
     throw new Error('this Node has no node:sqlite (Podium needs 22.5 or newer to store anything)');
   }
+  const dbFile = path.join(dataDir, 'podium.db');
+  if (!create && !fs.existsSync(dbFile)) {
+    throw new Error(`no database at ${dbFile} - check DATA_DIR`);
+  }
   try {
-    // 0700: the database holds password hashes and the room passphrase.
-    // mkdirSync's mode only applies to a directory it actually creates, so an
-    // operator pointing DATA_DIR at an existing 0755 directory would otherwise
-    // leave all of that readable by every local account. Tightened either way,
-    // and not fatal if it cannot be - a deliberate ACL is the operator's call,
-    // and refusing to start over it would be worse than saying so.
-    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-    try {
-      fs.chmodSync(dataDir, 0o700);
-    } catch (err) {
-      console.error(`podium: could not tighten permissions on ${dataDir} (${err.code}) - check who can read it`);
+    if (create) {
+      // 0700: the database holds password hashes and the room passphrase.
+      // mkdirSync's mode only applies to a directory it actually creates, so
+      // an operator pointing DATA_DIR at an existing 0755 directory would
+      // otherwise leave all of that readable by every local account.
+      // Tightened either way, and not fatal if it cannot be - a deliberate
+      // ACL is the operator's call, and refusing to start over it would be
+      // worse than saying so.
+      fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+      try {
+        fs.chmodSync(dataDir, 0o700);
+      } catch (err) {
+        console.error(`podium: could not tighten permissions on ${dataDir} (${err.code}) - check who can read it`);
+      }
     }
-    const db = new DatabaseSync(path.join(dataDir, 'podium.db'));
+    const db = new DatabaseSync(dbFile);
     // WAL so a long read cannot block the write that a login is; a busy
     // timeout so the CLI adding a user while the server runs waits its turn
     // rather than failing outright.

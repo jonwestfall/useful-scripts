@@ -145,14 +145,18 @@ async function main(argv) {
   // which the check above has already ruled out.
   //
   // Except for `doctor`: a database that will not open - a future schema, a
-  // corrupt file - is exactly the situation that command exists to diagnose,
-  // so letting the throw here pre-empt it would mean the one command meant to
-  // survive a broken box dies before it can say anything. Every other command
-  // still needs a working database and fails loudly, as it always has.
+  // corrupt file, or DATA_DIR simply being wrong - is exactly the situation
+  // that command exists to diagnose, so letting the throw here pre-empt it
+  // would mean the one command meant to survive a broken box dies before it
+  // can say anything. `create: false` is the other half of that: doctor must
+  // not paper over a missing/mistyped DATA_DIR by quietly creating a fresh
+  // database there and then reporting a clean bill of health on it. Every
+  // other command still needs a working database, may create one, and fails
+  // loudly, as it always has.
   let db = null;
   let dbOpenError = null;
   try {
-    db = store.open(path.resolve(dataDir));
+    db = store.open(path.resolve(dataDir), { create: group !== 'doctor' });
   } catch (err) {
     if (group !== 'doctor') throw err;
     dbOpenError = err;

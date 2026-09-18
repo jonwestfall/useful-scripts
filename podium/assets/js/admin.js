@@ -825,7 +825,12 @@ let courseSettings = {};
 async function refreshCourses() {
   const [list, settings] = await Promise.all([
     fetch('/api/courses', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : { courses: [] })),
-    fetch('/api/settings', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : { courses: [] })),
+    // ?archived=1 so an admin managing an archived course's row sees its real
+    // stored settings instead of a blank form - the server only honours this
+    // for an admin, and a blank form saved back would otherwise wipe the
+    // room/transport/passphrase the read never showed (see forUser's own
+    // comment in settings.js).
+    fetch('/api/settings?archived=1', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : { courses: [] })),
   ]);
   serverCourses = list.courses || [];
   courseSettings = Object.fromEntries((settings.courses || []).map((row) => [row.course, row.settings]));

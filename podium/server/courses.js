@@ -144,9 +144,27 @@ function addMember(db, user, code, { username, role = 'member' }) {
   const course = find(db, code);
   const person = accounts.findUser(db, username);
   if (!person) throw Object.assign(new Error(`no account called ${username}`), { status: 400 });
+  const wanted = role === 'owner' ? 'owner' : 'member';
+  // Setting an existing owner's role to 'member' is a demotion by another
+  // name, and the page offers it as exactly that ("Make a member") - so it
+  // has to keep the same last-owner rail removeMember enforces, or that rail
+  // is just a label on one of two doors to the same room.
+  if (wanted === 'member' && !user.isAdmin) {
+    const current = db.prepare('SELECT role FROM course_members WHERE course_id = ? AND user_id = ?')
+      .get(course.id, person.id);
+    if (current?.role === 'owner') {
+      const owners = db.prepare("SELECT COUNT(*) AS n FROM course_members WHERE course_id = ? AND role = 'owner'")
+        .get(course.id).n;
+      if (owners <= 1) {
+        throw Object.assign(new Error(
+          `${person.username} is the only owner of ${course.code} - make someone else an owner first`,
+        ), { status: 409 });
+      }
+    }
+  }
   db.prepare(`INSERT INTO course_members (course_id, user_id, role) VALUES (?, ?, ?)
       ON CONFLICT(course_id, user_id) DO UPDATE SET role = excluded.role`)
-    .run(course.id, person.id, role === 'owner' ? 'owner' : 'member');
+    .run(course.id, person.id, wanted);
   return members(db, course.id);
 }
 

@@ -69,7 +69,14 @@ command -v sqlite3 >/dev/null 2>&1 || node_sqlite=1
 
 stamp=$(date +%Y%m%dT%H%M%S)
 work=$(mktemp -d)
-trap 'rm -rf -- "$work"' EXIT
+install -d -m 0700 "$BACKUP_DIR"
+archive="$BACKUP_DIR/podium-$stamp.tar.gz"
+# Written under this name first and renamed into place only once it is whole
+# and has read back clean - never straight to $archive. tar failing partway
+# (a full disk, most likely) would otherwise leave a truncated file sitting
+# under the name rotation and a restore both trust as a complete backup.
+tmp_archive="$archive.tmp.$$"
+trap 'rm -rf -- "$work" "$tmp_archive"' EXIT
 install -d -m 0700 "$work/podium-$stamp"
 out="$work/podium-$stamp"
 
@@ -125,6 +132,56 @@ else
   echo 'backup: no database yet; carrying on with the files' >&2
 fi
 
+# The media-before-database order above closes the DELETE race (a retention
+# sweep or a removed item can never leave the snapshotted database pointing
+# at bytes this backup never captured), but it opens the opposite one for an
+# UPLOAD: a file finishing its write in the gap between the media copy and
+# VACUUM INTO has bytes the tar above missed, yet its row - written after the
+# bytes, per storeUpload/rememberMedia - can still make it into the database
+# snapshot. Left alone, that is exactly the same "missing from disk" failure
+# the ordering was chosen to avoid, just from the other direction.
+#
+# This closes that gap rather than just documenting it: every sha256 the
+# snapshot's own media table claims to hold is checked against what actually
+# landed in the backup, and anything missing is copied in now from the live
+# tree. That copy is safe BECAUSE the row is already committed in this
+# snapshot - by the same write-bytes-before-row invariant, the bytes were on
+# disk before the row was, so they are on disk now unless something deleted
+# them in the (much smaller, now measured in seconds rather than however long
+# the media copy took) gap between VACUUM INTO and this very check - a race
+# on top of a race, and about as far as a shell script reasonably chases it.
+if [[ -f "$out/podium.db" ]]; then
+  echo "==> checking every file the snapshot points at made it into this backup"
+  node - "$out/podium.db" "$out/media" "$DATA_DIR/media" <<'JS'
+process.removeAllListeners('warning');
+const fs = require('node:fs');
+const path = require('node:path');
+const { DatabaseSync } = require('node:sqlite');
+const [, , dbPath, backupMedia, liveMedia] = process.argv;
+const db = new DatabaseSync(dbPath);
+const shas = db.prepare('SELECT sha256 FROM media').all().map((row) => row.sha256);
+db.close();
+let copied = 0;
+let missing = 0;
+for (const sha of shas) {
+  const shard = sha.slice(0, 2);
+  const dest = path.join(backupMedia, shard, sha);
+  if (fs.existsSync(dest)) continue;
+  const src = path.join(liveMedia, shard, sha);
+  if (!fs.existsSync(src)) {
+    missing += 1;
+    console.error(`backup: ${sha} is in the database but is not on disk anywhere - it will restore as a broken image`);
+    continue;
+  }
+  fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+  fs.copyFileSync(src, dest);
+  copied += 1;
+}
+if (copied) console.log(`backup: topped up ${copied} file(s) uploaded after media was copied but before the database snapshot was taken`);
+if (missing) process.exitCode = 1;
+JS
+fi
+
 if [[ -f "$CONFIG_DIR/podium.env" ]]; then
   echo "==> copying $CONFIG_DIR/podium.env"
   install -m 0600 "$CONFIG_DIR/podium.env" "$out/podium.env"
@@ -142,17 +199,17 @@ fi
   echo 'snapshot plus the media tree, and both have to go back together.'
 } > "$out/MANIFEST.txt"
 
-install -d -m 0700 "$BACKUP_DIR"
-archive="$BACKUP_DIR/podium-$stamp.tar.gz"
 echo "==> writing $archive"
-tar -C "$work" -czf "$archive" "podium-$stamp"
-chmod 0600 "$archive"
+tar -C "$work" -czf "$tmp_archive" "podium-$stamp"
+chmod 0600 "$tmp_archive"
 
 # A backup nobody has ever read is a hope, not a backup. This is cheap and it
 # catches the two failures that actually happen: a truncated write, and a disk
-# that filled up halfway through.
+# that filled up halfway through. Checked on the temporary name, before the
+# rename that is the one moment this backup starts counting as one.
 echo "==> verifying"
-tar -tzf "$archive" >/dev/null || die 'the archive did not read back'
+tar -tzf "$tmp_archive" >/dev/null || die 'the archive did not read back'
+mv -f -- "$tmp_archive" "$archive"
 
 echo "==> pruning to the last $KEEP"
 mapfile -t stale < <(ls -1t "$BACKUP_DIR"/podium-*.tar.gz 2>/dev/null | tail -n "+$((KEEP + 1))")

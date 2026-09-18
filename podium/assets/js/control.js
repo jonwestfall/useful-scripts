@@ -1189,7 +1189,12 @@ async function exportSession() {
     }
 
     if (skipped.length) lines.push('Not included:', ...skipped.map((line) => `  - ${line}`), '');
-    lines.push(recordingNow()
+    // Matches fileExportWithLecture's own gate below, not recordingNow(): the
+    // ordinary flow is teach, stand down, THEN export, and standing down is
+    // exactly what clears state.lectureId - recordingNow() would say this
+    // export stays on the device only, while fileExportWithLecture is in fact
+    // about to file it under lastKnownLectureId.
+    lines.push(serverKeepsSessions && lastKnownLectureId
       ? 'This lecture is also kept on the server; the same files can be downloaded again from the Admin page.'
       : 'Photos and ink are held only while the app is open; this zip is the copy that lasts.');
     files.push({ name: 'session.txt', data: new TextEncoder().encode(lines.join('\n')) });
@@ -2486,17 +2491,20 @@ function makeThumb(dataUrl) {
 
 // The name a photo has in the session zip, and on the server if this room is
 // being recorded - so the two are the same file rather than two copies of one
-// picture. Numbered by the photo's own place in the lecture (`n`), not by its
-// position in the strip: the strip only holds the last two dozen, so after a
-// busy lecture a position-based number would renumber what survived and leave
-// the record disagreeing with itself.
+// picture. Keyed by the photo's own id, which the display mints once and
+// broadcasts with the shot, rather than a locally-counted sequence: a `shot`
+// message reaches every controller in the room, each running its own count
+// that a reload resets, so two controllers filing the SAME photo under a
+// count-based name could file it twice under different names - and
+// lecture_files is unique by name, so whichever write landed second would
+// either collide oddly or replace the other's row outright.
 const photoFileName = (photo) =>
-  `photos/${String(photo.n).padStart(2, '0')}-${safeName(photo.title, 'photo')}.jpg`;
+  `photos/${photo.id}-${safeName(photo.title, 'photo')}.jpg`;
 
 function addPhoto({ id, data, title, badge }) {
   assetStore.set(id, data);
   photoCount += 1;
-  photos.unshift({ id, title, badge, at: Date.now(), n: photoCount, thumb: data });
+  photos.unshift({ id, title, badge, at: Date.now(), thumb: data });
   filePhotoWithLecture(photos[0], data);
   // Swap in the small copy as soon as it is ready; until then the strip shows
   // the full-size one rather than an empty box.

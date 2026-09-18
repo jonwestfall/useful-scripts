@@ -441,7 +441,15 @@ async function handleApi(req, res, url, ctx) {
     // what earns them, and writing them takes more than membership.
 
     if (head === 'settings' && !rest.length && req.method === 'GET') {
-      json(res, 200, { courses: settings.forUser(ctx.db, user) });
+      // Archived courses only for admin.html's own settings card asking for
+      // them by name (?archived=1) - never for an ordinary device's silent
+      // auto-setup (config.js hits this same route with no query string),
+      // which has no business being offered a course that is meant to have
+      // stopped being usable. forUser ignores the flag for a non-admin
+      // anyway, but the query string is also the only way a plain device
+      // could ask, so it is worth being deliberate about here too.
+      const includeArchived = url.searchParams.get('archived') === '1';
+      json(res, 200, { courses: settings.forUser(ctx.db, user, { includeArchived }) });
       return true;
     }
 
