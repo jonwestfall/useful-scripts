@@ -123,10 +123,17 @@ function checkPermissions(dataDir) {
  * runs before the library_items/lecture_files row that would reference it -
  * see addFile's own comment on why that order is deliberate) leaves behind.
  */
+// existsSync alone would call a directory sitting where a file's hash says it
+// should be "present" - serveMedia refuses to stream a directory, so that
+// would be a row doctor calls healthy and every download of it fails.
+const isRegularFile = (file) => {
+  try { return fs.statSync(file).isFile(); } catch { return false; }
+};
+
 function checkMedia(db, dataDir) {
   const rows = db.prepare('SELECT sha256, bytes FROM media').all();
   const known = new Set(rows.map((row) => row.sha256));
-  const missing = rows.filter((row) => !fs.existsSync(library.mediaPath(dataDir, row.sha256)));
+  const missing = rows.filter((row) => !isRegularFile(library.mediaPath(dataDir, row.sha256)));
 
   let onDisk = 0;
   const orphanFiles = [];
@@ -166,9 +173,17 @@ const safeList = (dir) => {
   try { return fs.readdirSync(dir); } catch { return []; }
 };
 
-function checkAccounts(db) {
+function checkAccounts(db, env = process.env) {
   const all = accounts.countUsers(db);
   if (!all) {
+    // Accounts take precedence over AUTH_PASSWORD when there are any (see
+    // podium-server.js), but with none at all a configured AUTH_PASSWORD is
+    // exactly what the pages fall back to - a supported, working gate, not
+    // the "wide open" case this check exists to catch. That case is no
+    // accounts AND no password.
+    if (env.AUTH_PASSWORD) {
+      return say('ok', 'accounts', 'no accounts yet; the pages are behind a shared password (AUTH_PASSWORD) instead');
+    }
     return say('bad', 'accounts', 'there are no accounts, so these pages are open to anyone who can reach them',
       'podium-admin user add <name> --admin');
   }
@@ -335,7 +350,7 @@ async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, en
   } else {
     await attempt(() => checkSchema(db));
     await attempt(() => checkIntegrity(db));
-    await attempt(() => checkAccounts(db));
+    await attempt(() => checkAccounts(db, env));
     await attempt(() => checkMedia(db, dataDir));
     await attempt(() => checkStorage(db, env));
   }

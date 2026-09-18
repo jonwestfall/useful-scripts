@@ -1101,6 +1101,15 @@ async function stopRecording() {
   if (!id) return;
   lectureId = null;
   state.lectureId = null;
+  // Broadcast now, the same way startRecording broadcasts the id it just set
+  // - standDown()'s own commit() (which sets state.armed = false) already ran
+  // before this transition even started (queueRecordingTransition queues it
+  // as a microtask), so without this, a controller keeps believing the just-
+  // ended lecture is still the live one: state.armed correctly says the room
+  // stood down, but state.lectureId does not, and a photo or poll taken in
+  // the gap before the NEXT Go live can still pass a recordingNow()-style
+  // check and get filed against a lecture that has already ended.
+  commit();
   clearTimeout(pendingTimer);
   // A retry timer left over from an earlier failed flush in THIS lecture is
   // about to be superseded by the drain below - cancel it, rather than let it
@@ -1167,10 +1176,12 @@ function snapshotInk() {
 // It is the raw record, not the picture. Rebuilding an annotated slide needs
 // the deck behind it, which is the controller's job and is what an export
 // files alongside this.
-async function fileInk(id) {
-  const surfaces = Object.fromEntries(
-    Object.entries(state.ink.bySurface || {}).filter(([, strokes]) => strokes?.length),
-  );
+//
+// `surfaces` is always the caller's own snapshot (see snapshotInk and the
+// comment in stopRecording on why it is taken before any await) - never
+// rebuilt from state.ink here, which by the time this runs may already
+// belong to a lecture that went live after this one stood down.
+async function fileInk(id, surfaces) {
   if (!Object.keys(surfaces).length) return;
   const body = JSON.stringify({ room: cfg.room, savedAt: Date.now(), bySurface: surfaces });
   // The cap is the server's (16 MB); stopping short of it here means the
@@ -1199,19 +1210,38 @@ async function fileInk(id) {
 function noteSurface() {
   if (!lectureId || !state.armed) return;
   const item = state.program;
-  const key = inkSurfaceKey(item);
+  const primaryKey = inkSurfaceKey(item);
+  // A split layout can change what B, C or D show - or the layout itself -
+  // with panel A untouched, and the room saw that happen; panel A's own key
+  // used to be the whole timeline, which meant a lecture run entirely from a
+  // split screen could go by with nothing recorded at all. The layout and
+  // every active panel beyond A factor into whether this counts as new.
+  const panels = activePanels();
+  const key = [state.layout, primaryKey, ...panels.map((p) => inkSurfaceKey(p.item))].join('|');
   if (key === lastSurface) return;
   const opening = lastSurface === null;
   lastSurface = key;
   // Going live with nothing up yet is not a moment in the lecture. Later
   // blackouts are - "the projector went dark at 10:42" is real - so only the
-  // opening one is dropped.
-  if (opening && key === 'black') return;
+  // opening one is dropped, and only when the whole screen opens black: a
+  // split layout showing anything else already IS something happening.
+  if (opening && state.layout === 'single' && primaryKey === 'black') return;
   // A client-generated id, sent with the event every time it is (re)posted -
   // see the client_id comment in store.js's migration. Invented once, here,
   // rather than at flush time, so a retried flush resends the SAME id for the
   // SAME event instead of minting a new one that would defeat the dedup.
-  pendingEvent = { id: uid(10), at: Date.now(), kind: 'program', title: itemTitle(item), detail: recordDetail(item) };
+  pendingEvent = {
+    id: uid(10), at: Date.now(), kind: 'program', title: itemTitle(item),
+    detail: {
+      ...recordDetail(item),
+      // Recorded alongside panel A's own detail rather than as a separate
+      // event: the timeline is "what was on the projector", and on a split
+      // screen that is all of it at once, not one panel at a time.
+      ...(panels.length
+        ? { layout: state.layout, panels: panels.map((p) => ({ title: itemTitle(p.item), ...recordDetail(p.item) })) }
+        : {}),
+    },
+  };
   clearTimeout(pendingTimer);
   pendingTimer = setTimeout(settleSurface, Math.max(0, RECORD_MIN_GAP_MS - (Date.now() - lastEventAt)));
 }

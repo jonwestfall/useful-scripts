@@ -418,8 +418,10 @@ week before term.
 **Accounts** are an administrator's business and the card is absent rather than
 disabled for anyone else — a page of controls that all answer 403 tells you
 less than a page that does not offer them. Each row says when the account was
-last seen and on how many devices it is still signed in, which are the two
-questions anyone actually has in front of a list of accounts. Setting somebody
+last seen and how many sessions it still holds, which are the two questions
+anyone actually has in front of a list of accounts — a session, not a device:
+signing in twice from the same browser counts twice, the same as two
+different devices would. Setting somebody
 else's password is a prompt rather than a field per row: it is a rare,
 deliberate act, and a page carrying a dozen empty password boxes invites a
 browser to fill one in.

@@ -482,6 +482,17 @@ try { plans.savePlan(db, owner, { title: 'Enormous', doc: { blob: 'x'.repeat(pla
 catch (err) { refusedPlan = err.message; }
 ok('a plan too large to store is refused rather than stored', /too large/.test(refusedPlan));
 
+// The same rail library.js's courseIdFor enforces: filing something new under
+// an archived course must be refused outright, not left to succeed into a
+// plan that immediately disappears from its own sharing scope (VISIBLE
+// already excludes archived courses for a member).
+courses.update(db, admin, 'psy415', { archived: true });
+refusedPlan = '';
+try { plans.savePlan(db, owner, { title: 'Too late', courseCode: 'psy415', doc: {} }); }
+catch (err) { refusedPlan = err.message; }
+ok('a plan cannot be filed under an archived course either', /archived/.test(refusedPlan));
+courses.update(db, admin, 'psy415', { archived: false });
+
 plans.deletePlan(db, owner, draft.id);
 ok('removing a plan takes it out of the listing', !plansSeenBy(owner).includes('Half-written'));
 
@@ -944,6 +955,29 @@ ok('the pruned lecture is still there, with its timeline intact',
 ok('usage counts what the sessions are actually costing',
   lectures.usage(db).files === 1 && lectures.usage(db).bytes === fresh.bytes);
 
+// GET /api/lectures bolts usage onto a response whose lecture LIST is already
+// scoped to what the caller may see - the figure has to match, or a course
+// member learns the size of every private session on the box. Passing a user
+// scopes it the same way; omitting one (as the admin-only Storage route and
+// the CLI do) still gets the real total.
+ok("a non-admin's own usage matches the global total when every file is theirs",
+  lectures.usage(db, owner).files === 1 && lectures.usage(db, owner).bytes === fresh.bytes);
+ok('but someone who cannot see that lecture at all sees none of its usage',
+  lectures.usage(db, ta).files === 0 && lectures.usage(db, ta).bytes === 0);
+ok('an admin passed explicitly still gets the real total, not a scoped one',
+  lectures.usage(db, admin).files === 1);
+
+// removeFile is the other half of addFile's upsert: a name a later export no
+// longer produces AT ALL (a photo the keep-switch has since turned off, one
+// aged out of history) rather than one it is replacing by landing on the
+// same name.
+const removedFile = lectures.removeFile(db, owner, recent.id, 'photos/01-this week.jpg', { dataDir });
+ok('removeFile takes the named file out of the lecture',
+  removedFile.removed === true && lectures.getLecture(db, owner, recent.id).files.length === 0);
+ok('and frees the bytes nothing else points at', !existsSync(library.mediaPath(dataDir, fresh.sha256)));
+ok('removing a name that was never there is a harmless no-op',
+  lectures.removeFile(db, owner, recent.id, 'photos/never-existed.jpg', { dataDir }).removed === false);
+
 console.log('\n-- running the place: accounts and courses --');
 
 // The rail that matters most: an instance with no enabled administrator cannot
@@ -1117,6 +1151,22 @@ ok('one with none is not, because nobody can manage it from a browser',
   doctor.checkAccounts(db).level === 'bad');
 for (const person of admins) accounts.setDisabled(db, person.username, false);
 
+// Accounts take precedence over AUTH_PASSWORD when there are any (see
+// podium-server.js), but with zero accounts at all AUTH_PASSWORD is exactly
+// the supported fallback the pages use instead - not the wide-open case this
+// check exists to catch. That needs a database with no accounts whatsoever,
+// not merely disabled ones (which is the case just above, and correctly
+// stays 'bad' even with a password set, since disabled admins still can't
+// sign in).
+const noAccountsDir = mkdtempSync(path.join(tmpdir(), 'podium-doctor-noaccounts-'));
+const noAccountsDb = store.open(noAccountsDir);
+ok('with zero accounts and no password, still the wide-open case',
+  doctor.checkAccounts(noAccountsDb).level === 'bad');
+ok('but a configured shared password makes the same instance a healthy one',
+  doctor.checkAccounts(noAccountsDb, { AUTH_PASSWORD: 'shared secret' }).level === 'ok');
+noAccountsDb.close();
+rmSync(noAccountsDir, { recursive: true, force: true });
+
 // Bytes on disk with nothing pointing at them: harmless, and the shape a
 // hand-edited data directory leaves.
 const strayShard = path.join(dataDir, 'media', 'zz');
@@ -1133,6 +1183,19 @@ db.prepare('INSERT INTO media (sha256, bytes, content_type, created_at) VALUES (
 ok('a stored file missing from disk is a failure',
   doctor.checkMedia(db, dataDir).level === 'bad');
 db.prepare('DELETE FROM media WHERE sha256 = ?').run(ghost);
+
+// A directory sitting where a file should be: fs.existsSync alone would call
+// this "present", but nothing can ever read image bytes out of a directory,
+// so this is exactly the missing-from-disk failure above, not a pass.
+const dirGhost = createHash('sha256').update('a path that is a directory, not a file').digest('hex');
+const dirGhostPath = library.mediaPath(dataDir, dirGhost);
+mkdirSync(dirGhostPath, { recursive: true });
+db.prepare('INSERT INTO media (sha256, bytes, content_type, created_at) VALUES (?, ?, ?, ?)')
+  .run(dirGhost, 10, 'image/png', Date.now());
+ok('a directory standing in for a stored file is treated as missing, not present',
+  doctor.checkMedia(db, dataDir).level === 'bad');
+db.prepare('DELETE FROM media WHERE sha256 = ?').run(dirGhost);
+rmSync(dirGhostPath, { recursive: true, force: true });
 
 // A media row neither the library nor a lecture points at: forgetMediaIfUnused
 // checks exactly those two tables to decide "nothing wants this any more", so

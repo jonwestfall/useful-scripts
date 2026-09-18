@@ -46,7 +46,16 @@ cleanup() {
   local status=$?
   rm -rf -- "$work"
   if (( status != 0 )); then
-    if [[ -n "${aside:-}" && -e "${aside:-}" ]]; then
+    # Gated on `moved`, not just "$aside exists": $aside is set well before
+    # the mv that is supposed to populate it, so a bare existence check could
+    # not tell "this invocation's own move landed there" from "something else
+    # was already sitting at that path" - a leftover from a prior run, or two
+    # restores landing on the same collision-prone name. Mistaking the latter
+    # for the former would delete the still-live DATA_DIR and replace it with
+    # whatever unrelated directory happened to be at $aside. `moved` is set
+    # ONLY immediately after the mv below actually succeeds, so it is the one
+    # thing that is actually true when it is set.
+    if [[ -n "${moved:-}" && -e "${aside:-}" ]]; then
       echo "restore: failed (exit $status) - putting $DATA_DIR back the way it was" >&2
       rm -rf -- "$DATA_DIR"
       mv -T "$aside" "$DATA_DIR"
@@ -75,7 +84,14 @@ echo "==> restoring from $archive"
 # run against the wrong archive is a thing that happens at three in the morning,
 # and "it is still in the directory next door" is the difference between a bad
 # hour and a bad year.
-aside="$DATA_DIR.replaced-$(date +%Y%m%dT%H%M%S)"
+#
+# Timestamped to the second AND suffixed with this process's own pid: the
+# timestamp alone collides on two restores started in the same second, or
+# with a leftover directory a prior run left at this exact path - and mv -T
+# below would then either fail against that existing path or, worse, succeed
+# by merging into it, either way defeating the "moved" flag's whole job of
+# knowing whose move actually happened.
+aside="$DATA_DIR.replaced-$(date +%Y%m%dT%H%M%S)-$$"
 
 if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
   echo "==> stopping $SERVICE"
@@ -86,6 +102,11 @@ fi
 if [[ -e "$DATA_DIR" ]]; then
   echo "==> moving the current data aside to $aside"
   mv -T "$DATA_DIR" "$aside"
+  # Set only once the mv above has actually returned success - set -e means a
+  # failed mv never reaches this line, so cleanup's rollback can trust this
+  # flag as "this invocation genuinely relocated the live data here", not
+  # merely "this variable happens to be non-empty".
+  moved=1
 fi
 
 install -d -m 0700 "$DATA_DIR"

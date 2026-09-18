@@ -89,6 +89,13 @@ function courseIdFor(db, user, code) {
       .get(course.id, user.id);
     if (!member) throw Object.assign(new Error(`no course with the code ${code}`), { status: 400 });
   }
+  // The same rail library.js's courseIdFor enforces, and for the same reason:
+  // VISIBLE already stops answering for an archived course's plans, so filing
+  // one there would "succeed" into a plan that disappears from its own
+  // sharing scope the instant it is saved.
+  if (course.archived_at) {
+    throw Object.assign(new Error(`${course.code} is archived and cannot be filed under any more`), { status: 409 });
+  }
   return course.id;
 }
 

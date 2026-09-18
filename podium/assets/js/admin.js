@@ -242,6 +242,12 @@ function describe(event) {
   if (event.detail?.slide) bits.push(`slide ${event.detail.slide}`);
   if (event.detail?.page) bits.push(`page ${event.detail.page}`);
   if (event.detail?.type && !bits.length && event.detail.type !== 'black') bits.push(event.detail.type);
+  // A split layout's other panels, recorded alongside panel A rather than as
+  // events of their own - see noteSurface in display.js.
+  if (event.detail?.panels?.length) {
+    const labels = ['B', 'C', 'D'];
+    bits.push(event.detail.panels.map((p, i) => `${labels[i] || '?'}: ${p.title || p.type || '—'}`).join(', '));
+  }
   return bits.join(' · ');
 }
 
@@ -692,6 +698,12 @@ function renderCourseSettings(course, settings) {
         }).then(async (res) => {
           if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'that did not work');
         });
+        // Without this, courseSettings still holds what refreshCourses() last
+        // fetched: closing and reopening this course would re-render the form
+        // from that stale snapshot, showing a passphrase that was just
+        // rotated as the old one - and saving again from there would send it
+        // straight back to the server, undoing the rotation.
+        courseSettings[course.code] = wanted;
         status.textContent = 'Saved — devices pick it up the next time they sign in.';
       } catch (err) {
         status.textContent = err.message;

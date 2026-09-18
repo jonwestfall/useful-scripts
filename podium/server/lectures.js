@@ -524,9 +524,55 @@ function addFile(db, user, id, { name, kind, sha256, bytes, contentType, dataDir
   return { name: clean, bytes };
 }
 
+/**
+ * Take one named file back out of a lecture - the other half of addFile's
+ * upsert. A re-export replaces what an earlier one left by name, but a file
+ * the newer export no longer produces AT ALL (a photo the keep-switch has
+ * since turned off, one removed from the local strip, a poll that aged out
+ * of history) has no name for that upsert to land on and would otherwise sit
+ * there forever, still downloadable, after the export that stopped
+ * including it.
+ *
+ * Same permission as filing one in the first place - seeing the lecture -
+ * not the narrower mayDelete a whole lecture needs: the controller doing the
+ * reconciling is often not the account that ran it.
+ */
+function removeFile(db, user, id, name, { dataDir } = {}) {
+  const lecture = findLecture(db, user, id);
+  if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
+  const clean = cleanName(name);
+  if (!clean) return { removed: false };
+  const row = db.prepare(`SELECT lf.id, m.sha256 FROM lecture_files lf JOIN media m ON m.id = lf.media_id
+     WHERE lf.lecture_id = ? AND lf.name = ?`).get(lecture.id, clean);
+  if (!row) return { removed: false };
+  db.prepare('DELETE FROM lecture_files WHERE id = ?').run(row.id);
+  library.forgetMediaIfUnused(db, dataDir, row.sha256);
+  return { removed: true };
+}
 
-/** What the session records are costing in disk, for the admin page to show. */
-function usage(db) {
+
+/**
+ * What the session records are costing in disk.
+ *
+ * Two different questions wear the same name: the Storage card (an admin-only
+ * route) wants the true instance-wide total, but the ordinary session list
+ * (GET /api/lectures, open to anyone who may see sessions at all) bolts this
+ * onto a response whose lecture list is already scoped to what the caller may
+ * see - so the usage figure has to match, or it hands a course member the
+ * size of every private session on the box. Pass `user` for that scoped
+ * answer; omit it (as the admin-only storage route and the CLI do) for the
+ * real total.
+ */
+function usage(db, user) {
+  if (user && !user.isAdmin) {
+    const row = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(m.bytes), 0) AS bytes
+        FROM lecture_files lf
+        JOIN media m ON m.id = lf.media_id
+        JOIN lectures l ON l.id = lf.lecture_id
+        LEFT JOIN courses c ON c.id = l.course_id
+       WHERE ${VISIBLE}`).get(user.id, 0);
+    return { files: row.files, bytes: row.bytes };
+  }
   const row = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(bytes), 0) AS bytes FROM media
      WHERE id IN (SELECT media_id FROM lecture_files)`).get();
   return { files: row.files, bytes: row.bytes };
@@ -615,7 +661,7 @@ function deleteLecture(db, user, id, { dataDir } = {}) {
 module.exports = {
   listLectures, getLecture, startLecture, endLecture, appendEvents, recordPoll,
   renameLecture, deleteLecture, mayDelete, courseIdForRoom,
-  addFile, listFiles, pruneFiles, usage, keepableType, cleanName, visibleLecture,
+  addFile, removeFile, listFiles, pruneFiles, usage, keepableType, cleanName, visibleLecture,
   MAX_EVENTS, MAX_EVENTS_PER_POST, MAX_POLLS,
   MAX_FILE_BYTES, MAX_FILES_PER_LECTURE, MAX_LECTURE_BYTES, KEEPABLE,
 };

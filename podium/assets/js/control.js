@@ -1170,9 +1170,16 @@ async function exportSession() {
 
     // 5. Polls: whatever is currently on screen (a live snapshot - the
     // display's own poll loop keeps it within a second of the relay) plus
-    // everything already ended and sitting in this session's history.
+    // everything already ended THIS lecture. pollHistory outlives any one
+    // lecture - it is the presenter's own scrollback across a whole term -
+    // so an export built during or just after a LATER lecture must not
+    // bundle an earlier one's polls into files that fileExportWithLecture is
+    // about to upload under the new lecture's id. An entry with no lectureId
+    // at all (saved before this field existed) is excluded the same way, for
+    // the same reason: better left out than misattributed.
     const currentPoll = findPollItem();
-    const pollRows = [...(currentPoll ? [{ ...currentPoll, endedAt: null }] : []), ...pollHistory];
+    const pollRows = [...(currentPoll ? [{ ...currentPoll, endedAt: null }] : []),
+      ...pollHistory.filter((row) => row.lectureId === lastKnownLectureId)];
     if (pollRows.length) {
       lines.push(`Polls (${pollRows.length}):`);
       pollRows.forEach((row, i) => {
@@ -1193,9 +1200,14 @@ async function exportSession() {
     // ordinary flow is teach, stand down, THEN export, and standing down is
     // exactly what clears state.lectureId - recordingNow() would say this
     // export stays on the device only, while fileExportWithLecture is in fact
-    // about to file it under lastKnownLectureId.
+    // about to file it under lastKnownLectureId. The photo-switch clause
+    // matches that same function's own skip (file.name.startsWith('photos/'))
+    // - claiming photos "can be downloaded again" when the switch is off
+    // would be a promise this zip is not the one keeping.
     lines.push(serverKeepsSessions && lastKnownLectureId
-      ? 'This lecture is also kept on the server; the same files can be downloaded again from the Admin page.'
+      ? (photosKept()
+        ? 'This lecture is also kept on the server; the same files can be downloaded again from the Admin page.'
+        : 'This lecture is also kept on the server, except its photos - this device is not set to keep them; everything else here can be downloaded again from the Admin page.')
       : 'Photos and ink are held only while the app is open; this zip is the copy that lasts.');
     files.push({ name: 'session.txt', data: new TextEncoder().encode(lines.join('\n')) });
 
@@ -1227,6 +1239,15 @@ async function exportSession() {
   }
 }
 
+// Every prefix (or exact name) an export's own bundle can ever produce - see
+// the photos/, slides/, boards/ and polls/ names built above, and
+// session.txt itself. Used only to decide what reconcileExportFiles may
+// remove: anything outside this set (ink.json, a photo filed the instant it
+// was taken, before any export ran) belongs to a different filer entirely
+// and reconciling an export must never touch it.
+const EXPORT_FILE_PREFIXES = ['photos/', 'slides/', 'boards/', 'polls/'];
+const ownedByExport = (name) => name === 'session.txt' || EXPORT_FILE_PREFIXES.some((p) => name.startsWith(p));
+
 /**
  * Send every file an export just built to the lecture the display opened.
  *
@@ -1246,9 +1267,11 @@ async function fileExportWithLecture(files, status) {
   if (!serverKeepsSessions || !lectureId) return;
   let sent = 0;
   let failed = 0;
+  const keptNames = new Set(['session.txt']);
   for (const file of files) {
     // The one thing the switch on this tab governs (see filePhotoWithLecture).
     if (!photosKept() && file.name.startsWith('photos/')) continue;
+    keptNames.add(file.name);
     status.textContent = `Keeping this session on the server… (${sent + 1} of ${files.length})`;
     const type = file.name.endsWith('.png') ? 'image/png'
       : file.name.endsWith('.jpg') ? 'image/jpeg'
@@ -1258,6 +1281,31 @@ async function fileExportWithLecture(files, status) {
     else failed += 1;
   }
   if (failed) status.textContent = `Kept ${sent} of ${sent + failed} files on the server; building the zip…`;
+  await reconcileExportFiles(lectureId, keptNames);
+}
+
+/**
+ * The other half of "re-exporting replaces what an earlier one left":
+ * addFile's own upsert (same lecture, same name) handles a file this export
+ * still produces, but a name this export no longer produces AT ALL - a
+ * photo the keep-switch has since turned off, one removed from the local
+ * strip, a poll that aged out of history - has nothing to upsert onto and
+ * would otherwise sit on the server forever, still downloadable, from
+ * whichever earlier export DID include it. Best-effort and never allowed to
+ * fail the export itself: the zip already built and handed to the teacher is
+ * the copy that matters regardless of how this comes out.
+ */
+async function reconcileExportFiles(lectureId, keptNames) {
+  try {
+    const res = await fetch(`/api/lectures/${encodeURIComponent(lectureId)}`, { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const { lecture } = await res.json();
+    for (const existing of lecture.files || []) {
+      if (!ownedByExport(existing.name) || keptNames.has(existing.name)) continue;
+      await fetch(`/api/lectures/${encodeURIComponent(lectureId)}/files?name=${encodeURIComponent(existing.name)}`,
+        { method: 'DELETE', credentials: 'same-origin' }).catch(() => { /* best effort */ });
+    }
+  } catch { /* best effort - the zip in hand is still correct either way */ }
 }
 
 async function exportDeck() {
@@ -1811,6 +1859,12 @@ async function endPoll() {
       pollId: item.pollId, kind: item.kind, question: item.question, options: item.options,
       counts: item.counts || [], answers: item.answers || [], voters: item.voters || 0,
       hiddenAnswers: item.hiddenAnswers || [], endedAt: Date.now(),
+      // Which lecture this poll belongs to, so a later export - in a
+      // different lecture entirely - knows not to include it. pollHistory
+      // outlives any one lecture (it is the presenter's own scrollback of
+      // questions to reopen, kept in localStorage), but an export's CSV
+      // bundle must not.
+      lectureId: lastKnownLectureId,
     });
     try {
       await pollApi(`/${item.pollId}`, { method: 'DELETE', headers: { authorization: `Bearer ${item.token}` } });

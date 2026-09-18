@@ -370,7 +370,10 @@ async function handleApi(req, res, url, ctx) {
     if (head === 'lectures' && !rest.length && req.method === 'GET') {
       json(res, 200, {
         lectures: lectures.listLectures(ctx.db, user),
-        usage: lectures.usage(ctx.db),
+        // Scoped to what this caller may see, the same as the lecture list
+        // just above it - the instance-wide total is the Storage card's own,
+        // admin-only question (see the comment on usage()).
+        usage: lectures.usage(ctx.db, user),
         limits: { fileBytes: lectures.MAX_FILE_BYTES, lectureBytes: lectures.MAX_LECTURE_BYTES },
       });
       return true;
@@ -425,6 +428,18 @@ async function handleApi(req, res, url, ctx) {
     // largest thing in this repository with no dependencies.
     if (head === 'lectures' && rest.length === 2 && rest[1] === 'files' && req.method === 'POST') {
       json(res, 200, { file: await receiveLectureFile(req, url, ctx, user, rest[0]) });
+      return true;
+    }
+
+    // Re-exporting is supposed to replace what a previous export left, not
+    // just add to it (see addFile's own comment on the same-name upsert) -
+    // but a file the newer export no longer produces at all (a photo the
+    // switch has since turned off, one deleted from the strip, a poll aged
+    // out of history) has no name for that upsert to replace. This is the
+    // other half: an explicit removal, same permission as filing one in the
+    // first place.
+    if (head === 'lectures' && rest.length === 2 && rest[1] === 'files' && req.method === 'DELETE') {
+      json(res, 200, lectures.removeFile(ctx.db, user, rest[0], url.searchParams.get('name'), { dataDir: ctx.dataDir }));
       return true;
     }
 
@@ -576,8 +591,14 @@ async function changePerson(ctx, user, username, body) {
  * the database itself.
  */
 function storageReport(ctx) {
+  // WAL mode (see store.open) keeps recently-written pages in podium.db-wal
+  // until the next checkpoint, plus a small -shm index alongside it - both
+  // real bytes on disk that podium.db alone does not account for, and on a
+  // busy instance they are not a rounding error.
   let database = 0;
-  try { database = fs.statSync(path.join(ctx.dataDir, 'podium.db')).size; } catch { /* not yet written */ }
+  for (const suffix of ['', '-wal', '-shm']) {
+    try { database += fs.statSync(path.join(ctx.dataDir, `podium.db${suffix}`)).size; } catch { /* not there */ }
+  }
   return {
     library: library.usage(ctx.db),
     sessions: lectures.usage(ctx.db),
@@ -585,7 +606,13 @@ function storageReport(ctx) {
     dataDir: ctx.dataDir,
     // Media bytes live on disk beside the database, not inside it - so a copy
     // of the database alone is not a backup, and the page says so.
-    retentionDays: Number(process.env.LECTURE_RETENTION_DAYS || 0) || null,
+    // Matches doctor.checkStorage's own validation: only a finite, positive
+    // number is a real retention setting, the same thing pruneFiles itself
+    // requires - a stray "-1" must not be presented as a working setting.
+    retentionDays: (() => {
+      const days = Number(process.env.LECTURE_RETENTION_DAYS);
+      return Number.isFinite(days) && days > 0 ? days : null;
+    })(),
   };
 }
 

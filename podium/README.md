@@ -1165,9 +1165,10 @@ account; everywhere else it loads and says so. What is on it depends on who you 
 
 **People** (administrators only). Add an account, set somebody's password, make
 somebody an administrator, disable an account that should stop working today. Each row
-says when that account was last seen and how many devices it is still signed in on.
-Setting a password signs every one of those devices out, which is the point of doing
-it in a hurry.
+says when that account was last seen and how many sessions it still holds — a session,
+not a device: signing in twice from the same browser counts twice, the same as two
+different devices would. Setting a password signs every one of those sessions out,
+which is the point of doing it in a hurry.
 
 Two things the page will not let you do: disable or demote **yourself** — the switches
 are simply not on your own row — and disable or demote the **last administrator who can
