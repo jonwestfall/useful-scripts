@@ -447,7 +447,14 @@ function recordPoll(db, user, id, poll) {
       String(poll?.question || '').slice(0, 1000),
       text,
       Number(poll?.voters) || 0,
-      Number.isFinite(poll?.endedAt) ? poll.endedAt : Date.now());
+      // Clamped the same way appendEvents and endLecture bound their own
+      // timestamps: a future endedAt from a controller with a fast clock
+      // would otherwise reach startLecture's stale-lecture-close logic
+      // (which uses the latest poll's ended_at, see the comment there) and
+      // produce a lecture that appears to end after it was even asked about.
+      Number.isFinite(poll?.endedAt)
+        ? Math.min(Math.max(poll.endedAt, lecture.started_at), Date.now())
+        : Date.now());
   return { pollId };
 }
 
@@ -484,6 +491,17 @@ function addFile(db, user, id, { name, kind, sha256, bytes, contentType, dataDir
   const clean = cleanName(name);
   if (!clean) throw Object.assign(new Error('that file needs a name'), { status: 400 });
 
+  // Registered BEFORE the cap checks below, deliberately: storeUpload has
+  // already written these bytes to their hash path, and the caller's catch
+  // (see receiveLectureFile in api.js) cleans up with forgetMediaIfUnused,
+  // which can only find bytes that have a media row. Checking the caps first
+  // would mean a rejected upload - over the file count, or the space cap -
+  // throws before any row exists, so that cleanup finds nothing and the
+  // bytes are orphaned on disk. rememberMedia is idempotent (ON CONFLICT DO
+  // NOTHING), so calling it here even for a doomed upload costs nothing on a
+  // retry with the same bytes.
+  const mediaId = library.rememberMedia(db, user, { sha256, bytes, contentType });
+
   const held = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(m.bytes), 0) AS bytes
       FROM lecture_files lf JOIN media m ON m.id = lf.media_id
      WHERE lf.lecture_id = ? AND lf.name <> ?`).get(lecture.id, clean);
@@ -493,8 +511,6 @@ function addFile(db, user, id, { name, kind, sha256, bytes, contentType, dataDir
   if (held.bytes + bytes > MAX_LECTURE_BYTES) {
     throw Object.assign(new Error('that lecture has reached the space one session may use'), { status: 413 });
   }
-
-  const mediaId = library.rememberMedia(db, user, { sha256, bytes, contentType });
   const previous = db.prepare(`SELECT m.sha256 FROM lecture_files lf JOIN media m ON m.id = lf.media_id
      WHERE lf.lecture_id = ? AND lf.name = ?`).get(lecture.id, clean);
   db.prepare(`INSERT INTO lecture_files (lecture_id, media_id, kind, name, created_at, created_by)

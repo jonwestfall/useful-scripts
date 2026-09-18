@@ -115,11 +115,15 @@ const listUsers = (db) =>
     ...publicUser(row),
     disabled: !!row.disabled_at,
     createdAt: row.created_at,
-    // When this account was last seen using the place, and on how many
-    // devices it is still signed in - the two questions anybody actually has
-    // in front of a list of accounts.
+    // When this account was last seen using the place, and how many
+    // still-valid login tokens it holds - NOT a device count, whatever it
+    // looks like at a glance: startSession mints a fresh token on every
+    // sign-in, so re-authenticating on the SAME device (a token that
+    // expired, a second tab) grows this the same as a genuinely different
+    // device would. Good enough to notice "several logins nobody
+    // recognizes"; not a census of hardware.
     lastSeen: row.last_seen || null,
-    devices: row.live_sessions,
+    activeSessions: row.live_sessions,
   }));
 
 /**

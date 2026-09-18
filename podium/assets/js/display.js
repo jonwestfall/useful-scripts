@@ -1109,6 +1109,15 @@ async function stopRecording() {
   clearTimeout(flushTimer);
   flushTimer = null;
   if (pendingEvent) { eventQueue.push(pendingEvent); pendingEvent = null; }
+  // Snapshotted synchronously, before any await below - not read from
+  // state.ink later, inside fileInk, once this function has already yielded.
+  // queueRecordingTransition serializes the recording subsystem's own
+  // start/stop calls, but goLive() flips state.armed back on (and drawing
+  // along with it) the instant it runs, and nothing about this chain stops a
+  // fresh Go Live from happening while this stand-down is still awaiting its
+  // flush below. Reading state.ink after that await is exactly how a new
+  // lecture's ink ends up filed under the old one's id.
+  const inkSurfaces = snapshotInk();
   // A few immediate tries rather than flushEvents' usual scheduled retry:
   // queueRecordingTransition will not let the next Go live begin until this
   // function returns, so anything still queued after that point would only
@@ -1121,13 +1130,30 @@ async function stopRecording() {
   for (let attempt = 0; attempt < 3 && eventQueue.length; attempt++) {
     await flushEvents(id);
   }
+  // Each of those attempts can itself reschedule flushTimer (see flushEvents)
+  // if it failed - bound to `id`, which is safe on its own, but that timer
+  // would still fire against the ONE global eventQueue, which a new lecture
+  // may already be pushing its own events into by then. Cancel it again now
+  // that the queue is genuinely empty, rather than let it post a later
+  // lecture's events under this one's id.
+  clearTimeout(flushTimer);
+  flushTimer = null;
   // Whatever still would not go, by now, goes with this lecture rather than
   // bleeding into the next one's queue - the same trade the network-down
   // case already makes for ink and files: the record stops early, it never
   // reads as the wrong lecture's.
   eventQueue = [];
-  await fileInk(id);
+  await fileInk(id, inkSurfaces);
   try { await postJson(lectureUrl(id, '/end'), { at: Date.now() }); } catch { /* it stays open */ }
+}
+
+// What fileInk actually keeps: every surface with at least one stroke on it,
+// as of right now. Pulled out so stopRecording can call this synchronously,
+// before any await - see the comment there for why that timing matters.
+function snapshotInk() {
+  return Object.fromEntries(
+    Object.entries(state.ink.bySurface || {}).filter(([, strokes]) => strokes?.length),
+  );
 }
 
 // Ink, as strokes, at the end of the lecture.

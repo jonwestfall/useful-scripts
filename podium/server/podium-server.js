@@ -43,6 +43,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { Worker } = require('node:worker_threads');
 const { WebSocketServer } = require('ws');
 const store = require('./store.js');
 const accounts = require('./accounts.js');
@@ -400,7 +401,12 @@ const server = http.createServer((req, res) => {
   // Not routed through handleApi because it answers with a file rather than
   // JSON, and a consistent-looking API is not worth a second file-streaming
   // path. See serveBackup.
-  if (url.pathname === '/api/backup' && req.method === 'GET') { serveBackup(req, res); return; }
+  if (url.pathname === '/api/backup' && req.method === 'GET') {
+    serveBackup(req, res).catch(() => {
+      try { api.json(res, 500, { error: 'could not take a copy of the database' }); } catch { /* response already begun */ }
+    });
+    return;
+  }
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
     api.handleApi(req, res, url, authContext).catch(() => {
       try { api.json(res, 500, { error: 'request failed' }); } catch { /* response already begun */ }
@@ -510,7 +516,42 @@ function serveMedia(req, res, url) {
  *
  * Administrators only. It carries password hashes and every room's passphrase.
  */
-function serveBackup(req, res) {
+// The worker VACUUM INTO runs in. node:sqlite's DatabaseSync is exactly
+// that - synchronous - so running it on this process's own thread would
+// block the event loop for the whole snapshot: every relay message and every
+// other request on hold until an administrator's backup download finishes,
+// which for a large database is not a rounding error. A worker thread opens
+// its OWN connection to the same file (SQLite's WAL mode is built for
+// concurrent readers, which is all VACUUM INTO's source side needs) and does
+// the blocking work there, leaving this thread free to keep serving the room
+// while it runs.
+function vacuumInto(source, destination) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(`
+      const { parentPort, workerData } = require('node:worker_threads');
+      const { DatabaseSync } = require('node:sqlite');
+      try {
+        const db = new DatabaseSync(workerData.source, { readOnly: true });
+        // A quoted string literal, not a bound parameter: VACUUM INTO takes
+        // no parameters. Both paths are this process's own, built from
+        // DATA_DIR and random bytes, so there is nothing of anyone else's in
+        // them to quote wrong.
+        db.exec(\`VACUUM INTO '\${workerData.destination.replace(/'/g, "''")}'\`);
+        db.close();
+        parentPort.postMessage({ ok: true });
+      } catch (err) {
+        parentPort.postMessage({ ok: false, message: err.message });
+      }
+    `, { eval: true, workerData: { source, destination } });
+    worker.once('message', (msg) => {
+      worker.terminate();
+      if (msg.ok) resolve(); else reject(new Error(msg.message));
+    });
+    worker.once('error', (err) => { worker.terminate(); reject(err); });
+  });
+}
+
+async function serveBackup(req, res) {
   if (!db || !DATA_DIR) { res.writeHead(404); res.end('not found'); return; }
   const user = accounts.sessionUser(db, api.cookieToken(req));
   if (!user) { api.json(res, 401, { error: 'not signed in' }); return; }
@@ -525,10 +566,7 @@ function serveBackup(req, res) {
   // failed downloads filling the disk the backup endpoint is meant to protect.
   const drop = () => { try { fs.rmSync(temp, { force: true }); } catch { /* gone already, or never written */ } };
   try {
-    // A quoted string literal, not a bound parameter: VACUUM INTO takes no
-    // parameters. The path is this process's own, built from DATA_DIR and
-    // random bytes, so there is nothing of anyone else's in it to quote wrong.
-    db.exec(`VACUUM INTO '${temp.replace(/'/g, "''")}'`);
+    await vacuumInto(path.join(DATA_DIR, 'podium.db'), temp);
   } catch (err) {
     drop();
     console.error(`podium: backup failed (${err.message})`);

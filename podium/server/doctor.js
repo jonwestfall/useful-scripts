@@ -115,9 +115,13 @@ function checkPermissions(dataDir) {
 }
 
 /**
- * Bytes on disk with no row pointing at them, and rows pointing at bytes that
- * are not there. Both are recoverable and neither is dangerous, but they are
- * the shape a half-finished upload or a hand-edited data directory leaves.
+ * Bytes on disk with no row pointing at them, rows pointing at bytes that are
+ * not there, and rows neither the library nor a lecture points at any more.
+ * All three are recoverable and none is dangerous, but they are the shape a
+ * half-finished upload, a hand-edited data directory, or a crash between
+ * remembering a file's bytes and filing it under something (rememberMedia
+ * runs before the library_items/lecture_files row that would reference it -
+ * see addFile's own comment on why that order is deliberate) leaves behind.
  */
 function checkMedia(db, dataDir) {
   const rows = db.prepare('SELECT sha256, bytes FROM media').all();
@@ -125,23 +129,35 @@ function checkMedia(db, dataDir) {
   const missing = rows.filter((row) => !fs.existsSync(library.mediaPath(dataDir, row.sha256)));
 
   let onDisk = 0;
-  const orphans = [];
+  const orphanFiles = [];
   const mediaDir = path.join(dataDir, 'media');
   for (const shard of safeList(mediaDir)) {
     for (const name of safeList(path.join(mediaDir, shard))) {
       if (name.startsWith('.incoming-')) continue;     // an upload in flight
       onDisk += 1;
-      if (!known.has(name)) orphans.push(path.join(shard, name));
+      if (!known.has(name)) orphanFiles.push(path.join(shard, name));
     }
   }
+
+  // A media row neither table claims: forgetMediaIfUnused checks exactly
+  // these same two tables to decide "nothing wants this any more", so a row
+  // that never got as far as either one is invisible to it and would
+  // otherwise sit there forever, correct-looking (its bytes ARE on disk) but
+  // pointing at nothing.
+  const orphanRows = db.prepare(`SELECT COUNT(*) AS n FROM media m
+      WHERE NOT EXISTS (SELECT 1 FROM library_items li WHERE li.media_id = m.id AND li.deleted_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM lecture_files lf WHERE lf.media_id = m.id)`).get().n;
 
   if (missing.length) {
     return say('bad', 'media', `${missing.length} of ${rows.length} stored files are missing from disk`,
       'Something removed files under media/ without going through Podium. Restore that directory from a backup.');
   }
-  if (orphans.length) {
-    return say('warn', 'media', `${onDisk} files on disk, ${orphans.length} of them unreferenced`,
-      'Harmless, and safe to delete once you are sure nothing is mid-upload.');
+  if (orphanFiles.length || orphanRows) {
+    const parts = [];
+    if (orphanFiles.length) parts.push(`${orphanFiles.length} file(s) on disk nothing in the database points at`);
+    if (orphanRows) parts.push(`${orphanRows} database row(s) neither the library nor a lecture points at`);
+    return say('warn', 'media', `${onDisk} file(s) on disk; ${parts.join('; ')}`,
+      'Harmless, and safe to tidy once you are sure nothing is mid-upload.');
   }
   return say('ok', 'media', `${rows.length} file(s), all present`);
 }
@@ -171,7 +187,13 @@ function checkAccounts(db) {
 function checkStorage(db, env) {
   const held = library.usage(db);
   const sessions = lectures.usage(db);
-  const days = Number(env.LECTURE_RETENTION_DAYS || 0);
+  // Matches pruneFiles' own validation (lectures.js): only a finite, POSITIVE
+  // number is a real retention setting. Number(env.X || 0) alone would treat
+  // -1 as truthy and report "session files kept -1 days" as a clean bill of
+  // health, when pruneFiles would in fact never remove anything for it -
+  // exactly the no-retention case this check exists to flag.
+  const raw = Number(env.LECTURE_RETENTION_DAYS);
+  const days = Number.isFinite(raw) && raw > 0 ? raw : 0;
   const line = `library ${held.files} file(s) ${mb(held.bytes)}, sessions ${sessions.files} file(s) ${mb(sessions.bytes)}`;
   // Unbounded growth is not a fault, but it is the thing that turns into one
   // quietly, and the operator is the only one who can decide it is fine.

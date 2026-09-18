@@ -81,6 +81,12 @@
       <h2>Courses</h2>
     </div>
     <div id="courses"></div>
+    <!-- Outside the admin-only row below on purpose: a course OWNER who is
+         not an administrator still changes membership and connection
+         settings from this card (withCourse routes every result here), and
+         a status message only an admin could ever see is no status message
+         at all for them. -->
+    <span class="hint" id="courses-note" role="status"></span>
     <div id="new-course-row" hidden>
       <hr style="border:0;border-top:1px solid var(--line);margin:12px 0">
       <div class="admin-form">
@@ -95,7 +101,6 @@
       </div>
       <div class="admin-actions">
         <button id="new-course-go" type="button">Add the course</button>
-        <span class="hint" id="courses-note" role="status"></span>
       </div>
     </div>
   </section>

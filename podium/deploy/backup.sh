@@ -129,7 +129,11 @@ db.close();
 JS
   fi
 else
-  echo 'backup: no database yet; carrying on with the files' >&2
+  # restore.sh refuses any archive with no podium.db inside it - so writing
+  # one anyway here would hand back something that LOOKS like a backup and
+  # cannot be restored. Failing now, before the tar step, is the honest
+  # answer: there is nothing to back up yet.
+  die "no database at $DATA_DIR/podium.db yet - nothing to back up until the service has run once"
 fi
 
 # The media-before-database order above closes the DELETE race (a retention

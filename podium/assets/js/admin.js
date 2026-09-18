@@ -320,19 +320,23 @@ function renderSessionBody(detail) {
   }
   body.append(actions);
 
-  if (!detail.timeline.length) {
+  // A lecture can hold a poll result or kept files with no timeline event at
+  // all - polls and file uploads are recorded independently of the timeline
+  // (see appendEvents/recordPoll/addFile in lectures.js) - so "no timeline"
+  // is not "nothing happened". Only say that when there is truly nothing
+  // else to show either; either way, the summaries below still run.
+  if (detail.timeline.length) {
+    const list = el('div', { class: 'timeline' });
+    for (const event of detail.timeline) {
+      list.append(el('div', { class: 'timeline-row' },
+        el('span', { class: 'timeline-at' }, clock(event.at)),
+        el('span', { class: 'timeline-what' }, event.title || '—'),
+        el('span', { class: 'timeline-note' }, describe(event))));
+    }
+    body.append(list);
+  } else if (!detail.files.length && !detail.pollResults.length) {
     body.append(el('p', { class: 'hint' }, 'Nothing was recorded for this one.'));
-    return body;
   }
-
-  const list = el('div', { class: 'timeline' });
-  for (const event of detail.timeline) {
-    list.append(el('div', { class: 'timeline-row' },
-      el('span', { class: 'timeline-at' }, clock(event.at)),
-      el('span', { class: 'timeline-what' }, event.title || '—'),
-      el('span', { class: 'timeline-note' }, describe(event))));
-  }
-  body.append(list);
 
   if (detail.files.length) {
     const photos = detail.files.filter((f) => f.kind === 'photo').length;
@@ -533,7 +537,10 @@ function renderPeople() {
       person.displayName === person.username ? person.username : `${person.displayName} (${person.username})`));
     row.append(el('span', { class: 'admin-meta' },
       [person.disabled ? 'disabled' : '',
-        person.devices ? `signed in on ${person.devices}` : '',
+        // Active sessions, not devices: signing in twice from the same
+        // browser (a token that expired, a second tab) counts twice here,
+        // the same as two different devices would - see accounts.js.
+        person.activeSessions ? `${person.activeSessions} active session${person.activeSessions === 1 ? '' : 's'}` : '',
         person.lastSeen ? `last seen ${when(person.lastSeen)}` : 'never signed in',
         `added ${when(person.createdAt)}`].filter(Boolean).join(' · ')));
 

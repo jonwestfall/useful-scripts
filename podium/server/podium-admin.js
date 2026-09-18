@@ -229,7 +229,14 @@ async function main(argv) {
   // here, which is the only way to take it back from someone who has left.
   if (group === 'course' && action === 'settings') {
     const course = courseByCode(db, rest[0]);
-    const current = settings.forUser(db, ROOT).find((c) => c.course === course.code);
+    // includeArchived: this is a shell at root, the recovery path, asking
+    // about one named course - not the ordinary browser flow forUser's
+    // default protects (a device's silent auto-setup, or courseIdForRoom's
+    // room lookup). Without it, rotating an archived course's passphrase
+    // would read no current settings and write back only the new
+    // passphrase, wiping its transport/room/URLs the same way the browser
+    // bug this mirrors did.
+    const current = settings.forUser(db, ROOT, { includeArchived: true }).find((c) => c.course === course.code);
     const wanted = { ...(current?.settings || {}) };
     const map = {
       transport: 'transport', room: 'room', passphrase: 'passphrase',

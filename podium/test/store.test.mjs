@@ -527,6 +527,18 @@ settings.write(db, owner, 'psy415', { transport: 'ws', room: 'psy415-room', pass
 ok('rotating the passphrase is how you take it back from someone who has left',
   settings.forUser(db, ta)[0].settings.passphrase === 'rotated');
 
+// includeArchived is what lets an admin manage an archived course's settings
+// (podium-admin.js's `course settings` CLI command, and admin.html's own
+// card) without first reading back nothing and then saving over everything
+// that was there - see the comment on forUser for why it defaults off.
+courses.update(db, admin, 'psy415', { archived: true });
+ok('forUser excludes an archived course by default - the safe answer for courseIdForRoom and an ordinary device',
+  !settings.forUser(db, admin).some((c) => c.course === 'psy415'));
+const archivedPsy415 = settings.forUser(db, admin, { includeArchived: true }).find((c) => c.course === 'psy415');
+ok('but includeArchived finds it with everything still there, not just the field about to be changed',
+  archivedPsy415?.settings.room === 'psy415-room' && archivedPsy415.settings.passphrase === 'rotated');
+courses.update(db, admin, 'psy415', { archived: false });
+
 console.log('\n-- what happened in the room --');
 
 // The room name is psy415's, which is how a lecture finds its course: the
@@ -640,25 +652,32 @@ ok('the tally comes back in the shape the CSV exporter wants',
 // without changing the total, or two controllers racing to end the same
 // poll. >= alone would let whichever lands last win regardless of which is
 // actually newer; ended_at is the tiebreaker that decides it instead.
-const tieBase = started + 200000;
+//
+// Real Date.now() values throughout, not large synthetic offsets from
+// `started`: recordPoll clamps endedAt to [lecture.started_at, now] the same
+// way endLecture does, so an offset far enough in the future to distinguish
+// "older" from "newer" would collapse to the same clamped value as its
+// neighbours instead of preserving the ordering this test depends on.
+const tieFirst = Date.now();
 lectures.recordPoll(db, ta, lecture.id, {
-  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [5, 5], voters: 10, endedAt: tieBase,
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [5, 5], voters: 10, endedAt: tieFirst,
 });
 lectures.recordPoll(db, ta, lecture.id, {
   // A stale retry: same count, but an OLDER ended_at - must not win.
-  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [10, 0], voters: 10, endedAt: tieBase - 5000,
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [10, 0], voters: 10, endedAt: tieFirst - 1,
 });
 ok('a same-count retry with an OLDER ended_at cannot overwrite the tally it is retrying',
   lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p2').counts[0] === 5);
+const tieNewer = Date.now();
 lectures.recordPoll(db, ta, lecture.id, {
   // Genuinely newer, still tied on count - must win.
-  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [4, 6], voters: 10, endedAt: tieBase + 5000,
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [4, 6], voters: 10, endedAt: tieNewer,
 });
 ok('but a same-count result with a NEWER ended_at does overwrite it',
   lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p2').counts[0] === 4);
 lectures.recordPoll(db, ta, lecture.id, {
   // A strictly lower count, however new, must still lose - a poll only gains votes.
-  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [0, 1], voters: 1, endedAt: tieBase + 999999,
+  pollId: 'p2', kind: 'choice', question: 'Tie test', options: ['a', 'b'], counts: [0, 1], voters: 1, endedAt: Date.now(),
 });
 ok('and a lower voter count never wins even with the newest ended_at of all',
   lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p2').voters === 10);
@@ -697,6 +716,18 @@ const beforeFutureClose = Date.now();
 const closedInFuture = lectures.endLecture(db, owner, futureLecture.id, { at: Date.now() + 3600000 });
 ok('and an at in the future clamps to now, not to a lecture that ran ahead of the clock',
   closedInFuture.endedAt >= beforeFutureClose && closedInFuture.endedAt <= Date.now());
+
+// recordPoll's own endedAt needs the same clamp: startLecture's stale-close
+// logic uses the latest poll's ended_at (see the "poll but no timeline
+// event" test above), so a future value from a controller with a fast clock
+// could make a stale lecture appear to end after it was even asked about.
+const clampPollLecture = lectures.startLecture(db, owner, { room: 'clamp-room-3' });
+lectures.recordPoll(db, owner, clampPollLecture.id, {
+  pollId: 'clamp-poll', kind: 'choice', options: ['a'], counts: [1], voters: 1, endedAt: Date.now() + 3600000,
+});
+const clampedPoll = lectures.getLecture(db, owner, clampPollLecture.id).pollResults[0];
+ok('a poll ended in the future has its own endedAt clamped to now',
+  clampedPoll.endedAt <= Date.now());
 
 // The second Go live in the same room, after a display whose tab was closed
 // without ever standing down.
@@ -833,6 +864,26 @@ ok('the same bytes filed twice are stored once',
 ok('anyone who can see the lecture can fetch its files', library.mayReadMedia(db, ta, photo.sha256));
 ok('and someone who cannot, cannot', !library.mayReadMedia(db, outsider, photo.sha256));
 
+// A rejected upload - over the space cap here - must not leave its bytes
+// orphaned: storeUpload has already written them by the time addFile's own
+// caps can refuse, and the caller (receiveLectureFile in api.js) cleans up
+// with forgetMediaIfUnused, which can only find bytes that already have a
+// media row. addFile registers that row before checking the caps for exactly
+// this reason.
+const tooBigUpload = await library.storeUpload(dataDir, Readable.from([Buffer.from('a file that claims to be enormous')]));
+let refusedForSpace = '';
+try {
+  lectures.addFile(db, owner, session4b.id, {
+    name: 'photos/too-big.jpg', kind: 'photo',
+    sha256: tooBigUpload.sha256, bytes: lectures.MAX_LECTURE_BYTES + 1, contentType: 'image/jpeg', dataDir,
+  });
+} catch (err) { refusedForSpace = err.message; }
+ok('a file that would bust the space cap is refused', /space one session may use/.test(refusedForSpace));
+ok('but its media row already exists, so the cleanup path that follows can actually find it',
+  !!db.prepare('SELECT 1 AS ok FROM media WHERE sha256 = ?').get(tooBigUpload.sha256));
+ok('and forgetMediaIfUnused does remove it - nothing else points at these bytes',
+  library.forgetMediaIfUnused(db, dataDir, tooBigUpload.sha256) && !existsSync(library.mediaPath(dataDir, tooBigUpload.sha256)));
+
 // Re-exporting replaces rather than accumulating, and frees what it replaced.
 const redone = await library.storeUpload(dataDir, Readable.from([Buffer.from('a better rasterization')]));
 lectures.addFile(db, owner, session4b.id, {
@@ -920,8 +971,8 @@ ok('and comes back when the second one is demoted', (() => {
   try { accounts.assertAnotherAdminRemains(db, 'root', 'disabling it'); return false; } catch { return true; }
 })());
 
-ok('an account listing says when each was last seen and on how many devices',
-  accounts.listUsers(db).every((row) => 'lastSeen' in row && 'devices' in row));
+ok('an account listing says when each was last seen and how many sessions it holds',
+  accounts.listUsers(db).every((row) => 'lastSeen' in row && 'activeSessions' in row));
 ok('and never carries a password hash anywhere near the browser',
   !JSON.stringify(accounts.listUsers(db)).includes('scrypt$'));
 
@@ -1083,6 +1134,21 @@ ok('a stored file missing from disk is a failure',
   doctor.checkMedia(db, dataDir).level === 'bad');
 db.prepare('DELETE FROM media WHERE sha256 = ?').run(ghost);
 
+// A media row neither the library nor a lecture points at: forgetMediaIfUnused
+// checks exactly those two tables to decide "nothing wants this any more", so
+// a row that never got as far as either one - a crash between rememberMedia
+// and the row that would reference it - is invisible to it, and to the
+// missing-from-disk check above too, since the bytes genuinely are there.
+const orphanSha = createHash('sha256').update('bytes nobody ever filed anywhere').digest('hex');
+const orphanShard = path.join(dataDir, 'media', orphanSha.slice(0, 2));
+mkdirSync(orphanShard, { recursive: true });
+writeFileSync(path.join(orphanShard, orphanSha), 'orphaned bytes');
+db.prepare('INSERT INTO media (sha256, bytes, content_type, created_at) VALUES (?, ?, ?, ?)')
+  .run(orphanSha, 14, 'text/plain', Date.now());
+ok('a media row neither the library nor a lecture points at is flagged too',
+  /database row\(s\)/.test(doctor.checkMedia(db, dataDir).detail) && doctor.checkMedia(db, dataDir).level === 'warn');
+db.prepare('DELETE FROM media WHERE sha256 = ?').run(orphanSha);
+
 const report = await doctor.run({
   db, dataDir, releaseDir: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
   healthUrl: '', certPath: '',
@@ -1120,6 +1186,11 @@ ok('with no retention configured, storage says everything is kept',
   /everything kept/.test(doctor.checkStorage(db, {}).detail));
 ok('and with it set, storage says for how long',
   /kept 180 days/.test(doctor.checkStorage(db, { LECTURE_RETENTION_DAYS: '180' }).detail));
+// pruneFiles (lectures.js) treats anything <= 0 as no retention at all - so
+// doctor has to agree, rather than reading a negative value as truthy and
+// reporting "kept -1 days" as a clean bill of health.
+ok('a negative retention value is treated the same as none set, not reported as valid',
+  /everything kept/.test(doctor.checkStorage(db, { LECTURE_RETENTION_DAYS: '-1' }).detail));
 
 console.log('\n-- doctor, from the command line --');
 
