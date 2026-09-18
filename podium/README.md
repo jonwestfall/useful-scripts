@@ -1054,7 +1054,7 @@ admin.
 Photos and rasterized slides are the two payloads that grow without bound, so the server
 can age them out: set `LECTURE_RETENTION_DAYS` (see [deploy/](deploy/README.md)) and the
 files of lectures older than that are swept at startup and once a day, or run
-`podium-admin.js lectures prune --days 180` by hand. Unset means keep everything. Either
+`server/podium-admin.js lectures prune --days 180` by hand. Unset means keep everything. Either
 way a lecture's **timeline and poll results are never aged out** — a few hundred short
 rows is not what fills a disk, and it is exactly what somebody wants three years later.
 
@@ -1202,7 +1202,7 @@ installing, for scripting and for getting back in. It also has the two commands 
 have no page:
 
 ```bash
-node podium-admin.js doctor        # is this box alright?
+node server/podium-admin.js doctor        # is this box alright?
 ```
 
 checks Node and SQLite, the schema, database integrity, free disk, the data directory's

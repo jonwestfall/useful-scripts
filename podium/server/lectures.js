@@ -294,6 +294,21 @@ function endLecture(db, user, id, { at, dataDir } = {}) {
   const lecture = findLecture(db, user, id);
   if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
   const row = lectureRow(lecture);
+  // Findable is not the same permission as endable: anyone in the course can
+  // see this lecture (appendEvents and recordPoll deliberately lean on that,
+  // so a TA's controller can still file a poll under the instructor's own
+  // lecture), but stopping someone else's live session out from under them
+  // is the same act as deleting it, and gets the same narrower rule.
+  if (!mayDelete(db, user, row)) {
+    throw Object.assign(new Error(
+      'only whoever ran this lecture, a course owner, or an administrator can end it',
+    ), { status: 403 });
+  }
+  // A stale /end from a display that never learned this lecture was already
+  // closed - by a fresher Go live's own stale-lecture sweep, or a previous
+  // /end it merely never heard the response to - must not re-date a record
+  // that already has its real end time. Idempotent no-op instead.
+  if (row.endedAt != null) return row;
   if (!row.events && !row.polls) {
     // A photo or the ink can exist before the first timeline event or poll -
     // fileInk and a photo upload both happen independently of appendEvents -

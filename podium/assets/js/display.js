@@ -1020,6 +1020,7 @@ let flushTimer = null;
 let flushPromise = null;    // the in-flight flush, so a caller can await it rather than bail
 let lastSurface = null;     // the ink surface key the last entry described
 let lastEventAt = 0;
+let recordingSince = 0;     // when THIS lecture began recording - see snapshotInk
 let pendingEvent = null;
 let pendingTimer = null;
 
@@ -1090,6 +1091,12 @@ async function startRecording() {
     state.lectureId = lecture.id;
     lastSurface = null;
     lastEventAt = 0;
+    // What snapshotInk measures "drawn during this lecture" against. Ink is
+    // deliberately kept across a stand-down (surviving a reload is the whole
+    // point - see "surviving a reload" below), so a board carried in from a
+    // previous lecture is on screen and must stay there; it just must not be
+    // filed under this lecture as though it were drawn here.
+    recordingSince = Date.now();
     // Broadcast it: a controller ending a poll files the tally under this id.
     // commit() notes what is already on screen as the timeline's first entry.
     commit();
@@ -1160,8 +1167,25 @@ async function stopRecording() {
 // as of right now. Pulled out so stopRecording can call this synchronously,
 // before any await - see the comment there for why that timing matters.
 function snapshotInk() {
+  // Each value here is `{ strokes, touched }` (see touchSurface in
+  // protocol.js), not a bare strokes array. Filtering on the wrapper's own
+  // .length - always undefined - kept every surface out, so fileInk's
+  // "nothing to file" check always won and no lecture has ever filed its
+  // ink at all. That is the bug worth fixing here on its own.
+  //
+  // `touched` then scopes what is filed to this lecture. Ink survives a
+  // stand-down on purpose, so last week's annotations on a deck reused this
+  // week are still on screen - and must stay there - but filing them under
+  // today's lecture would put words in its mouth. touchSurface only stamps
+  // this on a real ink action, so it means "drawn on since", not "looked at".
+  //
+  // A surface drawn on in BOTH lectures still carries the older strokes with
+  // it: the strokes themselves are not individually stamped, and splitting
+  // them would need a per-lecture baseline this does not keep. The common
+  // case - a board from last week nobody touched today - is scoped right.
   return Object.fromEntries(
-    Object.entries(state.ink.bySurface || {}).filter(([, strokes]) => strokes?.length),
+    Object.entries(state.ink.bySurface || {})
+      .filter(([, surface]) => surface?.strokes?.length && surface.touched >= recordingSince),
   );
 }
 

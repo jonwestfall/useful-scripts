@@ -67,6 +67,20 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+# Inspected before anything is extracted, not after: a path containing ".."
+# or given as absolute can make tar write outside $work during extraction
+# itself, and a symlink entry - cp -a below preserves media/ symlinks as-is -
+# could make a media hash resolve to any file on this host once restored,
+# for serveMedia() to stream back to whoever can read it. An archive this
+# script itself wrote can never contain either, so failing this check means
+# the archive was built, or tampered with, by something else.
+if tar -tzf "$archive" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+  die 'that archive contains an unsafe path - refusing to restore it'
+fi
+if tar -tvzf "$archive" | grep -Eq '^l'; then
+  die 'that archive contains a symlink - refusing to restore it'
+fi
 tar -xzf "$archive" -C "$work"
 # mapfile rather than `find | head -1`: with `set -o pipefail`, head closing the
 # pipe early can make find die of SIGPIPE and take the whole script with it.

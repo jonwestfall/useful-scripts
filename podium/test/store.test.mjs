@@ -707,11 +707,18 @@ ok('and a negative voters total is clamped the same way', negativePoll.voters ==
 let refusedDelete = '';
 try { lectures.deleteLecture(db, ta, lecture.id); } catch (err) { refusedDelete = err.message; }
 ok('a member who can read a lecture still cannot remove it', /only whoever ran this lecture/.test(refusedDelete));
+// A room of its own: `lecture` above is still open in psy415-room, and
+// starting a new lecture in a room that already has one open auto-closes the
+// old one as stale (see startLecture) - not what this delete-permission
+// check is testing.
 ok('a course owner can, which is the same rule the library runs on',
-  !!lectures.deleteLecture(db, owner, lectures.startLecture(db, owner, { room: 'psy415-room' }).id));
+  !!lectures.deleteLecture(db, owner, lectures.startLecture(db, owner, { room: 'delete-test-room' }).id));
 
-// Go live, decide the projector is fine, stand down again: no record.
-const glance = lectures.startLecture(db, owner, { room: 'psy415-room' });
+// Go live, decide the projector is fine, stand down again: no record. Its own
+// room, not psy415-room's: that one still has `lecture` open below it, and
+// starting a new lecture in a room that already has one auto-closes the old
+// one as stale (see startLecture) - exactly what this block is not testing.
+const glance = lectures.startLecture(db, owner, { room: 'glance-room' });
 const ended = lectures.endLecture(db, owner, glance.id, { at: Date.now() });
 ok('a lecture that recorded nothing is discarded rather than kept', ended.discarded === true);
 ok('and is really gone', !lectures.getLecture(db, admin, glance.id));
@@ -740,6 +747,27 @@ try {
 } catch (err) { refusedPollAfterEnd = err.message; }
 ok('a poll tally delivered after the lecture has ended is refused the same way',
   /already ended/.test(refusedPollAfterEnd));
+
+// Ending is not the same permission as writing to the timeline: appendEvents
+// and recordPoll deliberately lean on visibility alone (a TA's controller
+// files a poll under the instructor's lecture), but stopping someone else's
+// live session is the same act as deleting it and needs the same narrower
+// rule, or any course member could end a lecture they did not start.
+const forcedStop = lectures.startLecture(db, owner, { room: 'psy415-room' });
+lectures.appendEvents(db, owner, forcedStop.id, [{ kind: 'program', title: 'still going' }]);
+let refusedEnd = '';
+try { lectures.endLecture(db, ta, forcedStop.id); } catch (err) { refusedEnd = err.message; }
+ok('a member who can see a live lecture still cannot end it out from under whoever is running it',
+  /only whoever ran this lecture/.test(refusedEnd));
+ok('and it really is still open', !lectures.getLecture(db, owner, forcedStop.id).endedAt);
+lectures.endLecture(db, owner, forcedStop.id, { at: Date.now() });
+
+// A stale /end - a display that never learned a fresher Go live already
+// closed this lecture as stale, or one retrying a request it never saw the
+// response to - must not re-date an already-ended record.
+const reEnded = lectures.endLecture(db, owner, lecture.id, { at: closeAt + 999999 });
+ok('ending an already-ended lecture a second time is a no-op, not a later end time',
+  reEnded.endedAt === closeAt);
 
 // A caller sending an `at` outside the lecture's own lifetime - a bad clock,
 // or a bogus value - must not be able to record it as still open (a falsy

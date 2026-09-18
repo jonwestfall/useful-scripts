@@ -94,6 +94,7 @@ The sweep runs at startup and once a day; to run it by hand, or once, without
 setting it at all:
 
 ```bash
+cd /opt/podium/current/server
 sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js lectures list
 sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js lectures prune --days 180
 ```
