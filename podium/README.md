@@ -21,8 +21,9 @@ Pages in about twenty minutes — no terminal, no server, no card. This file is 
 full reference; that one is the road in. [ROADMAP.md](ROADMAP.md) is the plan for
 audience participation — students answering a question from their phones —
 [VPS.md](VPS.md) is the plan for what a box of your own adds (accounts, an
-uploadable library, durable history), and [OPEN-ISSUES.md](OPEN-ISSUES.md) is the
-short list of things believed fixed but not yet proved in a real room.
+uploadable library, durable history). Bugs, enhancements and things needing
+a real-room test are tracked in [Issues](https://github.com/jonwestfall/useful-scripts/issues),
+not in this repo's files.
 
 <details>
 <summary><b>What is in this file</b> (it is long; this is the map)</summary>
