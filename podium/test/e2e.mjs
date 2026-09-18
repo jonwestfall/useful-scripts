@@ -5175,6 +5175,27 @@ await desk.waitForFunction(async () => {
 }, null, { timeout: 30000 });
 ok('and everything the export built is filed with it too', true);
 
+// Ink is the other half of what a lecture keeps, and the half no export is
+// needed for: the display files its own strokes at stand-down so the
+// annotations outlive the tab even when nobody pressed Export. Drawn after
+// the export above deliberately - this is about the display's own filing
+// path, not about what the controller rasterized into the zip.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad');
+const acctPad = await pad.$eval('#pad', (n) => {
+  const r = n.getBoundingClientRect();
+  return { x: r.x, y: r.y, w: r.width, h: r.height };
+});
+await pad.mouse.move(acctPad.x + acctPad.w * 0.25, acctPad.y + acctPad.h * 0.35);
+await pad.mouse.down();
+for (let i = 1; i <= 10; i++) {
+  await pad.mouse.move(acctPad.x + acctPad.w * (0.25 + i * 0.04), acctPad.y + acctPad.h * (0.35 + i * 0.03));
+}
+await pad.mouse.up();
+await acctScreen.waitForFunction(
+  () => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 });
+ok('ink drawn during a server-backed lecture reaches the display', true);
+
 // E is stand down - the way back out of a lecture without a "quit" key a
 // stray press could hit.
 await acctScreen.keyboard.press('e');
@@ -5183,6 +5204,25 @@ await desk.waitForFunction(async () => {
   return lectures[0]?.endedAt > 0;
 }, null, { timeout: 15000 });
 ok('and standing down closes it', true);
+
+// And the strokes really are in it. Read back through /media rather than
+// trusting the row: a file that exists but holds an empty bySurface is
+// exactly the failure this is here to catch - snapshotInk filtered on the
+// wrong property for the whole life of the feature, so every lecture filed
+// nothing and every suite still passed.
+const filedInk = await desk.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' })
+    .then((r) => r.json());
+  const row = (lecture.files || []).find((f) => f.name === 'ink.json');
+  if (!row) return { found: false };
+  const body = await fetch(row.url, { credentials: 'same-origin' }).then((r) => r.json());
+  const surfaces = Object.values(body.bySurface || {});
+  return { found: true, surfaces: surfaces.length, strokes: surfaces.reduce((n, s) => n + (s.strokes?.length || 0), 0) };
+});
+ok(`the display files its own ink with the lecture (${filedInk.surfaces} surface(s), ${filedInk.strokes} stroke(s))`,
+  filedInk.found && filedInk.surfaces > 0 && filedInk.strokes > 0);
+
 // Everything below this point that reads "the" session - the timeline check,
 // the session-zip rebuild - assumes this is the only lecture in the list. Run
 // inside the page so it carries the (HttpOnly) session cookie automatically,
