@@ -1242,9 +1242,10 @@ async function exportSession() {
 // Every prefix (or exact name) an export's own bundle can ever produce - see
 // the photos/, slides/, boards/ and polls/ names built above, and
 // session.txt itself. Used only to decide what reconcileExportFiles may
-// remove: anything outside this set (ink.json, a photo filed the instant it
-// was taken, before any export ran) belongs to a different filer entirely
-// and reconciling an export must never touch it.
+// remove: anything outside this set (ink.json, for instance) belongs to a
+// different filer entirely and reconciling an export must never touch it.
+// photos/ is included here but reconcileExportFiles special-cases it further
+// still - see the comment there.
 const EXPORT_FILE_PREFIXES = ['photos/', 'slides/', 'boards/', 'polls/'];
 const ownedByExport = (name) => name === 'session.txt' || EXPORT_FILE_PREFIXES.some((p) => name.startsWith(p));
 
@@ -1281,7 +1282,7 @@ async function fileExportWithLecture(files, status) {
     else failed += 1;
   }
   if (failed) status.textContent = `Kept ${sent} of ${sent + failed} files on the server; building the zip…`;
-  await reconcileExportFiles(lectureId, keptNames);
+  await reconcileExportFiles(lectureId, keptNames, photosKept());
 }
 
 /**
@@ -1295,13 +1296,27 @@ async function fileExportWithLecture(files, status) {
  * fail the export itself: the zip already built and handed to the teacher is
  * the copy that matters regardless of how this comes out.
  */
-async function reconcileExportFiles(lectureId, keptNames) {
+async function reconcileExportFiles(lectureId, keptNames, reconcilePhotos) {
   try {
     const res = await fetch(`/api/lectures/${encodeURIComponent(lectureId)}`, { credentials: 'same-origin' });
     if (!res.ok) return;
     const { lecture } = await res.json();
     for (const existing of lecture.files || []) {
-      if (!ownedByExport(existing.name) || keptNames.has(existing.name)) continue;
+      if (keptNames.has(existing.name)) continue;
+      const isPhoto = existing.name.startsWith('photos/');
+      if (isPhoto) {
+        // A photo is filed the instant it is taken (filePhotoWithLecture), not
+        // by this export - the export only bundles whatever is still in the
+        // local strip, which MAX_PHOTOS caps client-side. An older photo
+        // missing from `keptNames` here can simply mean it scrolled out of
+        // that cap, not that anyone asked to drop it; reconciling it away on
+        // every re-export would silently undo a switch left on. Only actually
+        // reconcile photos when the keep-photos switch is off for the whole
+        // session, matching the per-file skip in fileExportWithLecture above.
+        if (!reconcilePhotos) continue;
+      } else if (!ownedByExport(existing.name)) {
+        continue;
+      }
       await fetch(`/api/lectures/${encodeURIComponent(lectureId)}/files?name=${encodeURIComponent(existing.name)}`,
         { method: 'DELETE', credentials: 'same-origin' }).catch(() => { /* best effort */ });
     }

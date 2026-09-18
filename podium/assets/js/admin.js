@@ -269,19 +269,25 @@ async function downloadSessionZip(detail, button) {
   button.disabled = true;
   const was = button.textContent;
   try {
+    // ink.json is the display's own raw strokes, filed at stand-down for the
+    // Ink tool to reload later - exportSession() never puts it in a zip (it
+    // rasterizes ink into the slides/boards PNGs instead), so "the same files
+    // the controller put in the zip" has to leave it out too, or this ends up
+    // rebuilding a zip the original export never produced.
+    const sourceFiles = detail.files.filter((f) => f.kind !== 'ink');
     const files = [];
-    for (const file of detail.files) {
-      button.textContent = `Fetching ${files.length + 1} of ${detail.files.length}…`;
+    for (const file of sourceFiles) {
+      button.textContent = `Fetching ${files.length + 1} of ${sourceFiles.length}…`;
       const res = await fetch(file.url, { credentials: 'same-origin' });
       if (!res.ok) continue;           // named in the summary below rather than failing the lot
       files.push({ name: file.name, data: new Uint8Array(await res.arrayBuffer()) });
     }
     if (!files.length) { button.textContent = 'Nothing could be fetched'; return; }
-    if (files.length < detail.files.length) {
+    if (files.length < sourceFiles.length) {
       files.push({
         name: 'missing.txt',
         data: new TextEncoder().encode(
-          `${detail.files.length - files.length} of this session's files could not be read back.\n`),
+          `${sourceFiles.length - files.length} of this session's files could not be read back.\n`),
       });
     }
     button.textContent = 'Building the zip…';
@@ -680,37 +686,47 @@ function renderCourseSettings(course, settings) {
       })));
   }
   const status = el('span', { class: 'hint', role: 'status' });
+
+  // Shared by both buttons below: whatever is in the form right now, sent as
+  // one PUT. "New passphrase" advertises itself as a one-button rotation (see
+  // the PR/VPS.md), which means it has to actually save, not just fill the
+  // field in and leave the old passphrase live until someone notices and
+  // clicks Save separately.
+  async function saveSettings(savingText, savedText) {
+    const wanted = {};
+    for (const input of form.querySelectorAll('[data-setting]')) {
+      if (input.value.trim()) wanted[input.dataset.setting] = input.value.trim();
+    }
+    save.disabled = true;
+    rotate.disabled = true;
+    status.textContent = savingText;
+    try {
+      await fetch(`/api/settings/${encodeURIComponent(course.code)}`, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ settings: wanted }),
+      }).then(async (res) => {
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'that did not work');
+      });
+      // Without this, courseSettings still holds what refreshCourses() last
+      // fetched: closing and reopening this course would re-render the form
+      // from that stale snapshot, showing a passphrase that was just
+      // rotated as the old one - and saving again from there would send it
+      // straight back to the server, undoing the rotation.
+      courseSettings[course.code] = wanted;
+      status.textContent = savedText;
+    } catch (err) {
+      status.textContent = err.message;
+    } finally {
+      save.disabled = false;
+      rotate.disabled = false;
+    }
+  }
+
   const save = el('button', {
     class: 'admin-small', type: 'button',
-    onclick: async () => {
-      const wanted = {};
-      for (const input of form.querySelectorAll('[data-setting]')) {
-        if (input.value.trim()) wanted[input.dataset.setting] = input.value.trim();
-      }
-      save.disabled = true;
-      status.textContent = 'Saving…';
-      try {
-        await fetch(`/api/settings/${encodeURIComponent(course.code)}`, {
-          method: 'PUT',
-          credentials: 'same-origin',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ settings: wanted }),
-        }).then(async (res) => {
-          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'that did not work');
-        });
-        // Without this, courseSettings still holds what refreshCourses() last
-        // fetched: closing and reopening this course would re-render the form
-        // from that stale snapshot, showing a passphrase that was just
-        // rotated as the old one - and saving again from there would send it
-        // straight back to the server, undoing the rotation.
-        courseSettings[course.code] = wanted;
-        status.textContent = 'Saved — devices pick it up the next time they sign in.';
-      } catch (err) {
-        status.textContent = err.message;
-      } finally {
-        save.disabled = false;
-      }
-    },
+    onclick: () => saveSettings('Saving…', 'Saved — devices pick it up the next time they sign in.'),
   }, 'Save the connection');
 
   const rotate = el('button', {
@@ -720,7 +736,7 @@ function renderCourseSettings(course, settings) {
       const field = form.querySelector('[data-setting="passphrase"]');
       field.value = [...crypto.getRandomValues(new Uint8Array(8))]
         .map((n) => 'abcdefghijkmnopqrstuvwxyz23456789'[n % 33]).join('');
-      status.textContent = 'New passphrase generated — save it, then re-pair every device.';
+      saveSettings('Saving the new passphrase…', 'New passphrase saved — re-pair every device.');
     },
   }, 'New passphrase');
 

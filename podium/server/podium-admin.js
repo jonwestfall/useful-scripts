@@ -138,8 +138,16 @@ async function main(argv) {
   const [group, action, ...rest] = positional;
   if (!group || group === 'help' || flags.help) { process.stdout.write(USAGE); return 0; }
 
-  const dataDir = flags['data-dir'] || process.env.DATA_DIR;
-  if (!dataDir) throw new Error('set DATA_DIR (or pass --data-dir) to say where the database lives');
+  const dataDirArg = flags['data-dir'] || process.env.DATA_DIR;
+  if (!dataDirArg) throw new Error('set DATA_DIR (or pass --data-dir) to say where the database lives');
+  // Resolved once, here, so every use below - opening the database, pruning
+  // files, and doctor's disk/media checks - agrees on the same directory. A
+  // relative DATA_DIR left unresolved at any one of those call sites would
+  // have it operate against a path relative to wherever this process happens
+  // to be running from instead of the directory the database actually lives
+  // in - pruneFiles deleting rows for files it can't find under the wrong
+  // path, or doctor reporting on a directory that isn't the real one.
+  const dataDir = path.resolve(dataDirArg);
   // open() throws with a reason of its own when a configured directory cannot
   // be used; main()'s catch prints it. null means only "no directory given",
   // which the check above has already ruled out.
@@ -156,7 +164,7 @@ async function main(argv) {
   let db = null;
   let dbOpenError = null;
   try {
-    db = store.open(path.resolve(dataDir), { create: group !== 'doctor' });
+    db = store.open(dataDir, { create: group !== 'doctor' });
   } catch (err) {
     if (group !== 'doctor') throw err;
     dbOpenError = err;

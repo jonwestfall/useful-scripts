@@ -121,7 +121,16 @@ fi
 if [[ "$RESTORE_ENV" == "1" && -f "$inner/podium.env" ]]; then
   echo "==> restoring $CONFIG_DIR/podium.env"
   install -d -m 0755 "$CONFIG_DIR"
-  install -m 0640 "$inner/podium.env" "$CONFIG_DIR/podium.env"
+  # The archive's own DATA_DIR line, if it has one, names wherever the box
+  # that made this backup kept its data - not necessarily this one's. Every
+  # file above was just restored under THIS invocation's $DATA_DIR; shipping
+  # the archive's env verbatim could start the service pointed at a
+  # directory nothing above ever touched, possibly one that does not even
+  # exist here, silently ignoring everything this restore just did.
+  patched_env="$work/podium.env"
+  grep -v '^DATA_DIR=' "$inner/podium.env" > "$patched_env" || true
+  printf 'DATA_DIR=%s\n' "$DATA_DIR" >> "$patched_env"
+  install -m 0640 "$patched_env" "$CONFIG_DIR/podium.env"
   chgrp "$PODIUM_USER" "$CONFIG_DIR/podium.env" 2>/dev/null || true
 fi
 

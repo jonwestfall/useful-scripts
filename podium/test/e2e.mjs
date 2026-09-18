@@ -250,11 +250,6 @@ const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_IN
 // type - and an upload that broke for any other reason fails its assertion
 // instead of quietly passing.
 //
-// The fourth deliberately intercepts a PATCH to /api/lectures/<id> and forces
-// it to answer 403, to prove a rejected rename reverts the field rather than
-// leaving it looking saved. Narrowed to that route rather than 403 in general,
-// so a real permission bug elsewhere still fails its own assertion.
-//
 // favicon.ico is not deliberate in the same sense - nothing here is testing
 // it - but it is not a result either: Podium serves no favicon by design (see
 // "stays reachable with no credentials (404)" in the auth-gate section, which
@@ -263,7 +258,21 @@ const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_IN
 // something any page here caused. Narrowed to that one path so a real 404
 // anywhere else - including a real 404 that happens to be ABOUT a favicon a
 // test actually cares about - still fails its own assertion.
-const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)|403 \(Forbidden\).*\/api\/lectures\/\d+|404 \(Not Found\).*favicon\.ico/;
+const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)|404 \(Not Found\).*favicon\.ico/;
+
+// A fourth deliberate case - a PATCH to /api/lectures/<id> forced to answer
+// 403, to prove a rejected rename reverts the field rather than leaving it
+// looking saved - does not fit DELIBERATE above: matching on status and path
+// alone would also swallow a real forbidden GET, DELETE, or a sibling route
+// like /api/lectures/<id>/files, /events or /polls (all contain the same
+// "/api/lectures/<digits>" substring), hiding a genuine permission
+// regression anywhere under that prefix for the rest of the suite. This flag
+// is armed only for the duration of that one interception (see the rename
+// test itself) so the allowance covers exactly the request it is testing.
+let expectingLectureRenameForbidden = false;
+// Anchored at the end (where = text + " " + url, so the url is always last):
+// a sibling route always has more path after the id, which this cannot match.
+const LECTURE_RENAME_FORBIDDEN = /403 \(Forbidden\).*\/api\/lectures\/\d+$/;
 
 const trap = (page, tag) => {
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
@@ -271,6 +280,7 @@ const trap = (page, tag) => {
     if (m.type() !== 'error') return;
     const where = `${m.text()} ${m.location()?.url || ''}`;
     if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where)) return;
+    if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     errors.push(`${tag} console: ${m.text()}`);
   });
 };
@@ -5318,6 +5328,7 @@ ok('and naming it sticks', true);
 
 // A rename the server actually refuses (or a dropped connection) must not
 // leave the field looking like it saved when it did not.
+expectingLectureRenameForbidden = true;
 await desk.route('**/api/lectures/*', (route) => {
   if (route.request().method() === 'PATCH') return route.fulfill({ status: 403, json: { error: 'no' } });
   return route.continue();
@@ -5330,6 +5341,7 @@ await desk.waitForFunction(
 );
 ok('a rejected rename reverts the field rather than leaving it looking saved', true);
 await desk.unroute('**/api/lectures/*');
+expectingLectureRenameForbidden = false;
 
 await desk.close();
 await acctScreen.close();

@@ -342,6 +342,11 @@ function cleanEvent(raw, now, startedAt) {
 function appendEvents(db, user, id, events) {
   const lecture = findLecture(db, user, id);
   if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
+  // A batch delayed or retried past /end lands here after the timeline is
+  // already supposed to be final - unlike a file upload (see addFile), there
+  // is no post-stand-down use for a NEW timeline entry, so a closed lecture
+  // simply refuses more of them rather than silently reopening its record.
+  if (lecture.ended_at != null) throw Object.assign(new Error('that lecture has already ended'), { status: 409 });
   const list = Array.isArray(events) ? events.slice(0, MAX_EVENTS_PER_POST) : [];
   if (!list.length) return { stored: 0, truncated: !!lecture.truncated };
 
@@ -400,6 +405,10 @@ function appendEvents(db, user, id, events) {
 function recordPoll(db, user, id, poll) {
   const lecture = findLecture(db, user, id);
   if (!lecture) throw Object.assign(new Error('no such lecture'), { status: 404 });
+  // Same reasoning as appendEvents: a tally delivered after stand-down has
+  // no lecture left to attach a consistent ended_at to, so it is refused
+  // rather than quietly added to an archived session's poll history.
+  if (lecture.ended_at != null) throw Object.assign(new Error('that lecture has already ended'), { status: 409 });
   const pollId = String(poll?.pollId || '').slice(0, 100);
   if (!pollId) throw Object.assign(new Error('a poll needs its id'), { status: 400 });
   if (lecture.poll_count >= MAX_POLLS) {
@@ -408,9 +417,16 @@ function recordPoll(db, user, id, poll) {
     if (!already) throw Object.assign(new Error('that lecture already holds as many polls as it can'), { status: 413 });
   }
 
+  // `Number(n) || 0` alone lets a negative (or non-finite) count through
+  // unchanged - only 0/NaN/'' fall back to 0 - so a vote count taken straight
+  // from the request could store and later display as a negative tally.
+  const nonNegInt = (n) => {
+    const v = Math.floor(Number(n));
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  };
   const results = {
     options: Array.isArray(poll?.options) ? poll.options.slice(0, 50).map((o) => String(o).slice(0, 500)) : [],
-    counts: Array.isArray(poll?.counts) ? poll.counts.slice(0, 50).map((n) => Number(n) || 0) : [],
+    counts: Array.isArray(poll?.counts) ? poll.counts.slice(0, 50).map(nonNegInt) : [],
     answers: Array.isArray(poll?.answers) ? poll.answers.slice(0, 500).map((a) => String(a).slice(0, 1000)) : [],
     // Indices into `answers`, not the answers themselves - that is the shape
     // the controller moderates in (see pollResultRows in control.js), and
@@ -446,7 +462,7 @@ function recordPoll(db, user, id, poll) {
       poll?.kind === 'text' ? 'text' : 'choice',
       String(poll?.question || '').slice(0, 1000),
       text,
-      Number(poll?.voters) || 0,
+      nonNegInt(poll?.voters),
       // Clamped the same way appendEvents and endLecture bound their own
       // timestamps: a future endedAt from a controller with a fast clock
       // would otherwise reach startLecture's stale-lecture-close logic
@@ -565,12 +581,18 @@ function removeFile(db, user, id, name, { dataDir } = {}) {
  */
 function usage(db, user) {
   if (user && !user.isAdmin) {
-    const row = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(m.bytes), 0) AS bytes
-        FROM lecture_files lf
-        JOIN media m ON m.id = lf.media_id
-        JOIN lectures l ON l.id = lf.lecture_id
-        LEFT JOIN courses c ON c.id = l.course_id
-       WHERE ${VISIBLE}`).get(user.id, 0);
+    // Counted the same way the global total below is: by distinct media row,
+    // not by lecture_files row. The store is content-addressed, so the same
+    // bytes can be filed under more than one visible lecture_files name (a
+    // photo re-exported, say) - counting rows would inflate a member's usage
+    // past what actually sits on disk.
+    const row = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(bytes), 0) AS bytes FROM media
+       WHERE id IN (
+         SELECT DISTINCT lf.media_id FROM lecture_files lf
+         JOIN lectures l ON l.id = lf.lecture_id
+         LEFT JOIN courses c ON c.id = l.course_id
+        WHERE ${VISIBLE}
+       )`).get(user.id, 0);
     return { files: row.files, bytes: row.bytes };
   }
   const row = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(bytes), 0) AS bytes FROM media

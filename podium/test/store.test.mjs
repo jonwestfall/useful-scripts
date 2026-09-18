@@ -693,6 +693,17 @@ lectures.recordPoll(db, ta, lecture.id, {
 ok('and a lower voter count never wins even with the newest ended_at of all',
   lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p2').voters === 10);
 
+// Counts and voters come straight from the request; `Number(n) || 0` alone
+// lets a negative one through unchanged (only 0/NaN/'' fall back to 0), which
+// would store and later display as a negative tally.
+lectures.recordPoll(db, ta, lecture.id, {
+  pollId: 'p3', kind: 'choice', question: 'Negative input', options: ['a', 'b'], counts: [-5, 3], voters: -2, endedAt: Date.now(),
+});
+const negativePoll = lectures.getLecture(db, owner, lecture.id).pollResults.find((p) => p.pollId === 'p3');
+ok('a negative vote count is clamped to zero rather than stored as sent',
+  negativePoll.counts[0] === 0 && negativePoll.counts[1] === 3);
+ok('and a negative voters total is clamped the same way', negativePoll.voters === 0);
+
 let refusedDelete = '';
 try { lectures.deleteLecture(db, ta, lecture.id); } catch (err) { refusedDelete = err.message; }
 ok('a member who can read a lecture still cannot remove it', /only whoever ran this lecture/.test(refusedDelete));
@@ -712,6 +723,23 @@ ok('and is really gone', !lectures.getLecture(db, admin, glance.id));
 const closeAt = Date.now();
 const closed = lectures.endLecture(db, owner, lecture.id, { at: closeAt });
 ok('one that recorded something is ended, not discarded', !closed.discarded && closed.endedAt === closeAt);
+
+// A batch delayed past /end, or a controller's poll tally arriving after
+// stand-down, has no open lecture left to extend - unlike a file upload,
+// which stays available after the fact for the post-class export.
+let refusedEventsAfterEnd = '';
+try { lectures.appendEvents(db, owner, lecture.id, [{ kind: 'program', title: 'too late' }]); }
+catch (err) { refusedEventsAfterEnd = err.message; }
+ok('a batch of events delivered after the lecture has ended is refused, not silently reopening the timeline',
+  /already ended/.test(refusedEventsAfterEnd));
+let refusedPollAfterEnd = '';
+try {
+  lectures.recordPoll(db, owner, lecture.id, {
+    pollId: 'late-poll', kind: 'choice', options: ['a'], counts: [1], voters: 1, endedAt: Date.now(),
+  });
+} catch (err) { refusedPollAfterEnd = err.message; }
+ok('a poll tally delivered after the lecture has ended is refused the same way',
+  /already ended/.test(refusedPollAfterEnd));
 
 // A caller sending an `at` outside the lecture's own lifetime - a bad clock,
 // or a bogus value - must not be able to record it as still open (a falsy
@@ -966,6 +994,22 @@ ok('but someone who cannot see that lecture at all sees none of its usage',
   lectures.usage(db, ta).files === 0 && lectures.usage(db, ta).bytes === 0);
 ok('an admin passed explicitly still gets the real total, not a scoped one',
   lectures.usage(db, admin).files === 1);
+
+// The store is content-addressed: the same bytes can be filed under a second
+// name in the same lecture (a photo re-uploaded, say). Counted by
+// lecture_files row rather than by the distinct media row underneath, a
+// member's own usage would show those bytes twice - inflated past what is
+// actually on disk, and out of step with the admin-only global total right
+// above, which already counts by media row.
+lectures.addFile(db, owner, recent.id, {
+  name: 'photos/02-this week again.jpg', kind: 'photo',
+  sha256: fresh.sha256, bytes: fresh.bytes, contentType: 'image/jpeg', dataDir,
+});
+ok("a non-admin's usage counts shared bytes once, not once per file that points at them",
+  lectures.usage(db, owner).files === 1 && lectures.usage(db, owner).bytes === fresh.bytes);
+// Cleaned back up so the removeFile tests just below see the single file
+// they expect, rather than the second name added only to prove the count above.
+lectures.removeFile(db, owner, recent.id, 'photos/02-this week again.jpg', { dataDir });
 
 // removeFile is the other half of addFile's upsert: a name a later export no
 // longer produces AT ALL (a photo the keep-switch has since turned off, one
