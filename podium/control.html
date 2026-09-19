@@ -461,7 +461,8 @@
           <div id="music-now" class="music-now">
             <div id="music-title">Nothing queued</div>
             <div id="music-sub" class="hint"></div>
-            <div class="music-bar"><div id="music-elapsed"></div></div>
+            <input id="music-scrub" type="range" min="0" max="0" step="1" value="0" aria-label="Scrub track">
+            <div id="music-elapsed" hidden></div>
             <div class="music-times"><span id="music-time">0:00</span><span id="music-length">--:--</span></div>
           </div>
 

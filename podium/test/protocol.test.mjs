@@ -428,6 +428,20 @@ chk('manual next with pauseQueue enabled still plays', s.music.index === 1 && s.
 applyCommand(s, {op:'music', action:'pauseQueue', value:false});
 chk('pauseQueue can be disabled', s.music.pauseQueue === false);
 
+applyCommand(s, {op:'music', action:'seek', time: 75});
+chk('music seek updates seekTo and seekNonce', s.music.seekTo === 75 && s.music.seekNonce === 1);
+chk('music seek sets playing to true', s.music.playing === true);
+applyCommand(s, {op:'music', action:'pause'});
+chk('music pause pauses playback', s.music.playing === false);
+applyCommand(s, {op:'music', action:'seek', time: 120});
+chk('music seek resumes/restarts playback when paused', s.music.seekTo === 120 && s.music.seekNonce === 2 && s.music.playing === true);
+applyCommand(s, {op:'music', action:'pause'});
+applyCommand(s, {op:'music', action:'seek', time: 30, play: false});
+chk('music seek with play:false does not restart playback', s.music.seekTo === 30 && s.music.seekNonce === 3 && s.music.playing === false);
+
+const emptyMusic = initialState();
+chk('music seek on empty queue returns false', applyCommand(emptyMusic, {op:'music', action:'seek', time: 10}) === false);
+
 applyCommand(s, {op:'stage', item:{type:'trackend', title:'We begin in…', untilQueue:true}});
 chk('trackend normalizes untilQueue flag', s.program.type === 'trackend' && s.program.untilQueue === true);
 applyCommand(s, {op:'stage', item:{type:'trackend', title:'We begin in…'}});

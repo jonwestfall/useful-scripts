@@ -38,7 +38,7 @@ export const BUILD = 23;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.0';
-export const COMMIT = '8037ad0';
+export const COMMIT = 'b595fc4';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -174,7 +174,7 @@ export function initialState() {
     // puts anything on the projector. `fadeMs` is how long the display should
     // take over the next change in `playing`: a quick dip for a pause, three
     // unhurried seconds for the "class is starting" fade.
-    music: { tracks: [], index: 0, playing: false, volume: 0.6, fadeMs: MUSIC_FADE_OUT_MS, playlist: '', pauseQueue: false },
+    music: { tracks: [], index: 0, playing: false, volume: 0.6, fadeMs: MUSIC_FADE_OUT_MS, playlist: '', pauseQueue: false, seekTo: 0, seekNonce: 0 },
     // A name or a logo pinned to one corner for the whole lecture - the thing
     // that should be IN a screen grab, not something you pick and lose the
     // next time you change what is on screen. So it lives beside program and
@@ -632,6 +632,18 @@ function applyMusicCommand(state, cmd) {
     case 'pauseQueue':
       music.pauseQueue = cmd.value !== undefined ? !!cmd.value : !music.pauseQueue;
       return true;
+
+    case 'seek': {
+      if (!music.tracks.length) return false;
+      const time = Math.max(0, Number(cmd.time ?? cmd.value) || 0);
+      music.seekTo = time;
+      music.seekNonce = (music.seekNonce || 0) + 1;
+      if (cmd.play !== false) {
+        music.playing = true;
+        music.fadeMs = MUSIC_PAUSE_MS;
+      }
+      return true;
+    }
 
     case 'shuffle': {
       if (music.tracks.length < 3) return false;

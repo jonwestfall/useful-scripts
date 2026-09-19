@@ -80,7 +80,19 @@ if (!content.includes('export function versionStamp(')) {
 
 fs.writeFileSync(PROTOCOL_PATH, content, 'utf8');
 
+const stamp = `v${newVersion} · build ${newBuild}${commit ? ` · ${commit}` : ''}`;
+const JOIN_PATH = path.resolve(__dirname, '../join.html');
+if (fs.existsSync(JOIN_PATH)) {
+  let joinHtml = fs.readFileSync(JOIN_PATH, 'utf8');
+  joinHtml = joinHtml.replace(
+    /<p id="join-version-stamp" class="version-stamp">.*?<\/p>/,
+    `<p id="join-version-stamp" class="version-stamp">${stamp}</p>`
+  );
+  fs.writeFileSync(JOIN_PATH, joinHtml, 'utf8');
+}
+
 console.log(`Updated protocol.js:`);
 console.log(`  VERSION: ${newVersion}`);
 console.log(`  BUILD:   ${newBuild} ${noBump ? '(unchanged)' : `(bumped from ${currentBuild})`}`);
 console.log(`  COMMIT:  ${commit || '(none)'}`);
+console.log(`  STAMP:   ${stamp}`);

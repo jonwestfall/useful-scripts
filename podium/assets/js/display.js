@@ -672,6 +672,7 @@ let musicFade = null;
 // every render, and a three-second fade out lasts as long as the renders do.
 let musicFadeTo = -1;
 let musicApplied = { src: '', playing: false, target: -1 };
+let musicLastSeek = 0;
 
 const trackDurations = new Map();
 
@@ -825,6 +826,27 @@ function syncMusic() {
       musicFade = null;
       musicFadeTo = -1;
       musicEl.pause();
+    }
+  }
+
+  if ((music.seekNonce || 0) !== musicLastSeek) {
+    musicLastSeek = music.seekNonce || 0;
+    if (music.seekTo !== undefined && Number.isFinite(music.seekTo)) {
+      const targetTime = music.seekTo;
+      try {
+        if (musicEl.readyState >= 1) {
+          musicEl.currentTime = targetTime;
+        } else {
+          musicEl.addEventListener('loadedmetadata', () => {
+            try { musicEl.currentTime = targetTime; } catch {}
+          }, { once: true });
+        }
+      } catch {}
+    }
+    if (music.playing && musicFade && musicFadeTo <= 0.005) {
+      clearInterval(musicFade);
+      musicFade = null;
+      musicFadeTo = -1;
     }
   }
 
@@ -1947,7 +1969,7 @@ async function connect() {
   $('#arm-code').textContent = bus.fingerprint;
   setInterval(broadcast, HEARTBEAT_MS);
   setInterval(() => {
-    if (telemetry().playing) broadcast();
+    if (telemetry().playing || state.music?.playing) broadcast();
   }, TELEMETRY_MS);
   broadcast();
 }

@@ -2978,8 +2978,18 @@ function renderMusic() {
   $('#music-sub').classList.toggle('is-warning', !!now.error);
 
   const pct = now.duration ? Math.min(100, (now.time / now.duration) * 100) : 0;
-  $('#music-elapsed').style.width = `${pct}%`;
-  $('#music-time').textContent = fmtTime(now.time);
+  const elapsed = $('#music-elapsed');
+  if (elapsed) elapsed.style.width = `${pct}%`;
+  const scrub = $('#music-scrub');
+  if (scrub) {
+    const d = now.duration || 0;
+    scrub.max = String(d);
+    scrub.disabled = !d;
+    if (!musicScrubbing) scrub.value = String(Math.min(now.time, d || now.time));
+  }
+  if (!musicScrubbing) {
+    $('#music-time').textContent = fmtTime(now.time);
+  }
   $('#music-length').textContent = now.duration ? fmtTime(now.duration) : '--:--';
 
   // The bottom bar carries it too, because the moment you want the music
@@ -3012,6 +3022,7 @@ function renderMusic() {
 }
 
 let musicSliding = false;
+let musicScrubbing = false;
 
 // --- automated sets -----------------------------------------------------------
 //
@@ -4063,6 +4074,28 @@ $('#music-fade').addEventListener('click', () => send({ op: 'music', action: 'fa
 $('#music-shuffle').addEventListener('click', () => send({ op: 'music', action: 'shuffle' }));
 $('#music-clear').addEventListener('click', () => send({ op: 'music', action: 'clear' }));
 $('#bar-music').addEventListener('click', () => send({ op: 'music', action: 'toggle' }));
+
+const musicScrub = $('#music-scrub');
+if (musicScrub) {
+  musicScrub.addEventListener('pointerdown', () => { musicScrubbing = true; });
+  musicScrub.addEventListener('input', (ev) => {
+    musicScrubbing = true;
+    $('#music-time').textContent = fmtTime(Number(ev.target.value));
+  });
+  musicScrub.addEventListener('change', (ev) => {
+    musicScrubbing = false;
+    const time = Number(ev.target.value);
+    if (state.musicNow) state.musicNow.time = time;
+    send({ op: 'music', action: 'seek', time, play: true });
+  });
+  musicScrub.addEventListener('pointerup', () => {
+    setTimeout(() => { musicScrubbing = false; }, 50);
+  });
+  musicScrub.addEventListener('pointercancel', () => {
+    musicScrubbing = false;
+    renderMusic();
+  });
+}
 // A panel, staged like anything else from the Library - see stage() - so it
 // goes through the usual freeze/cue/take pipeline rather than jumping
 // straight to the screen. Its own number comes from the queue, not from
