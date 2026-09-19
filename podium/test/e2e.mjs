@@ -1486,6 +1486,11 @@ ok('loading tracks shows the track dropdown under the loaded message', await pad
   return row && !row.hidden && sel && sel.options.length > 0;
 }));
 
+ok('pause queue checkbox is present and unchecked by default', await pad.evaluate(() => {
+  const cb = document.querySelector('#music-pause-queue');
+  return cb && !cb.checked;
+}));
+
 await pad.click('#music-autoplay');
 await pad.click('#music-load');
 await screen.waitForFunction(() => {

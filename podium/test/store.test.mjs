@@ -883,7 +883,7 @@ lectures.endLecture(db, owner, beating.id, { at: Date.now() });
 // the room was actually in use.
 const pollOnly = lectures.startLecture(db, owner, { room: 'poll-only-room' });
 db.prepare('UPDATE lectures SET started_at = ? WHERE id = ?').run(Date.now() - 3600000, pollOnly.id);
-const pollOnlyEndedAt = Date.now() - 900000;
+const pollOnlyEndedAt = Date.now() - 1800000;
 lectures.recordPoll(db, owner, pollOnly.id, {
   pollId: 'stale-p1', kind: 'choice', question: 'Any questions?', options: ['a'], counts: [1], voters: 1,
   endedAt: pollOnlyEndedAt,

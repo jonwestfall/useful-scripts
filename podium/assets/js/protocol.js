@@ -169,7 +169,7 @@ export function initialState() {
     // puts anything on the projector. `fadeMs` is how long the display should
     // take over the next change in `playing`: a quick dip for a pause, three
     // unhurried seconds for the "class is starting" fade.
-    music: { tracks: [], index: 0, playing: false, volume: 0.6, fadeMs: MUSIC_FADE_OUT_MS, playlist: '' },
+    music: { tracks: [], index: 0, playing: false, volume: 0.6, fadeMs: MUSIC_FADE_OUT_MS, playlist: '', pauseQueue: false },
     // A name or a logo pinned to one corner for the whole lecture - the thing
     // that should be IN a screen grab, not something you pick and lose the
     // next time you change what is on screen. So it lives beside program and
@@ -527,6 +527,7 @@ function cleanTrack(track) {
  * controller that joins mid-lecture see what is already playing.
  */
 function applyMusicCommand(state, cmd) {
+  if (!state.music) state.music = { tracks: [], index: 0, playing: false, volume: 0.6, fadeMs: MUSIC_FADE_OUT_MS, playlist: '', pauseQueue: false };
   const music = state.music;
   const last = Math.max(0, music.tracks.length - 1);
 
@@ -539,6 +540,7 @@ function applyMusicCommand(state, cmd) {
       music.index = 0;
       music.fadeMs = MUSIC_FADE_IN_MS;
       music.playing = !!cmd.play;
+      if (cmd.pauseQueue !== undefined) music.pauseQueue = !!cmd.pauseQueue;
       return true;
     }
 
@@ -610,9 +612,17 @@ function applyMusicCommand(state, cmd) {
       music.fadeMs = MUSIC_PAUSE_MS;
       // `auto` is the display telling us a track ended by itself. It should
       // not start music that was not already playing.
-      if (!cmd.auto) music.playing = true;
+      if (!cmd.auto) {
+        music.playing = true;
+      } else if (music.pauseQueue) {
+        music.playing = false;
+      }
       return true;
     }
+
+    case 'pauseQueue':
+      music.pauseQueue = cmd.value !== undefined ? !!cmd.value : !music.pauseQueue;
+      return true;
 
     case 'shuffle': {
       if (music.tracks.length < 3) return false;

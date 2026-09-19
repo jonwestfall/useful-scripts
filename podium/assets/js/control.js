@@ -5,7 +5,7 @@
 import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
+import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
   inkDigest, inkDigestsAgree, applyInkAction, BUILD, VERSION, MAX_SET_ENTRIES } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
@@ -32,7 +32,14 @@ let previewRenderer = null;
 let previewKey = null;
 let scrubbing = false;
 
-const send = (cmd) => bus?.send({ t: 'cmd', ...cmd });
+const send = (cmd) => {
+  if (cmd?.op === 'music') {
+    applyCommand(state, cmd);
+    renderMusic();
+    renderMixer();
+  }
+  return bus?.send({ t: 'cmd', ...cmd });
+};
 
 // Decks this controller holds the markdown for. An uploaded deck lives only
 // here and on whichever display asked for it; a deck with a src is fetched
@@ -2803,6 +2810,8 @@ async function loadPlaylists() {
   $('#music-add').hidden = none;
   const autoplayWrap = $('#music-autoplay-wrap');
   if (autoplayWrap) autoplayWrap.hidden = none;
+  const pauseQueueWrap = $('#music-pause-queue-wrap');
+  if (pauseQueueWrap) pauseQueueWrap.hidden = none;
   const trackRow = $('#music-track-row');
   if (trackRow && none) trackRow.hidden = true;
   if (none) $('#music-note').textContent = 'No content/music.json yet — paste a link below, or add that file to keep playlists between lectures.';
@@ -2904,6 +2913,10 @@ function renderMusic() {
   bar.classList.toggle('is-on', music.playing);
 
   if (!musicSliding) $('#music-volume').value = String(music.volume);
+  const pauseQueueBox = $('#music-pause-queue');
+  if (pauseQueueBox && document.activeElement !== pauseQueueBox) {
+    pauseQueueBox.checked = !!music.pauseQueue;
+  }
 
   // The queue is rebuilt only when it changes: it is redrawn from a heartbeat
   // like everything else here.
@@ -3922,7 +3935,8 @@ $('#music-load').addEventListener('click', () => {
   const list = chosenPlaylist();
   if (!list) return;
   const play = !!$('#music-autoplay')?.checked;
-  send({ op: 'music', action: 'load', tracks: list.tracks, name: list.name, play });
+  const pauseQueue = !!$('#music-pause-queue')?.checked;
+  send({ op: 'music', action: 'load', tracks: list.tracks, name: list.name, play, pauseQueue });
   $('#music-note').textContent = play
     ? `Playing “${list.name}” — ${list.tracks.length} track${list.tracks.length === 1 ? '' : 's'}.`
     : `Loaded “${list.name}” — ${list.tracks.length} track${list.tracks.length === 1 ? '' : 's'}.`;
@@ -3982,6 +3996,9 @@ $('#music-countdown').addEventListener('click', () => stage({ type: 'trackend', 
 const sendMusicVolume = throttle((value) => send({ op: 'music', action: 'volume', value }), 120);
 $('#music-volume').addEventListener('input', (ev) => { musicSliding = true; sendMusicVolume(Number(ev.target.value)); });
 $('#music-volume').addEventListener('change', () => { musicSliding = false; });
+$('#music-pause-queue')?.addEventListener('change', (ev) => {
+  send({ op: 'music', action: 'pauseQueue', value: ev.target.checked });
+});
 
 $('#photo-export').addEventListener('click', exportSession);
 $('#photo-keep').addEventListener('change', (ev) => setKeepPhotos(ev.target.checked));

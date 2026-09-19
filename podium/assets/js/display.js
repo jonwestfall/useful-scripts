@@ -789,7 +789,10 @@ function syncMusic() {
 // applyCommand like anything else and is broadcast: every controller's queue
 // moves on with it.
 musicEl.addEventListener('ended', () => {
-  if (applyCommand(state, { op: 'music', action: 'next', auto: true })) commit();
+  if (applyCommand(state, { op: 'music', action: 'next', auto: true })) {
+    if (!state.music.playing) musicEl.currentTime = 0;
+    commit();
+  }
 });
 
 // Ducking depends on what content is doing, which nothing commits state for -

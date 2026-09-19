@@ -414,6 +414,20 @@ chk('music load defaults to not playing', s.music.tracks.length === 1 && s.music
 applyCommand(s, {op:'music', action:'load', tracks:[{src:'content/audio/test.mp3', title:'Test Track'}], name:'Test', play:true});
 chk('music load with play: true auto-plays', s.music.playing === true);
 
+chk('music pauseQueue defaults to false', initialState().music.pauseQueue === false);
+applyCommand(s, {op:'music', action:'load', tracks:[{src:'content/audio/t1.mp3', title:'Track 1'}, {src:'content/audio/t2.mp3', title:'Track 2'}], play:true});
+chk('queue begins playing first track', s.music.index === 0 && s.music.playing === true);
+applyCommand(s, {op:'music', action:'next', auto:true});
+chk('default behavior auto-plays next track in queue', s.music.index === 1 && s.music.playing === true);
+applyCommand(s, {op:'music', action:'pauseQueue', value:true});
+chk('pauseQueue can be enabled', s.music.pauseQueue === true);
+applyCommand(s, {op:'music', action:'next', auto:true});
+chk('with pauseQueue enabled, queue pauses after current track finishes', s.music.index === 0 && s.music.playing === false);
+applyCommand(s, {op:'music', action:'next'});
+chk('manual next with pauseQueue enabled still plays', s.music.index === 1 && s.music.playing === true);
+applyCommand(s, {op:'music', action:'pauseQueue', value:false});
+chk('pauseQueue can be disabled', s.music.pauseQueue === false);
+
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);
