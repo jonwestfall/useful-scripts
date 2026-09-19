@@ -4166,6 +4166,7 @@ await pad.waitForFunction(() => document.querySelector('#display-state')?.textCo
 
 await pad.click('.tab[data-tab="music"]');
 ok('the button is disabled with nothing queued', await pad.evaluate(() => document.querySelector('#music-countdown').disabled));
+await pad.check('#music-autoplay');
 await pad.click('#music-load');
 await screen.waitForFunction(() => {
   const el = document.querySelector('audio#music');
