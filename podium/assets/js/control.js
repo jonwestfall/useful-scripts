@@ -831,7 +831,7 @@ function renderSlides() {
   const total = deck?.count || item.slideCount || 1;
   const index = Math.min(total - 1, Math.max(0, item.slide || 0));
   const step = item.step || 0;
-  const fragCount = (item.fragments && item.fragments[index]) || 0;
+  const fragCount = (item.fragments && item.fragments[index]) || (deck?.fragments && deck.fragments[index]) || 0;
   // A slide that had to be shrunk to fit says so, rather than leaving you to
   // wonder why the type on the projector is not the size you authored.
   const fit = deck?.fits?.[index];
@@ -856,11 +856,18 @@ function renderSlides() {
   }
 
   // "Now" mirrors exactly what the projector shows, build step included.
-  // "Next" is always shown fully built - you are looking ahead to what is
-  // coming, not rehearsing its reveal.
   nowMirror.update(item);
-  if (index + 1 < total) {
-    nextMirror.update({ ...item, slide: index + 1, step: (item.fragments && item.fragments[index + 1]) || 0 });
+
+  // "Next" previews the upcoming step: if the current slide has build steps
+  // remaining, it shows the next build fragment on this slide so the presenter
+  // knows what is about to appear. Once all fragments on the slide have been
+  // revealed (or on slides with no builds), it previews the upcoming slide.
+  if (step < fragCount) {
+    nextMirror.update({ ...item, slide: index, step: step + 1 });
+    const title = deck?.titles?.[index] ? `${index + 1}. ${deck.titles[index]}` : `Slide ${index + 1}`;
+    $('#deck-next-title').textContent = `${title} · build ${step + 1}/${fragCount}`;
+  } else if (index + 1 < total) {
+    nextMirror.update({ ...item, slide: index + 1, step: (item.fragments && item.fragments[index + 1]) || (deck?.fragments && deck.fragments[index + 1]) || 0 });
     $('#deck-next-title').textContent = deck?.titles?.[index + 1] ? `${index + 2}. ${deck.titles[index + 1]}` : `Slide ${index + 2}`;
   } else {
     nextMirror.update(null);

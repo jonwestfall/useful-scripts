@@ -43,6 +43,55 @@ export const FRAGMENT_CSS = `
   .podium-fragment.is-shown { opacity: 1; }
 `;
 
+export const MATH_CSS = `
+  /* KaTeX math wrapping for Marp slides */
+  div.marpit > svg > foreignObject > section .katex,
+  section .katex {
+    white-space: normal;
+  }
+  div.marpit > svg > foreignObject > section .katex > .katex-html,
+  section .katex > .katex-html {
+    white-space: normal;
+  }
+  div.marpit > svg > foreignObject > section .katex .base,
+  section .katex .base {
+    display: inline-block;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  div.marpit > svg > foreignObject > section .katex .text,
+  section .katex .text {
+    overflow-wrap: break-word;
+  }
+  div.marpit > svg > foreignObject > section .katex-display,
+  section .katex-display {
+    display: block;
+    margin: 0.8em 0;
+    max-width: 100%;
+    text-align: center;
+  }
+  div.marpit > svg > foreignObject > section .katex-display > .katex,
+  section .katex-display > .katex {
+    display: block;
+    text-align: center;
+    white-space: normal !important;
+  }
+  div.marpit > svg > foreignObject > section .katex-display > .katex > .katex-html,
+  section .katex-display > .katex > .katex-html {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    align-items: baseline !important;
+    max-width: 100% !important;
+    white-space: normal !important;
+    row-gap: 0.35em;
+  }
+  div.marpit > svg > foreignObject > section .katex-display.fleqn > .katex > .katex-html,
+  section .katex-display.fleqn > .katex > .katex-html {
+    justify-content: flex-start !important;
+  }
+`;
+
 async function loadEngine() {
   const { Marp, browser } = await import(/* @vite-ignore */ MARP_URL);
 
@@ -215,13 +264,12 @@ function overflowOf(section) {
   const rect = section.getBoundingClientRect();
   const drawn = section.offsetHeight;
   if (!drawn || !rect.height) return null;
-  // The slide is inside an <svg>, so what is on screen is some scale of the
-  // layout pixels every other number here is in. Measure it rather than
-  // assuming it: in a thumbnail the same slide is a twentieth of the size.
   const scale = rect.height / drawn;
 
   let top = Infinity;
   let bottom = -Infinity;
+  let left = Infinity;
+  let right = -Infinity;
   for (const child of section.children) {
     const style = getComputedStyle(child);
     // Footers, headers and the page number are placed against the slide edge
@@ -231,6 +279,8 @@ function overflowOf(section) {
     if (!box.width && !box.height) continue;
     top = Math.min(top, (box.top - rect.top) / scale);
     bottom = Math.max(bottom, (box.bottom - rect.top) / scale);
+    left = Math.min(left, (box.left - rect.left) / scale);
+    right = Math.max(right, (box.right - rect.left) / scale);
   }
 
   let need = section.scrollHeight;
@@ -243,7 +293,21 @@ function overflowOf(section) {
     // the extent of the children misses the last one's bottom margin.
     need = Math.max(need, (bottom - top) + pad);
   }
-  return need - section.clientHeight;
+  const overV = need - section.clientHeight;
+
+  let overH = 0;
+  if (Number.isFinite(left) && Number.isFinite(right) && section.clientWidth > 0) {
+    const style = getComputedStyle(section);
+    const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+    const needW = Math.max(section.scrollWidth, (right - left) + padX);
+    if (needW > section.clientWidth) {
+      // Slide viewBox scales uniformly (both w and h by 1/scale).
+      // Translate horizontal overflow into equivalent vertical overflow:
+      overH = (needW - section.clientWidth) * (section.clientHeight / section.clientWidth);
+    }
+  }
+
+  return Math.max(overV, overH);
 }
 
 /** Largest scale at which this slide's content fits its box. */
@@ -425,10 +489,18 @@ export async function render(source, id) {
     const box = (svg.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
     return box.length === 4 && box[2] > 0 && box[3] > 0 ? box[2] / box[3] : 16 / 9;
   });
+  // Strip single-line auto-scaling attributes from math blocks so equations
+  // wrap naturally rather than attempting to scale on a single line.
+  root.querySelectorAll('.katex-display[is="marp-span"], .katex-display[data-auto-scaling]').forEach((node) => {
+    node.removeAttribute('is');
+    node.removeAttribute('data-auto-scaling');
+  });
+
   const finalHtml = root.outerHTML;
+  const combinedCss = `${css}\n${MATH_CSS}`;
 
   // Measured here, once, and carried with the deck: see measureFits.
-  const fits = await measureFits(finalHtml, css);
+  const fits = await measureFits(finalHtml, combinedCss);
 
   // A deck naming a theme that was never installed falls back to the default
   // silently, which is a maddening thing to discover from the back of a lecture
@@ -441,7 +513,7 @@ export async function render(source, id) {
   const result = {
     id: key,
     html: finalHtml,
-    css,
+    css: combinedCss,
     theme: wanted && marp.themeSet.has(wanted) ? wanted : 'default',
     themeWarning,
     // Marpit hands back one array of comments per slide; directive comments

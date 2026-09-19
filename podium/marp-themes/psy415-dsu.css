@@ -389,3 +389,50 @@ section.compact li {
 section.compact table {
   font-size: 21px;
 }
+
+/* ---------- Math & Equations ---------- */
+
+.katex {
+  white-space: normal;
+}
+
+.katex > .katex-html {
+  white-space: normal;
+}
+
+.katex .base {
+  display: inline-block;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.katex .text {
+  overflow-wrap: break-word;
+}
+
+.katex-display {
+  display: block;
+  margin: 0.8em 0;
+  max-width: 100%;
+  text-align: center;
+}
+
+.katex-display > .katex {
+  display: block;
+  text-align: center;
+  white-space: normal !important;
+}
+
+.katex-display > .katex > .katex-html {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: center !important;
+  align-items: baseline !important;
+  max-width: 100% !important;
+  white-space: normal !important;
+  row-gap: 0.35em;
+}
+
+.katex-display.fleqn > .katex > .katex-html {
+  justify-content: flex-start !important;
+}
