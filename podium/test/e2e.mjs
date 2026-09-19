@@ -1764,6 +1764,7 @@ await pad.click('.tab[data-tab="library"]');
 await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
 await screen.waitForFunction(() => !document.querySelector('.layer[data-role="program"] audio'), null, { timeout: 5000 });
 await pad.click('.tab[data-tab="music"]');
+await pad.check('#music-autoplay');
 await pad.click('#music-load');
 await screen.waitForFunction(() => { const el = document.querySelector('audio#music'); return el && !el.paused && el.currentTime > 0; }, null, { timeout: 15000 });
 await pad.waitForTimeout(1500);   // past the fade-in, onto a settled level
@@ -4165,6 +4166,7 @@ await pad.waitForFunction(() => document.querySelector('#display-state')?.textCo
 
 await pad.click('.tab[data-tab="music"]');
 ok('the button is disabled with nothing queued', await pad.evaluate(() => document.querySelector('#music-countdown').disabled));
+await pad.check('#music-autoplay');
 await pad.click('#music-load');
 await screen.waitForFunction(() => {
   const el = document.querySelector('audio#music');
