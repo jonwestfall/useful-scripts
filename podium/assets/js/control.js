@@ -2803,11 +2803,32 @@ async function loadPlaylists() {
   $('#music-add').hidden = none;
   const autoplayWrap = $('#music-autoplay-wrap');
   if (autoplayWrap) autoplayWrap.hidden = none;
+  const trackRow = $('#music-track-row');
+  if (trackRow && none) trackRow.hidden = true;
   if (none) $('#music-note').textContent = 'No content/music.json yet — paste a link below, or add that file to keep playlists between lectures.';
 }
 
 function chosenPlaylist() {
   return playlists[Number($('#music-playlist').value) || 0] || null;
+}
+
+let loadedTracks = [];
+
+function updateMusicTrackSelect(tracks) {
+  loadedTracks = Array.isArray(tracks) ? tracks : [];
+  const row = $('#music-track-row');
+  const select = $('#music-track-select');
+  if (!row || !select) return;
+  if (!loadedTracks.length) {
+    row.hidden = true;
+    select.replaceChildren();
+    return;
+  }
+  select.replaceChildren(...loadedTracks.map((t, i) => el('option', { value: String(i) },
+    `${i + 1}. ${t.title || 'Track'}${t.artist ? ` — ${t.artist}` : ''}`
+  )));
+  select.value = '0';
+  row.hidden = false;
 }
 
 let musicQuickDrawn = '';
@@ -3905,12 +3926,33 @@ $('#music-load').addEventListener('click', () => {
   $('#music-note').textContent = play
     ? `Playing “${list.name}” — ${list.tracks.length} track${list.tracks.length === 1 ? '' : 's'}.`
     : `Loaded “${list.name}” — ${list.tracks.length} track${list.tracks.length === 1 ? '' : 's'}.`;
+  updateMusicTrackSelect(list.tracks);
 });
 $('#music-add').addEventListener('click', () => {
   const list = chosenPlaylist();
   if (!list) return;
   send({ op: 'music', action: 'add', tracks: list.tracks });
   $('#music-note').textContent = `Added “${list.name}” to the end of the queue.`;
+  updateMusicTrackSelect(list.tracks);
+});
+$('#music-track-play').addEventListener('click', () => {
+  const idx = Number($('#music-track-select').value) || 0;
+  const track = loadedTracks[idx];
+  if (!track) return;
+  const queueIdx = state.music?.tracks?.findIndex((t) => t.src === track.src);
+  if (queueIdx !== -1 && queueIdx !== undefined) {
+    send({ op: 'music', action: 'select', index: queueIdx, play: true });
+  } else {
+    send({ op: 'music', action: 'playnow', track });
+  }
+  $('#music-note').textContent = `Playing “${track.title || 'Track'}”.`;
+});
+$('#music-track-add').addEventListener('click', () => {
+  const idx = Number($('#music-track-select').value) || 0;
+  const track = loadedTracks[idx];
+  if (!track) return;
+  send({ op: 'music', action: 'add', tracks: [{ src: track.src, title: track.title, artist: track.artist }] });
+  $('#music-note').textContent = `Added “${track.title || 'Track'}” to the end of the queue.`;
 });
 $('#music-url-form').addEventListener('submit', (ev) => {
   ev.preventDefault();

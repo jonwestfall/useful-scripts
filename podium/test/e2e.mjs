@@ -1480,6 +1480,12 @@ await screen.waitForFunction(() => {
   .then(() => ok('loading a playlist by default leaves it paused on the display', true))
   .catch(() => ok('loading a playlist by default leaves it paused on the display', false));
 
+ok('loading tracks shows the track dropdown under the loaded message', await pad.evaluate(() => {
+  const row = document.querySelector('#music-track-row');
+  const sel = document.querySelector('#music-track-select');
+  return row && !row.hidden && sel && sel.options.length > 0;
+}));
+
 await pad.click('#music-autoplay');
 await pad.click('#music-load');
 await screen.waitForFunction(() => {
