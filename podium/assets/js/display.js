@@ -750,6 +750,12 @@ function syncMusic() {
   if (changed) {
     musicEl.src = src;
     musicEl.volume = 0;
+    if (!music.playing) {
+      clearInterval(musicFade);
+      musicFade = null;
+      musicFadeTo = -1;
+      musicEl.pause();
+    }
   }
 
   const target = musicTarget();

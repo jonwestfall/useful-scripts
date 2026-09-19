@@ -856,8 +856,9 @@ you play never has to live in the repository:
 ```
 
 Plain audio URLs need no CORS headers, so a private server works as-is over https.
-**Load** replaces the queue and starts playing, **Add to queue** appends a whole
-playlist, and pasting a link queues one track for this session only.
+**Load** replaces the queue (with an **Auto-play** checkbox to start playing
+immediately if checked), **Add to queue** appends a whole playlist, and
+pasting a link queues one track for this session only.
 
 **Or reuse what is already in the lecture.** Audio does not have to be one thing or
 the other. An audio item from your Library or lecture plan — the kind that shows a

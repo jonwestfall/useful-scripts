@@ -1475,10 +1475,19 @@ await pad.click('.tab[data-tab="music"]');
 await pad.click('#music-load');
 await screen.waitForFunction(() => {
   const el = document.querySelector('audio#music');
+  return el && el.paused && (el.currentSrc || '').includes('waiting-music');
+}, null, { timeout: 15000 })
+  .then(() => ok('loading a playlist by default leaves it paused on the display', true))
+  .catch(() => ok('loading a playlist by default leaves it paused on the display', false));
+
+await pad.click('#music-autoplay');
+await pad.click('#music-load');
+await screen.waitForFunction(() => {
+  const el = document.querySelector('audio#music');
   return el && !el.paused && el.currentTime > 0;
 }, null, { timeout: 15000 })
-  .then(() => ok('loading a playlist plays it on the display', true))
-  .catch(() => ok('loading a playlist plays it on the display', false));
+  .then(() => ok('loading with auto-play checked plays it on the display', true))
+  .catch(() => ok('loading with auto-play checked plays it on the display', false));
 
 ok('and the projector shows nothing at all for it', await screen.evaluate(() => {
   const el = document.querySelector('audio#music');

@@ -409,6 +409,11 @@ applyCommand(s, {op:'stage', item:{
 }});
 chk('an explicit showUrl:false is honoured, not overridden by the default', s.program.showUrl === false);
 
+applyCommand(s, {op:'music', action:'load', tracks:[{src:'content/audio/test.mp3', title:'Test Track'}], name:'Test'});
+chk('music load defaults to not playing', s.music.tracks.length === 1 && s.music.playing === false);
+applyCommand(s, {op:'music', action:'load', tracks:[{src:'content/audio/test.mp3', title:'Test Track'}], name:'Test', play:true});
+chk('music load with play: true auto-plays', s.music.playing === true);
+
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

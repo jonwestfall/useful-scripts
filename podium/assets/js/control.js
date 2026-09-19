@@ -2801,6 +2801,8 @@ async function loadPlaylists() {
   picker.hidden = none;
   $('#music-load').hidden = none;
   $('#music-add').hidden = none;
+  const autoplayWrap = $('#music-autoplay-wrap');
+  if (autoplayWrap) autoplayWrap.hidden = none;
   if (none) $('#music-note').textContent = 'No content/music.json yet — paste a link below, or add that file to keep playlists between lectures.';
 }
 
@@ -3898,8 +3900,11 @@ $('#cam-shot').addEventListener('click', takeCameraPhoto);
 $('#music-load').addEventListener('click', () => {
   const list = chosenPlaylist();
   if (!list) return;
-  send({ op: 'music', action: 'load', tracks: list.tracks, name: list.name, play: true });
-  $('#music-note').textContent = `Playing “${list.name}” — ${list.tracks.length} track${list.tracks.length === 1 ? '' : 's'}.`;
+  const play = !!$('#music-autoplay')?.checked;
+  send({ op: 'music', action: 'load', tracks: list.tracks, name: list.name, play });
+  $('#music-note').textContent = play
+    ? `Playing “${list.name}” — ${list.tracks.length} track${list.tracks.length === 1 ? '' : 's'}.`
+    : `Loaded “${list.name}” — ${list.tracks.length} track${list.tracks.length === 1 ? '' : 's'}.`;
 });
 $('#music-add').addEventListener('click', () => {
   const list = chosenPlaylist();
