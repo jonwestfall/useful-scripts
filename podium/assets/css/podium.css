@@ -218,6 +218,7 @@ body.display.is-frozen #stage::after {
 /* Above the rest: the shortcut card answers "how do I get out of this?", which
    is asked with something else already on screen. */
 #keys { z-index: 24; }
+#modal-countdown { z-index: 25; }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
   padding: 28px; max-width: 620px; width: 100%;
@@ -369,6 +370,8 @@ body.control.is-frozen { background: #171006; }
 .topbar .brand { font-weight: 700; color: var(--ink); letter-spacing: .04em; text-decoration: none; }
 .topbar .brand:hover { text-decoration: underline; }
 .topbar .spacer { flex: 1; }
+.version-tag { font-size: 11px; color: var(--dim); opacity: 0.75; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.version-stamp { font-size: 11px; color: var(--dim); opacity: 0.7; text-align: center; margin: 20px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 #status::before { content: '●'; margin-right: 6px; color: var(--dim); }
 #status[data-status='online']::before { color: var(--ok); }
 #status[data-status='offline']::before, #status[data-status='connecting']::before { color: var(--cue); }

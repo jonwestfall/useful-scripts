@@ -19,7 +19,7 @@ import {
 } from './store.js';
 import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle } from './deck.js';
-import { BUILD, VERSION, MAX_TIMERS } from './protocol.js';
+import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS } from './protocol.js';
 import { mountSessionBadge, serverInfo } from './server.js';
 
 mountSessionBadge($('#session-badge'));
@@ -714,7 +714,9 @@ function renderAll() {
 }
 
 renderTypePicker();
-$('#plan-build').textContent = `Podium ${VERSION} · build ${BUILD}`;
+$('#plan-build').textContent = `Podium ${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
+const planTag = $('#plan-version-tag');
+if (planTag) planTag.textContent = versionStamp();
 servedBuild().then((served) => {
   if (served === null || served === BUILD) return;
   $('#plan-build').textContent = `Podium ${VERSION} · build ${BUILD}, but the server has ${served} — this page came from a cache. Reload it.`;

@@ -670,9 +670,18 @@ function renderTrackEnd(item, opts) {
     const now = opts.getMusicNow?.() || null;
     // Nothing queued, or a track just switched and its metadata has not
     // loaded yet: say so rather than counting down from a wrong number.
-    const remainingMs = now?.hasTrack && Number.isFinite(now.duration) && now.duration > 0
-      ? Math.max(0, (now.duration - now.time) * 1000)
-      : NaN;
+    let remainingMs = NaN;
+    if (now?.hasTrack) {
+      if (item.untilQueue) {
+        if (Number.isFinite(now.queueRemaining) && now.queueRemaining >= 0) {
+          remainingMs = now.queueRemaining * 1000;
+        } else if (Number.isFinite(now.duration) && now.duration > 0) {
+          remainingMs = Math.max(0, (now.duration - now.time) * 1000);
+        }
+      } else if (Number.isFinite(now.duration) && now.duration > 0) {
+        remainingMs = Math.max(0, (now.duration - now.time) * 1000);
+      }
+    }
     value.textContent = Number.isFinite(remainingMs) ? fmtTime(Math.ceil(remainingMs / 1000)) : '--:--';
     node.classList.toggle('is-done', remainingMs <= 0);
     node.classList.toggle('is-urgent', remainingMs > 0 && remainingMs <= 30000);

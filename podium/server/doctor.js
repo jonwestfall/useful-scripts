@@ -279,9 +279,10 @@ function releaseIn(file) {
     return {
       build: Number(source.match(/BUILD\s*=\s*(\d+)/)?.[1] ?? NaN) || null,
       version: source.match(/VERSION\s*=\s*['"]([^'"]+)['"]/)?.[1] || null,
+      commit: source.match(/COMMIT\s*=\s*['"]([^'"]+)['"]/)?.[1] || null,
     };
   } catch {
-    return { build: null, version: null };
+    return { build: null, version: null, commit: null };
   }
 }
 

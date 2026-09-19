@@ -38,6 +38,11 @@ export const BUILD = 23;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.0';
+export const COMMIT = '8037ad0';
+
+export function versionStamp() {
+  return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
+}
 
 export const BLACK = { type: 'black', title: 'Black' };
 
@@ -278,6 +283,10 @@ function normalizeItem(item) {
     // nothing else about a poll's rendering depends on which controller is
     // looking at it right now.
     copy.showUrl = copy.showUrl !== false;
+  }
+  if (copy.type === 'trackend') {
+    copy.untilQueue = !!copy.untilQueue;
+    copy.title = String(copy.title || 'We begin in…').slice(0, 120);
   }
   return copy;
 }

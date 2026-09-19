@@ -13,6 +13,10 @@
 // configurable base rather than a relative one.)
 
 const $ = (sel) => document.querySelector(sel);
+import { versionStamp } from './protocol.js';
+
+const stamp = $('#join-version-stamp');
+if (stamp) stamp.textContent = versionStamp();
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const VOTER_KEY = 'podium.voter.v1';

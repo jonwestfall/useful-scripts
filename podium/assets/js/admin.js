@@ -7,8 +7,11 @@
 import { $, el } from './util.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { createZip } from './zip.js';
+import { versionStamp } from './protocol.js';
 
 mountSessionBadge($('#session-badge'));
+const stampEl = $('#admin-version-stamp');
+if (stampEl) stampEl.textContent = versionStamp();
 
 let items = [];
 let courses = [];

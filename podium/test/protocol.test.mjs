@@ -1,7 +1,7 @@
 // Run with:  node podium/test/protocol.test.mjs
 // Pure state-machine tests - no DOM, no network.
 import { initialState, applyCommand, timerRemaining, timerById, inkSurfaceKey,
-  inkDigest, inkDigestsAgree, applyInkAction, MAX_TIMERS } from '../assets/js/protocol.js';
+  inkDigest, inkDigestsAgree, applyInkAction, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp } from '../assets/js/protocol.js';
 const s = initialState();
 let ok = true;
 const chk = (label, cond) => { if (!cond) { ok = false; console.log('FAIL', label); } else console.log('ok  ', label); };
@@ -427,6 +427,16 @@ applyCommand(s, {op:'music', action:'next'});
 chk('manual next with pauseQueue enabled still plays', s.music.index === 1 && s.music.playing === true);
 applyCommand(s, {op:'music', action:'pauseQueue', value:false});
 chk('pauseQueue can be disabled', s.music.pauseQueue === false);
+
+applyCommand(s, {op:'stage', item:{type:'trackend', title:'We begin in…', untilQueue:true}});
+chk('trackend normalizes untilQueue flag', s.program.type === 'trackend' && s.program.untilQueue === true);
+applyCommand(s, {op:'stage', item:{type:'trackend', title:'We begin in…'}});
+chk('trackend defaults untilQueue to false', s.program.type === 'trackend' && s.program.untilQueue === false);
+
+chk('BUILD is a number', typeof BUILD === 'number' && BUILD > 0);
+chk('VERSION is a string', typeof VERSION === 'string' && VERSION.length > 0);
+chk('COMMIT is a string', typeof COMMIT === 'string' && COMMIT.length > 0);
+chk('versionStamp formats expected string', versionStamp().includes(`v${VERSION} · build ${BUILD}`));
 
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 console.log(ok ? '\nALL PASS' : '\nFAILURES');

@@ -105,7 +105,7 @@ const AUTH_OPEN_PATHS = new Set(['/join.html', '/assets/js/join.js', '/login.htm
  * part of). The number is on every page already; it is not a secret.
  */
 const SERVED = (() => {
-  if (!STATIC) return { build: null, version: null };
+  if (!STATIC) return { build: null, version: null, commit: null };
   try {
     const source = fs.readFileSync(path.join(STATIC, 'assets', 'js', 'protocol.js'), 'utf8');
     return {
@@ -113,9 +113,10 @@ const SERVED = (() => {
       // The release, for anybody asking what this box runs rather than
       // chasing a stale cache - the question the build number cannot answer.
       version: source.match(/VERSION\s*=\s*['"]([^'"]+)['"]/)?.[1] || null,
+      commit: source.match(/COMMIT\s*=\s*['"]([^'"]+)['"]/)?.[1] || null,
     };
   } catch {
-    return { build: null, version: null };
+    return { build: null, version: null, commit: null };
   }
 })();
 

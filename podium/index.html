@@ -26,8 +26,11 @@
     </div>
     <script type="module">
       import { serverInfo } from './assets/js/server.js';
+      import { versionStamp } from './assets/js/protocol.js';
       const info = await serverInfo();
       if (info.features.includes('library')) document.getElementById('admin-link').hidden = false;
+      const stamp = document.getElementById('index-version-stamp');
+      if (stamp) stamp.textContent = versionStamp();
     </script>
     <p class="hint" style="margin-top:20px">
       <b>Display</b> on the classroom PC — bookmark it. <b>Controller</b> on the iPad: open it and use
@@ -35,6 +38,7 @@
       <b>Planning</b> is the office page: build a lecture's running order, timers and media,
       save it as a plan file, and load that on the iPad before class.
     </p>
+    <p id="index-version-stamp" class="version-stamp"></p>
   </div>
 </div>
 </body>

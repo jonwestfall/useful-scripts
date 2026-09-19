@@ -6,7 +6,7 @@ import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, 
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
-  inkDigest, inkDigestsAgree, applyInkAction, BUILD, VERSION, MAX_SET_ENTRIES } from './protocol.js';
+  inkDigest, inkDigestsAgree, applyInkAction, BUILD, VERSION, COMMIT, versionStamp, MAX_SET_ENTRIES } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
@@ -623,12 +623,77 @@ async function pick(item, where = 'auto') {
   }
 }
 
+const trackDurations = new Map();
+
+function probeTrackDuration(src) {
+  if (!src || trackDurations.has(src)) return;
+  try {
+    const fullUrl = new URL(src, location.href).href;
+    if (trackDurations.has(fullUrl)) {
+      trackDurations.set(src, trackDurations.get(fullUrl));
+      return;
+    }
+    const a = new Audio();
+    a.preload = 'metadata';
+    a.src = fullUrl;
+    const onDone = (dur) => {
+      trackDurations.set(src, dur);
+      trackDurations.set(fullUrl, dur);
+      a.removeEventListener('loadedmetadata', onLoaded);
+      a.removeEventListener('error', onError);
+    };
+    const onLoaded = () => {
+      const d = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
+      onDone(d);
+    };
+    const onError = () => {
+      onDone(0);
+    };
+    a.addEventListener('loadedmetadata', onLoaded);
+    a.addEventListener('error', onError);
+    setTimeout(() => {
+      if (!trackDurations.has(src)) onDone(0);
+    }, 4000);
+  } catch {
+    trackDurations.set(src, 0);
+  }
+}
+
+function getQueueRemainingControl() {
+  const music = state.music;
+  if (!music?.tracks?.length) return 0;
+  const idx = Math.max(0, Math.min(music.index || 0, music.tracks.length - 1));
+  const currentTrack = music.tracks[idx];
+  const currentDur = (Number.isFinite(state.musicNow?.duration) && state.musicNow.duration > 0 ? state.musicNow.duration : null)
+    ?? trackDurations.get(currentTrack?.src)
+    ?? (typeof currentTrack?.duration === 'number' && Number.isFinite(currentTrack.duration) ? currentTrack.duration : null);
+  if (currentDur == null) return null;
+  const currentTime = state.musicNow?.time || 0;
+  let remaining = Math.max(0, currentDur - currentTime);
+  for (let i = idx + 1; i < music.tracks.length; i++) {
+    const t = music.tracks[i];
+    const d = (typeof t?.duration === 'number' && Number.isFinite(t.duration) ? t.duration : null)
+      ?? (trackDurations.has(t?.src) ? trackDurations.get(t?.src) : null);
+    if (d == null) return null;
+    remaining += d;
+  }
+  return remaining;
+}
+
 // What a track-countdown item's renderer reads for a live number: the
 // controller has no <audio> of its own, so this is state.musicNow (the
 // display's own telemetry, broadcast every heartbeat) rather than anything
 // measured locally - a preview mirror, same as everything else here.
 function getMusicNowPreview() {
-  return { hasTrack: !!state.music?.tracks?.length, time: state.musicNow?.time || 0, duration: state.musicNow?.duration || 0 };
+  const queueRem = Number.isFinite(state.musicNow?.queueRemaining)
+    ? state.musicNow.queueRemaining
+    : getQueueRemainingControl();
+  return {
+    hasTrack: !!state.music?.tracks?.length,
+    time: state.musicNow?.time || 0,
+    duration: state.musicNow?.duration || 0,
+    queueRemaining: queueRem,
+  };
 }
 
 // --- preview pane -----------------------------------------------------------
@@ -2888,6 +2953,11 @@ function renderMusicQuick() {
 function renderMusic() {
   renderMusicQuick();
   const music = state.music || { tracks: [], index: 0, playing: false, volume: 0.6 };
+  if (Array.isArray(music.tracks)) {
+    for (const t of music.tracks) {
+      if (t?.src) probeTrackDuration(t.src);
+    }
+  }
   const track = music.tracks[music.index] || null;
   const now = state.musicNow || { time: 0, duration: 0, ducked: false };
 
@@ -3997,7 +4067,107 @@ $('#bar-music').addEventListener('click', () => send({ op: 'music', action: 'tog
 // goes through the usual freeze/cue/take pipeline rather than jumping
 // straight to the screen. Its own number comes from the queue, not from
 // anything this click needs to know.
-$('#music-countdown').addEventListener('click', () => stage({ type: 'trackend', title: 'We begin in…' }));
+const COUNTDOWN_TEXT_KEY = 'podium.countdownText';
+const DEFAULT_COUNTDOWN_TEXT = 'We begin in…';
+
+function getCountdownText() {
+  try {
+    return localStorage.getItem(COUNTDOWN_TEXT_KEY) || DEFAULT_COUNTDOWN_TEXT;
+  } catch {
+    return DEFAULT_COUNTDOWN_TEXT;
+  }
+}
+
+function setCountdownText(val) {
+  const text = (val || '').trim() || DEFAULT_COUNTDOWN_TEXT;
+  try {
+    localStorage.setItem(COUNTDOWN_TEXT_KEY, text);
+  } catch {}
+  updateCountdownButton();
+  return text;
+}
+
+function updateCountdownButton() {
+  const btn = $('#music-countdown');
+  if (btn) btn.textContent = `⏳ Show “${getCountdownText()}” on screen`;
+}
+
+function openCountdownModal() {
+  const modal = $('#modal-countdown');
+  const input = $('#input-countdown-text');
+  if (!modal || !input) return;
+  input.value = getCountdownText();
+  modal.hidden = false;
+  input.focus();
+  input.select();
+}
+
+function closeCountdownModal() {
+  const modal = $('#modal-countdown');
+  if (modal) modal.hidden = true;
+}
+
+$('#music-edit-countdown')?.addEventListener('click', openCountdownModal);
+$('#modal-countdown-cancel')?.addEventListener('click', closeCountdownModal);
+
+$('#modal-countdown')?.addEventListener('click', (ev) => {
+  if (ev.target === $('#modal-countdown')) {
+    closeCountdownModal();
+  }
+});
+
+$('#form-countdown-text')?.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const input = $('#input-countdown-text');
+  setCountdownText(input?.value);
+  closeCountdownModal();
+});
+
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') {
+    const modal = $('#modal-countdown');
+    if (modal && !modal.hidden) {
+      closeCountdownModal();
+    }
+  }
+});
+
+const COUNTDOWN_QUEUE_KEY = 'podium.countdownQueue';
+
+function isCountdownQueue() {
+  try {
+    return localStorage.getItem(COUNTDOWN_QUEUE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function setCountdownQueue(val) {
+  try {
+    localStorage.setItem(COUNTDOWN_QUEUE_KEY, val ? 'true' : 'false');
+  } catch {}
+}
+
+const countdownQueueBox = $('#music-countdown-queue');
+if (countdownQueueBox) {
+  countdownQueueBox.checked = isCountdownQueue();
+  countdownQueueBox.addEventListener('change', (ev) => {
+    const untilQueue = ev.target.checked;
+    setCountdownQueue(untilQueue);
+    if (state.program?.type === 'trackend') {
+      stage({ ...state.program, untilQueue });
+    } else if (state.preview?.type === 'trackend') {
+      stage({ ...state.preview, untilQueue });
+    }
+  });
+}
+
+$('#music-countdown').addEventListener('click', () => stage({
+  type: 'trackend',
+  title: getCountdownText(),
+  untilQueue: $('#music-countdown-queue')?.checked || false,
+}));
+updateCountdownButton();
 // Throttled like the room volume: dragging a slider should not put sixty
 // commands a second on the relay.
 const sendMusicVolume = throttle((value) => send({ op: 'music', action: 'volume', value }), 120);
@@ -4087,6 +4257,8 @@ setInterval(() => { renderNow(); renderTimers(); renderConnection(); }, 250);
 // on the device actually in your hand.
 $('#control-version').textContent = VERSION;
 $('#control-build-number').textContent = String(BUILD);
+const versionTag = $('#control-version-tag');
+if (versionTag) versionTag.textContent = versionStamp();
 servedBuild().then((served) => {
   if (served === null || served === BUILD) return;
   $('#update-detail').textContent = `Running build ${BUILD}; the server is serving build ${served}.`;

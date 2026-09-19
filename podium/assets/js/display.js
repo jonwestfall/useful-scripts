@@ -15,7 +15,7 @@ import {
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl } from './config.js';
 import { createBus } from './bus.js';
 import {
-  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION,
+  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION, COMMIT, versionStamp,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
@@ -194,6 +194,7 @@ function mount(layer, item) {
       hasTrack: state.music.tracks.length > 0,
       time: musicEl.currentTime || 0,
       duration: Number.isFinite(musicEl.duration) ? musicEl.duration : 0,
+      queueRemaining: getQueueRemaining(),
     }),
     getStream: () => cameraStream,
     getCameraStatus: () => cameraStatus,
@@ -387,6 +388,8 @@ watchPixelRatio();
 // copy it is running is one the server has already replaced.
 $('#version-number').textContent = VERSION;
 $('#build-number').textContent = String(BUILD);
+const displayStamp = $('#display-version-stamp');
+if (displayStamp) displayStamp.textContent = versionStamp();
 servedBuild().then((served) => {
   if (served === null || served === BUILD) return;
   $('#build-check').textContent = ` — but the server is serving build ${served}, so this page came from a cache. Reload it.`;
@@ -670,6 +673,63 @@ let musicFade = null;
 let musicFadeTo = -1;
 let musicApplied = { src: '', playing: false, target: -1 };
 
+const trackDurations = new Map();
+
+function probeTrackDuration(src) {
+  if (!src || trackDurations.has(src)) return;
+  try {
+    const fullUrl = new URL(src, location.href).href;
+    if (trackDurations.has(fullUrl)) {
+      trackDurations.set(src, trackDurations.get(fullUrl));
+      return;
+    }
+    const a = new Audio();
+    a.preload = 'metadata';
+    a.src = fullUrl;
+    const onDone = (dur) => {
+      trackDurations.set(src, dur);
+      trackDurations.set(fullUrl, dur);
+      a.removeEventListener('loadedmetadata', onLoaded);
+      a.removeEventListener('error', onError);
+    };
+    const onLoaded = () => {
+      const d = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
+      onDone(d);
+    };
+    const onError = () => {
+      onDone(0);
+    };
+    a.addEventListener('loadedmetadata', onLoaded);
+    a.addEventListener('error', onError);
+    setTimeout(() => {
+      if (!trackDurations.has(src)) onDone(0);
+    }, 4000);
+  } catch {
+    trackDurations.set(src, 0);
+  }
+}
+
+function getQueueRemaining() {
+  const music = state.music;
+  if (!music?.tracks?.length) return 0;
+  const idx = Math.max(0, Math.min(music.index || 0, music.tracks.length - 1));
+  const currentTrack = music.tracks[idx];
+  const currentDur = (Number.isFinite(musicEl.duration) && musicEl.duration > 0 ? musicEl.duration : null)
+    ?? trackDurations.get(currentTrack?.src)
+    ?? (typeof currentTrack?.duration === 'number' && Number.isFinite(currentTrack.duration) ? currentTrack.duration : null);
+  if (currentDur == null) return null;
+  const currentTime = musicEl.currentTime || 0;
+  let remaining = Math.max(0, currentDur - currentTime);
+  for (let i = idx + 1; i < music.tracks.length; i++) {
+    const t = music.tracks[i];
+    const d = (typeof t?.duration === 'number' && Number.isFinite(t.duration) ? t.duration : null)
+      ?? (trackDurations.has(t?.src) ? trackDurations.get(t?.src) : null);
+    if (d == null) return null;
+    remaining += d;
+  }
+  return remaining;
+}
+
 function rampMusic(to, ms) {
   clearInterval(musicFade);
   musicFade = null;
@@ -724,6 +784,11 @@ musicEl.addEventListener('error', () => {
   broadcastSoon();
 });
 for (const ok of ['playing', 'loadeddata']) musicEl.addEventListener(ok, () => {
+  if (Number.isFinite(musicEl.duration) && musicEl.duration > 0) {
+    const track = state.music.tracks[state.music.index];
+    if (track?.src) trackDurations.set(track.src, musicEl.duration);
+    if (musicEl.src) trackDurations.set(musicEl.src, musicEl.duration);
+  }
   if (!musicError) return;
   musicError = '';
   broadcastSoon();
@@ -731,6 +796,11 @@ for (const ok of ['playing', 'loadeddata']) musicEl.addEventListener(ok, () => {
 
 function syncMusic() {
   const music = state.music;
+  if (Array.isArray(music.tracks)) {
+    for (const t of music.tracks) {
+      if (t?.src) probeTrackDuration(t.src);
+    }
+  }
   const track = music.tracks[music.index] || null;
   const src = track ? new URL(track.src, location.href).href : '';
 
@@ -1512,6 +1582,7 @@ function wireState() {
     musicNow: {
       time: musicEl.currentTime || 0,
       duration: Number.isFinite(musicEl.duration) ? musicEl.duration : 0,
+      queueRemaining: getQueueRemaining(),
       ducked: state.music.playing && contentIsSounding(),
       error: musicError,
     },

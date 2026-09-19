@@ -26,6 +26,7 @@
     <span id="peer-count"></span>
     <span id="plan-name" hidden></span>
     <span class="spacer"></span>
+    <span id="control-version-tag" class="version-tag"></span>
     <!-- Only ever filled in when this Podium came from a server with accounts
          (see server.js); on every other deployment it stays empty and hidden. -->
     <span id="session-badge" class="session-badge" hidden></span>
@@ -473,6 +474,8 @@
             <button id="music-fade" type="button">Fade out &amp; stop</button>
             <button id="music-shuffle" type="button">Shuffle the rest</button>
             <button id="music-clear" type="button">Clear queue</button>
+            <button id="music-edit-countdown" type="button">Edit Countdown Text</button>
+            <label id="music-countdown-queue-wrap" class="check"><input id="music-countdown-queue" type="checkbox"> End of queue</label>
           </div>
           <!-- A panel, not a music control - counts down to the end of
                whichever track is playing when it is put up, for a room that
@@ -846,6 +849,24 @@
     </p>
 
     <button type="button" id="setup-close" hidden>Close</button>
+  </div>
+</div>
+
+<!-- Modal: Edit Countdown Text -->
+<div id="modal-countdown" class="sheet" hidden>
+  <div class="card">
+    <h1>Edit Countdown Text</h1>
+    <p>Change the text displayed before the countdown timer on screen.</p>
+    <form id="form-countdown-text">
+      <div class="field">
+        <label for="input-countdown-text">Countdown text</label>
+        <input id="input-countdown-text" type="text" autocomplete="off" spellcheck="false" placeholder="We begin in…">
+      </div>
+      <div class="row" style="margin-top: 18px;">
+        <button id="modal-countdown-save" type="submit" class="is-on">Save</button>
+        <button id="modal-countdown-cancel" type="button">Cancel</button>
+      </div>
+    </form>
   </div>
 </div>
 

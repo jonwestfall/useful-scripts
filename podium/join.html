@@ -59,6 +59,7 @@
   .note.good { color: var(--live); }
   .note.bad { color: #ff9d9d; }
   .row { display: flex; gap: 10px; margin-top: 10px; }
+  .version-stamp { text-align: center; margin-top: 28px; font-size: 11px; color: var(--dim); opacity: 0.7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -86,6 +87,8 @@
   </div>
   <p class="note" id="note"></p>
 </div>
+
+<p id="join-version-stamp" class="version-stamp"></p>
 
 <script type="module" src="assets/js/join.js"></script>
 </body>
