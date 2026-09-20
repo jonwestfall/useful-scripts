@@ -669,6 +669,48 @@ body.control.is-frozen { background: #171006; }
 }
 .notes.is-empty { color: var(--dim); font-style: italic; }
 
+.deck-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0 4px 0;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.deck-chips::-webkit-scrollbar {
+  height: 4px;
+}
+.deck-chips::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
+}
+.deck-chip {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--panel-2);
+  color: var(--dim);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.deck-chip:hover {
+  background: var(--panel);
+  color: var(--ink);
+  border-color: var(--dim);
+}
+.deck-chip.is-active {
+  background: #1f6feb;
+  color: #fff;
+  border-color: #58a6ff;
+  font-weight: 600;
+}
+
 #now-title { font-size: 19px; font-weight: 650; }
 #now-type { color: var(--dim); font-size: 13px; }
 #transport .inline button { min-width: 62px; }

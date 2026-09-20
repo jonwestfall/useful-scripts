@@ -1603,6 +1603,9 @@ function wireState() {
       // what any relay will carry. See inkDigest in protocol.js; a controller
       // that does not match asks for the surface with 'ink-pull' below.
       digest: inkDigest(inkState.bySurface[key]?.strokes),
+      // Surface keys with saved strokes, so controllers know which slide thumbnails
+      // or items have annotations without pulling stroke bodies.
+      surfaces: Object.keys(inkState.bySurface).filter((k) => inkState.bySurface[k]?.strokes?.length > 0),
     },
     stageAspect: stage.clientWidth && stage.clientHeight ? stage.clientWidth / stage.clientHeight : 16 / 9,
     // Where the music has got to, and whether something on screen is currently

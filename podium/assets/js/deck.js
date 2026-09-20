@@ -425,7 +425,23 @@ async function measureFits(html, css) {
   }
 }
 
-const cache = new Map();
+export function parseSections(root) {
+  const sections = [];
+  root.querySelectorAll('svg[data-marpit-svg] section').forEach((section, i) => {
+    const heading = section.querySelector('h1, h2');
+    if (heading) {
+      const text = (heading.textContent || '').trim().replace(/\s+/g, ' ');
+      if (text) {
+        sections.push({
+          title: text.slice(0, 60),
+          slideIndex: i,
+          level: heading.tagName.toLowerCase() === 'h1' ? 1 : 2,
+        });
+      }
+    }
+  });
+  return sections;
+}
 
 function outline(root) {
   return Array.from(root.querySelectorAll('svg[data-marpit-svg] section')).map((section, i) => {
@@ -482,6 +498,7 @@ export async function render(source, id) {
   const root = doc.querySelector('.marpit') || doc.body;
   const fragments = markFragments(root);
   const titles = outline(root);
+  const sections = parseSections(root);
   // The aspect ratio baked into each slide's own SVG viewBox - read once here
   // so the controller can shape its ink pad to match a slide exactly without
   // touching the DOM itself.
@@ -521,6 +538,7 @@ export async function render(source, id) {
     // here, so what is left is genuinely presenter notes.
     notes: comments.map((list) => (list || []).join('\n\n').trim()),
     titles,
+    sections,
     fragments,
     aspects,
     // One scale per slide: 1 for a slide that fits its box as authored, less

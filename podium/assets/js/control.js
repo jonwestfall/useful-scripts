@@ -740,6 +740,105 @@ let gridShadow = null;
 // skipping the wait entirely - see buildGrid() below.
 let gridBuildId = null;
 let gridBuildPromise = null;
+let activeSectionFilter = null;
+let lastScrolledSlideIndex = null;
+let selectedChipSection = null;
+
+function getSlideSectionIndex(sections, slideIndex) {
+  if (!sections || !sections.length) return -1;
+  let secIdx = -1;
+  for (let k = 0; k < sections.length; k++) {
+    if (sections[k].slideIndex <= slideIndex) {
+      secIdx = k;
+    } else {
+      break;
+    }
+  }
+  return secIdx;
+}
+
+function renderSectionChips(deck) {
+  const container = $('#deck-grid-chips');
+  if (!container) return;
+  const sections = deck?.sections || [];
+  if (!sections.length) {
+    container.hidden = true;
+    container.innerHTML = '';
+    return;
+  }
+  container.hidden = false;
+  container.innerHTML = '';
+
+  const allBtn = document.createElement('button');
+  allBtn.type = 'button';
+  allBtn.className = 'deck-chip' + (activeSectionFilter === null ? ' is-active' : '');
+  allBtn.dataset.section = 'all';
+  allBtn.textContent = 'All';
+  allBtn.addEventListener('click', () => {
+    activeSectionFilter = null;
+    selectedChipSection = null;
+    updateChipClasses(container, 'all');
+    filterGrid();
+  });
+  container.append(allBtn);
+
+  sections.forEach((sec, k) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'deck-chip' + (activeSectionFilter === k ? ' is-active' : '');
+    chip.dataset.section = String(k);
+    chip.textContent = sec.title;
+    chip.title = `Section: ${sec.title} (Slide ${sec.slideIndex + 1})`;
+    chip.addEventListener('click', () => {
+      if (activeSectionFilter === k) {
+        // Second tap when filtered: reset back to All
+        activeSectionFilter = null;
+        selectedChipSection = null;
+        updateChipClasses(container, 'all');
+        filterGrid();
+      } else if (selectedChipSection === k || activeSectionFilter !== null) {
+        // Second tap on jumped chip, or switching filter while already filtered: isolate section
+        activeSectionFilter = k;
+        selectedChipSection = k;
+        updateChipClasses(container, String(k));
+        filterGrid();
+        const cell = gridShadow?.querySelector(`.cell[data-index="${sec.slideIndex}"]`);
+        cell?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+      } else {
+        // First tap: smoothly jump & scroll to that topic's first slide
+        selectedChipSection = k;
+        updateChipClasses(container, String(k));
+        const cell = gridShadow?.querySelector(`.cell[data-index="${sec.slideIndex}"]`);
+        cell?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+    });
+    container.append(chip);
+  });
+}
+
+function updateChipClasses(container, activeId) {
+  if (!container) return;
+  container.querySelectorAll('.deck-chip').forEach((chip) => {
+    chip.classList.toggle('is-active', chip.dataset.section === activeId);
+  });
+}
+
+function updateActiveSectionChip(slideIndex) {
+  const container = $('#deck-grid-chips');
+  if (!container || container.hidden) return;
+  if (activeSectionFilter !== null) return;
+  const sections = deckView?.deck?.sections;
+  if (!sections?.length) return;
+  const secIdx = getSlideSectionIndex(sections, slideIndex);
+  const targetId = secIdx >= 0 ? String(secIdx) : 'all';
+  container.querySelectorAll('.deck-chip').forEach((chip) => {
+    const isActive = chip.dataset.section === targetId;
+    chip.classList.toggle('is-active', isActive);
+    if (isActive) {
+      chip.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+  });
+}
 
 function ensureGridShadow() {
   gridShadow ??= $('#deck-grid').attachShadow({ mode: 'open' });
@@ -749,6 +848,9 @@ function ensureGridShadow() {
 function buildGrid(deck) {
   if (gridBuildId === deck.id) return gridBuildPromise;
   gridBuildId = deck.id;
+  lastScrolledSlideIndex = null;
+  activeSectionFilter = null;
+  selectedChipSection = null;
   gridBuildPromise = buildGridNow(deck);
   return gridBuildPromise;
 }
@@ -780,6 +882,15 @@ async function buildGridNow(deck) {
       position: absolute; right: 3px; bottom: 3px; padding: 0 5px; border-radius: 4px;
       background: rgba(0,0,0,.65); color: #fff; font: 600 11px/1.6 system-ui, sans-serif;
     }
+    .ink-badge {
+      display: none;
+      position: absolute; left: 3px; bottom: 3px; padding: 0 4px; border-radius: 4px;
+      background: rgba(255, 209, 102, 0.95); color: #151b23; font: 700 11px/1.6 system-ui, sans-serif;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.5); pointer-events: none;
+    }
+    .cell.has-ink .ink-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+    }
     /* A rendered thumbnail this small reads as a smear of colour, not text -
        the caption is what actually lets you find a slide by scanning, the
        same job the title attribute it replaces used to fail at on a
@@ -804,6 +915,8 @@ async function buildGridNow(deck) {
     cell.className = 'cell';
     cell.dataset.index = String(i);
     cell.dataset.search = title.toLowerCase();
+    const secIdx = getSlideSectionIndex(deck.sections, i);
+    cell.dataset.section = String(secIdx);
     const thumb = document.createElement('div');
     thumb.className = 'thumb';
     const marpit = document.createElement('div');
@@ -813,7 +926,11 @@ async function buildGridNow(deck) {
     const num = document.createElement('span');
     num.className = 'num';
     num.textContent = String(i + 1);
-    thumb.append(num);
+    const inkBadge = document.createElement('span');
+    inkBadge.className = 'ink-badge';
+    inkBadge.textContent = '✎';
+    inkBadge.title = 'Annotated slide';
+    thumb.append(num, inkBadge);
     const cap = document.createElement('div');
     cap.className = 'cap';
     cap.textContent = title;
@@ -821,6 +938,7 @@ async function buildGridNow(deck) {
     cell.addEventListener('click', () => send({ op: 'nav', dir: 'goto', value: i }));
     grid.append(cell);
   });
+  renderSectionChips(deck);
   filterGrid();
   // Marp needs its own DOM polyfill for inline-SVG slides or WebKit (every
   // iPad, which is where this grid actually gets used) lays foreignObject
@@ -846,22 +964,60 @@ function filterGrid() {
   const filter = $('#deck-grid-filter').value.trim().toLowerCase();
   let shown = 0;
   gridShadow.querySelectorAll('.cell').forEach((cell) => {
-    const match = !filter || cell.dataset.search.includes(filter);
+    const textMatch = !filter || cell.dataset.search.includes(filter);
+    const secIdx = Number(cell.dataset.section);
+    const sectionMatch = activeSectionFilter === null || secIdx === activeSectionFilter;
+    const match = textMatch && sectionMatch;
     cell.hidden = !match;
     if (match) shown += 1;
   });
   $('#deck-grid-empty').hidden = shown > 0;
 }
 
-function highlightGrid(index) {
+function highlightGrid(index, deckId = (deckView.id || (focusedItem(state)?.type === 'deck' ? focusedItem(state)?.deckId : null))) {
   if (!gridShadow) return;
-  gridShadow.querySelectorAll('.cell').forEach((cell) => {
-    cell.classList.toggle('on', Number(cell.dataset.index) === index);
+  const cells = gridShadow.querySelectorAll('.cell');
+  const surfacesWithInk = new Set(state.ink?.surfaces || []);
+  let activeCell = null;
+
+  cells.forEach((cell) => {
+    const i = Number(cell.dataset.index);
+    const isOn = i === index;
+    cell.classList.toggle('on', isOn);
+    if (isOn) activeCell = cell;
+
+    if (deckId) {
+      const surfaceKey = `deck:${deckId}:${i}`;
+      let hasStrokes = false;
+      if (inkSurface === surfaceKey) {
+        hasStrokes = (ink.strokes?.length || 0) > 0;
+      } else {
+        hasStrokes = surfacesWithInk.has(surfaceKey) || ((inkCache.get(surfaceKey)?.length || 0) > 0);
+      }
+      cell.classList.toggle('has-ink', hasStrokes);
+    }
   });
+
+  // Auto-scroll when the active slide changes
+  if (lastScrolledSlideIndex !== index && activeCell && !activeCell.hidden) {
+    const slidesPanel = $('[data-panel="slides"]');
+    if (slidesPanel && !slidesPanel.hidden) {
+      lastScrolledSlideIndex = index;
+      activeCell.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+    }
+  }
+
+  updateActiveSectionChip(index);
 }
 
 async function ensureDeckView(item) {
-  if (!item || item.type !== 'deck') { deckView = { id: null, deck: null }; return; }
+  if (!item || item.type !== 'deck') {
+    deckView = { id: null, deck: null };
+    lastScrolledSlideIndex = null;
+    activeSectionFilter = null;
+    selectedChipSection = null;
+    return;
+  }
   if (deckView.id === item.deckId) return;
   const mine = ++deckGeneration;
   let source;
@@ -2441,6 +2597,10 @@ function holdInk(surface, strokes) {
   inkCache.delete(surface);
   inkCache.set(surface, strokes);
   while (inkCache.size > INK_CACHE_MAX) inkCache.delete(inkCache.keys().next().value);
+  if (gridShadow && deckView.id) {
+    const item = focusedItem(state);
+    if (item?.type === 'deck') highlightGrid(item.slide || 0, item.deckId);
+  }
 }
 
 // An outstanding request for a surface's strokes, and the slices arriving in
@@ -2624,6 +2784,10 @@ const endStroke = (ev) => {
   send({ op: 'ink', action: 'points', id: ink.strokeId, pts: ink.buffer.splice(0) });
   ink.strokeId = null;
   try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
+  if (gridShadow && deckView.id) {
+    const item = focusedItem(state);
+    if (item?.type === 'deck') highlightGrid(item.slide || 0, item.deckId);
+  }
   // Catch up on any resize that was deliberately deferred while that stroke
   // was in progress, now that there is a safe moment to apply it.
   if (!$('[data-panel="ink"]').hidden) sizePad();
@@ -3632,7 +3796,10 @@ function tab(name) {
   // panel actually has a size to fit into - it would otherwise sit blank
   // until whatever periodic update happens to land next.
   if (name === 'ink') { syncInkFromState(); sizePad(); }
-  if (name === 'slides') renderSlides();
+  if (name === 'slides') {
+    lastScrolledSlideIndex = null;
+    renderSlides();
+  }
 }
 
 $$('.tab').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
