@@ -720,6 +720,18 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
   position: relative; width: 100%; height: 100%; overflow: hidden; background: #101418;
 }
 .mirror-frame { position: absolute; background: #101418; }
+.ink-tools { display: inline-flex; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); vertical-align: middle; }
+.ink-tools .ink-tool-btn {
+  border-radius: 0; border: none; border-right: 1px solid var(--line);
+  padding: 8px 13px; font-size: 13px; font-weight: 500; min-height: 42px;
+  background: var(--panel-2); color: var(--dim);
+}
+.ink-tools .ink-tool-btn:last-child { border-right: none; }
+.ink-tools .ink-tool-btn:hover { color: var(--ink); background: #1a2330; }
+.ink-tools .ink-tool-btn.is-on {
+  background: var(--accent); color: #07101f; font-weight: 600;
+}
+#pad.is-eraser { cursor: crosshair; }
 .swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; }
 .swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
 
