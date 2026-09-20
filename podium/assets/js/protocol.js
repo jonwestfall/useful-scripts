@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 26;
+export const BUILD = 27;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -38,7 +38,7 @@ export const BUILD = 26;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.0';
-export const COMMIT = '1880506';
+export const COMMIT = 'ea05b26';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
