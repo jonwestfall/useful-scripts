@@ -425,6 +425,8 @@ async function measureFits(html, css) {
   }
 }
 
+const cache = new Map();
+
 export function parseSections(root) {
   const sections = [];
   root.querySelectorAll('svg[data-marpit-svg] section').forEach((section, i) => {

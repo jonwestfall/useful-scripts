@@ -4664,7 +4664,7 @@ document.addEventListener('keydown', (ev) => {
   }
 
   // When focused on the Ink tab, switch tools quickly
-  if (!$('[data-panel="ink"]').hidden) {
+  if (!$('[data-panel="ink"]')?.hidden) {
     if (ev.key === '1') { ev.preventDefault(); setInkTool('pen'); return; }
     if (ev.key === '2') { ev.preventDefault(); setInkTool('highlighter'); return; }
     if (ev.key === '3') { ev.preventDefault(); setInkTool('eraser'); return; }
@@ -4677,7 +4677,7 @@ document.addEventListener('keydown', (ev) => {
   }
 
   // When focused on the Slides tab, toggle laser or spotlight pointer modes
-  if (!$('[data-panel="deck"]').hidden) {
+  if (!$('[data-panel="slides"]')?.hidden) {
     if (ev.key === 'l' || ev.key === 'L') { ev.preventDefault(); setLaserActive(!laserActive); return; }
     if (ev.key === 's' || ev.key === 'S') { ev.preventDefault(); setSpotlightActive(!spotlightActive); return; }
   }
