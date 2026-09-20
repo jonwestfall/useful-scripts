@@ -6,7 +6,8 @@ import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, 
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
-  inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, COMMIT, versionStamp, MAX_SET_ENTRIES } from './protocol.js';
+  inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, COMMIT, versionStamp, MAX_SET_ENTRIES,
+  detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
@@ -2938,6 +2939,62 @@ function eraseAt(ev) {
   }
 }
 
+// --- hold-to-straighten shape snapping (#38) ---------------------------------
+const HOLD_TO_SNAP_MS = 450;
+const HOLD_JITTER_RADIUS = 14;
+let shapeHoldTimer = null;
+let shapeHoldAnchor = null;
+let currentStrokeSnapped = false;
+let snappedShapeInfo = null;
+
+const broadcastSnappedStroke = throttle((stroke) => {
+  if (!stroke) return;
+  send({ op: 'ink', action: 'erase', ids: [stroke.id] });
+  send({
+    op: 'ink',
+    action: 'begin',
+    id: stroke.id,
+    color: stroke.color,
+    width: stroke.width,
+    highlighter: !!stroke.highlighter,
+    pts: stroke.pts,
+  });
+}, 60);
+
+function triggerHoldSnap() {
+  if (!ink.drawing || !ink.strokeId || currentStrokeSnapped) return;
+  const stroke = ink.strokes.find((st) => st.id === ink.strokeId);
+  if (!stroke || stroke.pts.length < 2) return;
+
+  const w = pad.clientWidth || 1000;
+  const h = pad.clientHeight || 1000;
+  const detected = detectAndSnapShape(stroke.pts, w, h);
+  if (!detected) return;
+
+  currentStrokeSnapped = true;
+  snappedShapeInfo = {
+    type: detected.type,
+    origin: stroke.pts[0],
+  };
+  stroke.pts = detected.pts;
+  ink.buffer = [];
+  holdInk(inkSurface, ink.strokes);
+  redrawPad();
+
+  send({ op: 'ink', action: 'erase', ids: [stroke.id] });
+  send({
+    op: 'ink',
+    action: 'begin',
+    id: stroke.id,
+    color: stroke.color,
+    width: stroke.width,
+    highlighter: !!stroke.highlighter,
+    pts: stroke.pts,
+  });
+
+  haptic('tick');
+}
+
 pad.addEventListener('pointerdown', (ev) => {
   if (ink.penOnly && ev.pointerType !== 'pen') return;
   if (ink.tool === 'laser' || ink.tool === 'spotlight') {
@@ -2968,6 +3025,8 @@ pad.addEventListener('pointerdown', (ev) => {
   pad.setPointerCapture(ev.pointerId);
   ink.drawing = true;
   ink.strokeId = uid(6);
+  currentStrokeSnapped = false;
+  snappedShapeInfo = null;
   const pt = padPoint(ev);
   holdInk(inkSurface, ink.strokes);
   const isHighlighter = ink.tool === 'highlighter';
@@ -2976,6 +3035,12 @@ pad.addEventListener('pointerdown', (ev) => {
   ink.strokes.push(newStroke);
   ink.buffer = [];
   send({ op: 'ink', action: 'begin', id: ink.strokeId, color: ink.color, width: ink.width, highlighter: isHighlighter, pts: [pt] });
+
+  clearTimeout(shapeHoldTimer);
+  shapeHoldAnchor = { x: ev.clientX, y: ev.clientY, time: Date.now() };
+  if (presentation.snapShapes !== false) {
+    shapeHoldTimer = setTimeout(triggerHoldSnap, HOLD_TO_SNAP_MS);
+  }
 });
 
 pad.addEventListener('pointermove', (ev) => {
@@ -3001,6 +3066,34 @@ pad.addEventListener('pointermove', (ev) => {
   }
   if (!ink.drawing) return;
   ev.preventDefault();
+
+  if (currentStrokeSnapped) {
+    const stroke = ink.strokes.find((st) => st.id === ink.strokeId);
+    if (!stroke) return;
+    const pt = padPoint(ev);
+    const w = pad.clientWidth || 1000;
+    const h = pad.clientHeight || 1000;
+
+    let updated = null;
+    if (snappedShapeInfo?.type === 'line') {
+      updated = snapStraightLine([snappedShapeInfo.origin, pt], w, h);
+    } else if (snappedShapeInfo?.type === 'arrow') {
+      updated = snapArrow([snappedShapeInfo.origin, pt], w, h);
+    } else if (snappedShapeInfo?.type === 'box') {
+      updated = snapBox([snappedShapeInfo.origin, pt], w, h);
+    } else if (snappedShapeInfo?.type === 'ellipse') {
+      updated = snapEllipse([snappedShapeInfo.origin, pt], w, h);
+    }
+
+    if (updated?.pts) {
+      stroke.pts = updated.pts;
+      holdInk(inkSurface, ink.strokes);
+      redrawPad();
+      broadcastSnappedStroke(stroke);
+    }
+    return;
+  }
+
   // Coalesced events keep an Apple Pencil line smooth without flooding the bus.
   const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
   // By id, not by position. A second controller's strokes now arrive live and
@@ -3016,9 +3109,21 @@ pad.addEventListener('pointermove', (ev) => {
   }
   redrawPad();
   flushInk();
+
+  if (presentation.snapShapes !== false) {
+    const dist = Math.hypot(ev.clientX - (shapeHoldAnchor?.x || 0), ev.clientY - (shapeHoldAnchor?.y || 0));
+    if (dist > HOLD_JITTER_RADIUS) {
+      shapeHoldAnchor = { x: ev.clientX, y: ev.clientY, time: Date.now() };
+      clearTimeout(shapeHoldTimer);
+      shapeHoldTimer = setTimeout(triggerHoldSnap, HOLD_TO_SNAP_MS);
+    }
+  }
 });
 
 const endStroke = (ev) => {
+  clearTimeout(shapeHoldTimer);
+  shapeHoldTimer = null;
+
   if (ink.pointing) {
     const mode = ink.pointing;
     ink.pointing = null;
@@ -3040,6 +3145,33 @@ const endStroke = (ev) => {
   }
   if (!ink.drawing) return;
   ink.drawing = false;
+
+  if (currentStrokeSnapped) {
+    currentStrokeSnapped = false;
+    snappedShapeInfo = null;
+    const stroke = ink.strokes.find((st) => st.id === ink.strokeId);
+    if (stroke) {
+      send({ op: 'ink', action: 'erase', ids: [stroke.id] });
+      send({
+        op: 'ink',
+        action: 'begin',
+        id: stroke.id,
+        color: stroke.color,
+        width: stroke.width,
+        highlighter: !!stroke.highlighter,
+        pts: stroke.pts,
+      });
+    }
+    ink.strokeId = null;
+    try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
+    if (gridShadow && deckView.id) {
+      const item = focusedItem(state);
+      if (item?.type === 'deck') highlightGrid(item.slide || 0, item.deckId);
+    }
+    if (!$('[data-panel="ink"]').hidden) sizePad();
+    return;
+  }
+
   flushInk();
   send({ op: 'ink', action: 'points', id: ink.strokeId, pts: ink.buffer.splice(0) });
   ink.strokeId = null;
@@ -4946,12 +5078,14 @@ const PRESENTATION_DEFAULTS = {
   bottomSlots: ['music', 'play', 'freeze', 'blank', 'none', 'none', 'none', 'none'],
   inkScrollGutter: false,
   inkControlsTop: false,
+  snapShapes: true,
 };
 function loadPresentation() {
   try {
     const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
     const merged = { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
     if (merged.haptics === undefined) merged.haptics = true;
+    if (merged.snapShapes === undefined) merged.snapShapes = true;
     if (!Array.isArray(merged.bottomSlots) || merged.bottomSlots.length !== 8) {
       merged.bottomSlots = [
         merged.bottomSlot1 || 'music',
@@ -5414,6 +5548,11 @@ $('#pref-ink-controls-top')?.addEventListener('change', (ev) => {
   applyInkPreferences();
 });
 
+$('#pref-snap-shapes')?.addEventListener('change', (ev) => {
+  presentation.snapShapes = ev.target.checked;
+  savePresentation();
+});
+
 $('#topbar-pacing')?.addEventListener('click', () => {
   if (!pacingState.startedAt) {
     startPacingTimer();
@@ -5461,6 +5600,8 @@ function showSetup() {
   if (prefGutter) prefGutter.checked = !!presentation.inkScrollGutter;
   const prefTop = $('#pref-ink-controls-top');
   if (prefTop) prefTop.checked = !!presentation.inkControlsTop;
+  const prefSnap = $('#pref-snap-shapes');
+  if (prefSnap) prefSnap.checked = presentation.snapShapes !== false;
   renderKeepPhotos();
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {
