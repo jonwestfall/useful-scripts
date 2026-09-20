@@ -232,7 +232,7 @@ const { readJson } = api;
 function questionPayload(poll) {
   return JSON.stringify({
     seq: poll.seq, open: poll.open, kind: poll.kind,
-    question: poll.question, options: poll.options,
+    question: poll.question, options: poll.options, closesAt: poll.closesAt,
   });
 }
 
@@ -324,7 +324,7 @@ async function handlePoll(req, res, url) {
   if (req.method === 'POST' && action === 'vote') {
     let body;
     try { body = await readJson(req, 8 * 1024); } catch { pollJson(res, 400, { error: 'bad body' }); return; }
-    if (!poll.open) { pollJson(res, 409, { error: 'this question is closed' }); return; }
+    if (!poll.open || (poll.closesAt && Date.now() > poll.closesAt)) { pollJson(res, 409, { error: 'this question is closed' }); return; }
     const voter = String(body.voter || '').slice(0, 64);
     if (!voter) { pollJson(res, 400, { error: 'no voter id' }); return; }
     if (!poll.votes.has(voter) && poll.votes.size >= MAX_VOTERS) { pollJson(res, 503, { error: 'this poll is full' }); return; }
@@ -364,6 +364,7 @@ async function handlePoll(req, res, url) {
     poll.question = question;
     poll.options = options;
     poll.open = body.open !== false;
+    poll.closesAt = Number.isFinite(Number(body.closesAt)) && body.closesAt > 0 ? Number(body.closesAt) : null;
     pushQuestion(poll);
     pollJson(res, 200, { seq: poll.seq, open: poll.open });
     return;
@@ -376,7 +377,7 @@ async function handlePoll(req, res, url) {
       if (poll.kind === 'text') answers.push(answer);
       else if (counts[answer] !== undefined) counts[answer] += 1;
     }
-    pollJson(res, 200, { seq: poll.seq, open: poll.open, voters: poll.votes.size, counts, answers });
+    pollJson(res, 200, { seq: poll.seq, open: poll.open, closesAt: poll.closesAt, voters: poll.votes.size, counts, answers });
     return;
   }
 

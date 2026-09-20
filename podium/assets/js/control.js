@@ -2036,6 +2036,24 @@ let pollBusy = false;    // a relay call is in flight - disable the buttons that
 let pollError = '';      // composer-side validation/relay error
 let pollActionError = ''; // running-poll-side relay error (close/reopen/end)
 let pollEndButton = null; // the wireDangerButton handle for #poll-end, wired further down
+let pollCurrentClosesAt = null;
+let pollTickTimer = null;
+
+function tickPollCountdown() {
+  const cd = document.getElementById('poll-running-countdown');
+  if (!cd || !pollCurrentClosesAt) return;
+  const remaining = Math.max(0, Math.ceil((pollCurrentClosesAt - Date.now()) / 1000));
+  cd.hidden = false;
+  const m = Math.floor(remaining / 60);
+  const s = String(remaining % 60).padStart(2, '0');
+  cd.textContent = remaining >= 60 ? `Voting closes in ${m}:${s}` : `Voting closes in ${s} seconds`;
+  cd.style.color = remaining <= 10 ? '#ff9d9d' : 'var(--dim)';
+  if (remaining === 0) {
+    cd.hidden = true;
+    const item = findPollItem();
+    if (item && item.open !== false && !pollBusy) setPollOpen(false);
+  }
+}
 
 function findPollItem() {
   return [state.program, state.preview, ...state.panels].find((it) => it?.type === 'poll') || null;
@@ -2294,7 +2312,28 @@ async function setPollOpen(open) {
     await pollApi(`/${item.pollId}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${item.token}` },
-      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, open }),
+      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, correct: item.correct, open }),
+    });
+  } catch (err) {
+    pollActionError = err.message || 'Could not reach the poll.';
+  } finally {
+    pollBusy = false;
+    renderPollsPanel();
+  }
+}
+
+async function setPollClosesAt(seconds) {
+  const item = findPollItem();
+  if (!item || !item.token || pollBusy) return;
+  pollBusy = true;
+  pollActionError = '';
+  renderPollsPanel();
+  try {
+    const closesAt = Date.now() + (seconds * 1000);
+    await pollApi(`/${item.pollId}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${item.token}` },
+      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, correct: item.correct, open: true, closesAt }),
     });
   } catch (err) {
     pollActionError = err.message || 'Could not reach the poll.';
@@ -2473,12 +2512,23 @@ function renderRunningPoll(item) {
   $('#poll-copy-link').disabled = !link;
   $('#poll-copy-link').hidden = archived;
   $('#poll-toggle-open').hidden = archived;
+  $('#poll-timer-btns').hidden = archived || item.open === false;
   $('#poll-running-status').textContent = archived
     ? `Redisplayed from history — ${item.voters} response${item.voters === 1 ? '' : 's'}, not accepting new votes`
     : `${item.voters} response${item.voters === 1 ? '' : 's'}${item.open === false ? ' · voting closed' : ' · voting open'}`
       + (item.revealed ? ' · shown to the room' : ' · visible to you only');
   $('#poll-toggle-open').textContent = item.open === false ? 'Reopen voting' : 'Close voting';
   $('#poll-toggle-open').disabled = pollBusy;
+  
+  if (item.closesAt && item.open !== false) {
+    pollCurrentClosesAt = item.closesAt;
+    if (!pollTickTimer) pollTickTimer = setInterval(tickPollCountdown, 1000);
+    tickPollCountdown();
+  } else {
+    pollCurrentClosesAt = null;
+    $('#poll-running-countdown').hidden = true;
+    if (pollTickTimer) { clearInterval(pollTickTimer); pollTickTimer = null; }
+  }
   $('#poll-toggle-reveal').textContent = item.revealed ? 'Hide from room' : 'Reveal to room';
   $('#poll-action-error').hidden = !pollActionError;
   $('#poll-action-error').textContent = pollActionError;
@@ -4393,6 +4443,9 @@ $('#poll-toggle-open').addEventListener('click', () => {
   const item = findPollItem();
   if (item) setPollOpen(item.open === false);
 });
+$('#poll-timer-30').addEventListener('click', () => setPollClosesAt(30));
+$('#poll-timer-60').addEventListener('click', () => setPollClosesAt(60));
+$('#poll-timer-120').addEventListener('click', () => setPollClosesAt(120));
 $('#poll-toggle-reveal').addEventListener('click', togglePollReveal);
 $('#poll-export').addEventListener('click', exportPollCsv);
 // wireDangerButton leaves a button disabled after a successful action - right

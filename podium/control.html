@@ -619,8 +619,14 @@
               <button id="poll-copy-link" type="button">Copy join link</button>
             </div>
             <div id="poll-running-status" class="hint"></div>
+            <div id="poll-running-countdown" class="hint" style="font-variant-numeric: tabular-nums; font-weight: 700; color: var(--dim);" hidden></div>
             <div id="poll-running-results"></div>
             <p id="poll-action-error" class="hint" hidden></p>
+            <div class="inline" id="poll-timer-btns">
+              <button id="poll-timer-30" type="button" class="btn-small">+30s</button>
+              <button id="poll-timer-60" type="button" class="btn-small">+60s</button>
+              <button id="poll-timer-120" type="button" class="btn-small">+2m</button>
+            </div>
             <div class="inline">
               <button id="poll-toggle-open" type="button">Close voting</button>
               <button id="poll-toggle-reveal" type="button">Reveal to room</button>

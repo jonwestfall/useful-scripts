@@ -1116,7 +1116,8 @@ async function tickPolls() {
           || JSON.stringify(current.counts) !== JSON.stringify(tally.counts)
           || JSON.stringify(current.answers) !== JSON.stringify(tally.answers);
         if (!changed) return;
-        current.open = !!tally.open;
+        current.open = tally.open !== false;
+        current.closesAt = tally.closesAt;
         current.voters = tally.voters || 0;
         if (current.kind === 'choice') current.counts = tally.counts || [];
         else current.answers = tally.answers || [];

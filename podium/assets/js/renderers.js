@@ -536,7 +536,8 @@ function renderPoll(item, opts) {
   // adds this third way in, for a room where typing a URL beats scanning.
   const urlText = el('div', { class: 'r-poll-url' }, '');
   const hint = el('div', { class: 'r-poll-hint' }, 'Scan, or join and enter the code');
-  const joinCard = el('div', { class: 'r-poll-join' }, qrHolder, code, urlText, hint);
+  const countdownText = el('div', { class: 'r-poll-countdown' }, '');
+  const joinCard = el('div', { class: 'r-poll-join' }, qrHolder, code, urlText, hint, countdownText);
   const status = el('div', { class: 'r-poll-status' }, '');
   const results = el('div', { class: 'r-poll-results' });
   const node = el('div', { class: 'r-poll' }, question, joinCard, status, results);
@@ -551,8 +552,6 @@ function renderPoll(item, opts) {
 
   const drawResults = (it) => {
     if (it.kind === 'text') {
-      // Hidden-by-index, not filtered out of `answers` itself - the room
-      // simply never gets a row for one, same as if it had never arrived.
       const hidden = new Set(it.hiddenAnswers || []);
       const answers = (it.answers || []).filter((_, i) => !hidden.has(i));
       results.replaceChildren(...(answers.length
@@ -578,12 +577,35 @@ function renderPoll(item, opts) {
       }));
   };
 
+  let tickTimer = null;
+  let currentClosesAt = null;
+
+  const tick = () => {
+    if (!currentClosesAt) {
+      countdownText.textContent = '';
+      countdownText.hidden = true;
+      return;
+    }
+    const remaining = Math.max(0, Math.ceil((currentClosesAt - Date.now()) / 1000));
+    countdownText.hidden = false;
+    const m = Math.floor(remaining / 60);
+    const s = String(remaining % 60).padStart(2, '0');
+    countdownText.textContent = remaining >= 60 ? `${m}:${s} left` : `${s} seconds left`;
+    countdownText.style.color = remaining <= 10 ? '#ff9d9d' : 'var(--dim)';
+    
+    // Auto-close visually on projector (server handles actual rejection)
+    if (remaining === 0) {
+      currentClosesAt = null;
+      countdownText.hidden = true;
+      if (!node.classList.contains('is-closed')) {
+        node.classList.add('is-closed');
+        const countText = status.textContent.split(' · ')[0];
+        status.textContent = `${countText} · closed`;
+      }
+    }
+  };
+
   const draw = (it) => {
-    // A redisplay from history (see control.js's redisplayFromHistory) has a
-    // pollId, for a stable ink key, but no token - there is no relay poll
-    // behind it any more, so a join card would be a QR to a dead code. A plan
-    // item previewed in the office (planfile.js's PLAN_TYPES.poll) has
-    // neither - it is not a poll yet, just the question for one.
     const archived = !it.token && !!it.pollId;
     const joinUrl = it.pollId ? (opts.getPollJoinUrl?.(it.pollId) || '') : '';
     question.textContent = it.question || '';
@@ -593,14 +615,17 @@ function renderPoll(item, opts) {
       qrHolder.replaceChildren();
       urlText.textContent = '';
       hint.textContent = 'Not started yet.';
+      currentClosesAt = null;
     } else if (archived) {
       qrHolder.replaceChildren();
       urlText.textContent = '';
       hint.textContent = 'This poll has ended — results only, no new votes.';
+      currentClosesAt = null;
     } else {
       drawQr(joinUrl);
       urlText.textContent = it.showUrl !== false ? joinUrl : '';
       hint.textContent = 'Scan, or join and enter the code';
+      currentClosesAt = it.open ? it.closesAt : null;
     }
     urlText.hidden = !urlText.textContent;
     node.classList.toggle('is-revealed', !!it.revealed);
@@ -610,6 +635,10 @@ function renderPoll(item, opts) {
       : `${it.voters || 0} response${it.voters === 1 ? '' : 's'}${it.open === false ? ' · closed' : ''}`;
     if (it.revealed) drawResults(it);
     else results.replaceChildren();
+    
+    tick();
+    if (currentClosesAt && !tickTimer) tickTimer = setInterval(tick, 1000);
+    if (!currentClosesAt && tickTimer) { clearInterval(tickTimer); tickTimer = null; }
   };
   draw(item);
 
@@ -618,7 +647,10 @@ function renderPoll(item, opts) {
     update: draw,
     reconcile() {},
     telemetry: noTelemetry,
-    destroy() { node.remove(); },
+    destroy() { 
+      if (tickTimer) clearInterval(tickTimer);
+      node.remove(); 
+    },
   };
 }
 

@@ -78,7 +78,10 @@
 </form>
 
 <div id="live" class="card" hidden>
-  <p class="question" id="question">Waiting for the first question…</p>
+  <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+    <p class="question" id="question" style="margin-top: 0; flex: 1;">Waiting for the first question…</p>
+    <div id="countdown" hidden style="margin-left: 12px; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--dim);"></div>
+  </div>
   <div id="choices"></div>
   <div id="typed" hidden>
     <label for="answer">Your answer</label>

@@ -260,6 +260,7 @@ function normalizeItem(item) {
       ? (Array.isArray(copy.options) ? copy.options : []).slice(0, 8).map((o) => String(o).slice(0, 200))
       : [];
     copy.correct = Number.isFinite(Number(copy.correct)) ? Math.round(Number(copy.correct)) : -1;
+    copy.closesAt = Number.isFinite(Number(copy.closesAt)) && copy.closesAt > 0 ? Number(copy.closesAt) : null;
     copy.open = copy.open !== false;
     copy.revealed = !!copy.revealed;
     copy.voters = Math.max(0, Number(copy.voters) || 0);
