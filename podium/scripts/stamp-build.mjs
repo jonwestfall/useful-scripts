@@ -4,9 +4,15 @@
  * Updates BUILD, VERSION, and COMMIT in assets/js/protocol.js.
  *
  * Usage:
- *   node scripts/stamp-build.mjs             # Bumps BUILD + 1, updates COMMIT from git
- *   node scripts/stamp-build.mjs --no-bump   # Updates COMMIT from git, keeps BUILD as is
- *   node scripts/stamp-build.mjs --version 1.1 # Sets VERSION to 1.1, bumps BUILD + 1, updates COMMIT
+ *   node scripts/stamp-build.mjs                # Bumps BUILD + 1, updates COMMIT from git
+ *   node scripts/stamp-build.mjs --no-bump      # Updates COMMIT from git, keeps BUILD as is
+ *   node scripts/stamp-build.mjs --version 1.1  # Sets VERSION to 1.1, bumps BUILD + 1, updates COMMIT
+ *   node scripts/stamp-build.mjs --commit abc12  # Uses the given hash instead of HEAD
+ *
+ * Commit resolution order:
+ *   1. --commit <sha>   (explicit, preferred in CI)
+ *   2. $GITHUB_SHA      (set automatically by GitHub Actions)
+ *   3. git rev-parse --short HEAD  (local fallback)
  */
 
 import { execSync } from 'node:child_process';
@@ -17,10 +23,17 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROTOCOL_PATH = path.resolve(__dirname, '../assets/js/protocol.js');
 
-function getGitCommit() {
+function getGitCommit(explicit) {
+  // 1. Explicit --commit flag (CI or manual override)
+  if (explicit) {
+    return explicit.slice(0, 7);
+  }
+  // 2. GitHub Actions provides the triggering commit
   if (process.env.GITHUB_SHA) {
     return process.env.GITHUB_SHA.slice(0, 7);
   }
+  // 3. Local: current HEAD (will be one behind after the commit that includes
+  //    this change — a fundamental git limitation, see the plan notes)
   try {
     return execSync('git rev-parse --short HEAD', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {
@@ -32,6 +45,8 @@ const args = process.argv.slice(2);
 const noBump = args.includes('--no-bump');
 const versionArgIdx = args.indexOf('--version');
 const explicitVersion = versionArgIdx !== -1 && args[versionArgIdx + 1] ? args[versionArgIdx + 1] : null;
+const commitArgIdx = args.indexOf('--commit');
+const explicitCommit = commitArgIdx !== -1 && args[commitArgIdx + 1] ? args[commitArgIdx + 1] : null;
 
 let content = fs.readFileSync(PROTOCOL_PATH, 'utf8');
 
@@ -50,7 +65,7 @@ const currentVersion = versionMatch ? versionMatch[1] : '1.0';
 const newVersion = explicitVersion || currentVersion;
 
 // Get Commit Hash
-const commit = getGitCommit() || (content.match(/export const COMMIT = '([^']*)';/)?.[1] ?? '');
+const commit = getGitCommit(explicitCommit) || (content.match(/export const COMMIT = '([^']*)';/)?.[1] ?? '');
 
 // Replace BUILD
 content = content.replace(/export const BUILD = \d+;/, `export const BUILD = ${newBuild};`);
