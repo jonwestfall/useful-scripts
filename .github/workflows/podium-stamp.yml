@@ -19,6 +19,8 @@ jobs:
   stamp:
     name: Bump build number
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     timeout-minutes: 3
 
     # Never stamp a stamp — the previous run's own commit contains [skip ci]

@@ -1797,18 +1797,35 @@ async function refreshContentManagement() {
 }
 
 const info = await serverInfo();
+function setupAdminTabs() {
+  const tabs = document.querySelectorAll('.admin-tabs .tab');
+  const panels = document.querySelectorAll('.admin-panel');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('is-on'));
+      panels.forEach(p => p.hidden = true);
+      tab.classList.add('is-on');
+      document.getElementById(tab.dataset.target).hidden = false;
+    });
+  });
+}
+
 if (!info.features.includes('library')) {
   $('#no-server').hidden = false;
 } else {
   me = info.user;
   $('#admin').hidden = false;
+  setupAdminTabs();
+
+  $('#tab-library').hidden = false;
   $('#up-go').addEventListener('click', upload);
   $('#lib-search').addEventListener('input', render);
   await refresh();
+
   // Separate probe from the library's: a server could gain session records
   // without the library, and the panel stays absent rather than empty.
   if (info.features.includes('sessions')) {
-    $('#sessions-card').hidden = false;
+    $('#tab-sessions').hidden = false;
     $('#sess-search').addEventListener('input', renderSessions);
     await refreshSessions();
   }
@@ -1816,11 +1833,11 @@ if (!info.features.includes('library')) {
   // Courses are everyone's (you see the ones you are in); people and storage
   // are an administrator's. Each card appears only where it would work.
   if (info.features.includes('people')) {
-    $('#courses-card').hidden = false;
+    $('#tab-courses').hidden = false;
     $('#new-course-go').addEventListener('click', addCourse);
     if (me?.isAdmin) {
-      $('#people-card').hidden = false;
-      $('#storage-card').hidden = false;
+      $('#tab-people').hidden = false;
+      $('#tab-storage').hidden = false;
       $('#people-search').addEventListener('input', renderPeople);
       $('#new-user-go').addEventListener('click', addPerson);
       $('#backup-go').addEventListener('click', downloadBackup);
@@ -1831,9 +1848,13 @@ if (!info.features.includes('library')) {
 
   // Content management is for administrators only
   if (info.features.includes('content') && me?.isAdmin) {
-    $('#content-card').hidden = false;
+    $('#tab-content').hidden = false;
     setupContentManagement();
     await refreshContentManagement();
   }
+
+  // Select first available tab
+  const firstVisibleTab = document.querySelector('.admin-tabs .tab:not([hidden])');
+  if (firstVisibleTab) firstVisibleTab.click();
 }
 

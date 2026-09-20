@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress } from './util.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
@@ -1278,7 +1278,11 @@ function renderSlides() {
     notesEl.classList.add('is-empty');
   } else {
     const note = deck.notes[index] || '';
-    notesEl.textContent = note || 'No notes on this slide.';
+    if (note) {
+      notesEl.innerHTML = miniMarkdown(note);
+    } else {
+      notesEl.textContent = 'No notes on this slide.';
+    }
     notesEl.classList.toggle('is-empty', !note);
   }
 
@@ -4184,8 +4188,18 @@ async function connect() {
 // --- wiring -----------------------------------------------------------------
 
 function tab(name) {
-  $$('.tab').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
-  $$('.panel').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+  const dualPane = document.body.classList.contains('dual-pane');
+  $$('.tab:not(#dual-pane-toggle)').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
+  $$('.panel').forEach((p) => {
+    if (dualPane && p.dataset.panel === 'slides') {
+      p.hidden = false;
+    } else {
+      p.hidden = p.dataset.panel !== name;
+    }
+  });
+  if (dualPane) {
+    document.body.classList.toggle('dual-secondary', name !== 'slides');
+  }
   // The list of lectures on the server is asked for again every time the tab
   // carrying it is opened. Reading it once at startup would mean a lecture
   // sent from the desk five minutes ago was invisible here until a reload -
@@ -4217,7 +4231,22 @@ function tab(name) {
   }
 }
 
-$$('.tab').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
+$$('.tab:not(#dual-pane-toggle)').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
+
+const savedDual = localStorage.getItem('podium.ui.dualPane') === '1';
+if (savedDual) {
+  document.body.classList.add('dual-pane');
+  $('#dual-pane-toggle').classList.add('is-on');
+}
+
+$('#dual-pane-toggle').addEventListener('click', () => {
+  const isDual = document.body.classList.toggle('dual-pane');
+  $('#dual-pane-toggle').classList.toggle('is-on', isDual);
+  localStorage.setItem('podium.ui.dualPane', isDual ? '1' : '0');
+  const activeTab = document.querySelector('.tab.is-on:not(#dual-pane-toggle)');
+  if (activeTab) tab(activeTab.dataset.tab);
+  window.dispatchEvent(new Event('resize'));
+});
 
 $$('.layout-btn').forEach((b) => {
   b.addEventListener('click', () => send({ op: 'layout', mode: b.dataset.layout }));
