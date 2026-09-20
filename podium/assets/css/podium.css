@@ -814,6 +814,41 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; }
 .swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
 
+/* Custom color picker swatch (Issue #53) */
+.swatch-picker {
+  position: relative; width: 42px; height: 42px; min-height: 42px; padding: 0;
+  border-radius: 50%; display: inline-grid; place-items: center; cursor: pointer;
+  background: conic-gradient(#ff4d4f, #ffd166, #45d483, #6ea8fe, #a371f7, #ff4d4f);
+  border: 2px solid var(--line); box-sizing: border-box;
+}
+.swatch-picker-inner {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--custom-color, #a371f7);
+  border: 1.5px solid rgba(0, 0, 0, .45); pointer-events: none;
+}
+.swatch-picker input[type="color"] {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; border: none; padding: 0;
+}
+.swatch-picker.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
+
+/* Ink panel layout preferences (Issue #53) */
+.panel[data-panel="ink"].pad-gutter #pad-viewport {
+  width: 80%; margin: 6px auto;
+}
+.panel[data-panel="ink"].controls-top #ink-controls {
+  order: 1;
+}
+.panel[data-panel="ink"].controls-top #pad-viewport {
+  order: 2;
+}
+.panel[data-panel="ink"].controls-top .hint {
+  order: 3;
+}
+.ink-controls {
+  display: flex; flex-direction: column; gap: 14px;
+}
+
 #cam-local { width: 100%; max-width: 320px; border-radius: var(--radius); background: #000; }
 #cam-status { color: var(--dim); font-size: 14px; }
 

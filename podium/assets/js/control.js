@@ -3857,7 +3857,7 @@ function tab(name) {
   // from that, so every "contain"-fit surface needs a nudge the moment its
   // panel actually has a size to fit into - it would otherwise sit blank
   // until whatever periodic update happens to land next.
-  if (name === 'ink') { syncInkFromState(); sizePad(); }
+  if (name === 'ink') { syncInkFromState(); applyInkPreferences(); sizePad(); }
   if (name === 'slides') {
     lastScrolledSlideIndex = null;
     renderSlides();
@@ -4383,11 +4383,39 @@ $('#ink-width').addEventListener('input', (ev) => {
   if (ink.tool === 'highlighter') ink.highlighterWidth = val;
   else if (ink.tool === 'pen') ink.penWidth = val;
 });
-$$('.swatch').forEach((b) => b.addEventListener('click', () => {
+$$('.swatch:not(.swatch-picker)').forEach((b) => b.addEventListener('click', () => {
   ink.color = b.dataset.color;
-  $$('.swatch').forEach((s) => s.classList.toggle('is-on', s === b));
+  $$('.swatch:not(.swatch-picker)').forEach((s) => s.classList.toggle('is-on', s === b));
+  $('#ink-picker-label')?.classList.remove('is-on');
   if (ink.tool === 'eraser' || ink.tool === 'laser' || ink.tool === 'spotlight') setInkTool('pen');
 }));
+
+const INK_CUSTOM_COLOR_KEY = 'podium.ink_custom_color.v1';
+let customInkColor = '#a371f7';
+try {
+  const savedColor = localStorage.getItem(INK_CUSTOM_COLOR_KEY);
+  if (savedColor && /^#[0-9a-fA-F]{6}$/.test(savedColor)) customInkColor = savedColor;
+} catch { /* private browsing */ }
+
+const inkColorPicker = $('#ink-color-picker');
+const inkPickerLabel = $('#ink-picker-label');
+if (inkColorPicker && inkPickerLabel) {
+  inkColorPicker.value = customInkColor;
+  inkPickerLabel.style.setProperty('--custom-color', customInkColor);
+
+  const onCustomColor = (color) => {
+    customInkColor = color;
+    ink.color = color;
+    inkPickerLabel.style.setProperty('--custom-color', color);
+    $$('.swatch:not(.swatch-picker)').forEach((s) => s.classList.remove('is-on'));
+    inkPickerLabel.classList.add('is-on');
+    try { localStorage.setItem(INK_CUSTOM_COLOR_KEY, color); } catch { /* quota / private */ }
+    if (ink.tool === 'eraser' || ink.tool === 'laser' || ink.tool === 'spotlight') setInkTool('pen');
+  };
+
+  inkColorPicker.addEventListener('input', (ev) => onCustomColor(ev.target.value));
+  inkColorPicker.addEventListener('change', (ev) => onCustomColor(ev.target.value));
+}
 
 $('#cam-start').addEventListener('click', async () => {
   if (cameraSender?.active) { await cameraSender.stop(); return; }
@@ -4721,6 +4749,8 @@ const PRESENTATION_DEFAULTS = {
   pacingAutoStart: true,
   bottomSlot1: 'music',
   bottomSlot2: 'play',
+  inkScrollGutter: false,
+  inkControlsTop: false,
 };
 function loadPresentation() {
   try {
@@ -4732,6 +4762,18 @@ function savePresentation() {
   try { localStorage.setItem(PRESENTATION_KEY, JSON.stringify(presentation)); } catch { /* private mode, or quota */ }
 }
 let presentation = loadPresentation();
+
+function applyInkPreferences() {
+  const inkPanel = $('[data-panel="ink"]');
+  if (inkPanel) {
+    inkPanel.classList.toggle('pad-gutter', !!presentation.inkScrollGutter);
+    inkPanel.classList.toggle('controls-top', !!presentation.inkControlsTop);
+  }
+  if (!$('[data-panel="ink"]')?.hidden && !ink.drawing && !ink.pointing) {
+    sizePad();
+  }
+}
+applyInkPreferences();
 
 // Lecture pacing state (survives reloads mid-lecture)
 const PACING_KEY = 'podium.pacing.v1';
@@ -5048,6 +5090,18 @@ $('#pref-bottom-slot-2').addEventListener('change', (ev) => {
   renderBottomSlots();
 });
 
+$('#pref-ink-scroll-gutter')?.addEventListener('change', (ev) => {
+  presentation.inkScrollGutter = ev.target.checked;
+  savePresentation();
+  applyInkPreferences();
+});
+
+$('#pref-ink-controls-top')?.addEventListener('change', (ev) => {
+  presentation.inkControlsTop = ev.target.checked;
+  savePresentation();
+  applyInkPreferences();
+});
+
 $('#topbar-pacing')?.addEventListener('click', () => {
   if (!pacingState.startedAt) {
     startPacingTimer();
@@ -5082,6 +5136,10 @@ function showSetup() {
   $('#pref-pacing-autostart').checked = presentation.pacingAutoStart !== false;
   $('#pref-bottom-slot-1').value = presentation.bottomSlot1 || 'music';
   $('#pref-bottom-slot-2').value = presentation.bottomSlot2 || 'play';
+  const prefGutter = $('#pref-ink-scroll-gutter');
+  if (prefGutter) prefGutter.checked = !!presentation.inkScrollGutter;
+  const prefTop = $('#pref-ink-controls-top');
+  if (prefTop) prefTop.checked = !!presentation.inkControlsTop;
   renderKeepPhotos();
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {

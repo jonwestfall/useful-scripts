@@ -309,45 +309,51 @@
               <canvas id="pad"></canvas>
             </div>
           </div>
-          <div class="inline">
-            <button id="ink-zoom-out" type="button" title="Zoom out">−</button>
-            <span id="ink-zoom-level" class="mono">1×</span>
-            <button id="ink-zoom-in" type="button" title="Zoom in">+</button>
-            <button id="ink-zoom-reset" type="button">Reset zoom</button>
-            <button id="ink-toggle-mirror" type="button" class="is-on">Showing slide</button>
-          </div>
-          <div class="inline">
-            <span class="hint" style="margin:0">Pan (once zoomed):</span>
-            <button id="pan-left" class="pan-btn" type="button" disabled title="Pan left">◀</button>
-            <button id="pan-up" class="pan-btn" type="button" disabled title="Pan up">▲</button>
-            <button id="pan-down" class="pan-btn" type="button" disabled title="Pan down">▼</button>
-            <button id="pan-right" class="pan-btn" type="button" disabled title="Pan right">▶</button>
-          </div>
-          <div class="inline">
-            <div class="ink-tools" role="group" aria-label="Ink tool selection">
-              <button id="ink-tool-pen" class="ink-tool-btn is-on" type="button" data-tool="pen" title="Pen (P)">Pen</button>
-              <button id="ink-tool-highlighter" class="ink-tool-btn" type="button" data-tool="highlighter" title="Highlighter (H)">Highlighter</button>
-              <button id="ink-tool-eraser" class="ink-tool-btn" type="button" data-tool="eraser" title="Eraser (E)">Eraser</button>
-              <button id="ink-tool-laser" class="ink-tool-btn" type="button" data-tool="laser" title="Laser pointer (L)">Laser</button>
-              <button id="ink-tool-spotlight" class="ink-tool-btn" type="button" data-tool="spotlight" title="Spotlight (S)">Spotlight</button>
+          <div id="ink-controls" class="ink-controls">
+            <div class="inline">
+              <button id="ink-zoom-out" type="button" title="Zoom out">−</button>
+              <span id="ink-zoom-level" class="mono">1×</span>
+              <button id="ink-zoom-in" type="button" title="Zoom in">+</button>
+              <button id="ink-zoom-reset" type="button">Reset zoom</button>
+              <button id="ink-toggle-mirror" type="button" class="is-on">Showing slide</button>
             </div>
-            <button class="swatch is-on" type="button" data-color="#ffd166" style="background:#ffd166"></button>
-            <button class="swatch" type="button" data-color="#ff4d4f" style="background:#ff4d4f"></button>
-            <button class="swatch" type="button" data-color="#45d483" style="background:#45d483"></button>
-            <button class="swatch" type="button" data-color="#6ea8fe" style="background:#6ea8fe"></button>
-            <button class="swatch" type="button" data-color="#ffffff" style="background:#ffffff"></button>
-            <button id="ink-undo" type="button">Undo</button>
-            <button id="ink-clear" type="button">Clear</button>
-            <button id="ink-save" type="button" title="Keep a photo of this panel, ink and all">Save a photo</button>
-            <!-- Appears for a few seconds after a Clear. Clearing the board is
-                 a frequent, deliberate move, so it stays one tap; this is what
-                 makes the accidental one survivable. -->
-            <button id="ink-unclear" type="button" hidden>Undo clear</button>
-          </div>
-          <div class="inline">
-            <label class="grow" for="ink-width">Thickness</label>
-            <input id="ink-width" class="grow" type="range" min="2" max="24" value="6">
-            <label class="check"><input id="ink-pen-only" type="checkbox"> Apple Pencil only</label>
+            <div class="inline">
+              <span class="hint" style="margin:0">Pan (once zoomed):</span>
+              <button id="pan-left" class="pan-btn" type="button" disabled title="Pan left">◀</button>
+              <button id="pan-up" class="pan-btn" type="button" disabled title="Pan up">▲</button>
+              <button id="pan-down" class="pan-btn" type="button" disabled title="Pan down">▼</button>
+              <button id="pan-right" class="pan-btn" type="button" disabled title="Pan right">▶</button>
+            </div>
+            <div class="inline">
+              <div class="ink-tools" role="group" aria-label="Ink tool selection">
+                <button id="ink-tool-pen" class="ink-tool-btn is-on" type="button" data-tool="pen" title="Pen (P)">Pen</button>
+                <button id="ink-tool-highlighter" class="ink-tool-btn" type="button" data-tool="highlighter" title="Highlighter (H)">Highlighter</button>
+                <button id="ink-tool-eraser" class="ink-tool-btn" type="button" data-tool="eraser" title="Eraser (E)">Eraser</button>
+                <button id="ink-tool-laser" class="ink-tool-btn" type="button" data-tool="laser" title="Laser pointer (L)">Laser</button>
+                <button id="ink-tool-spotlight" class="ink-tool-btn" type="button" data-tool="spotlight" title="Spotlight (S)">Spotlight</button>
+              </div>
+              <button class="swatch is-on" type="button" data-color="#ffd166" style="background:#ffd166"></button>
+              <button class="swatch" type="button" data-color="#ff4d4f" style="background:#ff4d4f"></button>
+              <button class="swatch" type="button" data-color="#45d483" style="background:#45d483"></button>
+              <button class="swatch" type="button" data-color="#6ea8fe" style="background:#6ea8fe"></button>
+              <button class="swatch" type="button" data-color="#ffffff" style="background:#ffffff"></button>
+              <label id="ink-picker-label" class="swatch swatch-picker" title="Custom color">
+                <span id="ink-picker-preview" class="swatch-picker-inner"></span>
+                <input id="ink-color-picker" type="color" value="#a371f7">
+              </label>
+              <button id="ink-undo" type="button">Undo</button>
+              <button id="ink-clear" type="button">Clear</button>
+              <button id="ink-save" type="button" title="Keep a photo of this panel, ink and all">Save a photo</button>
+              <!-- Appears for a few seconds after a Clear. Clearing the board is
+                   a frequent, deliberate move, so it stays one tap; this is what
+                   makes the accidental one survivable. -->
+              <button id="ink-unclear" type="button" hidden>Undo clear</button>
+            </div>
+            <div class="inline">
+              <label class="grow" for="ink-width">Thickness</label>
+              <input id="ink-width" class="grow" type="range" min="2" max="24" value="6">
+              <label class="check"><input id="ink-pen-only" type="checkbox"> Apple Pencil only</label>
+            </div>
           </div>
           <p class="hint">
             Ink draws over whatever is on screen and is shaped to match it, so the pad above
@@ -882,6 +888,16 @@
       <p class="hint">
         Starts the pacing clock automatically the first time you un-blank or advance a slide.
         You can also tap the pacing tracker in the top bar at any time to start or reset it.
+      </p>
+
+      <label class="check"><input id="pref-ink-scroll-gutter" type="checkbox"> Add 10% scroll border around markup slide</label>
+      <p class="hint">
+        Shrinks the slide area slightly so you can use your finger to scroll the page up and down without accidentally drawing strokes on the slide.
+      </p>
+
+      <label class="check"><input id="pref-ink-controls-top" type="checkbox"> Place markup tools above the slide</label>
+      <p class="hint">
+        Moves the markup toolbar, colors, and thickness controls to the top of the screen above the slide instead of below it.
       </p>
 
       <div class="field" style="margin-top:16px;">
