@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress } from './util.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
@@ -1278,7 +1278,11 @@ function renderSlides() {
     notesEl.classList.add('is-empty');
   } else {
     const note = deck.notes[index] || '';
-    notesEl.textContent = note || 'No notes on this slide.';
+    if (note) {
+      notesEl.innerHTML = miniMarkdown(note);
+    } else {
+      notesEl.textContent = 'No notes on this slide.';
+    }
     notesEl.classList.toggle('is-empty', !note);
   }
 
