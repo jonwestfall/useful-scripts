@@ -486,6 +486,7 @@ export function applyInkAction(strokes, cmd, fallback = {}) {
         width: cmd.width || fallback.width,
         pts: roundPoints(cmd.pts),
       };
+      if (cmd.highlighter || fallback.highlighter) stroke.highlighter = true;
       strokes.push(stroke);
     }
     // Capped on the stroke actually touched, not the last one in the list: a
@@ -493,8 +494,73 @@ export function applyInkAction(strokes, cmd, fallback = {}) {
     if (stroke.pts.length > MAX_POINTS_PER_STROKE) stroke.pts.length = MAX_POINTS_PER_STROKE;
     return true;
   }
+  if (cmd.action === 'erase') {
+    const ids = Array.isArray(cmd.ids) ? cmd.ids : (cmd.id ? [cmd.id] : []);
+    if (!ids.length) return false;
+    const set = new Set(ids);
+    let changed = false;
+    for (let i = strokes.length - 1; i >= 0; i--) {
+      if (set.has(strokes[i].id)) {
+        strokes.splice(i, 1);
+        changed = true;
+      }
+    }
+    return changed;
+  }
   if (cmd.action === 'undo') { strokes.pop(); return true; }
   if (cmd.action === 'clear') { strokes.length = 0; return true; }
+  return false;
+}
+
+/**
+ * Squared distance from point (px, py) to segment (x1, y1)-(x2, y2).
+ */
+export function distToSegmentSquared(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const l2 = dx * dx + dy * dy;
+  if (l2 === 0) return (px - x1) ** 2 + (py - y1) ** 2;
+  let t = ((px - x1) * dx + (py - y1) * dy) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return (px - (x1 + t * dx)) ** 2 + (py - (y1 + t * dy)) ** 2;
+}
+
+/**
+ * Hit test a stroke against screen coordinates (px, py) given surface size (w, h).
+ */
+export function strokeHitTest(stroke, px, py, w, h, eraserRadius = 18) {
+  if (!stroke?.pts || stroke.pts.length === 0) return false;
+  const radius = Math.max(eraserRadius, (stroke.width || 6) * 0.5 + 8);
+  const r2 = radius * radius;
+
+  if (stroke.pts.length === 1) {
+    const sx = stroke.pts[0][0] * w;
+    const sy = stroke.pts[0][1] * h;
+    return (px - sx) ** 2 + (py - sy) ** 2 <= r2;
+  }
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of stroke.pts) {
+    const sx = x * w;
+    const sy = y * h;
+    if (sx < minX) minX = sx;
+    if (sx > maxX) maxX = sx;
+    if (sy < minY) minY = sy;
+    if (sy > maxY) maxY = sy;
+  }
+  if (px < minX - radius || px > maxX + radius || py < minY - radius || py > maxY + radius) {
+    return false;
+  }
+
+  for (let i = 0; i < stroke.pts.length - 1; i++) {
+    const x1 = stroke.pts[i][0] * w;
+    const y1 = stroke.pts[i][1] * h;
+    const x2 = stroke.pts[i + 1][0] * w;
+    const y2 = stroke.pts[i + 1][1] * h;
+    if (distToSegmentSquared(px, py, x1, y1, x2, y2) <= r2) {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -1041,11 +1107,12 @@ export function applyCommand(state, cmd) {
         return true;
       }
       if (cmd.action === 'clear' && surface.strokes.length) surface.cleared = surface.strokes.slice();
-      applyInkAction(surface.strokes, cmd, { color: ink.color, width: ink.width });
+      const changed = applyInkAction(surface.strokes, cmd, { color: ink.color, width: ink.width, highlighter: !!cmd.highlighter });
       // Cap memory over a long lecture; the oldest strokes fall off first.
       if (surface.strokes.length > MAX_STROKES_PER_SURFACE) {
         surface.strokes.splice(0, surface.strokes.length - MAX_STROKES_PER_SURFACE);
       }
+      if (cmd.action === 'erase') return changed;
       return true;
     }
 

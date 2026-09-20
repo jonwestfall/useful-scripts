@@ -65,8 +65,11 @@ The **Slides** tab provides an integrated confidence monitor:
 Annotate over any slide, PDF, image, or whiteboard with an Apple Pencil or stylus:
 - **Zero Latency Vector Ink**: Draws locally on the iPad first for instantaneous feedback, then synchronizes vector strokes to the projector over WebSockets.
 - **Surface Anchoring**: Ink is mathematically anchored to the content bounds. If a slide is 16:9 letterboxed on a 4:3 projector, ink stays pinned to the slide elements even if the layout changes.
-- **Color Palette & Stroke Widths**: Select from high-contrast colors (white, yellow, cyan, red) and adjust line thickness.
-- **Quick Whiteboard**: Tap the whiteboard shortcut in the bottom bar to instantly summon a clean drawing canvas.
+- **Pen, Highlighter & Stroke Eraser Tools**:
+  - **Pen**: Opaque solid line for writing, sketching, and diagrams.
+  - **Highlighter**: Semi-transparent (35% opacity) broad stroke designed to emphasize slide text, equations, or diagrams without obscuring content beneath.
+  - **Targeted Stroke Eraser**: Tap or swipe across individual strokes to remove them via vector hit-testing without wiping the whole board or reversing newer annotations.
+- **Stylus & Apple Pencil Hardware Support**: Physical stylus eraser tips or barrel buttons automatically trigger eraser mode while in contact. Keyboard shortcuts `1` (Pen), `2` / `H` (Highlighter), `3` / `E` (Eraser) enable fast tool switching.
 - **Exporting Annotations**: At the end of class, export all annotated slides and whiteboard diagrams as high-resolution PNGs bundled in a session `.zip`.
 
 ---

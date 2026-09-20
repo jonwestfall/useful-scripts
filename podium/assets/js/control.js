@@ -6,7 +6,7 @@ import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, 
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
-  inkDigest, inkDigestsAgree, applyInkAction, BUILD, VERSION, COMMIT, versionStamp, MAX_SET_ENTRIES } from './protocol.js';
+  inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, COMMIT, versionStamp, MAX_SET_ENTRIES } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
@@ -969,6 +969,10 @@ function paintStrokes(ctx, strokes, w, h) {
   const widthScale = w / 1280;
   for (const stroke of strokes || []) {
     if (!stroke.pts || stroke.pts.length < 2) continue;
+    ctx.save();
+    if (stroke.highlighter) {
+      ctx.globalAlpha = 0.35;
+    }
     ctx.beginPath();
     ctx.strokeStyle = stroke.color;
     ctx.lineWidth = Math.max(1, stroke.width * widthScale);
@@ -977,6 +981,7 @@ function paintStrokes(ctx, strokes, w, h) {
     ctx.moveTo(stroke.pts[0][0] * w, stroke.pts[0][1] * h);
     for (let i = 1; i < stroke.pts.length; i++) ctx.lineTo(stroke.pts[i][0] * w, stroke.pts[i][1] * h);
     ctx.stroke();
+    ctx.restore();
   }
 }
 
@@ -2177,7 +2182,20 @@ const padFrame = $('#pad-frame');
 const padMirror = $('#pad-mirror');
 const pad = $('#pad');
 const padCtx = pad.getContext('2d');
-const ink = { drawing: false, strokeId: null, buffer: [], penOnly: false, color: '#ffd166', width: 6, strokes: [] };
+const ink = {
+  drawing: false,
+  erasing: false,
+  strokeId: null,
+  buffer: [],
+  penOnly: false,
+  tool: 'pen',
+  color: '#ffd166',
+  width: 6,
+  penWidth: 6,
+  highlighterWidth: 22,
+  lastErasePoint: null,
+  strokes: [],
+};
 let inkSurface = null;
 let zoom = 1;
 let panX = 0;
@@ -2387,6 +2405,10 @@ function redrawPad() {
   padCtx.clearRect(0, 0, w, h);
   for (const stroke of ink.strokes) {
     if (stroke.pts.length < 2) continue;
+    padCtx.save();
+    if (stroke.highlighter) {
+      padCtx.globalAlpha = 0.35;
+    }
     padCtx.beginPath();
     padCtx.strokeStyle = stroke.color;
     padCtx.lineWidth = stroke.width;
@@ -2395,6 +2417,7 @@ function redrawPad() {
     padCtx.moveTo(stroke.pts[0][0] * w, stroke.pts[0][1] * h);
     for (let i = 1; i < stroke.pts.length; i++) padCtx.lineTo(stroke.pts[i][0] * w, stroke.pts[i][1] * h);
     padCtx.stroke();
+    padCtx.restore();
   }
 }
 
@@ -2447,7 +2470,7 @@ function receiveInkSurface(msg) {
   if (!msg.last) return;
   // Never clobber a stroke this device is in the middle of drawing; the next
   // heartbeat will notice the difference and ask again.
-  if (!ink.drawing) {
+  if (!ink.drawing && !ink.erasing) {
     holdInk(msg.surface, inkPull.parts);
     if (!$('[data-panel="ink"]').hidden) redrawPad();
   }
@@ -2468,7 +2491,7 @@ function syncInkFromState() {
     if (clearedInk.surface && clearedInk.surface !== nextSurface) offerUnclear(null, []);
     if (!$('[data-panel="ink"]').hidden) redrawPad();
   }
-  if (!ink.drawing && !inkDigestsAgree(inkDigest(ink.strokes), state.ink?.digest)) requestInkSurface();
+  if (!ink.drawing && !ink.erasing && !inkDigestsAgree(inkDigest(ink.strokes), state.ink?.digest)) requestInkSurface();
   // Resizing mid-stroke is what caused strokes to come out warped. If the
   // deck's aspect had only just become known - Marp still loading when the
   // gesture started - the frame would resize partway through it. Points
@@ -2477,7 +2500,7 @@ function syncInkFromState() {
   // different things once redrawn under one uniform size. Deferring the
   // resize until the stroke ends (see endStroke()) keeps every point in a
   // gesture measured against one constant box.
-  if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad();
+  if (!$('[data-panel="ink"]').hidden && !ink.drawing && !ink.erasing) sizePad();
 }
 
 const flushInk = throttle(() => {
@@ -2490,19 +2513,85 @@ function padPoint(ev) {
   return [(ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height];
 }
 
+function isHardwareEraser(ev) {
+  return ev.pointerType === 'pen' && (((ev.buttons & 32) !== 0) || ev.button === 5);
+}
+
+function eraseAt(ev) {
+  const rect = pad.getBoundingClientRect();
+  const px = ev.clientX - rect.left;
+  const py = ev.clientY - rect.top;
+  const w = rect.width;
+  const h = rect.height;
+  if (!w || !h || !ink.strokes.length) return;
+
+  const samplePoints = [];
+  if (ink.lastErasePoint) {
+    const [lx, ly] = ink.lastErasePoint;
+    const dist = Math.hypot(px - lx, py - ly);
+    const step = 12;
+    if (dist > step) {
+      const steps = Math.ceil(dist / step);
+      for (let s = 1; s <= steps; s++) {
+        samplePoints.push([lx + (px - lx) * (s / steps), ly + (py - ly) * (s / steps)]);
+      }
+    } else {
+      samplePoints.push([px, py]);
+    }
+  } else {
+    samplePoints.push([px, py]);
+  }
+  ink.lastErasePoint = [px, py];
+
+  const toRemove = [];
+  for (const stroke of ink.strokes) {
+    for (const [sx, sy] of samplePoints) {
+      if (strokeHitTest(stroke, sx, sy, w, h)) {
+        toRemove.push(stroke.id);
+        break;
+      }
+    }
+  }
+
+  if (toRemove.length) {
+    const set = new Set(toRemove);
+    ink.strokes = ink.strokes.filter((s) => !set.has(s.id));
+    holdInk(inkSurface, ink.strokes);
+    redrawPad();
+    send({ op: 'ink', action: 'erase', ids: toRemove });
+  }
+}
+
 pad.addEventListener('pointerdown', (ev) => {
   if (ink.penOnly && ev.pointerType !== 'pen') return;
+  const hardwareEraser = isHardwareEraser(ev);
+  if (ink.tool === 'eraser' || hardwareEraser) {
+    pad.setPointerCapture(ev.pointerId);
+    ink.erasing = true;
+    ink.lastErasePoint = null;
+    eraseAt(ev);
+    return;
+  }
   pad.setPointerCapture(ev.pointerId);
   ink.drawing = true;
   ink.strokeId = uid(6);
   const pt = padPoint(ev);
   holdInk(inkSurface, ink.strokes);
-  ink.strokes.push({ id: ink.strokeId, color: ink.color, width: ink.width, pts: [pt] });
+  const isHighlighter = ink.tool === 'highlighter';
+  const newStroke = { id: ink.strokeId, color: ink.color, width: ink.width, pts: [pt] };
+  if (isHighlighter) newStroke.highlighter = true;
+  ink.strokes.push(newStroke);
   ink.buffer = [];
-  send({ op: 'ink', action: 'begin', id: ink.strokeId, color: ink.color, width: ink.width, pts: [pt] });
+  send({ op: 'ink', action: 'begin', id: ink.strokeId, color: ink.color, width: ink.width, highlighter: isHighlighter, pts: [pt] });
 });
 
 pad.addEventListener('pointermove', (ev) => {
+  if (ink.erasing) {
+    ev.preventDefault();
+    const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
+    for (const e of events) eraseAt(e);
+    return;
+  }
   if (!ink.drawing) return;
   ev.preventDefault();
   // Coalesced events keep an Apple Pencil line smooth without flooding the bus.
@@ -2523,6 +2612,12 @@ pad.addEventListener('pointermove', (ev) => {
 });
 
 const endStroke = (ev) => {
+  if (ink.erasing) {
+    ink.erasing = false;
+    ink.lastErasePoint = null;
+    try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
+    return;
+  }
   if (!ink.drawing) return;
   ink.drawing = false;
   flushInk();
@@ -4000,11 +4095,35 @@ $('#ink-unclear').addEventListener('click', () => {
   redrawPad();
   offerUnclear(null, []);
 });
+function setInkTool(tool) {
+  ink.tool = tool;
+  $$('.ink-tool-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.tool === tool));
+  pad.classList.toggle('is-eraser', tool === 'eraser');
+  const slider = $('#ink-width');
+  if (tool === 'pen') {
+    ink.width = ink.penWidth;
+    if (slider) slider.value = ink.penWidth;
+  } else if (tool === 'highlighter') {
+    ink.width = ink.highlighterWidth;
+    if (slider) slider.value = ink.highlighterWidth;
+  }
+}
+
+$$('.ink-tool-btn').forEach((b) => b.addEventListener('click', () => {
+  setInkTool(b.dataset.tool);
+}));
+
 $('#ink-pen-only').addEventListener('change', (ev) => { ink.penOnly = ev.target.checked; });
-$('#ink-width').addEventListener('input', (ev) => { ink.width = Number(ev.target.value); });
+$('#ink-width').addEventListener('input', (ev) => {
+  const val = Number(ev.target.value);
+  ink.width = val;
+  if (ink.tool === 'highlighter') ink.highlighterWidth = val;
+  else if (ink.tool === 'pen') ink.penWidth = val;
+});
 $$('.swatch').forEach((b) => b.addEventListener('click', () => {
   ink.color = b.dataset.color;
   $$('.swatch').forEach((s) => s.classList.toggle('is-on', s === b));
+  if (ink.tool === 'eraser') setInkTool('pen');
 }));
 
 $('#cam-start').addEventListener('click', async () => {
@@ -4261,6 +4380,15 @@ document.addEventListener('keydown', (ev) => {
     if (ev.shiftKey) askForShot('screen', 'the whole screen');
     else askForShot(state.focus, `panel ${PANEL_LABELS[state.focus]}`);
     return;
+  }
+
+  // When focused on the Ink tab, switch tools quickly
+  if (!$('[data-panel="ink"]').hidden) {
+    if (ev.key === '1') { ev.preventDefault(); setInkTool('pen'); return; }
+    if (ev.key === '2') { ev.preventDefault(); setInkTool('highlighter'); return; }
+    if (ev.key === '3') { ev.preventDefault(); setInkTool('eraser'); return; }
+    if (ev.key === 'e' || ev.key === 'E') { ev.preventDefault(); setInkTool('eraser'); return; }
+    if (ev.key === 'h' || ev.key === 'H') { ev.preventDefault(); setInkTool('highlighter'); return; }
   }
 
   // Paging, on the other hand, only means something on something with pages.

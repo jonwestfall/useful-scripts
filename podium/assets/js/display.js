@@ -404,6 +404,10 @@ servedBuild().then((served) => {
 
 function strokePath(ctx, stroke, rect, from = 0) {
   if (stroke.pts.length < 2) return;
+  ctx.save();
+  if (stroke.highlighter) {
+    ctx.globalAlpha = 0.35;
+  }
   ctx.beginPath();
   ctx.strokeStyle = stroke.color;
   ctx.lineWidth = stroke.width;
@@ -415,6 +419,7 @@ function strokePath(ctx, stroke, rect, from = 0) {
     ctx.lineTo(rect.x + stroke.pts[i][0] * rect.w, rect.y + stroke.pts[i][1] * rect.h);
   }
   ctx.stroke();
+  ctx.restore();
 }
 
 function currentInkStrokes() {
@@ -465,7 +470,8 @@ function redrawInk(force = false) {
     && key === ink.drawnKey
     && strokes.length >= ink.drawnStrokes
     && ink.drawnStrokes > 0
-    && strokes.length === ink.drawnStrokes;
+    && strokes.length === ink.drawnStrokes
+    && !last?.highlighter;
 
   if (appended && last) {
     strokePath(ctx, last, rect, ink.drawnTail);
