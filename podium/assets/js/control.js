@@ -4429,12 +4429,14 @@ function renderSlotButton(btn, slotType) {
   btn.classList.remove('is-on');
 
   switch (slotType) {
-    case 'music':
-      btn.hidden = !music.tracks.length;
+    case 'music': {
+      const music = state.music || { tracks: [], playing: false };
+      btn.hidden = !music.tracks?.length;
       btn.textContent = music.playing ? '♪ ⏸' : '♪ ▶';
       btn.title = music.playing ? 'Pause background music' : 'Play background music';
-      btn.classList.toggle('is-on', music.playing);
+      btn.classList.toggle('is-on', !!music.playing);
       break;
+    }
 
     case 'play': {
       const item = focusedItem(state);

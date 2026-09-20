@@ -198,6 +198,7 @@ console.log('-- DOM and CSS verification --');
   chk('control.js routes bar-play click to executeSlotAction', js.includes("executeSlotAction(presentation.bottomSlot2 || 'play')"));
   chk('control.js populates pref-bottom-slot-1 in showSetup', js.includes("$('#pref-bottom-slot-1').value = presentation.bottomSlot1 || 'music'"));
   chk('control.js populates pref-bottom-slot-2 in showSetup', js.includes("$('#pref-bottom-slot-2').value = presentation.bottomSlot2 || 'play'"));
+  chk('control.js safely resolves state.music in renderSlotButton', js.includes('const music = state.music ||'));
 }
 
 if (!ok) {
