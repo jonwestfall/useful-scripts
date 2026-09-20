@@ -586,6 +586,12 @@ async function serveBackup(req, res) {
 
   fs.stat(temp, (err, info) => {
     if (err) { drop(); api.json(res, 500, { error: 'could not take a copy of the database' }); return; }
+    accounts.logEvent(db, {
+      userId: user.id, username: user.username,
+      action: 'backup_downloaded',
+      ip: api.clientIp(req), userAgent: req.headers['user-agent'],
+      details: { bytes: info.size }
+    });
     res.writeHead(200, {
       'content-type': 'application/vnd.sqlite3',
       'content-length': info.size,
@@ -698,10 +704,15 @@ const heartbeat = setInterval(() => {
   }
 }, 25000);
 
+const LOG_RETENTION_DAYS = Number(process.env.LOG_RETENTION_DAYS || 90);
+
 // Expired rows are harmless but they accumulate for as long as the box runs,
 // and a login table nobody ever sweeps is a login table nobody can read.
 const sessionSweep = db ? setInterval(() => {
   try { accounts.pruneSessions(db); } catch { /* the next sweep can have it */ }
+  if (LOG_RETENTION_DAYS > 0) {
+    try { accounts.pruneLogs(db, Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000); } catch { /* next sweep */ }
+  }
 }, 60 * 60 * 1000) : null;
 sessionSweep?.unref();
 

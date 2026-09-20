@@ -57,13 +57,55 @@ export function escapeHtml(str) {
   ));
 }
 
-// Very small inline-markdown subset for the "big text" card: **bold**, *italic*, `code`.
 export function miniMarkdown(str) {
-  return escapeHtml(str)
+  let html = escapeHtml(str);
+
+  html = html
     .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
     .replace(/\*([^*]+)\*/g, '<i>$1</i>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\n/g, '<br>');
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+
+  const lines = html.split('\n');
+  let inList = false;
+  const out = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const match = line.match(/^(\s*)(?:[-*])\s+(.*)$/);
+    if (match) {
+      if (!inList) {
+        out.push('<ul class="mini-md-list">');
+        inList = true;
+      }
+      out.push(`<li>${match[2]}</li>`);
+    } else {
+      if (inList) {
+        out.push('</ul>');
+        inList = false;
+      }
+      out.push(line);
+    }
+  }
+  if (inList) {
+    out.push('</ul>');
+  }
+  
+  let finalHtml = '';
+  for (let i = 0; i < out.length; i++) {
+    const l = out[i];
+    const isListTag = l.startsWith('<ul') || l.startsWith('</ul') || l.startsWith('<li');
+    finalHtml += l;
+    
+    if (!isListTag && i < out.length - 1) {
+       const nextIsListTag = out[i+1].startsWith('<ul') || out[i+1].startsWith('</ul') || out[i+1].startsWith('<li');
+       if (!nextIsListTag) {
+         finalHtml += '<br>';
+       }
+    }
+  }
+  return finalHtml;
 }
 
 // Guess a content item from a pasted URL so the controller's "paste a link" box

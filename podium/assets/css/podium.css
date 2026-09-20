@@ -705,6 +705,9 @@ body.control.is-frozen { background: #171006; }
   min-height: 76px; color: var(--ink);
 }
 .notes.is-empty { color: var(--dim); font-style: italic; }
+.mini-md-list { margin: 6px 0; padding-left: 20px; list-style-type: disc; }
+.mini-md-list li { margin-bottom: 4px; }
+.notes a { color: var(--accent); text-decoration: underline; }
 
 .deck-chips {
   display: flex;
@@ -1368,3 +1371,68 @@ body.plan .linkish:hover { text-decoration: underline; }
   max-height: 100%;
 }
 
+
+/* Issue #47: Dual-pane layout on large landscape tablets */
+@media (min-width: 1000px) {
+  #dual-pane-toggle {
+    display: flex !important;
+    align-items: center;
+  }
+  
+  body.dual-pane .panels {
+    display: flex;
+    flex-direction: row;
+    gap: 14px;
+  }
+  
+  body.dual-pane .panel[data-panel="slides"] {
+    display: flex !important;
+    flex: 1;
+    min-width: 0;
+  }
+  
+  /* If a different tab is selected, show it on the right */
+  body.dual-pane .panel.is-on:not([data-panel="slides"]) {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+  
+  /* Give the slides panel a border only if another tab is actively shown */
+  body.dual-pane:not(:has(.panel.is-on[data-panel="slides"])) .panel[data-panel="slides"] {
+    border-right: 1px solid var(--line);
+    padding-right: 14px;
+  }
+}
+
+/* Issue #47: Dual-pane layout on large landscape tablets */
+@media (min-width: 1000px) {
+  #dual-pane-toggle {
+    display: flex !important;
+    align-items: center;
+  }
+  
+  body.dual-pane .panels {
+    display: flex;
+    flex-direction: row;
+    gap: 14px;
+  }
+  
+  body.dual-pane .panel[data-panel="slides"] {
+    display: flex !important;
+    flex: 1;
+    min-width: 0;
+  }
+  
+  body.dual-pane .panel.is-on:not([data-panel="slides"]) {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+  
+  /* Give the slides panel a border only if another tab is actively shown */
+  body.dual-pane.dual-secondary .panel[data-panel="slides"] {
+    border-right: 1px solid var(--line);
+    padding-right: 14px;
+  }
+}

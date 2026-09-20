@@ -306,11 +306,25 @@ function sessionUser(db, token, { now = Date.now(), onSlide } = {}) {
   return publicUser(row);
 }
 
-const endSession = (db, token) =>
-  db.prepare('DELETE FROM auth_sessions WHERE token_sha256 = ?').run(tokenHash(token || ''));
+function endSession(db, token, { ip = null, userAgent = null } = {}) {
+  const hash = tokenHash(token || '');
+  const row = db.prepare(`SELECT s.created_at, s.last_seen_at, u.id, u.username
+      FROM auth_sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.token_sha256 = ?`).get(hash);
+  if (row) {
+    logEvent(db, { userId: row.id, username: row.username, action: 'logout', ip, userAgent, details: { durationMs: row.last_seen_at - row.created_at } });
+  }
+  db.prepare('DELETE FROM auth_sessions WHERE token_sha256 = ?').run(hash);
+}
 
-const pruneSessions = (db, now = Date.now()) =>
-  db.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(now).changes;
+function pruneSessions(db, now = Date.now()) {
+  db.prepare(`INSERT INTO audit_logs (user_id, username, action, created_at, details)
+    SELECT u.id, u.username, 'session_pruned', ?,
+           json_object('durationMs', s.last_seen_at - s.created_at, 'userAgent', s.user_agent)
+    FROM auth_sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.expires_at <= ?`).run(now, now);
+  return db.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(now).changes;
+}
 
 /**
  * Check a username and password, and on success hand back a fresh session
@@ -321,7 +335,10 @@ async function login(db, username, password, { userAgent = '', ip = '' } = {}) {
   const name = normalizeUsername(username);
   const now = Date.now();
   for (const key of [`u:${name}`, `ip:${ip}`]) {
-    if (throttledFor(key, now)) return { ok: false, retryAfterMs: throttledFor(key, now) };
+    if (throttledFor(key, now)) {
+      logEvent(db, { username: name, action: 'login_failure_throttled', ip, userAgent, details: { retryAfterMs: throttledFor(key, now) }, now });
+      return { ok: false, retryAfterMs: throttledFor(key, now) };
+    }
   }
   const row = findUser(db, name);
   // Verify against a fixed unusable hash when there is no account to verify
@@ -335,17 +352,39 @@ async function login(db, username, password, { userAgent = '', ip = '' } = {}) {
   if (!good || !row || row.disabled_at) {
     noteFailure(`u:${name}`, now);
     noteFailure(`ip:${ip}`, now);
+    logEvent(db, { userId: row?.id, username: name, action: 'login_failure_invalid', ip, userAgent, now });
     return { ok: false };
   }
   clearFailures(`u:${name}`);
   clearFailures(`ip:${ip}`);
+  logEvent(db, { userId: row.id, username: row.username, action: 'login_success', ip, userAgent, now });
   return { ok: true, token: startSession(db, row.id, userAgent, now), user: publicUser(row) };
 }
+
+// --- audit logs --------------------------------------------------------------
+
+function logEvent(db, { userId = null, username = null, action, ip = null, userAgent = null, details = null, now = Date.now() }) {
+  if (!db) return;
+  db.prepare(`INSERT INTO audit_logs (user_id, username, action, ip_address, user_agent, created_at, details)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+    userId,
+    username,
+    action,
+    ip ? String(ip).slice(0, 45) : null, // IPv6 length
+    userAgent ? String(userAgent).slice(0, 200) : null,
+    now,
+    details ? JSON.stringify(details) : null
+  );
+}
+
+const pruneLogs = (db, cutoffMs) =>
+  db.prepare('DELETE FROM audit_logs WHERE created_at < ?').run(cutoffMs).changes;
 
 module.exports = {
   hashPassword, verifyPassword, normalizeUsername, publicUser,
   createUser, findUser, listUsers, countUsers, countEnabledUsers, countEnabledAdmins,
   setPassword, setDisabled, setAdmin, setDisplayName, assertAnotherAdminRemains,
   startSession, sessionUser, endSession, pruneSessions, login,
+  logEvent, pruneLogs,
   SESSION_MS,
 };

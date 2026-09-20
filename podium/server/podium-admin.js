@@ -49,6 +49,7 @@ const USAGE = `podium-admin — accounts and courses for a server-backed Podium
   member add <course-code> <username> [--role owner|member]
   member remove <course-code> <username>
   sessions prune
+  logs prune --days <n>
   lectures list [--limit 20]
   lectures prune --days <n>
   doctor [--health-url http://127.0.0.1:8080/healthz] [--cert /path/fullchain.pem]
@@ -297,6 +298,14 @@ async function main(argv) {
 
   if (group === 'sessions' && action === 'prune') {
     say(`removed ${accounts.pruneSessions(db)} expired session(s)`);
+    return 0;
+  }
+
+  if (group === 'logs' && action === 'prune') {
+    const days = Number(flags.days);
+    if (!days || days < 1) throw new Error('--days <n> is required and must be at least 1');
+    const removed = accounts.pruneLogs(db, Date.now() - days * 24 * 60 * 60 * 1000);
+    say(`removed ${removed} audit log(s) older than ${days} days`);
     return 0;
   }
 

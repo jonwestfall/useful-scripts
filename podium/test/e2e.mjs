@@ -5105,6 +5105,8 @@ const desk = await acctCtx.newPage();
 trap(desk, 'acct admin');
 await desk.goto(`${acctBase}/admin.html`);
 await desk.waitForSelector('#admin:not([hidden])');
+await desk.click('#tab-library');
+await desk.waitForSelector('#panel-library:not([hidden])');
 ok('the admin page opens for a signed-in account', await desk.isVisible('#up-file'));
 ok(`and says what it will take (${(await desk.textContent('#upload-help')).slice(0, 40)}…)`,
   /50 MB/.test(await desk.textContent('#upload-help')) && /\.md/.test(await desk.textContent('#upload-help')));
@@ -5458,7 +5460,9 @@ await desk.evaluate(async (keepId) => {
 }, firstLectureId);
 
 await desk.reload();
-await desk.waitForSelector('#sessions-card:not([hidden]) .admin-row');
+await desk.waitForSelector('#admin:not([hidden])');
+await desk.click('#tab-sessions');
+await desk.waitForSelector('#panel-sessions:not([hidden]) .admin-row');
 const sessionMeta = await desk.textContent('#sessions .admin-meta');
 ok(`the admin page lists the session with what it knows about it (${sessionMeta.replace(/\s+/g, ' ').trim()})`,
   /acct-room/.test(sessionMeta) && /moment/.test(sessionMeta));
@@ -5478,7 +5482,8 @@ ok(`opening it shows what was covered, by name (${timeline.join(', ')})`,
 //
 // Everything below was a shell command until phase 5: an account, a course,
 // somebody in it, and the room that course connects to.
-await desk.waitForSelector('#people-card:not([hidden])');
+await desk.click('#tab-people');
+await desk.waitForSelector('#panel-people:not([hidden])');
 await desk.fill('#new-user', 'sam');
 await desk.fill('#new-name', 'Sam Okafor');
 await desk.fill('#new-pass', 'sams password here');
@@ -5498,6 +5503,8 @@ ok('your own row offers no way to disable or demote yourself',
   await ownRow.$('button:has-text("Disable")') === null
   && await ownRow.$eval('input[type=checkbox]', (i) => i.disabled) === true);
 
+await desk.click('#tab-courses');
+await desk.waitForSelector('#panel-courses:not([hidden])');
 await desk.click('#courses-card .admin-row:has(.admin-title:text-is("PSY 415")) button:has-text("Open")');
 await desk.waitForSelector('#courses .session-body');
 await desk.selectOption('#courses .session-body select', 'sam');
@@ -5522,6 +5529,9 @@ ok('rotating it is one button, because that is how you take a room back',
 // it reading what the server actually holds rather than a key nobody has.
 await desk.fill(passField, before);
 
+await desk.click('#tab-storage');
+await desk.waitForSelector('#panel-storage:not([hidden])');
+
 ok(`the page says what the box is holding (${(await desk.textContent('#storage-note')).slice(0, 60)}…)`,
   /Library: 1 file/.test(await desk.textContent('#storage-note'))
   && /database:/.test(await desk.textContent('#storage-note')));
@@ -5534,6 +5544,8 @@ ok(`a copy of the database comes out in one click (${backupFile.suggestedFilenam
 
 // The record, rebuilt into the same zip by a page that was never in the room.
 const rebuilt = desk.waitForEvent('download', { timeout: 40000 });
+await desk.click('#tab-sessions');
+await desk.waitForSelector('#panel-sessions:not([hidden])');
 await desk.click('#sessions .session-body button:has-text("Download the session")');
 const rebuiltFile = await rebuilt;
 ok(`a past lecture downloads as a session zip again (${rebuiltFile.suggestedFilename()})`,

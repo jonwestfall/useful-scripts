@@ -1467,6 +1467,14 @@ ok('and every other command still fails loudly on the same database, as it alway
 })());
 rmSync(crashDir, { recursive: true, force: true });
 
+console.log('\n--- audit logs ---');
+accounts.logEvent(db, { userId: admin.id, username: admin.username, action: 'test_action', details: { foo: 'bar' }, now: 1000 });
+accounts.logEvent(db, { userId: null, username: null, action: 'anon_action', now: 2000 });
+ok('logs inserted', db.prepare('SELECT COUNT(*) AS n FROM audit_logs').get().n >= 2);
+const logCountBeforePrune = db.prepare('SELECT COUNT(*) AS n FROM audit_logs').get().n;
+accounts.pruneLogs(db, 1500);
+ok('logs pruned older than cutoff', db.prepare('SELECT COUNT(*) AS n FROM audit_logs').get().n === logCountBeforePrune - 1);
+
 db.close();
 rmSync(root, { recursive: true, force: true });
 
