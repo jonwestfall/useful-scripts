@@ -38,6 +38,7 @@ const send = (cmd) => {
     renderMusic();
     renderMixer();
   }
+  checkPacingAutoStart(cmd);
   return bus?.send({ t: 'cmd', ...cmd });
 };
 
@@ -4278,7 +4279,7 @@ window.addEventListener('resize', () => { if (!$('[data-panel="ink"]').hidden &&
 window.addEventListener('beforeunload', () => bus?.close());
 
 installOfflineShell();
-setInterval(() => { renderNow(); renderTimers(); renderConnection(); }, 250);
+setInterval(() => { renderNow(); renderTimers(); renderConnection(); renderClockAndPacing(); }, 250);
 
 // Is this tab itself the stale one? Reloading a page that a cache is still
 // answering for can leave you reloading forever without moving, so the
@@ -4316,7 +4317,14 @@ $('#update-reload').addEventListener('click', () => {
 // app where "device preferences" has grown into its own settings surface
 // (the Presentation tab) rather than a single quick-access toggle.
 const PRESENTATION_KEY = 'podium.presentation.v1';
-const PRESENTATION_DEFAULTS = { showPollUrl: true, blankOnConnect: true, keepAwake: true, keepPhotos: false };
+const PRESENTATION_DEFAULTS = {
+  showPollUrl: true,
+  blankOnConnect: true,
+  keepAwake: true,
+  keepPhotos: false,
+  lectureDuration: 0,
+  pacingAutoStart: true,
+};
 function loadPresentation() {
   try {
     const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
@@ -4327,6 +4335,96 @@ function savePresentation() {
   try { localStorage.setItem(PRESENTATION_KEY, JSON.stringify(presentation)); } catch { /* private mode, or quota */ }
 }
 let presentation = loadPresentation();
+
+// Lecture pacing state (survives reloads mid-lecture)
+const PACING_KEY = 'podium.pacing.v1';
+function loadPacingState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PACING_KEY) || 'null');
+    if (saved && typeof saved.startedAt === 'number') return saved;
+  } catch { /* private mode */ }
+  return { startedAt: null };
+}
+function savePacingState(pacing) {
+  try {
+    if (pacing && pacing.startedAt) {
+      localStorage.setItem(PACING_KEY, JSON.stringify(pacing));
+    } else {
+      localStorage.removeItem(PACING_KEY);
+    }
+  } catch { /* private mode */ }
+}
+let pacingState = loadPacingState();
+
+function startPacingTimer() {
+  pacingState = { startedAt: Date.now() };
+  savePacingState(pacingState);
+  renderClockAndPacing();
+}
+
+function resetPacingTimer() {
+  pacingState = { startedAt: null };
+  savePacingState(pacingState);
+  renderClockAndPacing();
+}
+
+function checkPacingAutoStart(cmd) {
+  if (!presentation.pacingAutoStart || !presentation.lectureDuration || pacingState.startedAt) return;
+  const isNav = cmd?.op === 'nav';
+  const isUnblank = cmd?.op === 'blank' && (cmd.on === false || (cmd.on === undefined && state.blank));
+  if (isNav || isUnblank) {
+    startPacingTimer();
+  }
+}
+
+function renderClockAndPacing() {
+  const clockEl = $('#topbar-clock');
+  if (clockEl) {
+    clockEl.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  const pacingBtn = $('#topbar-pacing');
+  const pacingLabel = $('#topbar-pacing-label');
+  const pacingBar = $('#topbar-pacing-bar');
+  if (!pacingBtn || !pacingLabel || !pacingBar) return;
+
+  const dur = Number(presentation.lectureDuration) || 0;
+  if (dur <= 0) {
+    pacingBtn.hidden = true;
+    return;
+  }
+  pacingBtn.hidden = false;
+
+  if (!pacingState.startedAt) {
+    pacingBtn.classList.remove('is-running', 'is-near-end', 'is-overtime');
+    pacingLabel.textContent = `▶ Start (${dur}m)`;
+    pacingBar.style.width = '0%';
+    pacingBtn.title = 'Start lecture pacing timer';
+    return;
+  }
+
+  const elapsedSec = Math.max(0, Math.floor((Date.now() - pacingState.startedAt) / 1000));
+  const totalSec = dur * 60;
+  pacingBtn.classList.add('is-running');
+
+  if (elapsedSec < totalSec) {
+    const nearEnd = elapsedSec >= totalSec * 0.85;
+    pacingBtn.classList.toggle('is-near-end', nearEnd);
+    pacingBtn.classList.remove('is-overtime');
+    const pct = Math.min(100, Math.round((elapsedSec / totalSec) * 100));
+    pacingBar.style.width = `${pct}%`;
+    pacingLabel.textContent = `${fmtTime(elapsedSec)} / ${dur}m`;
+    pacingBtn.title = `Lecture pacing: ${fmtTime(elapsedSec)} elapsed of ${dur}m (tap to reset)`;
+  } else {
+    pacingBtn.classList.remove('is-near-end');
+    pacingBtn.classList.add('is-overtime');
+    const overSec = elapsedSec - totalSec;
+    pacingBar.style.width = '100%';
+    pacingLabel.textContent = `+${fmtTime(overSec)} (${dur}m)`;
+    pacingBtn.title = `Lecture pacing: ${fmtTime(overSec)} overtime (tap to reset)`;
+  }
+}
+renderClockAndPacing();
 
 // Keeping this device awake is a live effect, not just a stored preference -
 // toggling it in Settings has to take hold immediately, and a lock has to be
@@ -4373,6 +4471,45 @@ $('#pref-keep-photos').addEventListener('change', (ev) => {
   renderKeepPhotos();
 });
 
+$('#pref-lecture-duration').addEventListener('change', (ev) => {
+  const val = ev.target.value;
+  if (val === 'custom') {
+    $('#pref-lecture-duration-custom').hidden = false;
+    $('#pref-lecture-duration-custom').value = presentation.lectureDuration || 50;
+    presentation.lectureDuration = Number($('#pref-lecture-duration-custom').value) || 50;
+    $('#pref-lecture-duration-custom').focus();
+  } else {
+    $('#pref-lecture-duration-custom').hidden = true;
+    presentation.lectureDuration = Number(val);
+  }
+  savePresentation();
+  renderClockAndPacing();
+});
+
+$('#pref-lecture-duration-custom').addEventListener('input', (ev) => {
+  const parsed = parseInt(ev.target.value, 10);
+  if (!Number.isNaN(parsed) && parsed > 0) {
+    presentation.lectureDuration = Math.min(360, parsed);
+    savePresentation();
+    renderClockAndPacing();
+  }
+});
+
+$('#pref-pacing-autostart').addEventListener('change', (ev) => {
+  presentation.pacingAutoStart = ev.target.checked;
+  savePresentation();
+});
+
+$('#topbar-pacing')?.addEventListener('click', () => {
+  if (!pacingState.startedAt) {
+    startPacingTimer();
+  } else {
+    if (confirm('Reset lecture pacing timer?')) {
+      resetPacingTimer();
+    }
+  }
+});
+
 // --- setup ------------------------------------------------------------------
 
 function showSetup() {
@@ -4384,6 +4521,17 @@ function showSetup() {
   $('#pref-blank-on-connect').checked = presentation.blankOnConnect;
   $('#pref-keep-awake').checked = presentation.keepAwake;
   $('#pref-keep-photos').checked = presentation.keepPhotos;
+  const dur = presentation.lectureDuration || 0;
+  const stdPresets = ['0', '30', '45', '50', '60', '75', '90'];
+  if (stdPresets.includes(String(dur))) {
+    $('#pref-lecture-duration').value = String(dur);
+    $('#pref-lecture-duration-custom').hidden = true;
+  } else {
+    $('#pref-lecture-duration').value = 'custom';
+    $('#pref-lecture-duration-custom').hidden = false;
+    $('#pref-lecture-duration-custom').value = dur;
+  }
+  $('#pref-pacing-autostart').checked = presentation.pacingAutoStart !== false;
   renderKeepPhotos();
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {

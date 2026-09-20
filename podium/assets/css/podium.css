@@ -378,6 +378,33 @@ body.control.is-frozen { background: #171006; }
 #status[data-status='error']::before, #status[data-status='mismatch']::before { color: var(--live); }
 #display-state.is-bad { color: #ffb3b3; }
 .topbar button { min-height: 34px; padding: 0 10px; font-size: 13px; }
+
+.clock-widget {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.topbar-clock {
+  font-weight: 600; font-size: 13px; color: var(--ink); letter-spacing: .02em;
+}
+.topbar-pacing {
+  position: relative; display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 28px; padding: 2px 10px 4px; font-size: 12px; font-weight: 600;
+  color: var(--dim); background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 999px; overflow: hidden; cursor: pointer; user-select: none;
+}
+.topbar-pacing:hover { background: #232b35; color: var(--ink); }
+.topbar-pacing.is-running { color: var(--ink); border-color: var(--accent); }
+.topbar-pacing.is-near-end { border-color: var(--cue); color: var(--cue); }
+.topbar-pacing.is-overtime { border-color: var(--live); color: #ff9d9d; background: #2a1215; }
+.pacing-track {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 2.5px;
+  background: rgba(255, 255, 255, .08);
+}
+#topbar-pacing-bar {
+  display: block; height: 100%; width: 0%; background: var(--accent); transition: width .3s ease;
+}
+.topbar-pacing.is-near-end #topbar-pacing-bar { background: var(--cue); }
+.topbar-pacing.is-overtime #topbar-pacing-bar { background: var(--live); width: 100% !important; }
 /* Who is signed in, on a server that has accounts. Empty and hidden on every
    other deployment, so it costs nothing in the bar it is not needed in. */
 /* The admin page. Same furniture as the planning page (body.plan), with a
@@ -908,6 +935,9 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 @media (max-width: 640px) {
   .topbar .brand, .topbar .room-info, #peer-count { display: none; }
   .topbar .session-badge .session-who { display: none; }
+  .clock-widget { gap: 6px; }
+  .topbar-clock { font-size: 12px; }
+  .topbar-pacing { font-size: 11px; padding: 2px 6px 3px; min-height: 24px; }
   .bottombar { gap: 6px; }
   .bottombar button { min-width: 0; padding: 0 8px; }
   .bottombar .vol { flex: 1; min-width: 76px; gap: 6px; }
