@@ -299,14 +299,32 @@ let expectingRecoveryConflict = false;
 const RECOVERY_CONFLICT = /409 \(Conflict\).*\/api\/lectures\/\d+\/events$/;
 
 const trap = (page, tag) => {
+  const recentFavicon404s = [];
+  const trimFavicon404s = () => {
+    const cutoff = Date.now() - 2000;
+    while (recentFavicon404s.length && recentFavicon404s[0] < cutoff) recentFavicon404s.shift();
+  };
+  page.on('response', (r) => {
+    if (r.status() !== 404) return;
+    if (!/\/favicon\.ico(?:\?|$)/.test(r.url())) return;
+    recentFavicon404s.push(Date.now());
+    trimFavicon404s();
+  });
   page.on('pageerror', (e) => errors.push(`${tag}: ${e.message}`));
   page.on('console', (m) => {
     if (m.type() !== 'error') return;
-    const where = `${m.text()} ${m.location()?.url || ''}`;
+    const text = m.text();
+    const where = `${text} ${m.location()?.url || ''}`;
     if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where)) return;
+    trimFavicon404s();
+    if (recentFavicon404s.length && !m.location()?.url
+      && text === 'Failed to load resource: the server responded with a status of 404 (Not Found)') {
+      recentFavicon404s.shift();
+      return;
+    }
     if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     if (expectingRecoveryConflict && RECOVERY_CONFLICT.test(where)) return;
-    errors.push(`${tag} console: ${m.text()}`);
+    errors.push(`${tag} console: ${text}`);
   });
 };
 
