@@ -2338,9 +2338,27 @@ const padFrame = $('#pad-frame');
 const padMirror = $('#pad-mirror');
 const pad = $('#pad');
 const padCtx = pad.getContext('2d');
+
+const LASER_COLORS = ['red', 'green', 'blue'];
+const LASER_KEY = 'podium.laser.v1';
+let laserColor = 'red';
+try {
+  const saved = localStorage.getItem(LASER_KEY);
+  if (LASER_COLORS.includes(saved)) laserColor = saved;
+} catch { /* private browsing: red it is */ }
+
+const sendLaser = throttle((x, y) => bus?.send({ t: 'laser', x, y, on: true, color: laserColor }), 40);
+const sendSpotlight = throttle((x, y) => bus?.send({ t: 'spotlight', x, y, on: true }), 40);
+
+const padLaserDot = el('div', { class: 'laser-dot' });
+const padSpotlightPreview = el('div', { class: 'spotlight-preview' });
+padLaserDot.dataset.color = laserColor;
+padFrame.append(padLaserDot, padSpotlightPreview);
+
 const ink = {
   drawing: false,
   erasing: false,
+  pointing: null,
   strokeId: null,
   buffer: [],
   penOnly: false,
@@ -2724,6 +2742,23 @@ function eraseAt(ev) {
 
 pad.addEventListener('pointerdown', (ev) => {
   if (ink.penOnly && ev.pointerType !== 'pen') return;
+  if (ink.tool === 'laser' || ink.tool === 'spotlight') {
+    pad.setPointerCapture(ev.pointerId);
+    ink.pointing = ink.tool;
+    const [x, y] = padPoint(ev);
+    if (ink.tool === 'laser') {
+      padLaserDot.style.left = `${x * 100}%`;
+      padLaserDot.style.top = `${y * 100}%`;
+      padLaserDot.classList.add('is-on');
+      sendLaser(x, y);
+    } else {
+      padSpotlightPreview.style.setProperty('--spotlight-x', `${x * 100}%`);
+      padSpotlightPreview.style.setProperty('--spotlight-y', `${y * 100}%`);
+      padSpotlightPreview.classList.add('is-on');
+      sendSpotlight(x, y);
+    }
+    return;
+  }
   const hardwareEraser = isHardwareEraser(ev);
   if (ink.tool === 'eraser' || hardwareEraser) {
     pad.setPointerCapture(ev.pointerId);
@@ -2746,6 +2781,20 @@ pad.addEventListener('pointerdown', (ev) => {
 });
 
 pad.addEventListener('pointermove', (ev) => {
+  if (ink.pointing) {
+    ev.preventDefault();
+    const [x, y] = padPoint(ev);
+    if (ink.pointing === 'laser') {
+      padLaserDot.style.left = `${x * 100}%`;
+      padLaserDot.style.top = `${y * 100}%`;
+      sendLaser(x, y);
+    } else if (ink.pointing === 'spotlight') {
+      padSpotlightPreview.style.setProperty('--spotlight-x', `${x * 100}%`);
+      padSpotlightPreview.style.setProperty('--spotlight-y', `${y * 100}%`);
+      sendSpotlight(x, y);
+    }
+    return;
+  }
   if (ink.erasing) {
     ev.preventDefault();
     const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
@@ -2772,6 +2821,19 @@ pad.addEventListener('pointermove', (ev) => {
 });
 
 const endStroke = (ev) => {
+  if (ink.pointing) {
+    const mode = ink.pointing;
+    ink.pointing = null;
+    if (mode === 'laser') {
+      padLaserDot.classList.remove('is-on');
+      bus?.send({ t: 'laser', on: false });
+    } else {
+      padSpotlightPreview.classList.remove('is-on');
+      bus?.send({ t: 'spotlight', on: false });
+    }
+    try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
+    return;
+  }
   if (ink.erasing) {
     ink.erasing = false;
     ink.lastErasePoint = null;
@@ -3969,25 +4031,16 @@ $('#confidence-split').addEventListener('click', () => {
 $('#deck-markup').addEventListener('click', () => tab('ink'));
 
 let laserActive = false;
+let spotlightActive = false;
 const laserDot = el('div', { class: 'laser-dot' });
-$('#deck-now-preview').append(laserDot);
-
-// Red vanishes into a dark slide or a photograph and green vanishes into a
-// green one, so the colour is the presenter's to pick and worth remembering:
-// whoever needs green today needs it for the whole course. Per device, like
-// every other preference here - it says nothing about the room.
-const LASER_COLORS = ['red', 'green', 'blue'];
-const LASER_KEY = 'podium.laser.v1';
-let laserColor = 'red';
-try {
-  const saved = localStorage.getItem(LASER_KEY);
-  if (LASER_COLORS.includes(saved)) laserColor = saved;
-} catch { /* private browsing: red it is */ }
+const spotlightPreview = el('div', { class: 'spotlight-preview' });
+$('#deck-now-preview').append(laserDot, spotlightPreview);
 
 function setLaserColor(color) {
   laserColor = LASER_COLORS.includes(color) ? color : 'red';
   try { localStorage.setItem(LASER_KEY, laserColor); } catch { /* nothing to do */ }
   laserDot.dataset.color = laserColor;
+  padLaserDot.dataset.color = laserColor;
   // The button wears the colour too, so you can tell at a glance what the
   // class is about to see without pressing it first.
   $('#deck-laser').dataset.color = laserColor;
@@ -3995,18 +4048,30 @@ function setLaserColor(color) {
 }
 
 function setLaserActive(on) {
+  if (on && spotlightActive) setSpotlightActive(false);
   laserActive = on;
   $('#deck-laser').classList.toggle('is-on', on);
   nowMirror.frame.classList.toggle('laser-armed', on);
   if (!on) { laserDot.classList.remove('is-on'); bus?.send({ t: 'laser', on: false }); }
   renderBottomSlots();
 }
+
+function setSpotlightActive(on) {
+  if (on && laserActive) setLaserActive(false);
+  spotlightActive = on;
+  $('#deck-spotlight')?.classList.toggle('is-on', on);
+  nowMirror.frame.classList.toggle('spotlight-armed', on);
+  if (!on) { spotlightPreview.classList.remove('is-on'); bus?.send({ t: 'spotlight', on: false }); }
+  renderBottomSlots();
+}
+
 $('#deck-laser').addEventListener('click', () => setLaserActive(!laserActive));
+$('#deck-spotlight')?.addEventListener('click', () => setSpotlightActive(!spotlightActive));
 $$('.laser-swatch').forEach((b) => b.addEventListener('click', () => {
   setLaserColor(b.dataset.color);
   // Picking a colour mid-drag would otherwise leave the old one on the wall
   // until the next move; nudge the display so it changes immediately.
-  if (laserDragging) sendLaser(...lastLaserPoint);
+  if (pointerDragging === 'laser') sendLaser(...lastLaserPoint);
 }));
 setLaserColor(laserColor);
 
@@ -4015,39 +4080,58 @@ function laserPoint(ev) {
   return [(ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height];
 }
 
-const sendLaser = throttle((x, y) => bus?.send({ t: 'laser', x, y, on: true, color: laserColor }), 40);
-let laserDragging = false;
+let pointerDragging = null;
 let lastLaserPoint = [0.5, 0.5];
 
 nowMirror.frame.addEventListener('pointerdown', (ev) => {
-  if (!laserActive) return;
-  laserDragging = true;
+  if (!laserActive && !spotlightActive) return;
+  const mode = laserActive ? 'laser' : 'spotlight';
+  pointerDragging = mode;
   nowMirror.frame.setPointerCapture(ev.pointerId);
   const [x, y] = laserPoint(ev);
-  lastLaserPoint = [x, y];
-  laserDot.style.left = `${x * 100}%`;
-  laserDot.style.top = `${y * 100}%`;
-  laserDot.classList.add('is-on');
-  sendLaser(x, y);
+  if (mode === 'laser') {
+    lastLaserPoint = [x, y];
+    laserDot.style.left = `${x * 100}%`;
+    laserDot.style.top = `${y * 100}%`;
+    laserDot.classList.add('is-on');
+    sendLaser(x, y);
+  } else {
+    spotlightPreview.style.setProperty('--spotlight-x', `${x * 100}%`);
+    spotlightPreview.style.setProperty('--spotlight-y', `${y * 100}%`);
+    spotlightPreview.classList.add('is-on');
+    sendSpotlight(x, y);
+  }
 });
 nowMirror.frame.addEventListener('pointermove', (ev) => {
-  if (!laserDragging) return;
+  if (!pointerDragging) return;
   ev.preventDefault();
   const [x, y] = laserPoint(ev);
-  lastLaserPoint = [x, y];
-  laserDot.style.left = `${x * 100}%`;
-  laserDot.style.top = `${y * 100}%`;
-  sendLaser(x, y);
+  if (pointerDragging === 'laser') {
+    lastLaserPoint = [x, y];
+    laserDot.style.left = `${x * 100}%`;
+    laserDot.style.top = `${y * 100}%`;
+    sendLaser(x, y);
+  } else {
+    spotlightPreview.style.setProperty('--spotlight-x', `${x * 100}%`);
+    spotlightPreview.style.setProperty('--spotlight-y', `${y * 100}%`);
+    sendSpotlight(x, y);
+  }
 });
-const endLaserDrag = (ev) => {
-  if (!laserDragging) return;
-  laserDragging = false;
-  laserDot.classList.remove('is-on');
-  bus?.send({ t: 'laser', on: false });
+const endPointerDrag = (ev) => {
+  if (!pointerDragging) return;
+  const mode = pointerDragging;
+  pointerDragging = null;
+  if (mode === 'laser') {
+    laserDot.classList.remove('is-on');
+    bus?.send({ t: 'laser', on: false });
+  } else {
+    spotlightPreview.classList.remove('is-on');
+    bus?.send({ t: 'spotlight', on: false });
+  }
   try { nowMirror.frame.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
 };
-nowMirror.frame.addEventListener('pointerup', endLaserDrag);
-nowMirror.frame.addEventListener('pointercancel', endLaserDrag);
+nowMirror.frame.addEventListener('pointerup', endPointerDrag);
+nowMirror.frame.addEventListener('pointercancel', endPointerDrag);
 
 $('#deck-file').addEventListener('change', async (ev) => {
   const file = ev.target.files?.[0];
@@ -4263,9 +4347,21 @@ $('#ink-unclear').addEventListener('click', () => {
   offerUnclear(null, []);
 });
 function setInkTool(tool) {
+  if (ink.pointing) {
+    if (ink.pointing === 'laser') {
+      padLaserDot.classList.remove('is-on');
+      bus?.send({ t: 'laser', on: false });
+    } else if (ink.pointing === 'spotlight') {
+      padSpotlightPreview.classList.remove('is-on');
+      bus?.send({ t: 'spotlight', on: false });
+    }
+    ink.pointing = null;
+  }
   ink.tool = tool;
   $$('.ink-tool-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.tool === tool));
   pad.classList.toggle('is-eraser', tool === 'eraser');
+  pad.classList.toggle('is-laser', tool === 'laser');
+  pad.classList.toggle('is-spotlight', tool === 'spotlight');
   const slider = $('#ink-width');
   if (tool === 'pen') {
     ink.width = ink.penWidth;
@@ -4290,7 +4386,7 @@ $('#ink-width').addEventListener('input', (ev) => {
 $$('.swatch').forEach((b) => b.addEventListener('click', () => {
   ink.color = b.dataset.color;
   $$('.swatch').forEach((s) => s.classList.toggle('is-on', s === b));
-  if (ink.tool === 'eraser') setInkTool('pen');
+  if (ink.tool === 'eraser' || ink.tool === 'laser' || ink.tool === 'spotlight') setInkTool('pen');
 }));
 
 $('#cam-start').addEventListener('click', async () => {
@@ -4554,8 +4650,18 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === '1') { ev.preventDefault(); setInkTool('pen'); return; }
     if (ev.key === '2') { ev.preventDefault(); setInkTool('highlighter'); return; }
     if (ev.key === '3') { ev.preventDefault(); setInkTool('eraser'); return; }
+    if (ev.key === '4') { ev.preventDefault(); setInkTool('laser'); return; }
+    if (ev.key === '5') { ev.preventDefault(); setInkTool('spotlight'); return; }
     if (ev.key === 'e' || ev.key === 'E') { ev.preventDefault(); setInkTool('eraser'); return; }
     if (ev.key === 'h' || ev.key === 'H') { ev.preventDefault(); setInkTool('highlighter'); return; }
+    if (ev.key === 'l' || ev.key === 'L') { ev.preventDefault(); setInkTool('laser'); return; }
+    if (ev.key === 's' || ev.key === 'S') { ev.preventDefault(); setInkTool('spotlight'); return; }
+  }
+
+  // When focused on the Slides tab, toggle laser or spotlight pointer modes
+  if (!$('[data-panel="deck"]').hidden) {
+    if (ev.key === 'l' || ev.key === 'L') { ev.preventDefault(); setLaserActive(!laserActive); return; }
+    if (ev.key === 's' || ev.key === 'S') { ev.preventDefault(); setSpotlightActive(!spotlightActive); return; }
   }
 
   // Paging, on the other hand, only means something on something with pages.
@@ -4759,6 +4865,13 @@ function renderSlotButton(btn, slotType) {
       btn.classList.toggle('is-on', laserActive);
       break;
 
+    case 'spotlight':
+      btn.hidden = false;
+      btn.textContent = '🔆';
+      btn.title = 'Toggle spotlight mode';
+      btn.classList.toggle('is-on', spotlightActive);
+      break;
+
     case 'timer': {
       btn.hidden = false;
       const timer = currentTimer();
@@ -4818,6 +4931,10 @@ function executeSlotAction(type) {
 
     case 'laser':
       setLaserActive(!laserActive);
+      break;
+
+    case 'spotlight':
+      setSpotlightActive(!spotlightActive);
       break;
 
     case 'timer': {

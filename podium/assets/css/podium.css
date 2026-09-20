@@ -169,6 +169,23 @@ body.display #watermark img { display: block; max-height: 10vh; max-width: 26vw;
    the green pointer. A near-white centre and a thin dark ring read against any
    of them, so picking the "wrong" colour for a slide costs you brightness
    rather than the dot itself. */
+body.display #spotlight {
+  position: fixed; inset: 0; z-index: 5;
+  pointer-events: none; opacity: 0;
+  transition: opacity .12s ease;
+  --spotlight-x: 50vw;
+  --spotlight-y: 50vh;
+  --spotlight-radius: 120px;
+  background: radial-gradient(
+    circle var(--spotlight-radius) at var(--spotlight-x) var(--spotlight-y),
+    transparent 0%,
+    transparent 85%,
+    rgba(0, 0, 0, .45) 94%,
+    rgba(0, 0, 0, .72) 100%
+  );
+}
+body.display #spotlight.is-on { opacity: 1; }
+
 body.display #laser {
   position: fixed; top: 0; left: 0; width: 34px; height: 34px; z-index: 6;
   border-radius: 50%; pointer-events: none; opacity: 0;
@@ -630,8 +647,28 @@ body.control.is-frozen { background: #171006; }
 }
 #deck-now-preview { border-color: var(--accent); }
 #deck-now-preview .mirror-frame.laser-armed { cursor: crosshair; touch-action: none; }
-#deck-markup, #deck-laser { flex: 1; font-size: 13px; min-height: 38px; padding: 0 8px; }
+#deck-markup, #deck-laser, #deck-spotlight { flex: 1; font-size: 13px; min-height: 38px; padding: 0 8px; }
 #deck-laser.is-on { background: var(--live); border-color: var(--live); color: #fff; }
+#deck-spotlight.is-on { background: #d29922; border-color: #d29922; color: #fff; }
+#deck-now-preview .mirror-frame.spotlight-armed { cursor: crosshair; touch-action: none; }
+#pad.is-laser, #pad.is-spotlight { cursor: crosshair; }
+.spotlight-preview {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  transition: opacity .12s ease; z-index: 4;
+  --spotlight-x: 50%;
+  --spotlight-y: 50%;
+  --spotlight-radius: 40px;
+  background: radial-gradient(
+    circle var(--spotlight-radius) at var(--spotlight-x) var(--spotlight-y),
+    transparent 0%,
+    transparent 80%,
+    rgba(0, 0, 0, .45) 92%,
+    rgba(0, 0, 0, .68) 100%
+  );
+  border-radius: inherit;
+}
+.spotlight-preview.is-on { opacity: 1; }
+#pad-frame .spotlight-preview { --spotlight-radius: 110px; }
 .laser-dot {
   position: absolute; width: 22px; height: 22px; border-radius: 50%;
   --laser: 255, 77, 79;
@@ -888,6 +925,7 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .music-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #bar-music.is-on, .bottombar .bar-slot.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
 .bottombar .bar-slot[data-slot-action="laser"].is-on { background: var(--live); border-color: var(--live); color: #fff; }
+.bottombar .bar-slot[data-slot-action="spotlight"].is-on { background: #d29922; border-color: #d29922; color: #fff; }
 
 /* --- automated sets ----------------------------------------------------------
    A saved set (name, and four buttons to start it somewhere) and a build-time
