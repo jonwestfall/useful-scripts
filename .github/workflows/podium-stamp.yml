@@ -34,6 +34,7 @@ jobs:
         with:
           # Fetch the full ref so we can push back to it.
           ref: ${{ github.ref }}
+          fetch-depth: 0
           # The default GITHUB_TOKEN works and, crucially, pushes made with it
           # do not trigger further workflow runs.
           token: ${{ secrets.GITHUB_TOKEN }}
