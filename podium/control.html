@@ -725,8 +725,8 @@
   </div>
 
   <div class="bottombar">
-    <button id="bar-music" type="button" hidden title="Pause or resume the music">♪</button>
-    <button id="bar-play" type="button" hidden>▶</button>
+    <button id="bar-music" class="bar-slot" type="button" hidden title="Pause or resume the music">♪</button>
+    <button id="bar-play" class="bar-slot" type="button" hidden>▶</button>
     <button id="freeze" type="button">Freeze</button>
     <button id="blank" type="button">Blank</button>
     <!-- The master fader - scales content audio/video AND background music
@@ -874,6 +874,41 @@
         Starts the pacing clock automatically the first time you un-blank or advance a slide.
         You can also tap the pacing tracker in the top bar at any time to start or reset it.
       </p>
+
+      <div class="field" style="margin-top:16px;">
+        <label>Bottom bar shortcuts</label>
+        <div class="inline" style="gap:10px;">
+          <div style="flex:1;">
+            <label for="pref-bottom-slot-1" style="font-size:11px; color:var(--dim); margin-bottom:4px; display:block;">Quick Slot 1</label>
+            <select id="pref-bottom-slot-1" style="width:100%;">
+              <option value="music">Background Music (♪)</option>
+              <option value="play">Media Play/Pause (▶)</option>
+              <option value="whiteboard">Quick Whiteboard (✎)</option>
+              <option value="laser">Laser Pointer (🔦)</option>
+              <option value="timer">Quick Countdown (⏱)</option>
+              <option value="next">Slide Next (→)</option>
+              <option value="prev">Slide Prev (←)</option>
+              <option value="none">None (empty)</option>
+            </select>
+          </div>
+          <div style="flex:1;">
+            <label for="pref-bottom-slot-2" style="font-size:11px; color:var(--dim); margin-bottom:4px; display:block;">Quick Slot 2</label>
+            <select id="pref-bottom-slot-2" style="width:100%;">
+              <option value="play">Media Play/Pause (▶)</option>
+              <option value="music">Background Music (♪)</option>
+              <option value="whiteboard">Quick Whiteboard (✎)</option>
+              <option value="laser">Laser Pointer (🔦)</option>
+              <option value="timer">Quick Countdown (⏱)</option>
+              <option value="next">Slide Next (→)</option>
+              <option value="prev">Slide Prev (←)</option>
+              <option value="none">None (empty)</option>
+            </select>
+          </div>
+        </div>
+        <p class="hint">
+          Choose which shortcuts appear on the left side of the bottom bar next to Freeze, Blank, and Volume.
+        </p>
+      </div>
     </section>
 
     <p class="hint" id="control-build">

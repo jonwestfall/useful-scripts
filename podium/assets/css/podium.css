@@ -832,8 +832,8 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .music-row.is-on { border-color: var(--accent); background: #16202c; }
 .music-row-n { color: var(--dim); font-size: 12px; text-align: center; }
 .music-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.music-row-artist { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; }
-#bar-music.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
+#bar-music.is-on, .bottombar .bar-slot.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
+.bottombar .bar-slot[data-slot-action="laser"].is-on { background: var(--live); border-color: var(--live); color: #fff; }
 
 /* --- automated sets ----------------------------------------------------------
    A saved set (name, and four buttons to start it somewhere) and a build-time
@@ -928,7 +928,7 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 .bottombar .vol { flex: 2; display: flex; align-items: center; gap: 8px; min-width: 0; }
 /* A range input's intrinsic min-width would otherwise push it off a phone. */
 .bottombar .vol input { flex: 1; min-width: 0; width: 100%; }
-#mute, #bar-play, #bar-music { flex: none; width: 52px; padding: 0; }
+#mute, #bar-play, #bar-music, .bottombar .bar-slot { flex: none; width: 52px; padding: 0; }
 
 /* On a phone the bar has to fit one row: drop the identifiers you only need
    when something is wrong, and let the buttons shrink. */
@@ -941,7 +941,7 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
   .bottombar { gap: 6px; }
   .bottombar button { min-width: 0; padding: 0 8px; }
   .bottombar .vol { flex: 1; min-width: 76px; gap: 6px; }
-  #mute, #bar-play, #bar-music { width: 44px; }
+  #mute, #bar-play, #bar-music, .bottombar .bar-slot { width: 44px; }
 }
 
 @media (max-width: 900px) {
