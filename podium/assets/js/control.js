@@ -353,19 +353,42 @@ async function loadServerLibrary() {
 
 async function loadLibrary() {
   let fromFile = [];
+  let examplesEnabled = true;
+  let builtInsConfig = null;
   const fromServer = loadServerLibrary();
   try {
     const res = await fetch(cfg.manifest, { cache: 'no-cache' });
     if (res.ok) {
       const data = await res.json();
-      fromFile = (Array.isArray(data) ? data : data.items || []).filter((i) => i && i.type);
+      if (Array.isArray(data)) {
+        fromFile = data.filter((i) => i && i.type);
+      } else if (data && typeof data === 'object') {
+        fromFile = (data.items || []).filter((i) => i && i.type && i.enabled !== false);
+        if (typeof data.examplesEnabled === 'boolean') {
+          examplesEnabled = data.examplesEnabled;
+        }
+        if (data.builtIns && typeof data.builtIns === 'object') {
+          builtInsConfig = data.builtIns;
+        }
+      }
     }
   } catch { /* no manifest committed yet - built-ins and pasted links still work */ }
+
+  if (!examplesEnabled) {
+    fromFile = fromFile.filter((i) => (i.group || '').toLowerCase() !== 'working examples');
+  }
+
+  const activeBuiltIns = BUILT_INS.filter((i) => {
+    if (!builtInsConfig) return true;
+    const key = (i.title?.toLowerCase() === 'chalkboard') ? 'chalkboard' : (i.type || '').toLowerCase();
+    return builtInsConfig[key] !== false;
+  });
+
   library = [
     // The plan first: it is what you came to teach, and the built-ins are
     // always one scroll away.
     ...planLibraryItems(),
-    ...BUILT_INS.map((i) => ({ ...i, group: 'Quick' })),
+    ...activeBuiltIns.map((i) => ({ ...i, group: 'Quick' })),
     // Then what you put on your own server, ahead of the examples that ship
     // with Podium: one of those is Tuesday's lecture and the other is a demo.
     ...(await fromServer),

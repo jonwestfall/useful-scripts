@@ -140,6 +140,7 @@ const hasAccounts = () => !!db && accounts.countUsers(db) > 0;
 const authContext = {
   db,
   dataDir: DATA_DIR,
+  staticDir: STATIC || path.resolve(__dirname, '..'),
   hasAccounts,
   basicPassword: AUTH_PASSWORD,
   isBasicAuthorized: (req) => isAuthorized(req),
@@ -175,6 +176,7 @@ const MIME = {
   '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon',
   '.mp4': 'video/mp4', '.webm': 'video/webm',
   '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.ogg': 'audio/ogg', '.wav': 'audio/wav',
+  '.flac': 'audio/flac', '.aac': 'audio/aac',
   '.pdf': 'application/pdf', '.woff2': 'font/woff2',
 };
 
