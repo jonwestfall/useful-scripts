@@ -43,7 +43,7 @@ jobs:
           node-version: 22
 
       - name: Stamp build
-        run: node scripts/stamp-build.mjs --commit "${{ github.sha }}"
+        run: node scripts/stamp-build.mjs
         working-directory: podium
 
       - name: Commit and push
