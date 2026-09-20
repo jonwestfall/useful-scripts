@@ -961,6 +961,9 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 #bar-music.is-on, .bottombar .bar-slot.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
 .bottombar .bar-slot[data-slot-action="laser"].is-on { background: var(--live); border-color: var(--live); color: #fff; }
 .bottombar .bar-slot[data-slot-action="spotlight"].is-on { background: #d29922; border-color: #d29922; color: #fff; }
+.bottombar .bar-slot[data-slot-action="freeze"].is-on { background: var(--cue); border-color: var(--cue); color: #1a1204; }
+.bottombar .bar-slot[data-slot-action="blank"].is-on { background: #fff; border-color: #fff; color: #000; }
+.bottombar .bar-slot[data-slot-action="take"].is-armed { background: var(--live); border-color: var(--live); color: #fff; }
 
 /* --- automated sets ----------------------------------------------------------
    A saved set (name, and four buttons to start it somewhere) and a build-time
@@ -1049,13 +1052,26 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
   padding-bottom: calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line); background: var(--panel);
 }
-.bottombar button { flex: 1; font-weight: 600; }
+.bottombar button { font-weight: 600; }
+.bottombar .bar-slot {
+  flex: 0 1 auto; min-width: 48px; max-width: 110px; height: 42px;
+  padding: 0 8px; font-size: 13px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .bottombar #freeze.is-on { background: var(--cue); border-color: var(--cue); color: #1a1204; }
 .bottombar #blank.is-on { background: #fff; border-color: #fff; color: #000; }
-.bottombar .vol { flex: 2; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bottombar .vol { flex: 1 1 200px; max-width: 260px; margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
 /* A range input's intrinsic min-width would otherwise push it off a phone. */
 .bottombar .vol input { flex: 1; min-width: 0; width: 100%; }
-#mute, #bar-play, #bar-music, .bottombar .bar-slot { flex: none; width: 52px; padding: 0; }
+#mute { flex: none; width: 44px; height: 42px; padding: 0; }
+
+.bottom-slots-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px; margin-bottom: 8px;
+}
+.bottom-slot-field { display: flex; flex-direction: column; gap: 4px; }
+.bottom-slot-field label { font-size: 11px; color: var(--dim); font-weight: 600; }
+.bottom-slot-field select { width: 100%; }
 
 /* On a phone the bar has to fit one row: drop the identifiers you only need
    when something is wrong, and let the buttons shrink. */
@@ -1066,8 +1082,9 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
   .topbar-clock { font-size: 12px; }
   .topbar-pacing { font-size: 11px; padding: 2px 6px 3px; min-height: 24px; }
   .bottombar { gap: 6px; }
-  .bottombar button { min-width: 0; padding: 0 8px; }
-  .bottombar .vol { flex: 1; min-width: 76px; gap: 6px; }
+  .bottombar button { min-width: 0; padding: 0 4px; }
+  .bottombar .bar-slot.mobile-overflow { display: none !important; }
+  .bottombar .vol { flex: 1; min-width: 76px; max-width: none; margin-left: 0; gap: 6px; }
   #mute, #bar-play, #bar-music, .bottombar .bar-slot { width: 44px; }
 }
 

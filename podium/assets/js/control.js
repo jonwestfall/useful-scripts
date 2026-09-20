@@ -1644,7 +1644,6 @@ function renderNow() {
   $('#now-type').textContent = TYPES[type]?.label || type || '';
   $('#transport').hidden = !isMedia;
   $('#paging').hidden = !isPaged;
-  renderBottomSlots();
   $('#page-label').textContent = type === 'pdf'
     ? `Page ${item.page || 1}`
     : (type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}` : 'Slide');
@@ -1662,12 +1661,6 @@ function renderNow() {
     if (document.activeElement !== $('#media-loop')) $('#media-loop').checked = !!item.loop;
   }
 
-  $('#freeze').classList.toggle('is-on', state.frozen);
-  $('#freeze').textContent = state.frozen ? 'Frozen' : 'Freeze';
-  $('#blank').classList.toggle('is-on', state.blank);
-  // A cued layout with no content change (you only touched the layout
-  // picker while frozen) still needs TAKE to apply it, and Clear cue to
-  // abandon it - see the 'take'/'clear' cases in protocol.js.
   const cued = !!state.preview || state.previewLayout !== null;
   $('#take').disabled = !cued;
   $('#take').classList.toggle('is-armed', cued);
@@ -1677,6 +1670,8 @@ function renderNow() {
   $('#mute').classList.toggle('is-on', state.muted);
   $('#mute').textContent = state.muted ? '\u{1F507}' : '\u{1F50A}';
   if (document.activeElement !== $('#volume')) $('#volume').value = state.volume;
+
+  renderBottomSlots();
 
   document.body.classList.toggle('is-frozen', state.frozen);
 }
@@ -3866,9 +3861,6 @@ function tab(name) {
 
 $$('.tab').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
 
-$('#freeze').addEventListener('click', () => send({ op: 'freeze' }));
-$('#blank').addEventListener('click', () => send({ op: 'blank' }));
-
 $$('.layout-btn').forEach((b) => {
   b.addEventListener('click', () => send({ op: 'layout', mode: b.dataset.layout }));
   b.title = `${b.title || ''} — hold to photograph the whole screen`.replace(/^ — /, '');
@@ -3943,7 +3935,6 @@ $('#mixer-music').addEventListener('input', (ev) => {
 $('#mixer-music').addEventListener('change', () => { mixerSliding = null; });
 
 $('#play-pause').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
-$('#bar-play').addEventListener('click', () => executeSlotAction(presentation.bottomSlot2 || 'play'));
 $('#back10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: -10 }));
 $('#fwd10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: 10 }));
 $('#restart-media').addEventListener('click', () => send({ op: 'media', action: 'restart' }));
@@ -4478,7 +4469,6 @@ $('#music-next').addEventListener('click', () => send({ op: 'music', action: 'ne
 $('#music-fade').addEventListener('click', () => send({ op: 'music', action: 'fadeout' }));
 $('#music-shuffle').addEventListener('click', () => send({ op: 'music', action: 'shuffle' }));
 $('#music-clear').addEventListener('click', () => send({ op: 'music', action: 'clear' }));
-$('#bar-music').addEventListener('click', () => executeSlotAction(presentation.bottomSlot1 || 'music'));
 
 const musicScrub = $('#music-scrub');
 if (musicScrub) {
@@ -4749,19 +4739,49 @@ const PRESENTATION_DEFAULTS = {
   pacingAutoStart: true,
   bottomSlot1: 'music',
   bottomSlot2: 'play',
+  bottomSlots: ['music', 'play', 'freeze', 'blank', 'none', 'none', 'none', 'none'],
   inkScrollGutter: false,
   inkControlsTop: false,
 };
 function loadPresentation() {
   try {
     const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
-    return { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
+    const merged = { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
+    if (!Array.isArray(merged.bottomSlots) || merged.bottomSlots.length !== 8) {
+      merged.bottomSlots = [
+        merged.bottomSlot1 || 'music',
+        merged.bottomSlot2 || 'play',
+        'freeze',
+        'blank',
+        'none',
+        'none',
+        'none',
+        'none',
+      ];
+    }
+    return merged;
   } catch { return { ...PRESENTATION_DEFAULTS }; }
 }
 function savePresentation() {
   try { localStorage.setItem(PRESENTATION_KEY, JSON.stringify(presentation)); } catch { /* private mode, or quota */ }
 }
 let presentation = loadPresentation();
+
+function getBottomSlots() {
+  if (Array.isArray(presentation.bottomSlots) && presentation.bottomSlots.length === 8) {
+    return presentation.bottomSlots;
+  }
+  return [
+    presentation.bottomSlot1 || 'music',
+    presentation.bottomSlot2 || 'play',
+    'freeze',
+    'blank',
+    'none',
+    'none',
+    'none',
+    'none',
+  ];
+}
 
 function applyInkPreferences() {
   const inkPanel = $('[data-panel="ink"]');
@@ -4869,7 +4889,7 @@ function renderSlotButton(btn, slotType) {
   if (!btn) return;
   btn.dataset.slotAction = slotType || 'none';
   btn.disabled = false;
-  btn.classList.remove('is-on');
+  btn.classList.remove('is-on', 'is-armed');
 
   switch (slotType) {
     case 'music': {
@@ -4888,6 +4908,39 @@ function renderSlotButton(btn, slotType) {
       btn.textContent = telemetry.playing ? '⏸' : '▶';
       btn.title = telemetry.playing ? 'Pause media' : 'Play media';
       btn.classList.toggle('is-on', telemetry.playing);
+      break;
+    }
+
+    case 'freeze':
+      btn.hidden = false;
+      btn.textContent = state.frozen ? 'Frozen' : 'Freeze';
+      btn.title = state.frozen ? 'Unfreeze presentation' : 'Freeze presentation (holds screen)';
+      btn.classList.toggle('is-on', !!state.frozen);
+      break;
+
+    case 'blank':
+      btn.hidden = false;
+      btn.textContent = state.blank ? 'Blanked' : 'Blank';
+      btn.title = state.blank ? 'Unblank presentation' : 'Blank presentation (black screen)';
+      btn.classList.toggle('is-on', !!state.blank);
+      break;
+
+    case 'take': {
+      const cued = !!state.preview || state.previewLayout !== null;
+      btn.hidden = false;
+      btn.disabled = !cued;
+      btn.textContent = 'TAKE';
+      btn.title = cued ? 'Take cued item to live display' : 'No item cued';
+      btn.classList.toggle('is-armed', cued);
+      break;
+    }
+
+    case 'clear': {
+      const cued = !!state.preview || state.previewLayout !== null;
+      btn.hidden = false;
+      btn.disabled = !cued;
+      btn.textContent = '✕ Clear';
+      btn.title = cued ? 'Clear cued preview' : 'No item cued';
       break;
     }
 
@@ -4953,8 +5006,31 @@ function renderSlotButton(btn, slotType) {
 }
 
 function renderBottomSlots() {
-  renderSlotButton($('#bar-music'), presentation.bottomSlot1 || 'music');
-  renderSlotButton($('#bar-play'), presentation.bottomSlot2 || 'play');
+  const slots = getBottomSlots();
+  const slotElements = [
+    $('#bar-music'),
+    $('#bar-play'),
+    $('#freeze'),
+    $('#blank'),
+    $('#bar-slot-5'),
+    $('#bar-slot-6'),
+    $('#bar-slot-7'),
+    $('#bar-slot-8'),
+  ];
+
+  let visibleActiveCount = 0;
+  slots.forEach((slotType, idx) => {
+    const btn = slotElements[idx];
+    if (!btn) return;
+    renderSlotButton(btn, slotType);
+
+    if (!btn.hidden) {
+      visibleActiveCount += 1;
+      btn.classList.toggle('mobile-overflow', visibleActiveCount > 4);
+    } else {
+      btn.classList.remove('mobile-overflow');
+    }
+  });
 }
 
 function executeSlotAction(type) {
@@ -4965,6 +5041,22 @@ function executeSlotAction(type) {
 
     case 'play':
       send({ op: 'media', action: 'toggle' });
+      break;
+
+    case 'freeze':
+      send({ op: 'freeze' });
+      break;
+
+    case 'blank':
+      send({ op: 'blank' });
+      break;
+
+    case 'take':
+      send({ op: 'take' });
+      break;
+
+    case 'clear':
+      send({ op: 'clear', where: 'preview' });
       break;
 
     case 'whiteboard':
@@ -5002,6 +5094,17 @@ function executeSlotAction(type) {
       break;
   }
 }
+
+// Route bottom slot buttons to their configured actions
+$('.bottombar')?.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.bar-slot');
+  if (!btn || btn.disabled) return;
+  const action = btn.dataset.slotAction;
+  if (action && action !== 'none') {
+    executeSlotAction(action);
+  }
+});
+
 renderBottomSlots();
 
 // Keeping this device awake is a live effect, not just a stored preference -
@@ -5078,17 +5181,16 @@ $('#pref-pacing-autostart').addEventListener('change', (ev) => {
   savePresentation();
 });
 
-$('#pref-bottom-slot-1').addEventListener('change', (ev) => {
-  presentation.bottomSlot1 = ev.target.value;
-  savePresentation();
-  renderBottomSlots();
-});
-
-$('#pref-bottom-slot-2').addEventListener('change', (ev) => {
-  presentation.bottomSlot2 = ev.target.value;
-  savePresentation();
-  renderBottomSlots();
-});
+for (let i = 1; i <= 8; i++) {
+  $(`#pref-bottom-slot-${i}`)?.addEventListener('change', (ev) => {
+    presentation.bottomSlots = getBottomSlots().slice();
+    presentation.bottomSlots[i - 1] = ev.target.value;
+    presentation.bottomSlot1 = presentation.bottomSlots[0];
+    presentation.bottomSlot2 = presentation.bottomSlots[1];
+    savePresentation();
+    renderBottomSlots();
+  });
+}
 
 $('#pref-ink-scroll-gutter')?.addEventListener('change', (ev) => {
   presentation.inkScrollGutter = ev.target.checked;
@@ -5134,8 +5236,13 @@ function showSetup() {
     $('#pref-lecture-duration-custom').value = dur;
   }
   $('#pref-pacing-autostart').checked = presentation.pacingAutoStart !== false;
-  $('#pref-bottom-slot-1').value = presentation.bottomSlot1 || 'music';
-  $('#pref-bottom-slot-2').value = presentation.bottomSlot2 || 'play';
+  const currentSlots = getBottomSlots();
+  for (let i = 1; i <= 8; i++) {
+    const el = $(`#pref-bottom-slot-${i}`);
+    if (el) el.value = currentSlots[i - 1] || 'none';
+  }
+  $('#pref-bottom-slot-1').value = presentation.bottomSlot1 || currentSlots[0] || 'music';
+  $('#pref-bottom-slot-2').value = presentation.bottomSlot2 || currentSlots[1] || 'play';
   const prefGutter = $('#pref-ink-scroll-gutter');
   if (prefGutter) prefGutter.checked = !!presentation.inkScrollGutter;
   const prefTop = $('#pref-ink-controls-top');

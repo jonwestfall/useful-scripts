@@ -740,10 +740,14 @@
   </div>
 
   <div class="bottombar">
-    <button id="bar-music" class="bar-slot" type="button" hidden title="Pause or resume the music">♪</button>
-    <button id="bar-play" class="bar-slot" type="button" hidden>▶</button>
-    <button id="freeze" type="button">Freeze</button>
-    <button id="blank" type="button">Blank</button>
+    <button id="bar-music" class="bar-slot" type="button" data-slot="1" hidden title="Pause or resume the music">♪</button>
+    <button id="bar-play" class="bar-slot" type="button" data-slot="2" hidden>▶</button>
+    <button id="freeze" class="bar-slot" type="button" data-slot="3">Freeze</button>
+    <button id="blank" class="bar-slot" type="button" data-slot="4">Blank</button>
+    <button id="bar-slot-5" class="bar-slot" type="button" data-slot="5" hidden></button>
+    <button id="bar-slot-6" class="bar-slot" type="button" data-slot="6" hidden></button>
+    <button id="bar-slot-7" class="bar-slot" type="button" data-slot="7" hidden></button>
+    <button id="bar-slot-8" class="bar-slot" type="button" data-slot="8" hidden></button>
     <!-- The master fader - scales content audio/video AND background music
          together (see contentVolume in protocol.js and the Mixer tab, where
          each channel gets its own level instead of fighting over this one).
@@ -901,40 +905,158 @@
       </p>
 
       <div class="field" style="margin-top:16px;">
-        <label>Bottom bar shortcuts</label>
-        <div class="inline" style="gap:10px;">
-          <div style="flex:1;">
-            <label for="pref-bottom-slot-1" style="font-size:11px; color:var(--dim); margin-bottom:4px; display:block;">Quick Slot 1</label>
-            <select id="pref-bottom-slot-1" style="width:100%;">
+        <label>Bottom bar dock shortcuts</label>
+        <p class="hint" style="margin-bottom:10px;">
+          Customize up to 8 quick-action buttons in the bottom bar dock.
+          <br>
+          <b>Note:</b> On phones (≤640px), only the first 4 active buttons + volume slider will be visible.
+        </p>
+        <div id="bottom-slots-grid" class="bottom-slots-grid">
+          <div class="bottom-slot-field">
+            <label for="pref-bottom-slot-1">Slot 1</label>
+            <select id="pref-bottom-slot-1">
               <option value="music">Background Music (♪)</option>
               <option value="play">Media Play/Pause (▶)</option>
+              <option value="freeze">Freeze Display (❄)</option>
+              <option value="blank">Blank Display (⬛)</option>
+              <option value="take">TAKE (Cue Live)</option>
+              <option value="clear">Clear Cue (✕)</option>
               <option value="whiteboard">Quick Whiteboard (✎)</option>
               <option value="laser">Laser Pointer (🔦)</option>
               <option value="spotlight">Spotlight (🔆)</option>
               <option value="timer">Quick Countdown (⏱)</option>
               <option value="next">Slide Next (→)</option>
               <option value="prev">Slide Prev (←)</option>
-              <option value="none">None (empty)</option>
+              <option value="none">None (empty / hidden)</option>
             </select>
           </div>
-          <div style="flex:1;">
-            <label for="pref-bottom-slot-2" style="font-size:11px; color:var(--dim); margin-bottom:4px; display:block;">Quick Slot 2</label>
-            <select id="pref-bottom-slot-2" style="width:100%;">
+          <div class="bottom-slot-field">
+            <label for="pref-bottom-slot-2">Slot 2</label>
+            <select id="pref-bottom-slot-2">
               <option value="play">Media Play/Pause (▶)</option>
               <option value="music">Background Music (♪)</option>
+              <option value="freeze">Freeze Display (❄)</option>
+              <option value="blank">Blank Display (⬛)</option>
+              <option value="take">TAKE (Cue Live)</option>
+              <option value="clear">Clear Cue (✕)</option>
               <option value="whiteboard">Quick Whiteboard (✎)</option>
               <option value="laser">Laser Pointer (🔦)</option>
               <option value="spotlight">Spotlight (🔆)</option>
               <option value="timer">Quick Countdown (⏱)</option>
               <option value="next">Slide Next (→)</option>
               <option value="prev">Slide Prev (←)</option>
-              <option value="none">None (empty)</option>
+              <option value="none">None (empty / hidden)</option>
+            </select>
+          </div>
+          <div class="bottom-slot-field">
+            <label for="pref-bottom-slot-3">Slot 3</label>
+            <select id="pref-bottom-slot-3">
+              <option value="freeze">Freeze Display (❄)</option>
+              <option value="blank">Blank Display (⬛)</option>
+              <option value="music">Background Music (♪)</option>
+              <option value="play">Media Play/Pause (▶)</option>
+              <option value="take">TAKE (Cue Live)</option>
+              <option value="clear">Clear Cue (✕)</option>
+              <option value="whiteboard">Quick Whiteboard (✎)</option>
+              <option value="laser">Laser Pointer (🔦)</option>
+              <option value="spotlight">Spotlight (🔆)</option>
+              <option value="timer">Quick Countdown (⏱)</option>
+              <option value="next">Slide Next (→)</option>
+              <option value="prev">Slide Prev (←)</option>
+              <option value="none">None (empty / hidden)</option>
+            </select>
+          </div>
+          <div class="bottom-slot-field">
+            <label for="pref-bottom-slot-4">Slot 4</label>
+            <select id="pref-bottom-slot-4">
+              <option value="blank">Blank Display (⬛)</option>
+              <option value="freeze">Freeze Display (❄)</option>
+              <option value="music">Background Music (♪)</option>
+              <option value="play">Media Play/Pause (▶)</option>
+              <option value="take">TAKE (Cue Live)</option>
+              <option value="clear">Clear Cue (✕)</option>
+              <option value="whiteboard">Quick Whiteboard (✎)</option>
+              <option value="laser">Laser Pointer (🔦)</option>
+              <option value="spotlight">Spotlight (🔆)</option>
+              <option value="timer">Quick Countdown (⏱)</option>
+              <option value="next">Slide Next (→)</option>
+              <option value="prev">Slide Prev (←)</option>
+              <option value="none">None (empty / hidden)</option>
+            </select>
+          </div>
+          <div class="bottom-slot-field">
+            <label for="pref-bottom-slot-5">Slot 5</label>
+            <select id="pref-bottom-slot-5">
+              <option value="none">None (empty / hidden)</option>
+              <option value="whiteboard">Quick Whiteboard (✎)</option>
+              <option value="laser">Laser Pointer (🔦)</option>
+              <option value="spotlight">Spotlight (🔆)</option>
+              <option value="take">TAKE (Cue Live)</option>
+              <option value="clear">Clear Cue (✕)</option>
+              <option value="timer">Quick Countdown (⏱)</option>
+              <option value="next">Slide Next (→)</option>
+              <option value="prev">Slide Prev (←)</option>
+              <option value="freeze">Freeze Display (❄)</option>
+              <option value="blank">Blank Display (⬛)</option>
+              <option value="music">Background Music (♪)</option>
+              <option value="play">Media Play/Pause (▶)</option>
+            </select>
+          </div>
+          <div class="bottom-slot-field">
+            <label for="pref-bottom-slot-6">Slot 6</label>
+            <select id="pref-bottom-slot-6">
+              <option value="none">None (empty / hidden)</option>
+              <option value="whiteboard">Quick Whiteboard (✎)</option>
+              <option value="laser">Laser Pointer (🔦)</option>
+              <option value="spotlight">Spotlight (🔆)</option>
+              <option value="take">TAKE (Cue Live)</option>
+              <option value="clear">Clear Cue (✕)</option>
+              <option value="timer">Quick Countdown (⏱)</option>
+              <option value="next">Slide Next (→)</option>
+              <option value="prev">Slide Prev (←)</option>
+              <option value="freeze">Freeze Display (❄)</option>
+              <option value="blank">Blank Display (⬛)</option>
+              <option value="music">Background Music (♪)</option>
+              <option value="play">Media Play/Pause (▶)</option>
+            </select>
+          </div>
+          <div class="bottom-slot-field">
+            <label for="pref-bottom-slot-7">Slot 7</label>
+            <select id="pref-bottom-slot-7">
+              <option value="none">None (empty / hidden)</option>
+              <option value="whiteboard">Quick Whiteboard (✎)</option>
+              <option value="laser">Laser Pointer (🔦)</option>
+              <option value="spotlight">Spotlight (🔆)</option>
+              <option value="take">TAKE (Cue Live)</option>
+              <option value="clear">Clear Cue (✕)</option>
+              <option value="timer">Quick Countdown (⏱)</option>
+              <option value="next">Slide Next (→)</option>
+              <option value="prev">Slide Prev (←)</option>
+              <option value="freeze">Freeze Display (❄)</option>
+              <option value="blank">Blank Display (⬛)</option>
+              <option value="music">Background Music (♪)</option>
+              <option value="play">Media Play/Pause (▶)</option>
+            </select>
+          </div>
+          <div class="bottom-slot-field">
+            <label for="pref-bottom-slot-8">Slot 8</label>
+            <select id="pref-bottom-slot-8">
+              <option value="none">None (empty / hidden)</option>
+              <option value="whiteboard">Quick Whiteboard (✎)</option>
+              <option value="laser">Laser Pointer (🔦)</option>
+              <option value="spotlight">Spotlight (🔆)</option>
+              <option value="take">TAKE (Cue Live)</option>
+              <option value="clear">Clear Cue (✕)</option>
+              <option value="timer">Quick Countdown (⏱)</option>
+              <option value="next">Slide Next (→)</option>
+              <option value="prev">Slide Prev (←)</option>
+              <option value="freeze">Freeze Display (❄)</option>
+              <option value="blank">Blank Display (⬛)</option>
+              <option value="music">Background Music (♪)</option>
+              <option value="play">Media Play/Pause (▶)</option>
             </select>
           </div>
         </div>
-        <p class="hint">
-          Choose which shortcuts appear on the left side of the bottom bar next to Freeze, Blank, and Volume.
-        </p>
       </div>
     </section>
 
