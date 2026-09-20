@@ -57,6 +57,6 @@ jobs:
             echo "Nothing to stamp — files unchanged."
             exit 0
           fi
-          BUILD=$(grep -oP 'BUILD = \K\d+' podium/assets/js/protocol.js)
+          BUILD=$(node -e "const fs = require('fs'); const match = fs.readFileSync('podium/assets/js/protocol.js', 'utf8').match(/export const BUILD = (\\d+);/); if (!match) process.exit(1); console.log(match[1]);")
           git commit -m "chore: stamp build ${BUILD} [skip ci]"
           git push
