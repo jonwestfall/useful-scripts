@@ -1494,3 +1494,7 @@ body.plan .linkish:hover { text-decoration: underline; }
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
+
+/* Q&A specific */
+.poll-answer-row.is-answered { opacity: 0.5; }
+.poll-answer-row.is-projected { border-left: 4px solid var(--live); padding-left: 8px; }

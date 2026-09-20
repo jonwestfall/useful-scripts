@@ -70,10 +70,13 @@ function render() {
   $('#question').textContent = current.question || 'Waiting for the next question…';
 
   const asText = current.kind === 'text';
+  const asQna = current.kind === 'qna';
+  
   $('#typed').hidden = !asText || !current.question;
-  $('#choices').hidden = asText;
+  $('#choices').hidden = (!asText && !asQna) ? false : true;
+  $('#qna').hidden = !asQna || !current.question;
 
-  if (!asText) {
+  if (current.kind === 'choice') {
     const choices = $('#choices');
     choices.replaceChildren(...current.options.map((option, i) => {
       const button = document.createElement('button');
@@ -90,13 +93,42 @@ function render() {
       button.addEventListener('click', () => send(i));
       return button;
     }));
-  } else {
+  } else if (asText) {
     $('#answer').disabled = !current.open;
     $('#send').disabled = !current.open;
+  } else if (asQna) {
+    $('#qna-ask').disabled = !current.open;
+    $('#qna-send').disabled = !current.open;
+    
+    const feed = $('#qna-feed');
+    const questions = (current.qnaFeed || [])
+      .filter((q) => !q.hidden)
+      .sort((a, b) => (b.upvotes?.length || 0) - (a.upvotes?.length || 0));
+    
+    feed.replaceChildren(...questions.map((q) => {
+      const item = document.createElement('div');
+      item.className = `qna-item${q.answered ? ' is-answered' : ''}`;
+      
+      const text = document.createElement('div');
+      text.className = 'qna-item-text';
+      text.textContent = q.text;
+      
+      const upvote = document.createElement('button');
+      upvote.type = 'button';
+      upvote.className = 'qna-item-upvote';
+      const upvoted = (q.upvotes || []).includes(voter);
+      upvote.setAttribute('aria-pressed', String(upvoted));
+      upvote.disabled = !current.open;
+      upvote.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 4l-8 8h16z"/></svg><span>${q.upvotes?.length || 0}</span>`;
+      upvote.addEventListener('click', () => send({ action: 'upvote', id: q.id }));
+      
+      item.append(text, upvote);
+      return item;
+    }));
   }
 
   if (!current.question) say('');
-  else if (!current.open) say(answered === null ? 'This question is closed.' : 'Closed — your answer is in.', '');
+  else if (!current.open) say((answered === null && !asQna) ? 'This question is closed.' : 'Closed — your answer is in.', '');
   
   if (!tickTimer) tickTimer = setInterval(tick, 1000);
   tick();
@@ -188,6 +220,12 @@ $('#send').addEventListener('click', () => {
   const text = $('#answer').value.trim();
   if (!text) { say('Type something first.', 'bad'); return; }
   send(text);
+});
+$('#qna-send').addEventListener('click', () => {
+  const text = $('#qna-ask').value.trim();
+  if (!text) { say('Type a question first.', 'bad'); return; }
+  send({ action: 'ask', text });
+  $('#qna-ask').value = '';
 });
 
 // Arriving by QR code skips the form entirely - which is the point of the QR.

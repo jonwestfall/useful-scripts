@@ -1114,13 +1114,15 @@ async function tickPolls() {
         if (!current) return;
         const changed = current.open !== tally.open || current.voters !== tally.voters
           || JSON.stringify(current.counts) !== JSON.stringify(tally.counts)
-          || JSON.stringify(current.answers) !== JSON.stringify(tally.answers);
+          || JSON.stringify(current.answers) !== JSON.stringify(tally.answers)
+          || JSON.stringify(current.qnaFeed) !== JSON.stringify(tally.qnaFeed);
         if (!changed) return;
         current.open = tally.open !== false;
         current.closesAt = tally.closesAt;
         current.voters = tally.voters || 0;
         if (current.kind === 'choice') current.counts = tally.counts || [];
-        else current.answers = tally.answers || [];
+        else if (current.kind === 'text') current.answers = tally.answers || [];
+        else if (current.kind === 'qna') current.qnaFeed = tally.qnaFeed || [];
         commit();
       })
       .catch(() => { /* one missed tick is not worth a warning - the next one retries */ })

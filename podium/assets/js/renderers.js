@@ -558,6 +558,22 @@ function renderPoll(item, opts) {
         ? answers.map((a) => el('div', { class: 'r-poll-answer' }, a))
         : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No answers yet')]));
       return;
+    } else if (it.kind === 'qna') {
+      const qnaFeed = (it.qnaFeed || []).filter(q => !q.hidden && !q.answered);
+      const projected = (it.qnaFeed || []).find(q => q.projected);
+      
+      if (projected) {
+        results.replaceChildren(el('div', { class: 'r-poll-qna-projected', style: 'font-size: clamp(24px, 5cqw, 72px); font-weight: 600; text-align: center; margin: 4cqh 0; padding: 4cqw; background: var(--panel); border-radius: 2cqh;' }, projected.text));
+      } else {
+        const topQuestions = qnaFeed.sort((a, b) => (b.upvotes?.length || 0) - (a.upvotes?.length || 0)).slice(0, 4);
+        results.replaceChildren(...(topQuestions.length
+          ? topQuestions.map((q) => el('div', { class: 'r-poll-answer' }, 
+              el('span', { class: 'mono', style: 'color: var(--dim); margin-right: 12px;' }, `▲ ${q.upvotes?.length || 0}`),
+              q.text
+            ))
+          : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No questions yet')]));
+      }
+      return;
     }
     const counts = it.counts || [];
     const max = Math.max(1, ...counts, 0);
