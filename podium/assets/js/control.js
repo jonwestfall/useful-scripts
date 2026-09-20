@@ -4188,8 +4188,18 @@ async function connect() {
 // --- wiring -----------------------------------------------------------------
 
 function tab(name) {
-  $$('.tab').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
-  $$('.panel').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+  const dualPane = document.body.classList.contains('dual-pane');
+  $$('.tab:not(#dual-pane-toggle)').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
+  $$('.panel').forEach((p) => {
+    if (dualPane && p.dataset.panel === 'slides') {
+      p.hidden = false;
+    } else {
+      p.hidden = p.dataset.panel !== name;
+    }
+  });
+  if (dualPane) {
+    document.body.classList.toggle('dual-secondary', name !== 'slides');
+  }
   // The list of lectures on the server is asked for again every time the tab
   // carrying it is opened. Reading it once at startup would mean a lecture
   // sent from the desk five minutes ago was invisible here until a reload -
@@ -4221,7 +4231,22 @@ function tab(name) {
   }
 }
 
-$$('.tab').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
+$$('.tab:not(#dual-pane-toggle)').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
+
+const savedDual = localStorage.getItem('podium.ui.dualPane') === '1';
+if (savedDual) {
+  document.body.classList.add('dual-pane');
+  $('#dual-pane-toggle').classList.add('is-on');
+}
+
+$('#dual-pane-toggle').addEventListener('click', () => {
+  const isDual = document.body.classList.toggle('dual-pane');
+  $('#dual-pane-toggle').classList.toggle('is-on', isDual);
+  localStorage.setItem('podium.ui.dualPane', isDual ? '1' : '0');
+  const activeTab = document.querySelector('.tab.is-on:not(#dual-pane-toggle)');
+  if (activeTab) tab(activeTab.dataset.tab);
+  window.dispatchEvent(new Event('resize'));
+});
 
 $$('.layout-btn').forEach((b) => {
   b.addEventListener('click', () => send({ op: 'layout', mode: b.dataset.layout }));
