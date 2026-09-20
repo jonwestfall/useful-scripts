@@ -316,9 +316,7 @@
               <button id="ink-zoom-in" type="button" title="Zoom in">+</button>
               <button id="ink-zoom-reset" type="button">Reset zoom</button>
               <button id="ink-toggle-mirror" type="button" class="is-on">Showing slide</button>
-            </div>
-            <div class="inline">
-              <span class="hint" style="margin:0">Pan (once zoomed):</span>
+              <span class="hint" style="margin:0 0 0 6px">Pan (once zoomed):</span>
               <button id="pan-left" class="pan-btn" type="button" disabled title="Pan left">◀</button>
               <button id="pan-up" class="pan-btn" type="button" disabled title="Pan up">▲</button>
               <button id="pan-down" class="pan-btn" type="button" disabled title="Pan down">▼</button>
@@ -332,15 +330,6 @@
                 <button id="ink-tool-laser" class="ink-tool-btn" type="button" data-tool="laser" title="Laser pointer (L)">Laser</button>
                 <button id="ink-tool-spotlight" class="ink-tool-btn" type="button" data-tool="spotlight" title="Spotlight (S)">Spotlight</button>
               </div>
-              <button class="swatch is-on" type="button" data-color="#ffd166" style="background:#ffd166"></button>
-              <button class="swatch" type="button" data-color="#ff4d4f" style="background:#ff4d4f"></button>
-              <button class="swatch" type="button" data-color="#45d483" style="background:#45d483"></button>
-              <button class="swatch" type="button" data-color="#6ea8fe" style="background:#6ea8fe"></button>
-              <button class="swatch" type="button" data-color="#ffffff" style="background:#ffffff"></button>
-              <label id="ink-picker-label" class="swatch swatch-picker" title="Custom color">
-                <span id="ink-picker-preview" class="swatch-picker-inner"></span>
-                <input id="ink-color-picker" type="color" value="#a371f7">
-              </label>
               <button id="ink-undo" type="button">Undo</button>
               <button id="ink-clear" type="button">Clear</button>
               <button id="ink-save" type="button" title="Keep a photo of this panel, ink and all">Save a photo</button>
@@ -350,7 +339,16 @@
               <button id="ink-unclear" type="button" hidden>Undo clear</button>
             </div>
             <div class="inline">
-              <label class="grow" for="ink-width">Thickness</label>
+              <button class="swatch is-on" type="button" data-color="#ffd166" style="background:#ffd166"></button>
+              <button class="swatch" type="button" data-color="#ff4d4f" style="background:#ff4d4f"></button>
+              <button class="swatch" type="button" data-color="#45d483" style="background:#45d483"></button>
+              <button class="swatch" type="button" data-color="#6ea8fe" style="background:#6ea8fe"></button>
+              <button class="swatch" type="button" data-color="#ffffff" style="background:#ffffff"></button>
+              <label id="ink-picker-label" class="swatch swatch-picker" title="Custom color">
+                <span id="ink-picker-preview" class="swatch-picker-inner"></span>
+                <input id="ink-color-picker" type="color" value="#a371f7">
+              </label>
+              <label class="grow" for="ink-width" style="margin-left:8px">Thickness</label>
               <input id="ink-width" class="grow" type="range" min="2" max="24" value="6">
               <label class="check"><input id="ink-pen-only" type="checkbox"> Apple Pencil only</label>
             </div>
