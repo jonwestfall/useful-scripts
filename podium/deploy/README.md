@@ -79,7 +79,7 @@ administrator when you need it to.
 
 Once there are accounts, the display writes down what it showed, and the
 controller files the photos and the pages an export rasterizes (see
-[../VPS.md](../VPS.md)). Those two are the parts that grow, so
+[../docs/vps.md](../docs/vps.md)). Those two are the parts that grow, so
 `LECTURE_RETENTION_DAYS` in `podium.env` ages them out:
 
 ```
