@@ -294,6 +294,23 @@ const MIGRATIONS = [
       CREATE INDEX lectures_open_by_seen ON lectures(last_seen_at) WHERE ended_at IS NULL;
     `);
   },
+
+  (db) => {
+    db.exec(`
+      -- Audit log to track user interactions and administrative actions (Issue #55)
+      CREATE TABLE audit_logs (
+        id            INTEGER PRIMARY KEY,
+        user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        username      TEXT,
+        action        TEXT NOT NULL,
+        ip_address    TEXT,
+        user_agent    TEXT,
+        created_at    INTEGER NOT NULL,
+        details       TEXT
+      );
+      CREATE INDEX audit_logs_by_time ON audit_logs(created_at);
+    `);
+  },
 ];
 
 function migrate(db) {
