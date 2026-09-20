@@ -109,6 +109,51 @@
       </button>
     </div>
 
+    <h3>On plan load (Auto-launch)</h3>
+    <p class="hint">Automatically stage panes, play background music, and start a countdown when opening this plan in class.</p>
+    <div class="field">
+      <label class="check">
+        <input id="plan-autolaunch-enable" type="checkbox"> Auto-launch on plan load
+      </label>
+    </div>
+
+    <div id="plan-autolaunch-settings" class="stack autolaunch-box" hidden>
+      <div class="field">
+        <label for="plan-autolaunch-state">Initial presentation state</label>
+        <select id="plan-autolaunch-state">
+          <option value="live">Live (cut to screen immediately)</option>
+          <option value="freeze">Staged in Cue (Freeze / Take)</option>
+          <option value="blank">Blank (blacked-out screen)</option>
+        </select>
+        <p class="hint">Freeze stages into cue behind a held screen; Blank reveals with one tap of Blank.</p>
+      </div>
+
+      <div class="field">
+        <label>Pane staging</label>
+        <div id="plan-autolaunch-panes" class="stack" style="gap:10px;"></div>
+      </div>
+
+      <div class="field">
+        <label for="plan-autolaunch-music">Background music</label>
+        <div class="inline">
+          <select id="plan-autolaunch-music" class="grow">
+            <option value="">None</option>
+          </select>
+          <label class="check" style="white-space:nowrap;">
+            <input id="plan-autolaunch-music-play" type="checkbox" checked> Auto-play
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="plan-autolaunch-timer">Auto-start countdown</label>
+        <select id="plan-autolaunch-timer">
+          <option value="">None</option>
+        </select>
+        <p class="hint">Starts this countdown ticking immediately when the plan is opened.</p>
+      </div>
+    </div>
+
     <h3>Notes to yourself</h3>
     <textarea id="plan-notes" rows="4" placeholder="Anything you want to remember about this lecture."></textarea>
   </section>

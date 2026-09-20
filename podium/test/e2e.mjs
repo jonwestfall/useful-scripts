@@ -3434,6 +3434,37 @@ await pad.waitForFunction(() => /did not load/.test(document.querySelector('#pla
 ok(`a file that is not a plan is refused by name ("${await pad.textContent('#plan-note')}")`,
   /not a Podium lecture plan/.test(await pad.textContent('#plan-note')));
 
+// Auto-launch on plan load (Issue #52)
+const autoPlanFile = path.join(HERE, 'fixtures', 'e2e-autolaunch-plan.podium.json');
+fs.writeFileSync(autoPlanFile, JSON.stringify({
+  podium: 'plan',
+  v: 1,
+  title: 'Auto-launch demo',
+  layout: 'single',
+  timers: [{ id: 't-intro', label: 'Intro Countdown', mins: 3 }],
+  items: [
+    { id: 'i-welcome', type: 'text', title: 'Welcome sign', body: 'Welcome to Class' },
+  ],
+  autoLaunch: {
+    enabled: true,
+    initialState: 'live',
+    panes: {
+      A: { type: 'item', itemId: 'i-welcome' },
+    },
+    timer: {
+      timerId: 't-intro',
+    },
+  },
+}));
+
+await pad.setInputFiles('#plan-file', autoPlanFile);
+await pad.waitForFunction(() => document.querySelector('#library h3.group')?.textContent === 'Auto-launch demo', null, { timeout: 20000 });
+await screen.waitForFunction(() => {
+  const t = document.querySelector('.layer[data-role="program"] .r-text');
+  return t && /Welcome to Class/.test(t.textContent);
+}, null, { timeout: 15000 });
+ok('auto-launch puts initial item live on screen upon plan load', true);
+
 await tablet.close();
 await room.close();
 }

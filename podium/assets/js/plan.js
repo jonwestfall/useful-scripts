@@ -11,7 +11,8 @@
 import { $, $$, el, uid, guessItemFromUrl, wireDangerButton, servedBuild } from './util.js';
 import {
   PLAN_TYPES, emptyPlan, newItem, readPlan, planToJson, planFileName, planBytes,
-  itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, pruneAssets, MAX_ASSET_CHARS, MAX_PLAN_BYTES,
+  itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, pruneAssets, emptyAutoLaunch,
+  MAX_ASSET_CHARS, MAX_PLAN_BYTES,
 } from './planfile.js';
 import {
   allPlans, savePlan, loadPlan, removePlan,
@@ -19,7 +20,7 @@ import {
 } from './store.js';
 import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle } from './deck.js';
-import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS } from './protocol.js';
+import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS } from './protocol.js';
 import { mountSessionBadge, serverInfo } from './server.js';
 
 mountSessionBadge($('#session-badge'));
@@ -195,6 +196,7 @@ function move(id, delta) {
   plan.items.splice(to, 0, plan.items.splice(from, 1)[0]);
   touch();
   renderOrder();
+  renderAutoLaunch();
 }
 
 function duplicate(id) {
@@ -207,6 +209,7 @@ function duplicate(id) {
   plan.items.splice(index + 1, 0, copy);
   touch();
   select(copy.id);
+  renderAutoLaunch();
 }
 
 function remove(id) {
@@ -214,9 +217,11 @@ function remove(id) {
   if (index < 0) return;
   plan.items.splice(index, 1);
   if (selectedId === id) selectedId = plan.items[Math.min(index, plan.items.length - 1)]?.id || null;
+  pruneAutoLaunchItem(id);
   touch();
   renderOrder();
   renderEditor();
+  renderAutoLaunch();
 }
 
 function renderTypePicker() {
@@ -237,6 +242,7 @@ function renderTypePicker() {
       plan.items.splice(at < 0 ? plan.items.length : at + 1, 0, item);
       touch();
       select(item.id);
+      renderAutoLaunch();
     },
   }, el('span', { class: 'type-icon' }, spec.icon), el('span', {}, spec.label))));
 }
@@ -250,10 +256,12 @@ function renderTimers() {
       type: 'button', 'aria-label': `Remove ${timer.label || 'countdown'}`,
       onclick: () => {
         plan.timers = plan.timers.filter((t) => t.id !== timer.id);
+        pruneAutoLaunchTimer(timer.id);
         touch();
         renderTimers();
         renderOrder();
         renderEditor();
+        renderAutoLaunch();
       },
     }, '×'))));
   if (!plan.timers.length) $('#timers').append(el('li', { class: 'empty' }, 'None yet — the iPad will show one unnamed countdown and the 1/2/5/10/15 buttons.'));
@@ -569,6 +577,7 @@ $('#plan-layout').addEventListener('click', (ev) => {
   plan.layout = button.dataset.layout;
   touch();
   renderHeader();
+  renderAutoLaunch();
 });
 
 $('#timer-add').addEventListener('click', () => {
@@ -582,6 +591,299 @@ $('#timer-add').addEventListener('click', () => {
   // Countdown items name these, so their labels and the picker both move.
   renderOrder();
   renderEditor();
+  renderAutoLaunch();
+});
+
+// --- auto-launch on plan load (Issue #52) -----------------------------------
+
+let musicPlaylists = [];
+
+async function loadMusicPlaylists() {
+  try {
+    const res = await fetch('content/music.json', { cache: 'no-cache' });
+    if (!res.ok) return;
+    const data = await res.json();
+    musicPlaylists = (Array.isArray(data) ? data : data.playlists || [])
+      .filter((l) => l && Array.isArray(l.tracks) && l.tracks.length);
+  } catch {
+    musicPlaylists = [];
+  }
+  if (plan) renderAutoLaunch();
+}
+
+function pruneAutoLaunchItem(id) {
+  if (!plan?.autoLaunch?.panes) return;
+  for (const key of ['A', 'B', 'C', 'D']) {
+    const p = plan.autoLaunch.panes[key];
+    if (!p) continue;
+    if (p.type === 'item' && p.itemId === id) {
+      plan.autoLaunch.panes[key] = null;
+    } else if (p.type === 'set' && Array.isArray(p.entries)) {
+      p.entries = p.entries.filter((e) => e.itemId !== id);
+      if (!p.entries.length) {
+        plan.autoLaunch.panes[key] = null;
+      }
+    }
+  }
+  if (plan.autoLaunch.music?.playlist === `item:${id}`) {
+    plan.autoLaunch.music.playlist = '';
+  }
+}
+
+function pruneAutoLaunchTimer(timerId) {
+  if (plan?.autoLaunch?.timer?.timerId === timerId) {
+    plan.autoLaunch.timer.timerId = '';
+  }
+}
+
+function renderAutoLaunch() {
+  if (!plan) return;
+  if (!plan.autoLaunch) plan.autoLaunch = emptyAutoLaunch();
+  const al = plan.autoLaunch;
+
+  const enableBox = $('#plan-autolaunch-enable');
+  if (enableBox) enableBox.checked = !!al.enabled;
+  const settingsBox = $('#plan-autolaunch-settings');
+  if (settingsBox) settingsBox.hidden = !al.enabled;
+
+  const stateSelect = $('#plan-autolaunch-state');
+  if (stateSelect) stateSelect.value = al.initialState || 'live';
+
+  const musicSelect = $('#plan-autolaunch-music');
+  if (musicSelect) {
+    const val = al.music?.playlist || '';
+    musicSelect.replaceChildren(el('option', { value: '' }, 'None'));
+
+    if (musicPlaylists.length) {
+      const group = el('optgroup', { label: 'Playlists (content/music.json)' });
+      for (const l of musicPlaylists) {
+        group.append(el('option', {
+          value: `playlist:${l.name}`,
+        }, `🎵 ${l.name} (${l.tracks.length} track${l.tracks.length === 1 ? '' : 's'})`));
+      }
+      musicSelect.append(group);
+    }
+
+    const audioItems = (plan.items || []).filter((i) => i.type === 'audio');
+    if (audioItems.length) {
+      const group = el('optgroup', { label: 'Audio items in plan' });
+      for (const it of audioItems) {
+        group.append(el('option', {
+          value: `item:${it.id}`,
+        }, `🔊 ${itemLabel(it, plan)}`));
+      }
+      musicSelect.append(group);
+    }
+
+    if (val) {
+      let matched = false;
+      for (const opt of musicSelect.options) {
+        if (opt.value === val || opt.value === `playlist:${val}`) {
+          musicSelect.value = opt.value;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        const customOpt = el('option', { value: val }, val);
+        musicSelect.append(customOpt);
+        musicSelect.value = val;
+      }
+    } else {
+      musicSelect.value = '';
+    }
+  }
+
+  const musicPlay = $('#plan-autolaunch-music-play');
+  if (musicPlay) musicPlay.checked = al.music?.autoplay !== false;
+
+  const timerSelect = $('#plan-autolaunch-timer');
+  if (timerSelect) {
+    const val = al.timer?.timerId || '';
+    timerSelect.replaceChildren(
+      el('option', { value: '' }, 'None'),
+      ...(plan.timers || []).map((t) => el('option', {
+        value: t.id,
+      }, `⏱️ ${t.label ? `${t.label} (${t.mins}m)` : `${t.mins}m countdown`}`)),
+    );
+    timerSelect.value = (plan.timers || []).some((t) => t.id === val) ? val : '';
+  }
+
+  renderAutoLaunchPanes();
+}
+
+function renderAutoLaunchPanes() {
+  const container = $('#plan-autolaunch-panes');
+  if (!container || !plan) return;
+  if (!plan.autoLaunch) plan.autoLaunch = emptyAutoLaunch();
+  if (!plan.autoLaunch.panes) plan.autoLaunch.panes = { A: null, B: null, C: null, D: null };
+
+  const count = LAYOUTS[plan.layout || 'single'] || 1;
+  const activeKeys = ['A', 'B', 'C', 'D'].slice(0, count);
+
+  container.replaceChildren(...activeKeys.map((key) => {
+    const p = plan.autoLaunch.panes[key];
+    let mode = 'none';
+    if (p?.type === 'item') mode = 'item';
+    else if (p?.type === 'set') mode = 'set';
+
+    const modeSelect = el('select', {
+      onchange: (ev) => {
+        const val = ev.target.value;
+        if (val === 'none') {
+          plan.autoLaunch.panes[key] = null;
+        } else if (val === 'item') {
+          plan.autoLaunch.panes[key] = { type: 'item', itemId: plan.items[0]?.id || '' };
+        } else if (val === 'set') {
+          plan.autoLaunch.panes[key] = {
+            type: 'set',
+            title: `Pane ${key} set`,
+            mode: 'sequential',
+            entries: plan.items[0] ? [{ itemId: plan.items[0].id, seconds: 15 }] : [],
+          };
+        }
+        touch();
+        renderAutoLaunchPanes();
+      },
+    },
+      el('option', { value: 'none', selected: mode === 'none' }, 'Empty / None'),
+      el('option', { value: 'item', selected: mode === 'item' }, 'Single item'),
+      el('option', { value: 'set', selected: mode === 'set' }, 'Automated set (slideshow)'),
+    );
+
+    const header = el('div', { class: 'autolaunch-pane-header' },
+      el('span', { class: 'pane-badge' }, `Pane ${key}${count === 1 ? ' (Full screen)' : ''}`),
+      modeSelect,
+    );
+
+    const card = el('div', { class: 'autolaunch-pane-card' }, header);
+
+    if (mode === 'item') {
+      const itemSelect = el('select', {
+        class: 'grow',
+        onchange: (ev) => {
+          if (!plan.autoLaunch.panes[key]) plan.autoLaunch.panes[key] = { type: 'item', itemId: '' };
+          plan.autoLaunch.panes[key].itemId = ev.target.value;
+          touch();
+        },
+      },
+        el('option', { value: '' }, 'Pick an item…'),
+        ...plan.items.map((it, idx) => el('option', {
+          value: it.id,
+          selected: it.id === p?.itemId,
+        }, `${idx + 1}. [${PLAN_TYPES[it.type]?.label || it.type}] ${itemLabel(it, plan)}`)),
+      );
+      card.append(el('div', { class: 'field', style: 'margin: 0;' }, itemSelect));
+    } else if (mode === 'set') {
+      const setBox = el('div', { class: 'autolaunch-set-box' });
+      const titleInput = el('input', {
+        type: 'text',
+        class: 'grow',
+        placeholder: `Pane ${key} set`,
+        value: p.title || '',
+        oninput: (ev) => { p.title = ev.target.value; touch(); },
+      });
+      const orderSelect = el('select', {
+        onchange: (ev) => { p.mode = ev.target.value; touch(); },
+      },
+        el('option', { value: 'sequential', selected: p.mode !== 'random' }, 'Sequential (in order)'),
+        el('option', { value: 'random', selected: p.mode === 'random' }, 'Random shuffle'),
+      );
+      setBox.append(el('div', { class: 'inline' }, titleInput, orderSelect));
+
+      const entriesContainer = el('div', { class: 'stack', style: 'gap: 6px;' });
+      (p.entries || []).forEach((entry, eIdx) => {
+        const entrySelect = el('select', {
+          onchange: (ev) => { entry.itemId = ev.target.value; touch(); },
+        },
+          el('option', { value: '' }, 'Pick slide…'),
+          ...plan.items.map((it, idx) => el('option', {
+            value: it.id,
+            selected: it.id === entry.itemId,
+          }, `${idx + 1}. [${PLAN_TYPES[it.type]?.label || it.type}] ${itemLabel(it, plan)}`)),
+        );
+        const secondsInput = el('input', {
+          type: 'number',
+          min: '1',
+          max: '3600',
+          value: String(entry.seconds || 15),
+          onchange: (ev) => {
+            entry.seconds = Math.max(1, Math.min(3600, Math.round(Number(ev.target.value)) || 15));
+            touch();
+          },
+        });
+        const delBtn = el('button', {
+          type: 'button',
+          class: 'order-del',
+          title: 'Remove slide from set',
+          'aria-label': 'Remove slide',
+          onclick: () => {
+            p.entries.splice(eIdx, 1);
+            touch();
+            renderAutoLaunchPanes();
+          },
+        }, '×');
+        entriesContainer.append(el('div', { class: 'autolaunch-set-entry' },
+          entrySelect,
+          secondsInput,
+          el('span', { class: 'hint', style: 'margin: 0;' }, 'sec'),
+          delBtn,
+        ));
+      });
+      setBox.append(entriesContainer);
+
+      const addBtn = el('button', {
+        type: 'button',
+        class: 'btn',
+        style: 'align-self: flex-start; font-size: 13px; padding: 4px 8px;',
+        onclick: () => {
+          if (!Array.isArray(p.entries)) p.entries = [];
+          p.entries.push({ itemId: plan.items[0]?.id || '', seconds: 15 });
+          touch();
+          renderAutoLaunchPanes();
+        },
+      }, '+ Add slide to set');
+      setBox.append(addBtn);
+
+      card.append(setBox);
+    }
+
+    return card;
+  }));
+}
+
+$('#plan-autolaunch-enable').addEventListener('change', (ev) => {
+  if (!plan.autoLaunch) plan.autoLaunch = emptyAutoLaunch();
+  plan.autoLaunch.enabled = ev.target.checked;
+  $('#plan-autolaunch-settings').hidden = !plan.autoLaunch.enabled;
+  touch();
+});
+
+$('#plan-autolaunch-state').addEventListener('change', (ev) => {
+  if (!plan.autoLaunch) plan.autoLaunch = emptyAutoLaunch();
+  plan.autoLaunch.initialState = ev.target.value;
+  touch();
+});
+
+$('#plan-autolaunch-music').addEventListener('change', (ev) => {
+  if (!plan.autoLaunch) plan.autoLaunch = emptyAutoLaunch();
+  if (!plan.autoLaunch.music) plan.autoLaunch.music = { playlist: '', autoplay: true, volume: 0.5 };
+  plan.autoLaunch.music.playlist = ev.target.value;
+  touch();
+});
+
+$('#plan-autolaunch-music-play').addEventListener('change', (ev) => {
+  if (!plan.autoLaunch) plan.autoLaunch = emptyAutoLaunch();
+  if (!plan.autoLaunch.music) plan.autoLaunch.music = { playlist: '', autoplay: true, volume: 0.5 };
+  plan.autoLaunch.music.autoplay = ev.target.checked;
+  touch();
+});
+
+$('#plan-autolaunch-timer').addEventListener('change', (ev) => {
+  if (!plan.autoLaunch) plan.autoLaunch = emptyAutoLaunch();
+  if (!plan.autoLaunch.timer) plan.autoLaunch.timer = { timerId: '' };
+  plan.autoLaunch.timer.timerId = ev.target.value;
+  touch();
 });
 
 // --- files in and out --------------------------------------------------------
@@ -708,11 +1010,13 @@ function renderAll() {
   renderHeader();
   renderOrder();
   renderTimers();
+  renderAutoLaunch();
   renderEditor();
   renderSize();
   renderPlanList();
 }
 
+loadMusicPlaylists();
 renderTypePicker();
 $('#plan-build').textContent = `Podium ${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
 const planTag = $('#plan-version-tag');

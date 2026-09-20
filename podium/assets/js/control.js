@@ -446,6 +446,11 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
     const id = await deckId(source);
     deckStore.set(id, source);
     row.deckId = id;
+    try {
+      const deck = await renderDeckSource(source, id);
+      row.slideCount = deck.count;
+      row.fragments = deck.fragments;
+    } catch {}
   }
 
   currentPlan = plan;
@@ -459,7 +464,11 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
   // restore would yank the projector around, and reset a running clock, every
   // time the tablet woke up mid-lecture.
   if (!applyToDisplay) return;
-  if (plan.layout && plan.layout !== 'single') send({ op: 'layout', mode: plan.layout });
+  if (plan.autoLaunch?.enabled) {
+    send({ op: 'layout', mode: plan.layout || 'single' });
+  } else if (plan.layout && plan.layout !== 'single') {
+    send({ op: 'layout', mode: plan.layout });
+  }
   if (plan.timers.length) {
     // Ids carried through from the plan, so its countdown items name the same
     // clocks the display just created.
@@ -468,6 +477,132 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
       action: 'define',
       timers: plan.timers.slice(0, MAX_TIMERS).map((t) => ({ id: t.id, label: t.label, seconds: t.mins * 60 })),
     });
+  }
+
+  if (plan.autoLaunch?.enabled) {
+    const isFreeze = plan.autoLaunch.initialState === 'freeze';
+    const isBlank = plan.autoLaunch.initialState === 'blank';
+
+    if (isFreeze) {
+      send({ op: 'freeze', on: true });
+    }
+
+    const count = LAYOUTS[plan.layout || 'single'] || 1;
+    const paneKeys = ['A', 'B', 'C', 'D'].slice(0, count);
+
+    for (let i = 0; i < paneKeys.length; i++) {
+      const key = paneKeys[i];
+      const p = plan.autoLaunch.panes?.[key];
+      if (!p) continue;
+
+      if (p.type === 'item' && p.itemId) {
+        const item = plan.items.find((it) => it.id === p.itemId);
+        if (item) {
+          const staged = itemForStage(item);
+          if (staged.src) pushAssetIfHeld(staged.src);
+          if (item.type === 'deck' && item.deckId && deckStore.has(item.deckId)) {
+            bus?.send({ t: 'deck', id: item.deckId, source: deckStore.get(item.deckId) });
+            if (i === 0) {
+              try {
+                const deck = await renderDeckSource(deckStore.get(item.deckId), item.deckId);
+                deckGeneration++;
+                deckView = { id: item.deckId, deck };
+              } catch {}
+            }
+          }
+          if (i === 0) {
+            send({ op: 'stage', item: staged, where: isFreeze ? 'preview' : 'auto' });
+          } else {
+            send({ op: 'panel', index: i - 1, item: staged });
+          }
+        }
+      } else if (p.type === 'set' && Array.isArray(p.entries) && p.entries.length) {
+        const entries = [];
+        for (const e of p.entries) {
+          const item = plan.items.find((it) => it.id === e.itemId);
+          if (!item) continue;
+          const staged = itemForStage(item);
+          if (staged.src) pushAssetIfHeld(staged.src);
+          if (item.type === 'deck' && item.deckId && deckStore.has(item.deckId)) {
+            bus?.send({ t: 'deck', id: item.deckId, source: deckStore.get(item.deckId) });
+          }
+          entries.push({ item: staged, seconds: e.seconds || 15 });
+        }
+        if (entries.length) {
+          const setItem = {
+            type: 'set',
+            title: p.title || `Pane ${key} set`,
+            mode: p.mode === 'random' ? 'random' : 'sequential',
+            entries,
+          };
+          if (i === 0) {
+            send({ op: 'stage', item: setItem, where: isFreeze ? 'preview' : 'auto' });
+          } else {
+            send({ op: 'panel', index: i - 1, item: setItem });
+          }
+        }
+      }
+    }
+
+    if (isBlank) {
+      send({ op: 'blank', on: true });
+    }
+
+    if (plan.autoLaunch.music?.playlist) {
+      const musicConfig = plan.autoLaunch.music;
+      if (!playlists.length) {
+        try { await loadPlaylists(); } catch {}
+      }
+      let targetName = musicConfig.playlist;
+      let matchedPlaylist = null;
+      let matchedAudioItem = null;
+
+      if (targetName.startsWith('item:')) {
+        const itemId = targetName.slice(5);
+        matchedAudioItem = plan.items.find((it) => it.id === itemId);
+      } else {
+        if (targetName.startsWith('playlist:')) targetName = targetName.slice(9);
+        matchedPlaylist = playlists.find((l) => l.name === targetName) || playlists[Number(targetName)];
+        if (!matchedPlaylist) {
+          matchedAudioItem = plan.items.find((it) => it.type === 'audio' && (it.id === targetName || it.title === targetName));
+        }
+      }
+
+      if (matchedPlaylist) {
+        send({
+          op: 'music',
+          action: 'load',
+          tracks: matchedPlaylist.tracks,
+          name: matchedPlaylist.name,
+          play: musicConfig.autoplay !== false,
+        });
+      } else if (matchedAudioItem) {
+        send({
+          op: 'music',
+          action: 'load',
+          tracks: [{ src: matchedAudioItem.src, title: matchedAudioItem.title, artist: matchedAudioItem.artist }],
+          name: matchedAudioItem.title || 'Audio',
+          play: musicConfig.autoplay !== false,
+        });
+      }
+
+      if (typeof musicConfig.volume === 'number') {
+        send({ op: 'music', action: 'volume', value: musicConfig.volume });
+      }
+    }
+
+    if (plan.autoLaunch.timer?.timerId) {
+      const timer = plan.timers.find((t) => t.id === plan.autoLaunch.timer.timerId);
+      if (timer) {
+        send({
+          op: 'timer',
+          action: 'start',
+          id: timer.id,
+          seconds: timer.mins * 60,
+          label: timer.label || '',
+        });
+      }
+    }
   }
 }
 
