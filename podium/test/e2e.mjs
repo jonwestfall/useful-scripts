@@ -24,7 +24,11 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
 
 async function loadPlaywright() {
-  for (const spec of ['playwright', '/opt/node22/lib/node_modules/playwright/index.mjs']) {
+  for (const spec of [
+    process.env.PLAYWRIGHT_PATH,
+    'playwright',
+    '/opt/node22/lib/node_modules/playwright/index.mjs',
+  ].filter(Boolean)) {
     try { return await import(spec); } catch { /* try the next one */ }
   }
   console.error('playwright not found. Run: npm i playwright && npx playwright install chromium');
@@ -2367,6 +2371,7 @@ ok('and catches up to the new size once the stroke ends', JSON.stringify(await f
 // ellipse by construction regardless of any bug.
 await pad.click('#ink-clear');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+await pad.evaluate(() => { document.querySelector('.panels').scrollTop = 0; });
 pb = await padBox();
 const cx = pb.x + pb.w * 0.5, cy = pb.y + pb.h * 0.5, r = Math.min(pb.w, pb.h) * 0.3;
 await pad.mouse.move(cx + r, cy);

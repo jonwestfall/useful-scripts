@@ -169,6 +169,23 @@ body.display #watermark img { display: block; max-height: 10vh; max-width: 26vw;
    the green pointer. A near-white centre and a thin dark ring read against any
    of them, so picking the "wrong" colour for a slide costs you brightness
    rather than the dot itself. */
+body.display #spotlight {
+  position: fixed; inset: 0; z-index: 5;
+  pointer-events: none; opacity: 0;
+  transition: opacity .12s ease;
+  --spotlight-x: 50vw;
+  --spotlight-y: 50vh;
+  --spotlight-radius: 120px;
+  background: radial-gradient(
+    circle var(--spotlight-radius) at var(--spotlight-x) var(--spotlight-y),
+    transparent 0%,
+    transparent 85%,
+    rgba(0, 0, 0, .45) 94%,
+    rgba(0, 0, 0, .72) 100%
+  );
+}
+body.display #spotlight.is-on { opacity: 1; }
+
 body.display #laser {
   position: fixed; top: 0; left: 0; width: 34px; height: 34px; z-index: 6;
   border-radius: 50%; pointer-events: none; opacity: 0;
@@ -630,8 +647,28 @@ body.control.is-frozen { background: #171006; }
 }
 #deck-now-preview { border-color: var(--accent); }
 #deck-now-preview .mirror-frame.laser-armed { cursor: crosshair; touch-action: none; }
-#deck-markup, #deck-laser { flex: 1; font-size: 13px; min-height: 38px; padding: 0 8px; }
+#deck-markup, #deck-laser, #deck-spotlight { flex: 1; font-size: 13px; min-height: 38px; padding: 0 8px; }
 #deck-laser.is-on { background: var(--live); border-color: var(--live); color: #fff; }
+#deck-spotlight.is-on { background: #d29922; border-color: #d29922; color: #fff; }
+#deck-now-preview .mirror-frame.spotlight-armed { cursor: crosshair; touch-action: none; }
+#pad.is-laser, #pad.is-spotlight { cursor: crosshair; }
+.spotlight-preview {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  transition: opacity .12s ease; z-index: 4;
+  --spotlight-x: 50%;
+  --spotlight-y: 50%;
+  --spotlight-radius: 40px;
+  background: radial-gradient(
+    circle var(--spotlight-radius) at var(--spotlight-x) var(--spotlight-y),
+    transparent 0%,
+    transparent 80%,
+    rgba(0, 0, 0, .45) 92%,
+    rgba(0, 0, 0, .68) 100%
+  );
+  border-radius: inherit;
+}
+.spotlight-preview.is-on { opacity: 1; }
+#pad-frame .spotlight-preview { --spotlight-radius: 110px; }
 .laser-dot {
   position: absolute; width: 22px; height: 22px; border-radius: 50%;
   --laser: 255, 77, 79;
@@ -668,6 +705,48 @@ body.control.is-frozen { background: #171006; }
   min-height: 76px; color: var(--ink);
 }
 .notes.is-empty { color: var(--dim); font-style: italic; }
+
+.deck-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0 4px 0;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.deck-chips::-webkit-scrollbar {
+  height: 4px;
+}
+.deck-chips::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
+}
+.deck-chip {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--panel-2);
+  color: var(--dim);
+  border: 1px solid var(--line);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.deck-chip:hover {
+  background: var(--panel);
+  color: var(--ink);
+  border-color: var(--dim);
+}
+.deck-chip.is-active {
+  background: #1f6feb;
+  color: #fff;
+  border-color: #58a6ff;
+  font-weight: 600;
+}
 
 #now-title { font-size: 19px; font-weight: 650; }
 #now-type { color: var(--dim); font-size: 13px; }
@@ -734,6 +813,41 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 #pad.is-eraser { cursor: crosshair; }
 .swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; }
 .swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
+
+/* Custom color picker swatch (Issue #53) */
+.swatch-picker {
+  position: relative; width: 42px; height: 42px; min-height: 42px; padding: 0;
+  border-radius: 50%; display: inline-grid; place-items: center; cursor: pointer;
+  background: conic-gradient(#ff4d4f, #ffd166, #45d483, #6ea8fe, #a371f7, #ff4d4f);
+  border: 2px solid var(--line); box-sizing: border-box;
+}
+.swatch-picker-inner {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--custom-color, #a371f7);
+  border: 1.5px solid rgba(0, 0, 0, .45); pointer-events: none;
+}
+.swatch-picker input[type="color"] {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; border: none; padding: 0;
+}
+.swatch-picker.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
+
+/* Ink panel layout preferences (Issue #53) */
+.panel[data-panel="ink"].pad-gutter #pad-viewport {
+  width: 80%; margin: 6px auto;
+}
+.panel[data-panel="ink"].controls-top #ink-controls {
+  order: 1;
+}
+.panel[data-panel="ink"].controls-top #pad-viewport {
+  order: 2;
+}
+.panel[data-panel="ink"].controls-top .hint {
+  order: 3;
+}
+.ink-controls {
+  display: flex; flex-direction: column; gap: 14px;
+}
 
 #cam-local { width: 100%; max-width: 320px; border-radius: var(--radius); background: #000; }
 #cam-status { color: var(--dim); font-size: 14px; }
@@ -846,6 +960,10 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .music-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #bar-music.is-on, .bottombar .bar-slot.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
 .bottombar .bar-slot[data-slot-action="laser"].is-on { background: var(--live); border-color: var(--live); color: #fff; }
+.bottombar .bar-slot[data-slot-action="spotlight"].is-on { background: #d29922; border-color: #d29922; color: #fff; }
+.bottombar .bar-slot[data-slot-action="freeze"].is-on { background: var(--cue); border-color: var(--cue); color: #1a1204; }
+.bottombar .bar-slot[data-slot-action="blank"].is-on { background: #fff; border-color: #fff; color: #000; }
+.bottombar .bar-slot[data-slot-action="take"].is-armed { background: var(--live); border-color: var(--live); color: #fff; }
 
 /* --- automated sets ----------------------------------------------------------
    A saved set (name, and four buttons to start it somewhere) and a build-time
@@ -934,13 +1052,26 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
   padding-bottom: calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line); background: var(--panel);
 }
-.bottombar button { flex: 1; font-weight: 600; }
+.bottombar button { font-weight: 600; }
+.bottombar .bar-slot {
+  flex: 0 1 auto; min-width: 48px; max-width: 110px; height: 42px;
+  padding: 0 8px; font-size: 13px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .bottombar #freeze.is-on { background: var(--cue); border-color: var(--cue); color: #1a1204; }
 .bottombar #blank.is-on { background: #fff; border-color: #fff; color: #000; }
-.bottombar .vol { flex: 2; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bottombar .vol { flex: 1 1 200px; max-width: 260px; margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
 /* A range input's intrinsic min-width would otherwise push it off a phone. */
 .bottombar .vol input { flex: 1; min-width: 0; width: 100%; }
-#mute, #bar-play, #bar-music, .bottombar .bar-slot { flex: none; width: 52px; padding: 0; }
+#mute { flex: none; width: 44px; height: 42px; padding: 0; }
+
+.bottom-slots-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px; margin-bottom: 8px;
+}
+.bottom-slot-field { display: flex; flex-direction: column; gap: 4px; }
+.bottom-slot-field label { font-size: 11px; color: var(--dim); font-weight: 600; }
+.bottom-slot-field select { width: 100%; }
 
 /* On a phone the bar has to fit one row: drop the identifiers you only need
    when something is wrong, and let the buttons shrink. */
@@ -951,8 +1082,9 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
   .topbar-clock { font-size: 12px; }
   .topbar-pacing { font-size: 11px; padding: 2px 6px 3px; min-height: 24px; }
   .bottombar { gap: 6px; }
-  .bottombar button { min-width: 0; padding: 0 8px; }
-  .bottombar .vol { flex: 1; min-width: 76px; gap: 6px; }
+  .bottombar button { min-width: 0; padding: 0 4px; }
+  .bottombar .bar-slot.mobile-overflow { display: none !important; }
+  .bottombar .vol { flex: 1; min-width: 76px; max-width: none; margin-left: 0; gap: 6px; }
   #mute, #bar-play, #bar-music, .bottombar .bar-slot { width: 44px; }
 }
 

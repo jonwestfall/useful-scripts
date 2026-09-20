@@ -740,6 +740,105 @@ let gridShadow = null;
 // skipping the wait entirely - see buildGrid() below.
 let gridBuildId = null;
 let gridBuildPromise = null;
+let activeSectionFilter = null;
+let lastScrolledSlideIndex = null;
+let selectedChipSection = null;
+
+function getSlideSectionIndex(sections, slideIndex) {
+  if (!sections || !sections.length) return -1;
+  let secIdx = -1;
+  for (let k = 0; k < sections.length; k++) {
+    if (sections[k].slideIndex <= slideIndex) {
+      secIdx = k;
+    } else {
+      break;
+    }
+  }
+  return secIdx;
+}
+
+function renderSectionChips(deck) {
+  const container = $('#deck-grid-chips');
+  if (!container) return;
+  const sections = deck?.sections || [];
+  if (!sections.length) {
+    container.hidden = true;
+    container.innerHTML = '';
+    return;
+  }
+  container.hidden = false;
+  container.innerHTML = '';
+
+  const allBtn = document.createElement('button');
+  allBtn.type = 'button';
+  allBtn.className = 'deck-chip' + (activeSectionFilter === null ? ' is-active' : '');
+  allBtn.dataset.section = 'all';
+  allBtn.textContent = 'All';
+  allBtn.addEventListener('click', () => {
+    activeSectionFilter = null;
+    selectedChipSection = null;
+    updateChipClasses(container, 'all');
+    filterGrid();
+  });
+  container.append(allBtn);
+
+  sections.forEach((sec, k) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'deck-chip' + (activeSectionFilter === k ? ' is-active' : '');
+    chip.dataset.section = String(k);
+    chip.textContent = sec.title;
+    chip.title = `Section: ${sec.title} (Slide ${sec.slideIndex + 1})`;
+    chip.addEventListener('click', () => {
+      if (activeSectionFilter === k) {
+        // Second tap when filtered: reset back to All
+        activeSectionFilter = null;
+        selectedChipSection = null;
+        updateChipClasses(container, 'all');
+        filterGrid();
+      } else if (selectedChipSection === k || activeSectionFilter !== null) {
+        // Second tap on jumped chip, or switching filter while already filtered: isolate section
+        activeSectionFilter = k;
+        selectedChipSection = k;
+        updateChipClasses(container, String(k));
+        filterGrid();
+        const cell = gridShadow?.querySelector(`.cell[data-index="${sec.slideIndex}"]`);
+        cell?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+      } else {
+        // First tap: smoothly jump & scroll to that topic's first slide
+        selectedChipSection = k;
+        updateChipClasses(container, String(k));
+        const cell = gridShadow?.querySelector(`.cell[data-index="${sec.slideIndex}"]`);
+        cell?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+    });
+    container.append(chip);
+  });
+}
+
+function updateChipClasses(container, activeId) {
+  if (!container) return;
+  container.querySelectorAll('.deck-chip').forEach((chip) => {
+    chip.classList.toggle('is-active', chip.dataset.section === activeId);
+  });
+}
+
+function updateActiveSectionChip(slideIndex) {
+  const container = $('#deck-grid-chips');
+  if (!container || container.hidden) return;
+  if (activeSectionFilter !== null) return;
+  const sections = deckView?.deck?.sections;
+  if (!sections?.length) return;
+  const secIdx = getSlideSectionIndex(sections, slideIndex);
+  const targetId = secIdx >= 0 ? String(secIdx) : 'all';
+  container.querySelectorAll('.deck-chip').forEach((chip) => {
+    const isActive = chip.dataset.section === targetId;
+    chip.classList.toggle('is-active', isActive);
+    if (isActive) {
+      chip.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+  });
+}
 
 function ensureGridShadow() {
   gridShadow ??= $('#deck-grid').attachShadow({ mode: 'open' });
@@ -749,6 +848,9 @@ function ensureGridShadow() {
 function buildGrid(deck) {
   if (gridBuildId === deck.id) return gridBuildPromise;
   gridBuildId = deck.id;
+  lastScrolledSlideIndex = null;
+  activeSectionFilter = null;
+  selectedChipSection = null;
   gridBuildPromise = buildGridNow(deck);
   return gridBuildPromise;
 }
@@ -780,6 +882,15 @@ async function buildGridNow(deck) {
       position: absolute; right: 3px; bottom: 3px; padding: 0 5px; border-radius: 4px;
       background: rgba(0,0,0,.65); color: #fff; font: 600 11px/1.6 system-ui, sans-serif;
     }
+    .ink-badge {
+      display: none;
+      position: absolute; left: 3px; bottom: 3px; padding: 0 4px; border-radius: 4px;
+      background: rgba(255, 209, 102, 0.95); color: #151b23; font: 700 11px/1.6 system-ui, sans-serif;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.5); pointer-events: none;
+    }
+    .cell.has-ink .ink-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+    }
     /* A rendered thumbnail this small reads as a smear of colour, not text -
        the caption is what actually lets you find a slide by scanning, the
        same job the title attribute it replaces used to fail at on a
@@ -804,6 +915,8 @@ async function buildGridNow(deck) {
     cell.className = 'cell';
     cell.dataset.index = String(i);
     cell.dataset.search = title.toLowerCase();
+    const secIdx = getSlideSectionIndex(deck.sections, i);
+    cell.dataset.section = String(secIdx);
     const thumb = document.createElement('div');
     thumb.className = 'thumb';
     const marpit = document.createElement('div');
@@ -813,7 +926,11 @@ async function buildGridNow(deck) {
     const num = document.createElement('span');
     num.className = 'num';
     num.textContent = String(i + 1);
-    thumb.append(num);
+    const inkBadge = document.createElement('span');
+    inkBadge.className = 'ink-badge';
+    inkBadge.textContent = '✎';
+    inkBadge.title = 'Annotated slide';
+    thumb.append(num, inkBadge);
     const cap = document.createElement('div');
     cap.className = 'cap';
     cap.textContent = title;
@@ -821,6 +938,7 @@ async function buildGridNow(deck) {
     cell.addEventListener('click', () => send({ op: 'nav', dir: 'goto', value: i }));
     grid.append(cell);
   });
+  renderSectionChips(deck);
   filterGrid();
   // Marp needs its own DOM polyfill for inline-SVG slides or WebKit (every
   // iPad, which is where this grid actually gets used) lays foreignObject
@@ -846,22 +964,60 @@ function filterGrid() {
   const filter = $('#deck-grid-filter').value.trim().toLowerCase();
   let shown = 0;
   gridShadow.querySelectorAll('.cell').forEach((cell) => {
-    const match = !filter || cell.dataset.search.includes(filter);
+    const textMatch = !filter || cell.dataset.search.includes(filter);
+    const secIdx = Number(cell.dataset.section);
+    const sectionMatch = activeSectionFilter === null || secIdx === activeSectionFilter;
+    const match = textMatch && sectionMatch;
     cell.hidden = !match;
     if (match) shown += 1;
   });
   $('#deck-grid-empty').hidden = shown > 0;
 }
 
-function highlightGrid(index) {
+function highlightGrid(index, deckId = (deckView.id || (focusedItem(state)?.type === 'deck' ? focusedItem(state)?.deckId : null))) {
   if (!gridShadow) return;
-  gridShadow.querySelectorAll('.cell').forEach((cell) => {
-    cell.classList.toggle('on', Number(cell.dataset.index) === index);
+  const cells = gridShadow.querySelectorAll('.cell');
+  const surfacesWithInk = new Set(state.ink?.surfaces || []);
+  let activeCell = null;
+
+  cells.forEach((cell) => {
+    const i = Number(cell.dataset.index);
+    const isOn = i === index;
+    cell.classList.toggle('on', isOn);
+    if (isOn) activeCell = cell;
+
+    if (deckId) {
+      const surfaceKey = `deck:${deckId}:${i}`;
+      let hasStrokes = false;
+      if (inkSurface === surfaceKey) {
+        hasStrokes = (ink.strokes?.length || 0) > 0;
+      } else {
+        hasStrokes = surfacesWithInk.has(surfaceKey) || ((inkCache.get(surfaceKey)?.length || 0) > 0);
+      }
+      cell.classList.toggle('has-ink', hasStrokes);
+    }
   });
+
+  // Auto-scroll when the active slide changes
+  if (lastScrolledSlideIndex !== index && activeCell && !activeCell.hidden) {
+    const slidesPanel = $('[data-panel="slides"]');
+    if (slidesPanel && !slidesPanel.hidden) {
+      lastScrolledSlideIndex = index;
+      activeCell.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+    }
+  }
+
+  updateActiveSectionChip(index);
 }
 
 async function ensureDeckView(item) {
-  if (!item || item.type !== 'deck') { deckView = { id: null, deck: null }; return; }
+  if (!item || item.type !== 'deck') {
+    deckView = { id: null, deck: null };
+    lastScrolledSlideIndex = null;
+    activeSectionFilter = null;
+    selectedChipSection = null;
+    return;
+  }
   if (deckView.id === item.deckId) return;
   const mine = ++deckGeneration;
   let source;
@@ -1488,7 +1644,6 @@ function renderNow() {
   $('#now-type').textContent = TYPES[type]?.label || type || '';
   $('#transport').hidden = !isMedia;
   $('#paging').hidden = !isPaged;
-  renderBottomSlots();
   $('#page-label').textContent = type === 'pdf'
     ? `Page ${item.page || 1}`
     : (type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}` : 'Slide');
@@ -1506,12 +1661,6 @@ function renderNow() {
     if (document.activeElement !== $('#media-loop')) $('#media-loop').checked = !!item.loop;
   }
 
-  $('#freeze').classList.toggle('is-on', state.frozen);
-  $('#freeze').textContent = state.frozen ? 'Frozen' : 'Freeze';
-  $('#blank').classList.toggle('is-on', state.blank);
-  // A cued layout with no content change (you only touched the layout
-  // picker while frozen) still needs TAKE to apply it, and Clear cue to
-  // abandon it - see the 'take'/'clear' cases in protocol.js.
   const cued = !!state.preview || state.previewLayout !== null;
   $('#take').disabled = !cued;
   $('#take').classList.toggle('is-armed', cued);
@@ -1521,6 +1670,8 @@ function renderNow() {
   $('#mute').classList.toggle('is-on', state.muted);
   $('#mute').textContent = state.muted ? '\u{1F507}' : '\u{1F50A}';
   if (document.activeElement !== $('#volume')) $('#volume').value = state.volume;
+
+  renderBottomSlots();
 
   document.body.classList.toggle('is-frozen', state.frozen);
 }
@@ -2182,9 +2333,27 @@ const padFrame = $('#pad-frame');
 const padMirror = $('#pad-mirror');
 const pad = $('#pad');
 const padCtx = pad.getContext('2d');
+
+const LASER_COLORS = ['red', 'green', 'blue'];
+const LASER_KEY = 'podium.laser.v1';
+let laserColor = 'red';
+try {
+  const saved = localStorage.getItem(LASER_KEY);
+  if (LASER_COLORS.includes(saved)) laserColor = saved;
+} catch { /* private browsing: red it is */ }
+
+const sendLaser = throttle((x, y) => bus?.send({ t: 'laser', x, y, on: true, color: laserColor }), 40);
+const sendSpotlight = throttle((x, y) => bus?.send({ t: 'spotlight', x, y, on: true }), 40);
+
+const padLaserDot = el('div', { class: 'laser-dot' });
+const padSpotlightPreview = el('div', { class: 'spotlight-preview' });
+padLaserDot.dataset.color = laserColor;
+padFrame.append(padLaserDot, padSpotlightPreview);
+
 const ink = {
   drawing: false,
   erasing: false,
+  pointing: null,
   strokeId: null,
   buffer: [],
   penOnly: false,
@@ -2441,6 +2610,10 @@ function holdInk(surface, strokes) {
   inkCache.delete(surface);
   inkCache.set(surface, strokes);
   while (inkCache.size > INK_CACHE_MAX) inkCache.delete(inkCache.keys().next().value);
+  if (gridShadow && deckView.id) {
+    const item = focusedItem(state);
+    if (item?.type === 'deck') highlightGrid(item.slide || 0, item.deckId);
+  }
 }
 
 // An outstanding request for a surface's strokes, and the slices arriving in
@@ -2564,6 +2737,23 @@ function eraseAt(ev) {
 
 pad.addEventListener('pointerdown', (ev) => {
   if (ink.penOnly && ev.pointerType !== 'pen') return;
+  if (ink.tool === 'laser' || ink.tool === 'spotlight') {
+    pad.setPointerCapture(ev.pointerId);
+    ink.pointing = ink.tool;
+    const [x, y] = padPoint(ev);
+    if (ink.tool === 'laser') {
+      padLaserDot.style.left = `${x * 100}%`;
+      padLaserDot.style.top = `${y * 100}%`;
+      padLaserDot.classList.add('is-on');
+      sendLaser(x, y);
+    } else {
+      padSpotlightPreview.style.setProperty('--spotlight-x', `${x * 100}%`);
+      padSpotlightPreview.style.setProperty('--spotlight-y', `${y * 100}%`);
+      padSpotlightPreview.classList.add('is-on');
+      sendSpotlight(x, y);
+    }
+    return;
+  }
   const hardwareEraser = isHardwareEraser(ev);
   if (ink.tool === 'eraser' || hardwareEraser) {
     pad.setPointerCapture(ev.pointerId);
@@ -2586,6 +2776,20 @@ pad.addEventListener('pointerdown', (ev) => {
 });
 
 pad.addEventListener('pointermove', (ev) => {
+  if (ink.pointing) {
+    ev.preventDefault();
+    const [x, y] = padPoint(ev);
+    if (ink.pointing === 'laser') {
+      padLaserDot.style.left = `${x * 100}%`;
+      padLaserDot.style.top = `${y * 100}%`;
+      sendLaser(x, y);
+    } else if (ink.pointing === 'spotlight') {
+      padSpotlightPreview.style.setProperty('--spotlight-x', `${x * 100}%`);
+      padSpotlightPreview.style.setProperty('--spotlight-y', `${y * 100}%`);
+      sendSpotlight(x, y);
+    }
+    return;
+  }
   if (ink.erasing) {
     ev.preventDefault();
     const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
@@ -2612,6 +2816,19 @@ pad.addEventListener('pointermove', (ev) => {
 });
 
 const endStroke = (ev) => {
+  if (ink.pointing) {
+    const mode = ink.pointing;
+    ink.pointing = null;
+    if (mode === 'laser') {
+      padLaserDot.classList.remove('is-on');
+      bus?.send({ t: 'laser', on: false });
+    } else {
+      padSpotlightPreview.classList.remove('is-on');
+      bus?.send({ t: 'spotlight', on: false });
+    }
+    try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
+    return;
+  }
   if (ink.erasing) {
     ink.erasing = false;
     ink.lastErasePoint = null;
@@ -2624,6 +2841,10 @@ const endStroke = (ev) => {
   send({ op: 'ink', action: 'points', id: ink.strokeId, pts: ink.buffer.splice(0) });
   ink.strokeId = null;
   try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
+  if (gridShadow && deckView.id) {
+    const item = focusedItem(state);
+    if (item?.type === 'deck') highlightGrid(item.slide || 0, item.deckId);
+  }
   // Catch up on any resize that was deliberately deferred while that stroke
   // was in progress, now that there is a safe moment to apply it.
   if (!$('[data-panel="ink"]').hidden) sizePad();
@@ -3631,14 +3852,14 @@ function tab(name) {
   // from that, so every "contain"-fit surface needs a nudge the moment its
   // panel actually has a size to fit into - it would otherwise sit blank
   // until whatever periodic update happens to land next.
-  if (name === 'ink') { syncInkFromState(); sizePad(); }
-  if (name === 'slides') renderSlides();
+  if (name === 'ink') { syncInkFromState(); applyInkPreferences(); sizePad(); }
+  if (name === 'slides') {
+    lastScrolledSlideIndex = null;
+    renderSlides();
+  }
 }
 
 $$('.tab').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
-
-$('#freeze').addEventListener('click', () => send({ op: 'freeze' }));
-$('#blank').addEventListener('click', () => send({ op: 'blank' }));
 
 $$('.layout-btn').forEach((b) => {
   b.addEventListener('click', () => send({ op: 'layout', mode: b.dataset.layout }));
@@ -3714,7 +3935,6 @@ $('#mixer-music').addEventListener('input', (ev) => {
 $('#mixer-music').addEventListener('change', () => { mixerSliding = null; });
 
 $('#play-pause').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
-$('#bar-play').addEventListener('click', () => executeSlotAction(presentation.bottomSlot2 || 'play'));
 $('#back10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: -10 }));
 $('#fwd10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: 10 }));
 $('#restart-media').addEventListener('click', () => send({ op: 'media', action: 'restart' }));
@@ -3802,25 +4022,16 @@ $('#confidence-split').addEventListener('click', () => {
 $('#deck-markup').addEventListener('click', () => tab('ink'));
 
 let laserActive = false;
+let spotlightActive = false;
 const laserDot = el('div', { class: 'laser-dot' });
-$('#deck-now-preview').append(laserDot);
-
-// Red vanishes into a dark slide or a photograph and green vanishes into a
-// green one, so the colour is the presenter's to pick and worth remembering:
-// whoever needs green today needs it for the whole course. Per device, like
-// every other preference here - it says nothing about the room.
-const LASER_COLORS = ['red', 'green', 'blue'];
-const LASER_KEY = 'podium.laser.v1';
-let laserColor = 'red';
-try {
-  const saved = localStorage.getItem(LASER_KEY);
-  if (LASER_COLORS.includes(saved)) laserColor = saved;
-} catch { /* private browsing: red it is */ }
+const spotlightPreview = el('div', { class: 'spotlight-preview' });
+$('#deck-now-preview').append(laserDot, spotlightPreview);
 
 function setLaserColor(color) {
   laserColor = LASER_COLORS.includes(color) ? color : 'red';
   try { localStorage.setItem(LASER_KEY, laserColor); } catch { /* nothing to do */ }
   laserDot.dataset.color = laserColor;
+  padLaserDot.dataset.color = laserColor;
   // The button wears the colour too, so you can tell at a glance what the
   // class is about to see without pressing it first.
   $('#deck-laser').dataset.color = laserColor;
@@ -3828,18 +4039,30 @@ function setLaserColor(color) {
 }
 
 function setLaserActive(on) {
+  if (on && spotlightActive) setSpotlightActive(false);
   laserActive = on;
   $('#deck-laser').classList.toggle('is-on', on);
   nowMirror.frame.classList.toggle('laser-armed', on);
   if (!on) { laserDot.classList.remove('is-on'); bus?.send({ t: 'laser', on: false }); }
   renderBottomSlots();
 }
+
+function setSpotlightActive(on) {
+  if (on && laserActive) setLaserActive(false);
+  spotlightActive = on;
+  $('#deck-spotlight')?.classList.toggle('is-on', on);
+  nowMirror.frame.classList.toggle('spotlight-armed', on);
+  if (!on) { spotlightPreview.classList.remove('is-on'); bus?.send({ t: 'spotlight', on: false }); }
+  renderBottomSlots();
+}
+
 $('#deck-laser').addEventListener('click', () => setLaserActive(!laserActive));
+$('#deck-spotlight')?.addEventListener('click', () => setSpotlightActive(!spotlightActive));
 $$('.laser-swatch').forEach((b) => b.addEventListener('click', () => {
   setLaserColor(b.dataset.color);
   // Picking a colour mid-drag would otherwise leave the old one on the wall
   // until the next move; nudge the display so it changes immediately.
-  if (laserDragging) sendLaser(...lastLaserPoint);
+  if (pointerDragging === 'laser') sendLaser(...lastLaserPoint);
 }));
 setLaserColor(laserColor);
 
@@ -3848,39 +4071,58 @@ function laserPoint(ev) {
   return [(ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height];
 }
 
-const sendLaser = throttle((x, y) => bus?.send({ t: 'laser', x, y, on: true, color: laserColor }), 40);
-let laserDragging = false;
+let pointerDragging = null;
 let lastLaserPoint = [0.5, 0.5];
 
 nowMirror.frame.addEventListener('pointerdown', (ev) => {
-  if (!laserActive) return;
-  laserDragging = true;
+  if (!laserActive && !spotlightActive) return;
+  const mode = laserActive ? 'laser' : 'spotlight';
+  pointerDragging = mode;
   nowMirror.frame.setPointerCapture(ev.pointerId);
   const [x, y] = laserPoint(ev);
-  lastLaserPoint = [x, y];
-  laserDot.style.left = `${x * 100}%`;
-  laserDot.style.top = `${y * 100}%`;
-  laserDot.classList.add('is-on');
-  sendLaser(x, y);
+  if (mode === 'laser') {
+    lastLaserPoint = [x, y];
+    laserDot.style.left = `${x * 100}%`;
+    laserDot.style.top = `${y * 100}%`;
+    laserDot.classList.add('is-on');
+    sendLaser(x, y);
+  } else {
+    spotlightPreview.style.setProperty('--spotlight-x', `${x * 100}%`);
+    spotlightPreview.style.setProperty('--spotlight-y', `${y * 100}%`);
+    spotlightPreview.classList.add('is-on');
+    sendSpotlight(x, y);
+  }
 });
 nowMirror.frame.addEventListener('pointermove', (ev) => {
-  if (!laserDragging) return;
+  if (!pointerDragging) return;
   ev.preventDefault();
   const [x, y] = laserPoint(ev);
-  lastLaserPoint = [x, y];
-  laserDot.style.left = `${x * 100}%`;
-  laserDot.style.top = `${y * 100}%`;
-  sendLaser(x, y);
+  if (pointerDragging === 'laser') {
+    lastLaserPoint = [x, y];
+    laserDot.style.left = `${x * 100}%`;
+    laserDot.style.top = `${y * 100}%`;
+    sendLaser(x, y);
+  } else {
+    spotlightPreview.style.setProperty('--spotlight-x', `${x * 100}%`);
+    spotlightPreview.style.setProperty('--spotlight-y', `${y * 100}%`);
+    sendSpotlight(x, y);
+  }
 });
-const endLaserDrag = (ev) => {
-  if (!laserDragging) return;
-  laserDragging = false;
-  laserDot.classList.remove('is-on');
-  bus?.send({ t: 'laser', on: false });
+const endPointerDrag = (ev) => {
+  if (!pointerDragging) return;
+  const mode = pointerDragging;
+  pointerDragging = null;
+  if (mode === 'laser') {
+    laserDot.classList.remove('is-on');
+    bus?.send({ t: 'laser', on: false });
+  } else {
+    spotlightPreview.classList.remove('is-on');
+    bus?.send({ t: 'spotlight', on: false });
+  }
   try { nowMirror.frame.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
 };
-nowMirror.frame.addEventListener('pointerup', endLaserDrag);
-nowMirror.frame.addEventListener('pointercancel', endLaserDrag);
+nowMirror.frame.addEventListener('pointerup', endPointerDrag);
+nowMirror.frame.addEventListener('pointercancel', endPointerDrag);
 
 $('#deck-file').addEventListener('change', async (ev) => {
   const file = ev.target.files?.[0];
@@ -4096,9 +4338,21 @@ $('#ink-unclear').addEventListener('click', () => {
   offerUnclear(null, []);
 });
 function setInkTool(tool) {
+  if (ink.pointing) {
+    if (ink.pointing === 'laser') {
+      padLaserDot.classList.remove('is-on');
+      bus?.send({ t: 'laser', on: false });
+    } else if (ink.pointing === 'spotlight') {
+      padSpotlightPreview.classList.remove('is-on');
+      bus?.send({ t: 'spotlight', on: false });
+    }
+    ink.pointing = null;
+  }
   ink.tool = tool;
   $$('.ink-tool-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.tool === tool));
   pad.classList.toggle('is-eraser', tool === 'eraser');
+  pad.classList.toggle('is-laser', tool === 'laser');
+  pad.classList.toggle('is-spotlight', tool === 'spotlight');
   const slider = $('#ink-width');
   if (tool === 'pen') {
     ink.width = ink.penWidth;
@@ -4120,11 +4374,39 @@ $('#ink-width').addEventListener('input', (ev) => {
   if (ink.tool === 'highlighter') ink.highlighterWidth = val;
   else if (ink.tool === 'pen') ink.penWidth = val;
 });
-$$('.swatch').forEach((b) => b.addEventListener('click', () => {
+$$('.swatch:not(.swatch-picker)').forEach((b) => b.addEventListener('click', () => {
   ink.color = b.dataset.color;
-  $$('.swatch').forEach((s) => s.classList.toggle('is-on', s === b));
-  if (ink.tool === 'eraser') setInkTool('pen');
+  $$('.swatch:not(.swatch-picker)').forEach((s) => s.classList.toggle('is-on', s === b));
+  $('#ink-picker-label')?.classList.remove('is-on');
+  if (ink.tool === 'eraser' || ink.tool === 'laser' || ink.tool === 'spotlight') setInkTool('pen');
 }));
+
+const INK_CUSTOM_COLOR_KEY = 'podium.ink_custom_color.v1';
+let customInkColor = '#a371f7';
+try {
+  const savedColor = localStorage.getItem(INK_CUSTOM_COLOR_KEY);
+  if (savedColor && /^#[0-9a-fA-F]{6}$/.test(savedColor)) customInkColor = savedColor;
+} catch { /* private browsing */ }
+
+const inkColorPicker = $('#ink-color-picker');
+const inkPickerLabel = $('#ink-picker-label');
+if (inkColorPicker && inkPickerLabel) {
+  inkColorPicker.value = customInkColor;
+  inkPickerLabel.style.setProperty('--custom-color', customInkColor);
+
+  const onCustomColor = (color) => {
+    customInkColor = color;
+    ink.color = color;
+    inkPickerLabel.style.setProperty('--custom-color', color);
+    $$('.swatch:not(.swatch-picker)').forEach((s) => s.classList.remove('is-on'));
+    inkPickerLabel.classList.add('is-on');
+    try { localStorage.setItem(INK_CUSTOM_COLOR_KEY, color); } catch { /* quota / private */ }
+    if (ink.tool === 'eraser' || ink.tool === 'laser' || ink.tool === 'spotlight') setInkTool('pen');
+  };
+
+  inkColorPicker.addEventListener('input', (ev) => onCustomColor(ev.target.value));
+  inkColorPicker.addEventListener('change', (ev) => onCustomColor(ev.target.value));
+}
 
 $('#cam-start').addEventListener('click', async () => {
   if (cameraSender?.active) { await cameraSender.stop(); return; }
@@ -4187,7 +4469,6 @@ $('#music-next').addEventListener('click', () => send({ op: 'music', action: 'ne
 $('#music-fade').addEventListener('click', () => send({ op: 'music', action: 'fadeout' }));
 $('#music-shuffle').addEventListener('click', () => send({ op: 'music', action: 'shuffle' }));
 $('#music-clear').addEventListener('click', () => send({ op: 'music', action: 'clear' }));
-$('#bar-music').addEventListener('click', () => executeSlotAction(presentation.bottomSlot1 || 'music'));
 
 const musicScrub = $('#music-scrub');
 if (musicScrub) {
@@ -4383,12 +4664,22 @@ document.addEventListener('keydown', (ev) => {
   }
 
   // When focused on the Ink tab, switch tools quickly
-  if (!$('[data-panel="ink"]').hidden) {
+  if (!$('[data-panel="ink"]')?.hidden) {
     if (ev.key === '1') { ev.preventDefault(); setInkTool('pen'); return; }
     if (ev.key === '2') { ev.preventDefault(); setInkTool('highlighter'); return; }
     if (ev.key === '3') { ev.preventDefault(); setInkTool('eraser'); return; }
+    if (ev.key === '4') { ev.preventDefault(); setInkTool('laser'); return; }
+    if (ev.key === '5') { ev.preventDefault(); setInkTool('spotlight'); return; }
     if (ev.key === 'e' || ev.key === 'E') { ev.preventDefault(); setInkTool('eraser'); return; }
     if (ev.key === 'h' || ev.key === 'H') { ev.preventDefault(); setInkTool('highlighter'); return; }
+    if (ev.key === 'l' || ev.key === 'L') { ev.preventDefault(); setInkTool('laser'); return; }
+    if (ev.key === 's' || ev.key === 'S') { ev.preventDefault(); setInkTool('spotlight'); return; }
+  }
+
+  // When focused on the Slides tab, toggle laser or spotlight pointer modes
+  if (!$('[data-panel="slides"]')?.hidden) {
+    if (ev.key === 'l' || ev.key === 'L') { ev.preventDefault(); setLaserActive(!laserActive); return; }
+    if (ev.key === 's' || ev.key === 'S') { ev.preventDefault(); setSpotlightActive(!spotlightActive); return; }
   }
 
   // Paging, on the other hand, only means something on something with pages.
@@ -4448,17 +4739,61 @@ const PRESENTATION_DEFAULTS = {
   pacingAutoStart: true,
   bottomSlot1: 'music',
   bottomSlot2: 'play',
+  bottomSlots: ['music', 'play', 'freeze', 'blank', 'none', 'none', 'none', 'none'],
+  inkScrollGutter: false,
+  inkControlsTop: false,
 };
 function loadPresentation() {
   try {
     const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
-    return { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
+    const merged = { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
+    if (!Array.isArray(merged.bottomSlots) || merged.bottomSlots.length !== 8) {
+      merged.bottomSlots = [
+        merged.bottomSlot1 || 'music',
+        merged.bottomSlot2 || 'play',
+        'freeze',
+        'blank',
+        'none',
+        'none',
+        'none',
+        'none',
+      ];
+    }
+    return merged;
   } catch { return { ...PRESENTATION_DEFAULTS }; }
 }
 function savePresentation() {
   try { localStorage.setItem(PRESENTATION_KEY, JSON.stringify(presentation)); } catch { /* private mode, or quota */ }
 }
 let presentation = loadPresentation();
+
+function getBottomSlots() {
+  if (Array.isArray(presentation.bottomSlots) && presentation.bottomSlots.length === 8) {
+    return presentation.bottomSlots;
+  }
+  return [
+    presentation.bottomSlot1 || 'music',
+    presentation.bottomSlot2 || 'play',
+    'freeze',
+    'blank',
+    'none',
+    'none',
+    'none',
+    'none',
+  ];
+}
+
+function applyInkPreferences() {
+  const inkPanel = $('[data-panel="ink"]');
+  if (inkPanel) {
+    inkPanel.classList.toggle('pad-gutter', !!presentation.inkScrollGutter);
+    inkPanel.classList.toggle('controls-top', !!presentation.inkControlsTop);
+  }
+  if (!$('[data-panel="ink"]')?.hidden && !ink.drawing && !ink.pointing) {
+    sizePad();
+  }
+}
+applyInkPreferences();
 
 // Lecture pacing state (survives reloads mid-lecture)
 const PACING_KEY = 'podium.pacing.v1';
@@ -4554,7 +4889,7 @@ function renderSlotButton(btn, slotType) {
   if (!btn) return;
   btn.dataset.slotAction = slotType || 'none';
   btn.disabled = false;
-  btn.classList.remove('is-on');
+  btn.classList.remove('is-on', 'is-armed');
 
   switch (slotType) {
     case 'music': {
@@ -4576,6 +4911,39 @@ function renderSlotButton(btn, slotType) {
       break;
     }
 
+    case 'freeze':
+      btn.hidden = false;
+      btn.textContent = state.frozen ? 'Frozen' : 'Freeze';
+      btn.title = state.frozen ? 'Unfreeze presentation' : 'Freeze presentation (holds screen)';
+      btn.classList.toggle('is-on', !!state.frozen);
+      break;
+
+    case 'blank':
+      btn.hidden = false;
+      btn.textContent = state.blank ? 'Blanked' : 'Blank';
+      btn.title = state.blank ? 'Unblank presentation' : 'Blank presentation (black screen)';
+      btn.classList.toggle('is-on', !!state.blank);
+      break;
+
+    case 'take': {
+      const cued = !!state.preview || state.previewLayout !== null;
+      btn.hidden = false;
+      btn.disabled = !cued;
+      btn.textContent = 'TAKE';
+      btn.title = cued ? 'Take cued item to live display' : 'No item cued';
+      btn.classList.toggle('is-armed', cued);
+      break;
+    }
+
+    case 'clear': {
+      const cued = !!state.preview || state.previewLayout !== null;
+      btn.hidden = false;
+      btn.disabled = !cued;
+      btn.textContent = '✕ Clear';
+      btn.title = cued ? 'Clear cued preview' : 'No item cued';
+      break;
+    }
+
     case 'whiteboard': {
       btn.hidden = false;
       const isWb = focusedItem(state)?.type === 'whiteboard';
@@ -4590,6 +4958,13 @@ function renderSlotButton(btn, slotType) {
       btn.textContent = '🔦';
       btn.title = 'Toggle laser pointer';
       btn.classList.toggle('is-on', laserActive);
+      break;
+
+    case 'spotlight':
+      btn.hidden = false;
+      btn.textContent = '🔆';
+      btn.title = 'Toggle spotlight mode';
+      btn.classList.toggle('is-on', spotlightActive);
       break;
 
     case 'timer': {
@@ -4631,8 +5006,31 @@ function renderSlotButton(btn, slotType) {
 }
 
 function renderBottomSlots() {
-  renderSlotButton($('#bar-music'), presentation.bottomSlot1 || 'music');
-  renderSlotButton($('#bar-play'), presentation.bottomSlot2 || 'play');
+  const slots = getBottomSlots();
+  const slotElements = [
+    $('#bar-music'),
+    $('#bar-play'),
+    $('#freeze'),
+    $('#blank'),
+    $('#bar-slot-5'),
+    $('#bar-slot-6'),
+    $('#bar-slot-7'),
+    $('#bar-slot-8'),
+  ];
+
+  let visibleActiveCount = 0;
+  slots.forEach((slotType, idx) => {
+    const btn = slotElements[idx];
+    if (!btn) return;
+    renderSlotButton(btn, slotType);
+
+    if (!btn.hidden) {
+      visibleActiveCount += 1;
+      btn.classList.toggle('mobile-overflow', visibleActiveCount > 4);
+    } else {
+      btn.classList.remove('mobile-overflow');
+    }
+  });
 }
 
 function executeSlotAction(type) {
@@ -4645,12 +5043,32 @@ function executeSlotAction(type) {
       send({ op: 'media', action: 'toggle' });
       break;
 
+    case 'freeze':
+      send({ op: 'freeze' });
+      break;
+
+    case 'blank':
+      send({ op: 'blank' });
+      break;
+
+    case 'take':
+      send({ op: 'take' });
+      break;
+
+    case 'clear':
+      send({ op: 'clear', where: 'preview' });
+      break;
+
     case 'whiteboard':
       stage({ title: 'Whiteboard', type: 'whiteboard', bg: '#f7f5ef' });
       break;
 
     case 'laser':
       setLaserActive(!laserActive);
+      break;
+
+    case 'spotlight':
+      setSpotlightActive(!spotlightActive);
       break;
 
     case 'timer': {
@@ -4676,6 +5094,17 @@ function executeSlotAction(type) {
       break;
   }
 }
+
+// Route bottom slot buttons to their configured actions
+$('.bottombar')?.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.bar-slot');
+  if (!btn || btn.disabled) return;
+  const action = btn.dataset.slotAction;
+  if (action && action !== 'none') {
+    executeSlotAction(action);
+  }
+});
+
 renderBottomSlots();
 
 // Keeping this device awake is a live effect, not just a stored preference -
@@ -4752,16 +5181,27 @@ $('#pref-pacing-autostart').addEventListener('change', (ev) => {
   savePresentation();
 });
 
-$('#pref-bottom-slot-1').addEventListener('change', (ev) => {
-  presentation.bottomSlot1 = ev.target.value;
+for (let i = 1; i <= 8; i++) {
+  $(`#pref-bottom-slot-${i}`)?.addEventListener('change', (ev) => {
+    presentation.bottomSlots = getBottomSlots().slice();
+    presentation.bottomSlots[i - 1] = ev.target.value;
+    presentation.bottomSlot1 = presentation.bottomSlots[0];
+    presentation.bottomSlot2 = presentation.bottomSlots[1];
+    savePresentation();
+    renderBottomSlots();
+  });
+}
+
+$('#pref-ink-scroll-gutter')?.addEventListener('change', (ev) => {
+  presentation.inkScrollGutter = ev.target.checked;
   savePresentation();
-  renderBottomSlots();
+  applyInkPreferences();
 });
 
-$('#pref-bottom-slot-2').addEventListener('change', (ev) => {
-  presentation.bottomSlot2 = ev.target.value;
+$('#pref-ink-controls-top')?.addEventListener('change', (ev) => {
+  presentation.inkControlsTop = ev.target.checked;
   savePresentation();
-  renderBottomSlots();
+  applyInkPreferences();
 });
 
 $('#topbar-pacing')?.addEventListener('click', () => {
@@ -4796,8 +5236,17 @@ function showSetup() {
     $('#pref-lecture-duration-custom').value = dur;
   }
   $('#pref-pacing-autostart').checked = presentation.pacingAutoStart !== false;
-  $('#pref-bottom-slot-1').value = presentation.bottomSlot1 || 'music';
-  $('#pref-bottom-slot-2').value = presentation.bottomSlot2 || 'play';
+  const currentSlots = getBottomSlots();
+  for (let i = 1; i <= 8; i++) {
+    const el = $(`#pref-bottom-slot-${i}`);
+    if (el) el.value = currentSlots[i - 1] || 'none';
+  }
+  $('#pref-bottom-slot-1').value = presentation.bottomSlot1 || currentSlots[0] || 'music';
+  $('#pref-bottom-slot-2').value = presentation.bottomSlot2 || currentSlots[1] || 'play';
+  const prefGutter = $('#pref-ink-scroll-gutter');
+  if (prefGutter) prefGutter.checked = !!presentation.inkScrollGutter;
+  const prefTop = $('#pref-ink-controls-top');
+  if (prefTop) prefTop.checked = !!presentation.inkControlsTop;
   renderKeepPhotos();
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {
