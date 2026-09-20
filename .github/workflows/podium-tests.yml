@@ -4,7 +4,7 @@ name: Podium tests
 # other scripts living alongside it) never triggers a Podium test run.
 on:
   push:
-    branches: [main]
+    branches: [main, podium-beta]
     paths:
       - 'podium/**'
       - '.github/workflows/podium-tests.yml'
