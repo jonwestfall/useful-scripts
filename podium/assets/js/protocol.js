@@ -1127,3 +1127,337 @@ export function timerRemaining(timer, now = Date.now()) {
   if (!timer) return 0;
   return timer.running ? Math.max(0, timer.endsAt - now) : timer.remainingMs;
 }
+
+// --- shape recognition & snapping (hold-to-straighten #38) -------------------
+
+/**
+ * Computes polygon area using the shoelace formula.
+ */
+export function shoelaceArea(pts) {
+  if (!pts || pts.length < 3) return 0;
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const next = pts[(i + 1) % pts.length];
+    area += pts[i][0] * next[1] - next[0] * pts[i][1];
+  }
+  return Math.abs(area) * 0.5;
+}
+
+/**
+ * Snaps an open stroke to a clean straight line between its endpoints,
+ * with horizontal, vertical, and 45-degree angle snapping.
+ */
+export function snapStraightLine(pts, width = 1000, height = 1000) {
+  if (!pts || pts.length < 2) return null;
+  const w = width || 1000;
+  const h = height || 1000;
+  const p0 = [pts[0][0] * w, pts[0][1] * h];
+  const pn = [pts[pts.length - 1][0] * w, pts[pts.length - 1][1] * h];
+
+  const x0 = p0[0];
+  const y0 = p0[1];
+  let x1 = pn[0];
+  let y1 = pn[1];
+  let dx = x1 - x0;
+  let dy = y1 - y0;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return null;
+
+  const angle = Math.atan2(Math.abs(dy), Math.abs(dx));
+  // Snap horizontal if within ~5 degrees (0.087 rad)
+  if (angle < 0.087) {
+    y1 = y0;
+  }
+  // Snap vertical if within ~5 degrees
+  else if (Math.abs(Math.PI / 2 - angle) < 0.087) {
+    x1 = x0;
+  }
+  // Snap to 45 degree diagonal if within ~4 degrees (0.07 rad)
+  else if (Math.abs(Math.PI / 4 - angle) < 0.07) {
+    const signX = dx >= 0 ? 1 : -1;
+    const signY = dy >= 0 ? 1 : -1;
+    const avg = (Math.abs(dx) + Math.abs(dy)) / 2;
+    x1 = x0 + signX * avg;
+    y1 = y0 + signY * avg;
+  }
+
+  const rawPts = [
+    [x0, y0],
+    [x1, y1],
+  ];
+
+  return {
+    type: 'line',
+    pts: roundPoints(rawPts.map(([x, y]) => [
+      Math.max(0, Math.min(1, x / w)),
+      Math.max(0, Math.min(1, y / h)),
+    ])),
+  };
+}
+
+function snapArrowFromPoints(p0, tip, width, height) {
+  const w = width || 1000;
+  const h = height || 1000;
+  const x0 = p0[0];
+  const y0 = p0[1];
+  let tx = tip[0];
+  let ty = tip[1];
+  let dx = tx - x0;
+  let dy = ty - y0;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return null;
+
+  // Snap shaft to horizontal/vertical if close (within 5 degrees ~ 0.087 rad)
+  const angle = Math.atan2(Math.abs(dy), Math.abs(dx));
+  if (angle < 0.087) {
+    ty = y0;
+    dy = 0;
+  } else if (Math.abs(Math.PI / 2 - angle) < 0.087) {
+    tx = x0;
+    dx = 0;
+  }
+
+  const shaftLen = Math.hypot(dx, dy);
+  if (shaftLen < 1) return null;
+  const ux = dx / shaftLen;
+  const uy = dy / shaftLen;
+  const px = -uy;
+  const py = ux;
+
+  const barbLen = Math.min(26, Math.max(12, shaftLen * 0.18));
+  const barbAngle = 0.488; // ~28 degrees
+  const cosA = Math.cos(barbAngle);
+  const sinA = Math.sin(barbAngle);
+
+  // Barb 1
+  const b1x = tx - barbLen * (ux * cosA - px * sinA);
+  const b1y = ty - barbLen * (uy * cosA - py * sinA);
+
+  // Barb 2
+  const b2x = tx - barbLen * (ux * cosA + px * sinA);
+  const b2y = ty - barbLen * (uy * cosA + py * sinA);
+
+  const rawPts = [
+    [x0, y0],
+    [tx, ty],
+    [b1x, b1y],
+    [tx, ty],
+    [b2x, b2y],
+  ];
+
+  return {
+    type: 'arrow',
+    shaft: { from: [x0, y0], to: [tx, ty] },
+    pts: roundPoints(rawPts.map(([x, y]) => [
+      Math.max(0, Math.min(1, x / w)),
+      Math.max(0, Math.min(1, y / h)),
+    ])),
+  };
+}
+
+/**
+ * Snaps points to an arrow with a straight shaft and symmetrical barbs.
+ */
+export function snapArrow(pts, width = 1000, height = 1000) {
+  if (!pts || pts.length < 2) return null;
+  const w = width || 1000;
+  const h = height || 1000;
+  const pxPts = pts.map(([x, y]) => [x * w, y * h]);
+  const p0 = pxPts[0];
+  let maxDist = 0;
+  let maxIdx = 0;
+  for (let i = 0; i < pxPts.length; i++) {
+    const d = Math.hypot(pxPts[i][0] - p0[0], pxPts[i][1] - p0[1]);
+    if (d > maxDist) {
+      maxDist = d;
+      maxIdx = i;
+    }
+  }
+  const tip = pxPts[maxIdx];
+  return snapArrowFromPoints(p0, tip, w, h);
+}
+
+/**
+ * Snaps a closed stroke to a clean axis-aligned rectangle or square.
+ */
+export function snapBox(pts, width = 1000, height = 1000) {
+  if (!pts || pts.length < 3) return null;
+  const w = width || 1000;
+  const h = height || 1000;
+  const pxPts = pts.map(([x, y]) => [x * w, y * h]);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of pxPts) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const bw = maxX - minX;
+  const bh = maxY - minY;
+  if (bw < 1 || bh < 1) return null;
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const maxDim = Math.max(bw, bh);
+  const isSquare = maxDim > 0 && Math.abs(bw - bh) / maxDim < 0.15;
+  let x1 = minX, x2 = maxX, y1 = minY, y2 = maxY;
+  if (isSquare) {
+    const side = (bw + bh) / 2;
+    x1 = cx - side / 2;
+    x2 = cx + side / 2;
+    y1 = cy - side / 2;
+    y2 = cy + side / 2;
+  }
+  const rawPts = [
+    [x1, y1],
+    [x2, y1],
+    [x2, y2],
+    [x1, y2],
+    [x1, y1],
+  ];
+  return {
+    type: 'box',
+    isSquare,
+    pts: roundPoints(rawPts.map(([x, y]) => [
+      Math.max(0, Math.min(1, x / w)),
+      Math.max(0, Math.min(1, y / h)),
+    ])),
+  };
+}
+
+/**
+ * Snaps a closed stroke to a clean ellipse or circle.
+ */
+export function snapEllipse(pts, width = 1000, height = 1000) {
+  if (!pts || pts.length < 3) return null;
+  const w = width || 1000;
+  const h = height || 1000;
+  const pxPts = pts.map(([x, y]) => [x * w, y * h]);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of pxPts) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const bw = maxX - minX;
+  const bh = maxY - minY;
+  if (bw < 1 || bh < 1) return null;
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const maxDim = Math.max(bw, bh);
+  const isCircle = maxDim > 0 && Math.abs(bw - bh) / maxDim < 0.18;
+  let rx = bw / 2;
+  let ry = bh / 2;
+  if (isCircle) {
+    const r = (bw + bh) / 4;
+    rx = r;
+    ry = r;
+  }
+  const p0 = pxPts[0];
+  const startAngle = Math.atan2(p0[1] - cy, p0[0] - cx);
+  const SAMPLES = 36;
+  const rawPts = [];
+  for (let i = 0; i <= SAMPLES; i++) {
+    const theta = startAngle + (i * 2 * Math.PI) / SAMPLES;
+    rawPts.push([cx + rx * Math.cos(theta), cy + ry * Math.sin(theta)]);
+  }
+  return {
+    type: 'ellipse',
+    isCircle,
+    pts: roundPoints(rawPts.map(([x, y]) => [
+      Math.max(0, Math.min(1, x / w)),
+      Math.max(0, Math.min(1, y / h)),
+    ])),
+  };
+}
+
+/**
+ * Analyzes a stroke and detects whether it should snap to a geometric shape
+ * (straight line, arrow, rectangle/box, circle/ellipse).
+ * Returns { type, pts, ... } or null if stroke is too short or irregular.
+ */
+export function detectAndSnapShape(pts, width = 1000, height = 1000) {
+  if (!pts || pts.length < 2) return null;
+  const w = width || 1000;
+  const h = height || 1000;
+  const pxPts = pts.map(([x, y]) => [x * w, y * h]);
+
+  let totalLength = 0;
+  for (let i = 1; i < pxPts.length; i++) {
+    totalLength += Math.hypot(pxPts[i][0] - pxPts[i - 1][0], pxPts[i][1] - pxPts[i - 1][1]);
+  }
+  if (totalLength < 25) return null; // Too short (e.g. dot, tap)
+
+  const p0 = pxPts[0];
+  const pn = pxPts[pxPts.length - 1];
+  const endDist = Math.hypot(pn[0] - p0[0], pn[1] - p0[1]);
+  const isClosed = endDist < 0.28 * totalLength || (endDist < 45 && endDist / totalLength < 0.35);
+
+  if (isClosed) {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const [x, y] of pxPts) {
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const bw = maxX - minX;
+    const bh = maxY - minY;
+    if (bw < 10 || bh < 10) {
+      return snapStraightLine(pts, w, h);
+    }
+    const boxArea = bw * bh;
+    const polyArea = shoelaceArea(pxPts);
+    const ratio = boxArea > 0 ? polyArea / boxArea : 0;
+
+    if (ratio >= 0.85) {
+      return snapBox(pts, w, h);
+    }
+    if (ratio >= 0.55) {
+      return snapEllipse(pts, w, h);
+    }
+    return null; // Irregular closed doodle, preserve freehand
+  }
+
+  // Open stroke: check for arrow first
+  let maxDist = 0;
+  let maxIdx = 0;
+  for (let i = 0; i < pxPts.length; i++) {
+    const d = Math.hypot(pxPts[i][0] - p0[0], pxPts[i][1] - p0[1]);
+    if (d > maxDist) {
+      maxDist = d;
+      maxIdx = i;
+    }
+  }
+
+  const n = pxPts.length - 1;
+  const idxRatio = n > 0 ? maxIdx / n : 1;
+
+  if (maxDist >= 25 && idxRatio >= 0.50 && idxRatio <= 0.94) {
+    const tip = pxPts[maxIdx];
+    const shaftLen = maxDist;
+    let tailLen = 0;
+    let maxTailDistFromTip = 0;
+    for (let i = maxIdx + 1; i <= n; i++) {
+      tailLen += Math.hypot(pxPts[i][0] - pxPts[i - 1][0], pxPts[i][1] - pxPts[i - 1][1]);
+      const dTip = Math.hypot(pxPts[i][0] - tip[0], pxPts[i][1] - tip[1]);
+      if (dTip > maxTailDistFromTip) maxTailDistFromTip = dTip;
+    }
+
+    const tipToP0 = [p0[0] - tip[0], p0[1] - tip[1]];
+    const tipToTail = [pn[0] - tip[0], pn[1] - tip[1]];
+    const dot = tipToP0[0] * tipToTail[0] + tipToP0[1] * tipToTail[1];
+
+    if (
+      tailLen > 0
+      && tailLen <= 0.65 * shaftLen
+      && maxTailDistFromTip <= 0.45 * shaftLen
+      && dot > 0
+    ) {
+      return snapArrowFromPoints(p0, tip, w, h);
+    }
+  }
+
+  return snapStraightLine(pts, w, h);
+}
+

@@ -151,6 +151,16 @@ export function assetRef(id) { return `asset:${id}`; }
 export function isAssetRef(value) { return typeof value === 'string' && value.startsWith('asset:'); }
 export function assetIdOf(value) { return isAssetRef(value) ? value.slice(6) : null; }
 
+export function emptyAutoLaunch() {
+  return {
+    enabled: false,
+    initialState: 'live',
+    panes: { A: null, B: null, C: null, D: null },
+    music: { playlist: '', autoplay: true, volume: 0.5 },
+    timer: { timerId: '' },
+  };
+}
+
 export function emptyPlan(title = 'Untitled lecture') {
   const now = Date.now();
   return {
@@ -166,6 +176,7 @@ export function emptyPlan(title = 'Untitled lecture') {
     items: [],
     timers: [],
     assets: {},
+    autoLaunch: emptyAutoLaunch(),
   };
 }
 
@@ -346,6 +357,75 @@ export function readPlan(raw) {
     items.push(item);
   }
 
+  // Auto-launch on plan load (Issue #52)
+  const rawAuto = (data.autoLaunch && typeof data.autoLaunch === 'object') ? data.autoLaunch : null;
+  const autoLaunch = emptyAutoLaunch();
+  if (rawAuto) {
+    autoLaunch.enabled = !!rawAuto.enabled;
+    autoLaunch.initialState = ['live', 'freeze', 'blank'].includes(rawAuto.initialState) ? rawAuto.initialState : 'live';
+
+    const rawPanes = (rawAuto.panes && typeof rawAuto.panes === 'object') ? rawAuto.panes : {};
+    for (const key of ['A', 'B', 'C', 'D']) {
+      const p = rawPanes[key];
+      if (!p || typeof p !== 'object') {
+        autoLaunch.panes[key] = null;
+        continue;
+      }
+      if (p.type === 'item' || p.itemId) {
+        const itemId = str(p.itemId || p.id, 40);
+        if (itemId && items.some((i) => i.id === itemId)) {
+          autoLaunch.panes[key] = { type: 'item', itemId };
+        } else {
+          if (itemId) warnings.push(`Auto-launch pane ${key} referenced a missing item and was cleared.`);
+          autoLaunch.panes[key] = null;
+        }
+      } else if (p.type === 'set') {
+        const rawEntries = Array.isArray(p.entries) ? p.entries : [];
+        const entries = [];
+        for (const e of rawEntries) {
+          const itemId = str(e?.itemId || e?.id, 40);
+          if (itemId && items.some((i) => i.id === itemId)) {
+            entries.push({
+              itemId,
+              seconds: Math.max(1, Math.min(3600, Math.round(Number(e?.seconds)) || 15)),
+            });
+          }
+        }
+        if (entries.length) {
+          autoLaunch.panes[key] = {
+            type: 'set',
+            title: str(p.title, 100) || 'Automated set',
+            mode: p.mode === 'random' ? 'random' : 'sequential',
+            entries,
+          };
+        } else {
+          if (rawEntries.length) warnings.push(`Auto-launch pane ${key} set had no valid items and was cleared.`);
+          autoLaunch.panes[key] = null;
+        }
+      } else {
+        autoLaunch.panes[key] = null;
+      }
+    }
+
+    if (rawAuto.music && typeof rawAuto.music === 'object') {
+      autoLaunch.music = {
+        playlist: str(rawAuto.music.playlist, 200),
+        autoplay: rawAuto.music.autoplay !== false,
+        volume: num(rawAuto.music.volume, 0.5, 0, 1),
+      };
+    }
+
+    if (rawAuto.timer && typeof rawAuto.timer === 'object') {
+      const timerId = str(rawAuto.timer.timerId, 40);
+      if (timerId && !timers.some((t) => t.id === timerId)) {
+        warnings.push(`Auto-launch countdown pointed at a timer this plan does not define and was cleared.`);
+        autoLaunch.timer = { timerId: '' };
+      } else {
+        autoLaunch.timer = { timerId };
+      }
+    }
+  }
+
   const plan = {
     podium: 'plan',
     v: PLAN_VERSION,
@@ -359,6 +439,7 @@ export function readPlan(raw) {
     items,
     timers,
     assets,
+    autoLaunch,
   };
   return { plan: pruneAssets(plan), warnings };
 }
