@@ -8,6 +8,7 @@ import { $, el } from './util.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { createZip } from './zip.js';
 import { versionStamp } from './protocol.js';
+import { TYPES } from './renderers.js';
 
 mountSessionBadge($('#session-badge'));
 const stampEl = $('#admin-version-stamp');
@@ -900,6 +901,901 @@ function downloadBackup() {
   setTimeout(() => { $('#backup-note').textContent = ''; }, 6000);
 }
 
+// --- content management (Issue #54) -------------------------------------------
+
+let manifestData = { examplesEnabled: true, builtIns: {}, items: [] };
+let editingManifestIndex = -1;
+
+let themesData = [];
+let previewDeckMd = '';
+let marpEnginePromise = null;
+let previewDebounceTimer = null;
+
+let contentFilesData = [];
+let activeFileCategory = '';
+
+let musicData = { _comment: '', playlists: [] };
+
+function setupSubtabs() {
+  const tabs = document.querySelectorAll('.content-subtab');
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      tabs.forEach((t) => t.classList.remove('active'));
+      document.querySelectorAll('.content-tab-pane').forEach((p) => p.classList.remove('active'));
+      tab.classList.add('active');
+      const pane = document.getElementById(tab.dataset.pane);
+      if (pane) pane.classList.add('active');
+    });
+  });
+}
+
+// 1. Manifest
+async function refreshManifest() {
+  try {
+    const res = await fetch('/api/content/manifest', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const body = await res.json();
+    manifestData = body.manifest || { examplesEnabled: true, builtIns: {}, items: [] };
+    if (!Array.isArray(manifestData.items)) manifestData.items = [];
+
+    $('#manifest-examples-check').checked = manifestData.examplesEnabled !== false;
+    const bi = manifestData.builtIns || {};
+    $('#builtin-black').checked = bi.black !== false;
+    $('#builtin-whiteboard').checked = bi.whiteboard !== false;
+    $('#builtin-chalkboard').checked = bi.chalkboard !== false;
+    $('#builtin-camera').checked = bi.camera !== false;
+    $('#builtin-timer').checked = bi.timer !== false;
+    $('#builtin-trackend').checked = bi.trackend !== false;
+
+    renderManifestItems();
+  } catch (err) {
+    $('#manifest-status').textContent = `Could not load manifest: ${err.message}`;
+  }
+}
+
+function renderManifestItems() {
+  const list = $('#manifest-items-list');
+  list.replaceChildren();
+
+  if (!manifestData.items.length) {
+    list.append(el('p', { class: 'hint' }, 'No manifest items configured yet.'));
+    return;
+  }
+
+  manifestData.items.forEach((item, idx) => {
+    const typeSpec = TYPES[item.type] || { icon: '📄', label: item.type };
+    const isEnabled = item.enabled !== false;
+
+    const row = el('div', { class: 'admin-row', style: isEnabled ? '' : 'opacity:0.6;' },
+      el('span', { style: 'font-size:16px; margin-right:4px;' }, typeSpec.icon),
+      el('span', { class: 'admin-title' },
+        el('strong', {}, item.title || '(untitled)'),
+        el('span', { class: 'admin-meta', style: 'margin-left:8px;' },
+          [typeSpec.label, item.group, item.order !== undefined ? `#${item.order}` : '', item.src || ''].filter(Boolean).join(' · '))
+      ),
+      el('button', {
+        type: 'button',
+        class: 'admin-small',
+        title: isEnabled ? 'Click to disable' : 'Click to enable',
+        onclick: () => {
+          item.enabled = !isEnabled;
+          renderManifestItems();
+        },
+      }, isEnabled ? 'Enabled' : 'Disabled'),
+      el('button', {
+        type: 'button',
+        class: 'admin-small',
+        disabled: idx === 0,
+        title: 'Move up',
+        onclick: () => {
+          const prev = manifestData.items[idx - 1];
+          manifestData.items[idx - 1] = item;
+          manifestData.items[idx] = prev;
+          renderManifestItems();
+        },
+      }, '↑'),
+      el('button', {
+        type: 'button',
+        class: 'admin-small',
+        disabled: idx === manifestData.items.length - 1,
+        title: 'Move down',
+        onclick: () => {
+          const next = manifestData.items[idx + 1];
+          manifestData.items[idx + 1] = item;
+          manifestData.items[idx] = next;
+          renderManifestItems();
+        },
+      }, '↓'),
+      el('button', {
+        type: 'button',
+        class: 'admin-small',
+        onclick: () => openManifestForm(idx),
+      }, 'Edit'),
+      el('button', {
+        type: 'button',
+        class: 'admin-del',
+        onclick: (e) => removeManifestItem(idx, e.currentTarget),
+      }, 'Remove')
+    );
+
+    list.append(row);
+  });
+}
+
+function openManifestForm(idx = -1) {
+  editingManifestIndex = idx;
+  const box = $('#manifest-item-form-box');
+  box.hidden = false;
+  if (idx >= 0) {
+    const item = manifestData.items[idx];
+    $('#manifest-form-title').textContent = `Edit Manifest Item #${idx + 1}`;
+    $('#m-type').value = item.type || 'deck';
+    $('#m-title').value = item.title || '';
+    $('#m-src').value = item.src || '';
+    $('#m-group').value = item.group || '';
+    $('#m-order').value = item.order !== undefined ? item.order : '';
+    $('#m-note').value = item.note || '';
+    $('#m-enabled').checked = item.enabled !== false;
+  } else {
+    $('#manifest-form-title').textContent = 'New Manifest Item';
+    $('#m-type').value = 'deck';
+    $('#m-title').value = '';
+    $('#m-src').value = '';
+    $('#m-group').value = 'Lecture';
+    $('#m-order').value = '';
+    $('#m-note').value = '';
+    $('#m-enabled').checked = true;
+  }
+}
+
+function saveManifestItemFromForm() {
+  const type = $('#m-type').value;
+  const title = $('#m-title').value.trim();
+  if (!title) {
+    alert('A title is required for this item.');
+    return;
+  }
+  const item = {
+    type,
+    title,
+    src: $('#m-src').value.trim() || undefined,
+    group: $('#m-group').value.trim() || undefined,
+    order: $('#m-order').value !== '' ? Number($('#m-order').value) : undefined,
+    note: $('#m-note').value.trim() || undefined,
+    enabled: $('#m-enabled').checked,
+  };
+
+  if (editingManifestIndex >= 0) {
+    manifestData.items[editingManifestIndex] = item;
+  } else {
+    manifestData.items.push(item);
+  }
+  $('#manifest-item-form-box').hidden = true;
+  renderManifestItems();
+}
+
+function removeManifestItem(idx, button) {
+  if (button.dataset.armed !== 'yes') {
+    button.dataset.armed = 'yes';
+    button.textContent = 'Really?';
+    setTimeout(() => {
+      if (button.isConnected) {
+        button.dataset.armed = '';
+        button.textContent = 'Remove';
+      }
+    }, 4000);
+    return;
+  }
+  manifestData.items.splice(idx, 1);
+  renderManifestItems();
+}
+
+async function commitManifest() {
+  const note = $('#manifest-status');
+  note.textContent = 'Saving manifest…';
+  note.classList.remove('is-bad');
+  try {
+    const payload = {
+      examplesEnabled: $('#manifest-examples-check').checked,
+      builtIns: {
+        black: $('#builtin-black').checked,
+        whiteboard: $('#builtin-whiteboard').checked,
+        chalkboard: $('#builtin-chalkboard').checked,
+        camera: $('#builtin-camera').checked,
+        timer: $('#builtin-timer').checked,
+        trackend: $('#builtin-trackend').checked,
+      },
+      items: manifestData.items,
+    };
+    const res = await fetch('/api/content/manifest', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ manifest: payload }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'could not save manifest');
+    note.textContent = 'Manifest saved successfully.';
+    setTimeout(() => { if (note.textContent.includes('successfully')) note.textContent = ''; }, 4000);
+  } catch (err) {
+    note.textContent = err.message;
+    note.classList.add('is-bad');
+  }
+}
+
+// 2. Marp Themes
+async function getMarpEngine() {
+  if (!marpEnginePromise) {
+    marpEnginePromise = import('../vendor/marp.esm.js');
+  }
+  return marpEnginePromise;
+}
+
+async function loadPreviewDeckSource() {
+  if (previewDeckMd) return previewDeckMd;
+  try {
+    const res = await fetch('content/decks/example-builds.md', { cache: 'no-cache' });
+    if (res.ok) {
+      previewDeckMd = await res.text();
+      return previewDeckMd;
+    }
+  } catch {}
+  previewDeckMd = `---
+marp: true
+theme: default
+paginate: true
+title: Progressive Builds
+footer: Podium · example deck
+---
+<!-- _class: lead -->
+# **Progressive Builds**
+### Reveal one bullet at a time, PowerPoint-style
+
+---
+<!-- _class: build -->
+## Opt a slide in with one directive
+* First bullet point with **bold text**
+* Second bullet point with \`inline code\`
+* Third point showing clean typography
+
+---
+## Fine control with your own markup
+A plain paragraph with normal styling.
+`;
+  return previewDeckMd;
+}
+
+function updateThemePreview() {
+  clearTimeout(previewDebounceTimer);
+  previewDebounceTimer = setTimeout(async () => {
+    const statusEl = $('#theme-preview-note');
+    const mount = $('#theme-preview-mount');
+    if (!mount) return;
+    const cssEditor = $('#theme-css-editor');
+    const rawCss = cssEditor ? cssEditor.value : '';
+    const slideIndex = parseInt($('#theme-preview-slide-select')?.value || '0', 10);
+
+    try {
+      const { Marp } = await getMarpEngine();
+      const marp = new Marp({
+        inlineSVG: true,
+        html: {
+          div: ['class', 'style', 'id'],
+          span: ['class', 'style'],
+          p: ['class', 'style'],
+          section: ['class', 'style'],
+          figure: ['class'], figcaption: ['class'],
+          blockquote: ['class'], pre: ['class'], code: ['class'],
+          h1: ['class'], h2: ['class'], h3: ['class'], h4: ['class'], h5: ['class'], h6: ['class'],
+          ul: ['class'], ol: ['class', 'start'], li: ['class'],
+          table: ['class'], thead: [], tbody: [], tfoot: [], tr: ['class'],
+          th: ['class', 'colspan', 'rowspan', 'align'], td: ['class', 'colspan', 'rowspan', 'align'],
+          a: ['href', 'title', 'target', 'rel', 'class'],
+          img: ['src', 'alt', 'title', 'width', 'height', 'class', 'style'],
+          b: [], i: [], em: [], strong: [], u: [], s: [], small: [], mark: [],
+          sup: [], sub: [], kbd: [], abbr: ['title'], br: [], hr: ['class'],
+        },
+        math: 'katex',
+      });
+
+      let themeName = 'custom-theme';
+      const match = rawCss.match(/@theme\s+([a-zA-Z0-9_-]+)/);
+      let finalCss = rawCss;
+      if (match) {
+        themeName = match[1];
+      } else {
+        finalCss = `/* @theme ${themeName} */\n@import 'default';\n` + rawCss;
+      }
+
+      try {
+        marp.themeSet.add(finalCss);
+      } catch (themeErr) {
+        if (statusEl) statusEl.textContent = `Theme notice: ${themeErr.message}`;
+      }
+
+      const baseDeck = await loadPreviewDeckSource();
+      const customDeck = baseDeck.replace(/(theme:\s*)([^\n]+)/, `$1${themeName}`);
+      const { html, css } = marp.render(customDeck);
+
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      const svgs = doc.querySelectorAll('svg[data-marpit-svg]');
+      const chosenSvg = svgs[slideIndex] || svgs[0];
+
+      if (chosenSvg) {
+        mount.innerHTML = `<style>${css}</style>${chosenSvg.outerHTML}`;
+        if (statusEl && !statusEl.textContent.startsWith('Theme notice:')) {
+          statusEl.textContent = 'Preview updated.';
+        }
+      }
+    } catch (err) {
+      if (statusEl) statusEl.textContent = `Preview error: ${err.message}`;
+    }
+  }, 200);
+}
+
+async function refreshThemes() {
+  try {
+    const res = await fetch('/api/content/themes', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const body = await res.json();
+    themesData = body.themes || [];
+    renderThemes();
+  } catch (err) {
+    sayContent(`Could not load themes: ${err.message}`, true);
+  }
+}
+
+function renderThemes() {
+  const list = $('#themes-list');
+  list.replaceChildren();
+
+  if (!themesData.length) {
+    list.append(el('p', { class: 'hint' }, 'No Marp themes in marp-themes/.'));
+    return;
+  }
+
+  themesData.forEach((theme) => {
+    const row = el('div', { class: 'admin-row' },
+      el('span', { class: 'admin-title' },
+        el('strong', {}, theme.filename),
+        el('span', { class: 'admin-meta', style: 'margin-left:8px;' },
+          [bytes(theme.size), theme.inManifest ? 'registered in themes.json' : 'not in themes.json'].join(' · '))
+      ),
+      el('button', {
+        type: 'button',
+        class: 'admin-small',
+        onclick: () => openThemeEditor(theme.filename),
+      }, 'Edit & Preview'),
+      el('button', {
+        type: 'button',
+        class: 'admin-small',
+        onclick: () => {
+          location.href = `/api/content/themes/${encodeURIComponent(theme.filename)}?download=1`;
+        },
+      }, 'Download'),
+      el('button', {
+        type: 'button',
+        class: 'admin-del',
+        onclick: (e) => removeTheme(theme.filename, e.currentTarget),
+      }, 'Remove')
+    );
+    list.append(row);
+  });
+}
+
+async function openThemeEditor(filename = null) {
+  const box = $('#theme-editor-box');
+  const heading = $('#theme-editor-heading');
+  const filenameInput = $('#theme-filename');
+  const cssEditor = $('#theme-css-editor');
+  box.hidden = false;
+
+  if (filename) {
+    heading.textContent = `Editing Theme: ${filename}`;
+    filenameInput.value = filename;
+    filenameInput.disabled = true;
+    try {
+      const res = await fetch(`/api/content/themes/${encodeURIComponent(filename)}`, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('could not read theme');
+      const data = await res.json();
+      cssEditor.value = data.theme?.css || '';
+      updateThemePreview();
+    } catch (err) {
+      $('#theme-status').textContent = err.message;
+    }
+  } else {
+    heading.textContent = 'New Marp Theme';
+    filenameInput.value = 'custom.css';
+    filenameInput.disabled = false;
+    cssEditor.value = `/* @theme custom */\n@import 'default';\n\nsection {\n  background-color: #f7f9fc;\n  color: #1a202c;\n  font-family: system-ui, -apple-system, sans-serif;\n}\n\nh1, h2 {\n  color: #0b3954;\n}\n`;
+    updateThemePreview();
+  }
+}
+
+async function saveTheme() {
+  const note = $('#theme-status');
+  const filename = $('#theme-filename').value.trim();
+  const css = $('#theme-css-editor').value;
+  if (!filename.endsWith('.css')) {
+    note.textContent = 'Theme filename must end with .css';
+    note.classList.add('is-bad');
+    return;
+  }
+  note.textContent = 'Saving theme…';
+  note.classList.remove('is-bad');
+  try {
+    const res = await fetch(`/api/content/themes/${encodeURIComponent(filename)}`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ css }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'could not save theme');
+    note.textContent = `Saved ${filename} successfully.`;
+    await refreshThemes();
+    setTimeout(() => { if (note.textContent.includes('successfully')) note.textContent = ''; }, 4000);
+  } catch (err) {
+    note.textContent = err.message;
+    note.classList.add('is-bad');
+  }
+}
+
+function removeTheme(filename, button) {
+  if (button.dataset.armed !== 'yes') {
+    button.dataset.armed = 'yes';
+    button.textContent = 'Really?';
+    setTimeout(() => {
+      if (button.isConnected) {
+        button.dataset.armed = '';
+        button.textContent = 'Remove';
+      }
+    }, 4000);
+    return;
+  }
+  button.disabled = true;
+  fetch(`/api/content/themes/${encodeURIComponent(filename)}`, { method: 'DELETE', credentials: 'same-origin' })
+    .then((res) => res.json().then((body) => {
+      if (!res.ok) throw new Error(body.error || 'could not delete theme');
+      if ($('#theme-filename').value === filename) {
+        $('#theme-editor-box').hidden = true;
+      }
+      refreshThemes();
+    }))
+    .catch((err) => {
+      button.disabled = false;
+      button.textContent = 'Remove';
+      alert(err.message);
+    });
+}
+
+// 3. Pre-load Files
+async function refreshContentFiles() {
+  try {
+    const url = activeFileCategory
+      ? `/api/content/files?category=${encodeURIComponent(activeFileCategory)}`
+      : '/api/content/files';
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const body = await res.json();
+    contentFilesData = body.files || [];
+    renderContentFiles();
+  } catch (err) {
+    sayContent(`Could not load files: ${err.message}`, true);
+  }
+}
+
+function renderContentFiles() {
+  const list = $('#content-files-list');
+  list.replaceChildren();
+
+  const filter = ($('#file-search-input')?.value || '').trim().toLowerCase();
+  const shown = contentFilesData.filter((file) => {
+    if (activeFileCategory && file.category !== activeFileCategory) return false;
+    if (filter && !`${file.filename} ${file.category} ${file.url}`.toLowerCase().includes(filter)) return false;
+    return true;
+  });
+
+  if (!shown.length) {
+    list.append(el('p', { class: 'hint' }, contentFilesData.length ? 'Nothing matches that filter.' : 'No files in this category.'));
+    return;
+  }
+
+  shown.forEach((file) => {
+    const row = el('div', { class: 'admin-row' },
+      el('span', { class: 'admin-title' },
+        el('strong', {}, file.filename),
+        el('span', { class: 'admin-meta', style: 'margin-left:8px;' },
+          [file.category, bytes(file.size), file.url].join(' · '))
+      ),
+      file.isText ? el('button', {
+        type: 'button',
+        class: 'admin-small',
+        onclick: () => openFileEditor(file.category, file.filename),
+      }, 'Edit') : null,
+      el('button', {
+        type: 'button',
+        class: 'admin-small',
+        onclick: () => {
+          location.href = `/api/content/files/${encodeURIComponent(file.category)}/${encodeURIComponent(file.filename)}?download=1`;
+        },
+      }, 'Download'),
+      el('button', {
+        type: 'button',
+        class: 'admin-del',
+        onclick: (e) => removeContentFile(file.category, file.filename, e.currentTarget),
+      }, 'Remove')
+    );
+    list.append(row);
+  });
+}
+
+let activeEditingFile = null;
+async function openFileEditor(category, filename) {
+  const sheet = $('#file-editor-sheet');
+  const titleEl = $('#file-editor-title');
+  const pathEl = $('#file-editor-path');
+  const contentEl = $('#file-editor-content');
+  const statusEl = $('#file-editor-status');
+
+  statusEl.textContent = 'Loading…';
+  statusEl.classList.remove('is-bad');
+  titleEl.textContent = `Edit ${filename}`;
+  pathEl.textContent = `content/${category}/${filename}`;
+  activeEditingFile = { category, filename };
+  sheet.hidden = false;
+
+  try {
+    const res = await fetch(`/api/content/files/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`, { credentials: 'same-origin' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'could not read file');
+    contentEl.value = data.file?.text || '';
+    statusEl.textContent = '';
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.classList.add('is-bad');
+  }
+}
+
+async function saveFileEditor() {
+  if (!activeEditingFile) return;
+  const statusEl = $('#file-editor-status');
+  statusEl.textContent = 'Saving…';
+  statusEl.classList.remove('is-bad');
+  try {
+    const text = $('#file-editor-content').value;
+    const res = await fetch(`/api/content/files/${encodeURIComponent(activeEditingFile.category)}/${encodeURIComponent(activeEditingFile.filename)}`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'could not save file');
+    statusEl.textContent = 'Saved successfully.';
+    await refreshContentFiles();
+    setTimeout(() => { if (statusEl.textContent.includes('successfully')) statusEl.textContent = ''; }, 3000);
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.classList.add('is-bad');
+  }
+}
+
+async function uploadContentFile() {
+  const cat = $('#file-upload-cat').value;
+  const input = $('#file-upload-input');
+  const status = $('#file-upload-status');
+  const file = input.files[0];
+  if (!file) {
+    status.textContent = 'Please choose a file to upload.';
+    status.classList.add('is-bad');
+    return;
+  }
+
+  status.textContent = `Uploading ${file.name}…`;
+  status.classList.remove('is-bad');
+  $('#file-upload-btn').disabled = true;
+
+  try {
+    const res = await fetch(`/api/content/files/${encodeURIComponent(cat)}?filename=${encodeURIComponent(file.name)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: file,
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'upload failed');
+    status.textContent = `Uploaded ${file.name} to ${cat}.`;
+    input.value = '';
+    await refreshContentFiles();
+    setTimeout(() => { if (status.textContent.includes('Uploaded')) status.textContent = ''; }, 4000);
+  } catch (err) {
+    status.textContent = err.message;
+    status.classList.add('is-bad');
+  } finally {
+    $('#file-upload-btn').disabled = false;
+  }
+}
+
+function removeContentFile(category, filename, button) {
+  if (button.dataset.armed !== 'yes') {
+    button.dataset.armed = 'yes';
+    button.textContent = 'Really?';
+    setTimeout(() => {
+      if (button.isConnected) {
+        button.dataset.armed = '';
+        button.textContent = 'Remove';
+      }
+    }, 4000);
+    return;
+  }
+  button.disabled = true;
+  fetch(`/api/content/files/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+  })
+    .then((res) => res.json().then((body) => {
+      if (!res.ok) throw new Error(body.error || 'could not delete file');
+      refreshContentFiles();
+    }))
+    .catch((err) => {
+      button.disabled = false;
+      button.textContent = 'Remove';
+      alert(err.message);
+    });
+}
+
+// 4. Music Playlists
+async function refreshMusic() {
+  try {
+    const res = await fetch('/api/content/music', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const body = await res.json();
+    musicData = body.music || { playlists: [] };
+    if (!Array.isArray(musicData.playlists)) musicData.playlists = [];
+    renderMusicPlaylists();
+  } catch (err) {
+    sayContent(`Could not load music: ${err.message}`, true);
+  }
+}
+
+function renderMusicPlaylists() {
+  const container = $('#music-playlists-list');
+  container.replaceChildren();
+
+  if (!musicData.playlists.length) {
+    container.append(el('p', { class: 'hint' }, 'No playlists configured in content/music.json.'));
+    return;
+  }
+
+  musicData.playlists.forEach((pl, plIdx) => {
+    const plBox = el('div', {
+      style: 'background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:14px; margin-bottom:14px;',
+    });
+
+    const header = el('div', { style: 'display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;' },
+      el('label', { style: 'display:flex; align-items:center; gap:6px; font-weight:600; flex:1;' },
+        'Playlist Name:',
+        el('input', {
+          type: 'text',
+          value: pl.name || '',
+          style: 'font-weight:600;',
+          oninput: (e) => { pl.name = e.target.value; },
+        })
+      ),
+      el('label', { class: 'check' },
+        el('input', {
+          type: 'checkbox',
+          checked: !!pl.shuffle,
+          onchange: (e) => { pl.shuffle = e.target.checked; },
+        }),
+        'Shuffle'
+      ),
+      el('label', { class: 'check' },
+        el('input', {
+          type: 'checkbox',
+          checked: pl.loop !== false,
+          onchange: (e) => { pl.loop = e.target.checked; },
+        }),
+        'Loop'
+      ),
+      el('button', {
+        type: 'button',
+        class: 'admin-small',
+        onclick: () => {
+          if (!Array.isArray(pl.tracks)) pl.tracks = [];
+          pl.tracks.push({ title: 'New Track', artist: '', src: 'content/audio/' });
+          renderMusicPlaylists();
+        },
+      }, '+ Add Track'),
+      el('button', {
+        type: 'button',
+        class: 'admin-del',
+        onclick: (e) => {
+          const btn = e.currentTarget;
+          if (btn.dataset.armed !== 'yes') {
+            btn.dataset.armed = 'yes';
+            btn.textContent = 'Really remove?';
+            setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; btn.textContent = 'Remove'; } }, 4000);
+            return;
+          }
+          musicData.playlists.splice(plIdx, 1);
+          renderMusicPlaylists();
+        },
+      }, 'Remove')
+    );
+    plBox.append(header);
+
+    const trackList = el('div', { style: 'display:flex; flex-direction:column; gap:6px;' });
+    const tracks = Array.isArray(pl.tracks) ? pl.tracks : [];
+    if (!tracks.length) {
+      trackList.append(el('p', { class: 'hint', style: 'margin:4px 0;' }, 'No tracks in this playlist.'));
+    } else {
+      tracks.forEach((tr, trIdx) => {
+        const trRow = el('div', { class: 'admin-row', style: 'padding:6px 10px; background:var(--panel);' },
+          el('input', {
+            type: 'text',
+            value: tr.title || '',
+            placeholder: 'Track title',
+            style: 'flex:1; min-width:120px;',
+            oninput: (e) => { tr.title = e.target.value; },
+          }),
+          el('input', {
+            type: 'text',
+            value: tr.artist || '',
+            placeholder: 'Artist (optional)',
+            style: 'flex:1; min-width:100px;',
+            oninput: (e) => { tr.artist = e.target.value; },
+          }),
+          el('input', {
+            type: 'text',
+            value: tr.src || '',
+            placeholder: 'Path or URL (e.g. content/audio/song.mp3)',
+            style: 'flex:2; min-width:160px;',
+            oninput: (e) => { tr.src = e.target.value; },
+          }),
+          el('button', {
+            type: 'button',
+            class: 'admin-small',
+            disabled: trIdx === 0,
+            title: 'Move up',
+            onclick: () => {
+              const prev = tracks[trIdx - 1];
+              tracks[trIdx - 1] = tr;
+              tracks[trIdx] = prev;
+              renderMusicPlaylists();
+            },
+          }, '↑'),
+          el('button', {
+            type: 'button',
+            class: 'admin-small',
+            disabled: trIdx === tracks.length - 1,
+            title: 'Move down',
+            onclick: () => {
+              const next = tracks[trIdx + 1];
+              tracks[trIdx + 1] = tr;
+              tracks[trIdx] = next;
+              renderMusicPlaylists();
+            },
+          }, '↓'),
+          el('button', {
+            type: 'button',
+            class: 'admin-del',
+            title: 'Remove track',
+            onclick: () => {
+              tracks.splice(trIdx, 1);
+              renderMusicPlaylists();
+            },
+          }, '×')
+        );
+        trackList.append(trRow);
+      });
+    }
+    plBox.append(trackList);
+    container.append(plBox);
+  });
+}
+
+async function saveMusicPlaylists() {
+  const note = $('#music-status');
+  note.textContent = 'Saving playlists…';
+  note.classList.remove('is-bad');
+  try {
+    const res = await fetch('/api/content/music', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ music: musicData }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'could not save music');
+    note.textContent = 'Playlists saved successfully.';
+    setTimeout(() => { if (note.textContent.includes('successfully')) note.textContent = ''; }, 4000);
+  } catch (err) {
+    note.textContent = err.message;
+    note.classList.add('is-bad');
+  }
+}
+
+function sayContent(msg, isBad = false) {
+  const note = $('#manifest-status');
+  if (note) {
+    note.textContent = msg;
+    note.classList.toggle('is-bad', isBad);
+  }
+}
+
+function setupContentManagement() {
+  setupSubtabs();
+
+  // 1. Manifest
+  $('#manifest-add-btn').addEventListener('click', () => openManifestForm(-1));
+  $('#m-save-item-btn').addEventListener('click', saveManifestItemFromForm);
+  $('#m-cancel-item-btn').addEventListener('click', () => { $('#manifest-item-form-box').hidden = true; });
+  $('#manifest-commit-btn').addEventListener('click', commitManifest);
+
+  // 2. Marp Themes
+  $('#theme-new-btn').addEventListener('click', () => openThemeEditor(null));
+  $('#theme-upload-btn').addEventListener('click', () => $('#theme-upload-input').click());
+  $('#theme-upload-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const res = await fetch(`/api/content/themes?filename=${encodeURIComponent(file.name)}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: file,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'could not upload theme');
+      await refreshThemes();
+      openThemeEditor(file.name);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      e.target.value = '';
+    }
+  });
+  $('#theme-save-btn').addEventListener('click', saveTheme);
+  $('#theme-download-btn').addEventListener('click', () => {
+    const filename = $('#theme-filename').value.trim();
+    if (filename) location.href = `/api/content/themes/${encodeURIComponent(filename)}?download=1`;
+  });
+  $('#theme-close-btn').addEventListener('click', () => { $('#theme-editor-box').hidden = true; });
+  $('#theme-css-editor').addEventListener('input', updateThemePreview);
+  $('#theme-preview-slide-select').addEventListener('change', updateThemePreview);
+
+  // 3. Pre-load Files
+  document.querySelectorAll('.cat-pill').forEach((pill) => {
+    pill.addEventListener('click', () => {
+      document.querySelectorAll('.cat-pill').forEach((p) => p.classList.remove('active'));
+      pill.classList.add('active');
+      activeFileCategory = pill.dataset.cat || '';
+      renderContentFiles();
+    });
+  });
+  $('#file-search-input').addEventListener('input', renderContentFiles);
+  $('#file-upload-btn').addEventListener('click', uploadContentFile);
+  $('#file-editor-close').addEventListener('click', () => { $('#file-editor-sheet').hidden = true; });
+  $('#file-editor-save-btn').addEventListener('click', saveFileEditor);
+
+  // 4. Music
+  $('#music-add-playlist-btn').addEventListener('click', () => {
+    musicData.playlists.push({ name: 'New Playlist', shuffle: false, loop: true, tracks: [] });
+    renderMusicPlaylists();
+  });
+  $('#music-save-btn').addEventListener('click', saveMusicPlaylists);
+}
+
+async function refreshContentManagement() {
+  await Promise.all([
+    refreshManifest(),
+    refreshThemes(),
+    refreshContentFiles(),
+    refreshMusic(),
+  ]);
+}
+
 const info = await serverInfo();
 if (!info.features.includes('library')) {
   $('#no-server').hidden = false;
@@ -932,4 +1828,12 @@ if (!info.features.includes('library')) {
     }
     await refreshCourses();
   }
+
+  // Content management is for administrators only
+  if (info.features.includes('content') && me?.isAdmin) {
+    $('#content-card').hidden = false;
+    setupContentManagement();
+    await refreshContentManagement();
+  }
 }
+

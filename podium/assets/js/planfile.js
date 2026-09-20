@@ -44,9 +44,10 @@ export const PLAN_TYPES = {
   },
   image: {
     label: 'Photo', icon: '\u{1F5BC}',
-    blurb: 'A picture on the projector. Uploads are resized to fit through the relay.',
+    blurb: 'A picture on the projector. Uploads are resized to fit through the relay, or choose one on your server.',
     fields: [
       { key: 'src', label: 'Photo', kind: 'image', asset: true },
+      { key: 'path', label: 'or path on server', kind: 'text', placeholder: 'content/photos/diagram.png' },
       { key: 'fit', label: 'Fit', kind: 'select', def: 'contain',
         options: [['contain', 'Fit inside (letterbox)'], ['cover', 'Fill the screen (crop)']] },
     ],
@@ -198,6 +199,9 @@ export function newItem(type) {
 // - so it is carried through rather than stripped.
 export function itemForStage(item) {
   const { id: _id, note: _note, ...rest } = item;
+  if (rest.type === 'image' && !rest.src && rest.path) {
+    rest.src = rest.path;
+  }
   return rest;
 }
 
@@ -215,6 +219,7 @@ export function itemLabel(item, plan = null) {
   }
   if (item.type === 'qr' && item.caption) return item.caption;
   if (item.type === 'poll' && item.question) return item.question.split('\n')[0].slice(0, 60);
+  if (item.type === 'image' && item.path && !item.src) return item.path.split('/').pop();
   if (typeof item.src === 'string' && item.src && !isAssetRef(item.src)) return item.src.split('/').pop();
   return spec?.label || item.type;
 }

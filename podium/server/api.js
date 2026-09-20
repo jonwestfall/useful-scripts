@@ -27,6 +27,7 @@ const library = require('./library.js');
 const lectures = require('./lectures.js');
 const plans = require('./plans.js');
 const settings = require('./settings.js');
+const content = require('./content.js');
 
 const COOKIE = 'podium_session';
 const API_VERSION = 1;
@@ -43,6 +44,24 @@ function readJson(req, limit = 64 * 1024) {
     req.on('end', () => {
       try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { reject(new Error('not JSON')); }
     });
+    req.on('error', reject);
+  });
+}
+
+function readBuffer(req, limit = 100 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(Object.assign(new Error('payload too large'), { status: 413 }));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
@@ -128,7 +147,7 @@ function capabilities(ctx, user) {
   // installed instance with no accounts yet would offer an Admin page whose
   // every request answers 401 - a feature announced before it can be used.
   const features = ctx.db && ctx.hasAccounts()
-    ? ['auth', 'library', 'plans', 'settings', 'sessions', 'people']
+    ? ['auth', 'library', 'plans', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content'] : [])]
     : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
@@ -490,6 +509,172 @@ async function handleApi(req, res, url, ctx) {
       const body = await readJson(req);
       json(res, 200, { saved: settings.write(ctx.db, user, rest[0], body.settings || body) });
       return true;
+    }
+
+    // --- content management (Issue #54) -----------------------------------
+    if (head === 'content') {
+      if (!user.isAdmin) {
+        json(res, 403, { error: 'only an administrator can manage content' });
+        return true;
+      }
+
+      // Marp Themes
+      if (rest[0] === 'themes') {
+        if (rest.length === 1 && req.method === 'GET') {
+          json(res, 200, content.listThemes(ctx));
+          return true;
+        }
+
+        if (rest.length === 1 && req.method === 'POST') {
+          const isJson = (req.headers['content-type'] || '').includes('application/json');
+          let filename = url.searchParams.get('filename') || '';
+          let css = '';
+          if (isJson) {
+            const body = await readJson(req, 10 * 1024 * 1024);
+            filename = body.filename || filename;
+            css = typeof body.css === 'string' ? body.css : '';
+          } else {
+            const buf = await readBuffer(req, 10 * 1024 * 1024);
+            css = buf.toString('utf8');
+          }
+          if (!filename) {
+            json(res, 400, { error: 'filename required' });
+            return true;
+          }
+          json(res, 200, { saved: content.saveTheme(ctx, filename, css) });
+          return true;
+        }
+
+        if (rest.length === 2 && req.method === 'GET') {
+          const themeName = decodeURIComponent(rest[1]);
+          const theme = content.getTheme(ctx, themeName);
+          if (url.searchParams.get('download') === '1') {
+            res.writeHead(200, {
+              'content-disposition': `attachment; filename="${encodeURIComponent(theme.filename)}"`,
+              'content-type': 'text/css; charset=utf-8',
+            });
+            res.end(theme.css);
+            return true;
+          }
+          json(res, 200, { theme });
+          return true;
+        }
+
+        if (rest.length === 2 && req.method === 'PUT') {
+          const themeName = decodeURIComponent(rest[1]);
+          const isJson = (req.headers['content-type'] || '').includes('application/json');
+          let css = '';
+          if (isJson) {
+            const body = await readJson(req, 10 * 1024 * 1024);
+            css = typeof body.css === 'string' ? body.css : '';
+          } else {
+            const buf = await readBuffer(req, 10 * 1024 * 1024);
+            css = buf.toString('utf8');
+          }
+          json(res, 200, { saved: content.saveTheme(ctx, themeName, css) });
+          return true;
+        }
+
+        if (rest.length === 2 && req.method === 'DELETE') {
+          json(res, 200, content.deleteTheme(ctx, decodeURIComponent(rest[1])));
+          return true;
+        }
+      }
+
+      // Pre-load Files
+      if (rest[0] === 'files') {
+        if (rest.length === 1 && req.method === 'GET') {
+          const category = url.searchParams.get('category') || null;
+          json(res, 200, content.listFiles(ctx, category));
+          return true;
+        }
+
+        if (rest.length === 2 && req.method === 'POST') {
+          const category = rest[1];
+          const filename = url.searchParams.get('filename') || '';
+          if (!filename) {
+            json(res, 400, { error: 'filename required in query parameter (?filename=...)' });
+            return true;
+          }
+          const spec = content.CATEGORIES[category];
+          if (!spec) {
+            json(res, 400, { error: `invalid category: ${category}` });
+            return true;
+          }
+          const buf = await readBuffer(req, spec.maxBytes);
+          json(res, 200, { saved: content.saveContentFile(ctx, category, filename, buf) });
+          return true;
+        }
+
+        if (rest.length === 3 && req.method === 'GET') {
+          const category = rest[1];
+          const filename = decodeURIComponent(rest[2]);
+          const item = content.getContentFile(ctx, category, filename);
+          if (url.searchParams.get('download') === '1') {
+            const roots = content.resolveRoots(ctx);
+            const catDir = path.join(roots.contentDir, content.CATEGORIES[category]?.dir || category);
+            const safe = content.safePath(catDir, filename);
+            res.writeHead(200, {
+              'content-disposition': `attachment; filename="${encodeURIComponent(item.filename)}"`,
+              'content-length': item.size,
+              'content-type': 'application/octet-stream',
+            });
+            fs.createReadStream(safe.full).pipe(res);
+            return true;
+          }
+          json(res, 200, { file: item });
+          return true;
+        }
+
+        if (rest.length === 3 && req.method === 'PUT') {
+          const category = rest[1];
+          const filename = decodeURIComponent(rest[2]);
+          const isJson = (req.headers['content-type'] || '').includes('application/json');
+          let data;
+          if (isJson) {
+            const body = await readJson(req, 25 * 1024 * 1024);
+            data = body.text !== undefined ? body.text : (body.data || '');
+          } else {
+            const buf = await readBuffer(req, 25 * 1024 * 1024);
+            data = buf.toString('utf8');
+          }
+          json(res, 200, { saved: content.saveContentFile(ctx, category, filename, data) });
+          return true;
+        }
+
+        if (rest.length === 3 && req.method === 'DELETE') {
+          const category = rest[1];
+          const filename = decodeURIComponent(rest[2]);
+          json(res, 200, content.deleteContentFile(ctx, category, filename));
+          return true;
+        }
+      }
+
+      // Manifest
+      if (rest[0] === 'manifest') {
+        if (rest.length === 1 && req.method === 'GET') {
+          json(res, 200, { manifest: content.getManifest(ctx) });
+          return true;
+        }
+        if (rest.length === 1 && req.method === 'PUT') {
+          const body = await readJson(req, 1024 * 1024);
+          json(res, 200, content.saveManifest(ctx, body.manifest || body));
+          return true;
+        }
+      }
+
+      // Music
+      if (rest[0] === 'music') {
+        if (rest.length === 1 && req.method === 'GET') {
+          json(res, 200, { music: content.getMusic(ctx) });
+          return true;
+        }
+        if (rest.length === 1 && req.method === 'PUT') {
+          const body = await readJson(req, 1024 * 1024);
+          json(res, 200, content.saveMusic(ctx, body.music || body));
+          return true;
+        }
+      }
     }
   } catch (err) {
     json(res, err.status || 500, { error: err.status ? err.message : 'that did not work' });
