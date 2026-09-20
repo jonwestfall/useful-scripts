@@ -1,0 +1,62 @@
+name: Podium build stamp
+
+permissions:
+  contents: write
+
+# Automatically bump the build number and stamp the triggering commit hash
+# into protocol.js and join.html whenever code lands on main or podium-beta.
+#
+# The stamp commit uses [skip ci] so it never re-triggers this workflow (or
+# the test workflow). The GITHUB_TOKEN default is fine here: pushes made with
+# it deliberately do not fire further workflow runs, which is belt-and-
+# suspenders with [skip ci].
+
+on:
+  push:
+    branches: [main, podium-beta]
+    paths:
+      - 'podium/**'
+      - '.github/workflows/podium-stamp.yml'
+
+jobs:
+  stamp:
+    name: Bump build number
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    # Never stamp a stamp — the previous run's own commit contains [skip ci]
+    # in the message, but the on.push filter alone does not honour that; this
+    # condition does.
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fetch the full ref so we can push back to it.
+          ref: ${{ github.ref }}
+          # The default GITHUB_TOKEN works and, crucially, pushes made with it
+          # do not trigger further workflow runs.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Stamp build
+        run: node scripts/stamp-build.mjs --commit "${{ github.sha }}"
+        working-directory: podium
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add podium/assets/js/protocol.js podium/join.html
+          # If stamp-build.mjs made no changes (shouldn't happen, but be safe),
+          # skip the commit rather than failing.
+          if git diff --cached --quiet; then
+            echo "Nothing to stamp — files unchanged."
+            exit 0
+          fi
+          BUILD=$(grep -oP 'BUILD = \K\d+' podium/assets/js/protocol.js)
+          git commit -m "chore: stamp build ${BUILD} [skip ci]"
+          git push
