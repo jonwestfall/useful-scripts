@@ -562,14 +562,20 @@ function renderPoll(item, opts) {
     }
     const counts = it.counts || [];
     const max = Math.max(1, ...counts, 0);
-    results.replaceChildren(...(it.options || []).map((opt, i) => {
-      const count = counts[i] || 0;
-      const fill = el('div', { class: 'r-poll-bar-fill' });
-      fill.style.width = `${Math.round((count / max) * 100)}%`;
-      return el('div', { class: 'r-poll-bar-row' },
-        el('div', { class: 'r-poll-bar-label' }, el('span', {}, opt), el('span', { class: 'mono' }, String(count))),
-        el('div', { class: 'r-poll-bar-track' }, fill));
-    }));
+      results.replaceChildren(...(it.options || []).map((opt, i) => {
+        const count = counts[i] || 0;
+        const fill = el('div', { class: 'r-poll-bar-fill' });
+        fill.style.width = `${Math.round((count / max) * 100)}%`;
+        const isCorrect = it.revealed && it.correct === i;
+        const letter = String.fromCharCode(65 + i);
+        return el('div', { class: 'r-poll-bar-row' },
+          el('div', { class: 'r-poll-bar-label' }, 
+            el('span', {}, isCorrect ? el('strong', { class: 'ok-text' }, `[${letter}] `) : '', opt), 
+            el('span', { class: 'mono' }, String(count))
+          ),
+          el('div', { class: `r-poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill)
+        );
+      }));
   };
 
   const draw = (it) => {

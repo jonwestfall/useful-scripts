@@ -1436,3 +1436,39 @@ body.plan .linkish:hover { text-decoration: underline; }
     padding-right: 14px;
   }
 }
+
+/* Issue #40: Poll Correct Answers */
+.poll-chip {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  color: var(--dim);
+}
+.poll-chip:hover {
+  border-color: var(--dim);
+}
+.poll-chip.is-correct {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #0b0d10;
+}
+
+.poll-bar-track.is-correct .poll-bar-fill {
+  background: var(--ok);
+}
+
+.r-poll-bar-track.is-correct .r-poll-bar-fill {
+  background: var(--ok);
+}
+.ok-text {
+  color: var(--ok);
+}

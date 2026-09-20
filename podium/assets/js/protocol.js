@@ -259,6 +259,7 @@ function normalizeItem(item) {
     copy.options = copy.kind === 'choice'
       ? (Array.isArray(copy.options) ? copy.options : []).slice(0, 8).map((o) => String(o).slice(0, 200))
       : [];
+    copy.correct = Number.isFinite(Number(copy.correct)) ? Math.round(Number(copy.correct)) : -1;
     copy.open = copy.open !== false;
     copy.revealed = !!copy.revealed;
     copy.voters = Math.max(0, Number(copy.voters) || 0);

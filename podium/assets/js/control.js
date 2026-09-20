@@ -2217,7 +2217,7 @@ async function pollApi(suffix, opts = {}) {
 }
 
 function newPollDraft() {
-  pollDraft = { kind: 'choice', question: '', options: ['', ''] };
+  pollDraft = { kind: 'choice', question: '', options: ['', ''], correct: -1 };
   pollError = '';
   pollOptionsDrawn = -1;
 }
@@ -2232,6 +2232,7 @@ function openPollDraftFromPlan(item) {
     kind: item.kind === 'text' ? 'text' : 'choice',
     question: item.question || '',
     options: options.length ? options : ['', ''],
+    correct: Number.isFinite(Number(item.correct)) ? Number(item.correct) : -1,
   };
   pollError = '';
   pollOptionsDrawn = -1;
@@ -2243,9 +2244,17 @@ async function startPoll() {
   if (!pollDraft || pollBusy) return;
   const question = pollDraft.question.trim();
   if (!question) { pollError = 'Add a question first.'; renderPollsPanel(); return; }
-  const options = pollDraft.kind === 'choice'
-    ? pollDraft.options.map((o) => o.trim()).filter(Boolean)
-    : [];
+  let correct = -1;
+  const options = [];
+  if (pollDraft.kind === 'choice') {
+    for (let i = 0; i < pollDraft.options.length; i++) {
+      const trimmed = pollDraft.options[i].trim();
+      if (trimmed) {
+        if (pollDraft.correct === i) correct = options.length;
+        options.push(trimmed);
+      }
+    }
+  }
   if (pollDraft.kind === 'choice' && options.length < 2) {
     pollError = 'Add at least two options.';
     renderPollsPanel();
@@ -2259,11 +2268,11 @@ async function startPoll() {
     await pollApi(`/${created.code}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}` },
-      body: JSON.stringify({ kind: pollDraft.kind, question, options, open: true }),
+      body: JSON.stringify({ kind: pollDraft.kind, question, options, correct, open: true }),
     });
     stage({
       type: 'poll', title: 'Poll', pollId: created.code, token: created.token,
-      kind: pollDraft.kind, question, options, open: true, revealed: false,
+      kind: pollDraft.kind, question, options, correct, open: true, revealed: false,
       showUrl: presentation.showPollUrl,
     });
     pollDraft = null;
@@ -2346,7 +2355,7 @@ async function endPoll() {
   // duplicate the entry. Only a poll that actually ran gets archived.
   if (item.token) {
     addToPollHistory({
-      pollId: item.pollId, kind: item.kind, question: item.question, options: item.options,
+      pollId: item.pollId, kind: item.kind, question: item.question, options: item.options, correct: item.correct,
       counts: item.counts || [], answers: item.answers || [], voters: item.voters || 0,
       hiddenAnswers: item.hiddenAnswers || [], endedAt: Date.now(),
       // Which lecture this poll belongs to, so a later export - in a
@@ -2382,7 +2391,7 @@ async function endPoll() {
 // history list itself disables them then instead, to keep a tap from
 // looking like a dead click.
 function reopenFromHistory(row) {
-  pollDraft = { kind: row.kind, question: row.question, options: row.kind === 'choice' ? [...row.options] : ['', ''] };
+  pollDraft = { kind: row.kind, question: row.question, options: row.kind === 'choice' ? [...row.options] : ['', ''], correct: Number.isFinite(Number(row.correct)) ? Number(row.correct) : -1 };
   pollError = '';
   pollOptionsDrawn = -1;
   renderPollsPanel();
@@ -2412,15 +2421,36 @@ function renderPollBuilder() {
   $('#poll-option-add').closest('.inline').hidden = !showOptions;
   if (showOptions && pollOptionsDrawn !== pollDraft.options.length) {
     pollOptionsDrawn = pollDraft.options.length;
-    $('#poll-options').replaceChildren(...pollDraft.options.map((_, i) => el('div', { class: 'poll-option-row' },
-      el('input', {
-        type: 'text', placeholder: `Option ${i + 1}`, maxlength: '200',
-        oninput: (ev) => { pollDraft.options[i] = ev.target.value; },
-      }),
-      el('button', {
-        type: 'button', title: 'Remove', disabled: pollDraft.options.length <= 2,
-        onclick: () => { pollDraft.options.splice(i, 1); pollOptionsDrawn = -1; renderPollsPanel(); },
-      }, '×'))));
+    $('#poll-options').replaceChildren(...pollDraft.options.map((_, i) => {
+      const letter = String.fromCharCode(65 + i);
+      const isCorrect = pollDraft.correct === i;
+      return el('div', { class: 'poll-option-row' },
+        el('button', {
+          type: 'button',
+          class: `poll-chip ${isCorrect ? 'is-correct' : ''}`,
+          title: isCorrect ? 'Marked as correct' : 'Mark as correct',
+          onclick: () => {
+            pollDraft.correct = isCorrect ? -1 : i;
+            pollOptionsDrawn = -1;
+            renderPollsPanel();
+          },
+        }, letter),
+        el('input', {
+          type: 'text', placeholder: `Option ${i + 1}`, maxlength: '200',
+          oninput: (ev) => { pollDraft.options[i] = ev.target.value; },
+        }),
+        el('button', {
+          type: 'button', title: 'Remove', disabled: pollDraft.options.length <= 2,
+          onclick: () => {
+            pollDraft.options.splice(i, 1);
+            if (pollDraft.correct === i) pollDraft.correct = -1;
+            else if (pollDraft.correct > i) pollDraft.correct--;
+            pollOptionsDrawn = -1;
+            renderPollsPanel();
+          },
+        }, '×')
+      );
+    }));
     pollDraft.options.forEach((v, i) => { $$('#poll-options input')[i].value = v; });
   }
   $('#poll-option-add').disabled = pollDraft.options.length >= 8;
@@ -2476,9 +2506,15 @@ function renderRunningPoll(item) {
         const count = counts[i] || 0;
         const fill = el('div', { class: 'poll-bar-fill' });
         fill.style.width = `${Math.round((count / max) * 100)}%`;
+        const isCorrect = item.correct === i;
+        const letter = String.fromCharCode(65 + i);
         return el('div', { class: 'poll-bar-row' },
-          el('div', { class: 'poll-bar-label' }, el('span', {}, opt), el('span', { class: 'mono' }, String(count))),
-          el('div', { class: 'poll-bar-track' }, fill));
+          el('div', { class: 'poll-bar-label' }, 
+            el('span', {}, isCorrect ? el('strong', { class: 'ok-text' }, `[${letter}] `) : '', opt), 
+            el('span', { class: 'mono' }, String(count))
+          ),
+          el('div', { class: `poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill)
+        );
       }));
     }
   }
