@@ -35,6 +35,7 @@ const watermarkEl = $('#watermark');
 const watermarkImgEl = $('#watermark-img');
 const watermarkTextEl = $('#watermark-text');
 const laserEl = $('#laser');
+const spotlightEl = $('#spotlight');
 const hud = $('#hud');
 const standby = $('#standby');
 const setupEl = $('#setup');
@@ -404,6 +405,10 @@ servedBuild().then((served) => {
 
 function strokePath(ctx, stroke, rect, from = 0) {
   if (stroke.pts.length < 2) return;
+  ctx.save();
+  if (stroke.highlighter) {
+    ctx.globalAlpha = 0.35;
+  }
   ctx.beginPath();
   ctx.strokeStyle = stroke.color;
   ctx.lineWidth = stroke.width;
@@ -415,6 +420,7 @@ function strokePath(ctx, stroke, rect, from = 0) {
     ctx.lineTo(rect.x + stroke.pts[i][0] * rect.w, rect.y + stroke.pts[i][1] * rect.h);
   }
   ctx.stroke();
+  ctx.restore();
 }
 
 function currentInkStrokes() {
@@ -465,7 +471,8 @@ function redrawInk(force = false) {
     && key === ink.drawnKey
     && strokes.length >= ink.drawnStrokes
     && ink.drawnStrokes > 0
-    && strokes.length === ink.drawnStrokes;
+    && strokes.length === ink.drawnStrokes
+    && !last?.highlighter;
 
   if (appended && last) {
     strokePath(ctx, last, rect, ink.drawnTail);
@@ -928,6 +935,34 @@ function showLaser(msg) {
 function hideLaser() {
   clearTimeout(laserHideTimer);
   laserEl.classList.remove('is-on');
+}
+
+// --- spotlight ---------------------------------------------------------------
+//
+// Dims the slide background with a dark backdrop while leaving a bright circular
+// aperture centered on the presenter's touch. Like laser, deliberately outside
+// `state`: a live gesture that auto-vanishes on release or inactivity.
+
+let spotlightHideTimer = null;
+
+function showSpotlight(msg) {
+  if (!msg?.on) { hideSpotlight(); return; }
+  const { slot, renderer } = focusedPanel();
+  const rect = contentRectFor(slot, renderer);
+  const px = rect.x + (Number(msg.x) || 0) * rect.w;
+  const py = rect.y + (Number(msg.y) || 0) * rect.h;
+  const radius = Math.max(80, Math.round(Math.min(rect.w, rect.h) * 0.18));
+  spotlightEl.style.setProperty('--spotlight-x', `${px}px`);
+  spotlightEl.style.setProperty('--spotlight-y', `${py}px`);
+  spotlightEl.style.setProperty('--spotlight-radius', `${radius}px`);
+  spotlightEl.classList.add('is-on');
+  clearTimeout(spotlightHideTimer);
+  spotlightHideTimer = setTimeout(hideSpotlight, 1500);
+}
+
+function hideSpotlight() {
+  clearTimeout(spotlightHideTimer);
+  spotlightEl.classList.remove('is-on');
 }
 
 // --- watermark ---------------------------------------------------------------
@@ -1597,6 +1632,9 @@ function wireState() {
       // what any relay will carry. See inkDigest in protocol.js; a controller
       // that does not match asks for the surface with 'ink-pull' below.
       digest: inkDigest(inkState.bySurface[key]?.strokes),
+      // Surface keys with saved strokes, so controllers know which slide thumbnails
+      // or items have annotations without pulling stroke bodies.
+      surfaces: Object.keys(inkState.bySurface).filter((k) => inkState.bySurface[k]?.strokes?.length > 0),
     },
     stageAspect: stage.clientWidth && stage.clientHeight ? stage.clientWidth / stage.clientHeight : 16 / 9,
     // Where the music has got to, and whether something on screen is currently
@@ -1883,6 +1921,7 @@ async function connect() {
       // recoverRecording above for what that used to cost.
       if (msg.t === 'session-end') { standDown(); return; }
       if (msg.t === 'laser') { showLaser(msg); return; }
+      if (msg.t === 'spotlight') { showSpotlight(msg); return; }
       if (msg.t === 'ink-pull') {
         // A controller whose digest does not match this screen's: hand it the
         // surface it asked for. Addressed to that one controller rather than

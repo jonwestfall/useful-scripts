@@ -24,7 +24,11 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
 
 async function loadPlaywright() {
-  for (const spec of ['playwright', '/opt/node22/lib/node_modules/playwright/index.mjs']) {
+  for (const spec of [
+    process.env.PLAYWRIGHT_PATH,
+    'playwright',
+    '/opt/node22/lib/node_modules/playwright/index.mjs',
+  ].filter(Boolean)) {
     try { return await import(spec); } catch { /* try the next one */ }
   }
   console.error('playwright not found. Run: npm i playwright && npx playwright install chromium');
@@ -922,8 +926,8 @@ await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
 ok('and switches to Presentation without disturbing the connection form underneath', await pad.evaluate(() =>
   !document.querySelector('[data-settings-panel="presentation"]').hidden
   && document.querySelector('[data-settings-panel="connection"]').hidden));
-ok('all three presentation options default on',
-  (await pad.isChecked('#pref-poll-url')) && (await pad.isChecked('#pref-blank-on-connect')) && (await pad.isChecked('#pref-keep-awake')));
+ok('all presentation options default on (including haptics)',
+  (await pad.isChecked('#pref-poll-url')) && (await pad.isChecked('#pref-blank-on-connect')) && (await pad.isChecked('#pref-keep-awake')) && (await pad.isChecked('#pref-haptics')));
 
 await pad.uncheck('#pref-keep-awake');
 await pad.waitForFunction(() => window.__wakeLog.includes('release'), null, { timeout: 5000 });
@@ -931,6 +935,11 @@ ok('unchecking Keep awake actually releases the lock, not just the checkbox', tr
 await pad.check('#pref-keep-awake');
 await pad.waitForFunction(() => window.__wakeLog.filter((s) => s === 'request:screen').length >= 2, null, { timeout: 5000 });
 ok('and re-checking it requests a fresh one', true);
+
+await pad.uncheck('#pref-haptics');
+ok('unchecking haptics persists to presentation preferences',
+  await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).haptics === false));
+await pad.check('#pref-haptics');
 
 await pad.uncheck('#pref-poll-url');
 ok('a preference is saved the moment it changes, with no Save button of its own',
@@ -2385,6 +2394,7 @@ ok('and catches up to the new size once the stroke ends', JSON.stringify(await f
 // ellipse by construction regardless of any bug.
 await pad.click('#ink-clear');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+await pad.evaluate(() => { document.querySelector('.panels').scrollTop = 0; });
 pb = await padBox();
 const cx = pb.x + pb.w * 0.5, cy = pb.y + pb.h * 0.5, r = Math.min(pb.w, pb.h) * 0.3;
 await pad.mouse.move(cx + r, cy);
@@ -3446,6 +3456,37 @@ await pad.setInputFiles('#plan-file', path.join(HERE, 'fixtures', 'not-a-plan.js
 await pad.waitForFunction(() => /did not load/.test(document.querySelector('#plan-note').textContent), null, { timeout: 10000 }).catch(() => {});
 ok(`a file that is not a plan is refused by name ("${await pad.textContent('#plan-note')}")`,
   /not a Podium lecture plan/.test(await pad.textContent('#plan-note')));
+
+// Auto-launch on plan load (Issue #52)
+const autoPlanFile = path.join(HERE, 'fixtures', 'e2e-autolaunch-plan.podium.json');
+fs.writeFileSync(autoPlanFile, JSON.stringify({
+  podium: 'plan',
+  v: 1,
+  title: 'Auto-launch demo',
+  layout: 'single',
+  timers: [{ id: 't-intro', label: 'Intro Countdown', mins: 3 }],
+  items: [
+    { id: 'i-welcome', type: 'text', title: 'Welcome sign', body: 'Welcome to Class' },
+  ],
+  autoLaunch: {
+    enabled: true,
+    initialState: 'live',
+    panes: {
+      A: { type: 'item', itemId: 'i-welcome' },
+    },
+    timer: {
+      timerId: 't-intro',
+    },
+  },
+}));
+
+await pad.setInputFiles('#plan-file', autoPlanFile);
+await pad.waitForFunction(() => document.querySelector('#library h3.group')?.textContent === 'Auto-launch demo', null, { timeout: 20000 });
+await screen.waitForFunction(() => {
+  const t = document.querySelector('.layer[data-role="program"] .r-text');
+  return t && /Welcome to Class/.test(t.textContent);
+}, null, { timeout: 15000 });
+ok('auto-launch puts initial item live on screen upon plan load', true);
 
 await tablet.close();
 await room.close();

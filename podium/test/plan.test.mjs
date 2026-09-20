@@ -4,6 +4,7 @@
 import {
   emptyPlan, newItem, readPlan, planToJson, pruneAssets, referencedAssets,
   itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, PLAN_TYPES, PLAN_VERSION,
+  emptyAutoLaunch,
 } from '../assets/js/planfile.js';
 
 let ok = true;
@@ -166,6 +167,103 @@ chk('a poll round-trips through a plan file with its options intact',
   && polled.plan.items[0].options === 'Construct\nMethod\nNorming');
 chk('a poll item carries no pollId or token - a plan cannot pre-create one on a relay it has not talked to',
   !('pollId' in polled.plan.items[0]) && !('token' in polled.plan.items[0]));
+
+// --- auto-launch on plan load (Issue #52) -----------------------------------
+chk('emptyAutoLaunch provides default structure', (() => {
+  const al = emptyAutoLaunch();
+  return al.enabled === false && al.initialState === 'live'
+    && al.panes.A === null && al.panes.B === null && al.panes.C === null && al.panes.D === null
+    && al.music.playlist === '' && al.music.autoplay === true && al.music.volume === 0.5
+    && al.timer.timerId === '';
+})());
+
+chk('emptyPlan includes empty autoLaunch defaults', plan.autoLaunch && plan.autoLaunch.enabled === false && plan.autoLaunch.initialState === 'live');
+
+const fullPlanDoc = {
+  podium: 'plan',
+  v: 1,
+  layout: '2h',
+  timers: [{ id: 't1', label: 'Intro', mins: 5 }, { id: 't2', label: 'Work', mins: 10 }],
+  items: [
+    { id: 'i1', type: 'text', title: 'Welcome', body: 'Hello class' },
+    { id: 'i2', type: 'whiteboard', title: 'Board' },
+  ],
+  autoLaunch: {
+    enabled: true,
+    initialState: 'freeze',
+    panes: {
+      A: { type: 'item', itemId: 'i1' },
+      B: {
+        type: 'set',
+        title: 'Auto set',
+        mode: 'random',
+        entries: [
+          { itemId: 'i1', seconds: 20 },
+          { itemId: 'i2', seconds: 40 },
+        ],
+      },
+    },
+    music: {
+      playlist: 'playlist:Ambient pre-lecture',
+      autoplay: false,
+      volume: 0.75,
+    },
+    timer: {
+      timerId: 't1',
+    },
+  },
+};
+
+const parsedFull = readPlan(JSON.stringify(fullPlanDoc));
+chk('full autoLaunch configuration round-trips cleanly', (() => {
+  const al = parsedFull.plan.autoLaunch;
+  return al.enabled === true
+    && al.initialState === 'freeze'
+    && al.panes.A?.type === 'item' && al.panes.A?.itemId === 'i1'
+    && al.panes.B?.type === 'set' && al.panes.B?.title === 'Auto set' && al.panes.B?.mode === 'random'
+    && al.panes.B?.entries.length === 2 && al.panes.B?.entries[1].seconds === 40
+    && al.panes.C === null && al.panes.D === null
+    && al.music.playlist === 'playlist:Ambient pre-lecture' && al.music.autoplay === false && al.music.volume === 0.75
+    && al.timer.timerId === 't1'
+    && parsedFull.warnings.length === 0;
+})());
+
+const invalidAutoPlan = {
+  podium: 'plan',
+  v: 1,
+  timers: [{ id: 't1', label: 'Work', mins: 5 }],
+  items: [{ id: 'i1', type: 'text', body: 'Valid' }],
+  autoLaunch: {
+    enabled: 'yes',
+    initialState: 'invalid-state',
+    panes: {
+      A: { type: 'item', itemId: 'missing-item' },
+      B: {
+        type: 'set',
+        title: 'Bad set',
+        entries: [{ itemId: 'also-missing', seconds: 99999 }],
+      },
+    },
+    music: {
+      volume: -5,
+    },
+    timer: {
+      timerId: 'missing-timer',
+    },
+  },
+};
+
+const parsedInvalid = readPlan(JSON.stringify(invalidAutoPlan));
+chk('invalid autoLaunch fields are sanitized and warned', (() => {
+  const al = parsedInvalid.plan.autoLaunch;
+  return al.enabled === true
+    && al.initialState === 'live'
+    && al.panes.A === null
+    && al.panes.B === null
+    && al.music.volume === 0
+    && al.timer.timerId === ''
+    && parsedInvalid.warnings.length > 0;
+})());
 
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

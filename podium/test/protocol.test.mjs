@@ -1,7 +1,7 @@
 // Run with:  node podium/test/protocol.test.mjs
 // Pure state-machine tests - no DOM, no network.
 import { initialState, applyCommand, timerRemaining, timerById, inkSurfaceKey,
-  inkDigest, inkDigestsAgree, applyInkAction, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp } from '../assets/js/protocol.js';
+  inkDigest, inkDigestsAgree, applyInkAction, distToSegmentSquared, strokeHitTest, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp } from '../assets/js/protocol.js';
 const s = initialState();
 let ok = true;
 const chk = (label, cond) => { if (!cond) { ok = false; console.log('FAIL', label); } else console.log('ok  ', label); };
@@ -310,6 +310,23 @@ chk('shrinking the layout falls focus back to A rather than pointing at a panel 
   applyInkAction(mine, {action:'clear'});
   chk('clear empties in place rather than replacing the array', mine.length === 0);
   chk('an unknown ink action changes nothing', applyInkAction(mine, {action:'sneeze'}) === false);
+
+  // Highlighter and erase
+  applyInkAction(mine, {action:'begin', id:'h1', pts:[[0.1,0.1]], highlighter:true});
+  chk('highlighter stroke retains highlighter flag', mine[0].highlighter === true);
+  applyInkAction(mine, {action:'begin', id:'s1', pts:[[0.2,0.2]]});
+  applyInkAction(mine, {action:'begin', id:'s2', pts:[[0.3,0.3]]});
+  chk('erase by single id removes that stroke', applyInkAction(mine, {action:'erase', id:'s1'}) === true && mine.length === 2 && !mine.find(s => s.id === 's1'));
+  chk('erase non-existent id returns false', applyInkAction(mine, {action:'erase', id:'nonexistent'}) === false && mine.length === 2);
+  chk('erase by multiple ids removes matching strokes', applyInkAction(mine, {action:'erase', ids:['h1', 's2']}) === true && mine.length === 0);
+
+  // Distance and hit-testing pure functions
+  chk('distToSegmentSquared on segment is 0', distToSegmentSquared(5, 5, 0, 5, 10, 5) === 0);
+  chk('distToSegmentSquared beyond endpoint', distToSegmentSquared(15, 5, 0, 5, 10, 5) === 25);
+  const testStroke = { id: 't1', width: 6, pts: [[0.1, 0.1], [0.9, 0.1]] };
+  chk('strokeHitTest hits segment in middle', strokeHitTest(testStroke, 500, 100, 1000, 1000, 18) === true);
+  chk('strokeHitTest misses distant point', strokeHitTest(testStroke, 500, 500, 1000, 1000, 18) === false);
+  chk('strokeHitTest misses outside bounding box', strokeHitTest(testStroke, 50, 50, 1000, 1000, 10) === false);
 }
 
 {

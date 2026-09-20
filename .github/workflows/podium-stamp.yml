@@ -1,8 +1,5 @@
 name: Podium build stamp
 
-permissions:
-  contents: write
-
 # Automatically bump the build number and stamp the triggering commit hash
 # into protocol.js and join.html whenever code lands on main or podium-beta.
 #
@@ -34,7 +31,6 @@ jobs:
         with:
           # Fetch the full ref so we can push back to it.
           ref: ${{ github.ref }}
-          fetch-depth: 0
           # The default GITHUB_TOKEN works and, crucially, pushes made with it
           # do not trigger further workflow runs.
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -44,7 +40,7 @@ jobs:
           node-version: 22
 
       - name: Stamp build
-        run: node scripts/stamp-build.mjs
+        run: node scripts/stamp-build.mjs --commit "${{ github.sha }}"
         working-directory: podium
 
       - name: Commit and push
@@ -58,5 +54,6 @@ jobs:
             echo "Nothing to stamp — files unchanged."
             exit 0
           fi
-          git commit -m "chore: stamp build [skip ci]"
+          BUILD=$(grep -oP 'BUILD = \K\d+' podium/assets/js/protocol.js)
+          git commit -m "chore: stamp build ${BUILD} [skip ci]"
           git push

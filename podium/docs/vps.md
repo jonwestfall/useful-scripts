@@ -14,7 +14,7 @@ that offers none of this is not broken; it is the server Podium has always had.
 
 Running your own relay already buys the one thing the classroom PC cannot do:
 accept inbound connections, which is what made audience polls possible (see
-[ROADMAP.md](ROADMAP.md)). But the relay is still a pipe. Everything Podium
+[roadmap.md](roadmap.md)). But the relay is still a pipe. Everything Podium
 knows lives in browser `localStorage` on whichever device happened to learn it:
 
 - The **library** is a JSON file you edit, commit and push. Adding Tuesday's

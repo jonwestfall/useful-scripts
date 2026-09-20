@@ -152,6 +152,234 @@
     <div id="items"></div>
   </section>
 
+  <!-- Content Management (Issue #54). Administrators only. -->
+  <section class="card" id="content-card" hidden>
+    <div class="admin-head">
+      <h2>Content Management</h2>
+    </div>
+    <p class="hint">
+      Manage Marp themes, built-in tools, library manifest items, pre-loaded assets, and background music playlists.
+    </p>
+
+    <!-- Sub-tabs -->
+    <div class="content-subtabs" role="tablist">
+      <button type="button" class="content-subtab active" data-pane="tab-pane-manifest">Library Manifest</button>
+      <button type="button" class="content-subtab" data-pane="tab-pane-themes">Marp Themes</button>
+      <button type="button" class="content-subtab" data-pane="tab-pane-files">Pre-load Files</button>
+      <button type="button" class="content-subtab" data-pane="tab-pane-music">Music Playlists</button>
+    </div>
+
+    <!-- 1. Manifest Panel -->
+    <div id="tab-pane-manifest" class="content-tab-pane active">
+      <div style="background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:14px; margin-bottom:14px;">
+        <h3 style="margin:0 0 8px; font-size:14px;">Quick Tools &amp; Examples Configuration</h3>
+        <p class="hint" style="margin:0 0 10px;">Toggle default tools and example items available to controllers.</p>
+        <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center;">
+          <label class="check"><input id="manifest-examples-check" type="checkbox" checked> Show "Working examples" group</label>
+        </div>
+        <hr style="border:0;border-top:1px solid var(--line);margin:10px 0">
+        <span class="sub-label" style="margin-top:0">Built-in Quick Tools:</span>
+        <div style="display:flex; flex-wrap:wrap; gap:14px; margin-top:6px;">
+          <label class="check"><input id="builtin-black" type="checkbox" checked> Black</label>
+          <label class="check"><input id="builtin-whiteboard" type="checkbox" checked> Whiteboard</label>
+          <label class="check"><input id="builtin-chalkboard" type="checkbox" checked> Chalkboard</label>
+          <label class="check"><input id="builtin-camera" type="checkbox" checked> Phone camera</label>
+          <label class="check"><input id="builtin-timer" type="checkbox" checked> Timer</label>
+          <label class="check"><input id="builtin-trackend" type="checkbox" checked> We begin in…</label>
+        </div>
+      </div>
+
+      <div class="admin-head" style="margin-top:14px;">
+        <h3 style="margin:0; font-size:14px; flex:1;">Committed Manifest Items (<code>content/manifest.json</code>)</h3>
+        <button id="manifest-add-btn" type="button" class="admin-small">+ Add Item</button>
+      </div>
+
+      <!-- Add/Edit item form (hidden by default) -->
+      <div id="manifest-item-form-box" style="background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px; margin:10px 0;" hidden>
+        <h4 id="manifest-form-title" style="margin:0 0 8px; font-size:13px;">New Manifest Item</h4>
+        <div class="admin-form">
+          <label class="field">
+            <span>Type</span>
+            <select id="m-type">
+              <option value="deck">Marp deck</option>
+              <option value="video">Video</option>
+              <option value="audio">Audio</option>
+              <option value="image">Photo / Image</option>
+              <option value="slides">HTML Slides</option>
+              <option value="pdf">PDF</option>
+              <option value="text">Text sign</option>
+              <option value="web">Web page</option>
+              <option value="qr">QR code</option>
+              <option value="timer">Timer</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Title</span>
+            <input id="m-title" type="text" placeholder="e.g. Week 1 Slides">
+          </label>
+          <label class="field">
+            <span>Source Path or URL</span>
+            <input id="m-src" type="text" placeholder="e.g. content/decks/week1.md">
+          </label>
+          <label class="field">
+            <span>Group</span>
+            <input id="m-group" type="text" placeholder="e.g. Lecture or Working examples">
+          </label>
+          <label class="field">
+            <span>Order (optional)</span>
+            <input id="m-order" type="number" min="0" placeholder="1">
+          </label>
+          <label class="field">
+            <span>Note (optional)</span>
+            <input id="m-note" type="text" placeholder="Prep note for controller tile">
+          </label>
+        </div>
+        <div class="admin-actions">
+          <label class="check"><input id="m-enabled" type="checkbox" checked> Enabled</label>
+          <button id="m-save-item-btn" type="button">Save Item</button>
+          <button id="m-cancel-item-btn" type="button">Cancel</button>
+        </div>
+      </div>
+
+      <div id="manifest-items-list" style="margin-top:10px;"></div>
+
+      <div class="admin-actions" style="margin-top:16px;">
+        <button id="manifest-commit-btn" type="button">Save Manifest Changes</button>
+        <span class="hint" id="manifest-status" role="status"></span>
+      </div>
+    </div>
+
+    <!-- 2. Marp Themes Panel -->
+    <div id="tab-pane-themes" class="content-tab-pane">
+      <div class="admin-head">
+        <h3 style="margin:0; font-size:14px; flex:1;">Marp CSS Themes</h3>
+        <input id="theme-upload-input" type="file" accept=".css" hidden>
+        <button id="theme-upload-btn" type="button" class="admin-small">Upload Theme (.css)</button>
+        <button id="theme-new-btn" type="button" class="admin-small">+ New Theme</button>
+      </div>
+      <p class="hint">Themes stored in <code>marp-themes/</code> are synced with <code>marp-themes/themes.json</code> for use across decks.</p>
+
+      <div id="themes-list" style="margin-top:10px;"></div>
+
+      <!-- Theme Editor & Live Preview (hidden until selected or creating new) -->
+      <div id="theme-editor-box" style="margin-top:18px; border-top:1px solid var(--line); padding-top:14px;" hidden>
+        <div class="admin-head" style="margin-bottom:10px;">
+          <h3 id="theme-editor-heading" style="margin:0; font-size:14px; flex:1;">Editing Theme</h3>
+          <button id="theme-save-btn" type="button" class="admin-small">Save Theme</button>
+          <button id="theme-download-btn" type="button" class="admin-small">Download .css</button>
+          <button id="theme-close-btn" type="button" class="admin-small">Close Editor</button>
+        </div>
+        <div class="admin-form" style="margin-bottom:10px;">
+          <label class="field">
+            <span>Filename (.css)</span>
+            <input id="theme-filename" type="text" placeholder="custom.css">
+          </label>
+          <label class="field">
+            <span>Preview Slide</span>
+            <select id="theme-preview-slide-select">
+              <option value="0">Slide 1 (Title / Lead)</option>
+              <option value="1">Slide 2 (Bulleted Build)</option>
+              <option value="2">Slide 3 (Custom Markup)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="theme-editor-split">
+          <div class="theme-code-pane">
+            <span class="sub-label">CSS Theme Stylesheet:</span>
+            <textarea id="theme-css-editor" class="theme-css-textarea" placeholder="/* @theme custom */&#10;@import 'default';&#10;&#10;section {&#10;  background-color: #f7f9fc;&#10;  color: #1a202c;&#10;}"></textarea>
+          </div>
+          <div class="theme-preview-box">
+            <span class="sub-label">Live Slide Preview (Progressive Builds Example):</span>
+            <div id="theme-preview-stage" class="theme-preview-stage">
+              <div id="theme-preview-mount"></div>
+            </div>
+            <span class="hint" id="theme-preview-note">Preview updates automatically as you type.</span>
+          </div>
+        </div>
+        <div class="admin-actions">
+          <span class="hint" id="theme-status" role="status"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Pre-load Files Panel -->
+    <div id="tab-pane-files" class="content-tab-pane">
+      <div class="cat-pills" role="tablist">
+        <button type="button" class="cat-pill active" data-cat="">All Files</button>
+        <button type="button" class="cat-pill" data-cat="decks">Decks (content/decks)</button>
+        <button type="button" class="cat-pill" data-cat="audio">Audio (content/audio)</button>
+        <button type="button" class="cat-pill" data-cat="slides">Slides (content/slides)</button>
+        <button type="button" class="cat-pill" data-cat="video">Video (content/video)</button>
+        <button type="button" class="cat-pill" data-cat="photos">Photos (content/photos)</button>
+      </div>
+
+      <div style="background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px; margin-bottom:14px;">
+        <h4 style="margin:0 0 6px; font-size:13px;">Upload Pre-load Content</h4>
+        <div class="admin-form">
+          <label class="field">
+            <span>Target Category</span>
+            <select id="file-upload-cat">
+              <option value="decks">Decks (.md, .markdown — max 10MB)</option>
+              <option value="audio">Audio (.wav, .mp3, .m4a, .ogg, .flac, .aac — max 50MB)</option>
+              <option value="slides">Slides (.html, .htm, .zip — max 25MB)</option>
+              <option value="video">Video (.mp4, .webm, .mov, .mkv — max 100MB)</option>
+              <option value="photos">Photos (.png, .jpg, .jpeg, .gif, .webp, .svg — max 20MB)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Choose File</span>
+            <input id="file-upload-input" type="file">
+          </label>
+        </div>
+        <div class="admin-actions">
+          <button id="file-upload-btn" type="button">Upload File</button>
+          <span class="hint" id="file-upload-status" role="status"></span>
+        </div>
+      </div>
+
+      <div class="admin-head">
+        <h3 style="margin:0; font-size:14px; flex:1;">Pre-loaded Files</h3>
+        <input id="file-search-input" type="search" placeholder="Filter files" aria-label="Filter content files">
+      </div>
+      <div id="content-files-list" style="margin-top:10px;"></div>
+    </div>
+
+    <!-- 4. Music Playlists Panel -->
+    <div id="tab-pane-music" class="content-tab-pane">
+      <div class="admin-head">
+        <h3 style="margin:0; font-size:14px; flex:1;">Background Music Playlists (<code>content/music.json</code>)</h3>
+        <button id="music-add-playlist-btn" type="button" class="admin-small">+ Add Playlist</button>
+      </div>
+      <p class="hint">
+        Playlists for the controller's Music tab. Tracks stream from <code>content/audio/</code> or any URL.
+      </p>
+
+      <div id="music-playlists-list" style="margin-top:10px;"></div>
+
+      <div class="admin-actions" style="margin-top:16px;">
+        <button id="music-save-btn" type="button">Save Playlists Changes</button>
+        <span class="hint" id="music-status" role="status"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Sheet modal for editing text files (decks, html slides) -->
+  <div id="file-editor-sheet" class="sheet" hidden>
+    <div class="card" style="max-width:800px; width:100%;">
+      <div class="admin-head" style="margin-bottom:12px;">
+        <h2 id="file-editor-title" style="margin:0; font-size:18px; flex:1;">Edit File</h2>
+        <button id="file-editor-close" type="button" class="admin-small">Close</button>
+      </div>
+      <p class="hint" id="file-editor-path" style="margin-bottom:8px;"></p>
+      <textarea id="file-editor-content" class="theme-css-textarea" style="height:420px;"></textarea>
+      <div class="admin-actions" style="margin-top:12px;">
+        <button id="file-editor-save-btn" type="button">Save File</button>
+        <span class="hint" id="file-editor-status" role="status"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- What the box is holding, and the one button that gets a copy of it out.
        Administrators only. -->
   <section class="card" id="storage-card" hidden>
