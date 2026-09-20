@@ -8,6 +8,14 @@
 <title>Admin — Podium</title>
 <link rel="stylesheet" href="assets/css/podium.css">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<style>
+  .admin-panel { display: contents; }
+  .admin-panel[hidden] { display: none !important; }
+  .admin-tabs { flex-wrap: wrap; margin-bottom: 0; }
+  @media (max-width: 600px) {
+    .admin-tabs .tab { flex: 1 1 auto; text-align: center; }
+  }
+</style>
 <!-- The page for things you do sitting down. The controller is built for one
      hand in front of a class; file management is the opposite of that, so it
      lives here instead of cramping the tab bar you actually teach from.
@@ -42,10 +50,19 @@
 </div>
 
 <div id="admin" class="admin-wrap" hidden>
+  <div class="tabs admin-tabs" id="admin-tabs" style="grid-column: 1 / -1; margin-bottom: 0;">
+    <button type="button" class="tab" id="tab-people" data-target="panel-people" hidden>People</button>
+    <button type="button" class="tab" id="tab-courses" data-target="panel-courses" hidden>Courses</button>
+    <button type="button" class="tab" id="tab-library" data-target="panel-library" hidden>Library</button>
+    <button type="button" class="tab" id="tab-content" data-target="panel-content" hidden>Global Content</button>
+    <button type="button" class="tab" id="tab-sessions" data-target="panel-sessions" hidden>Sessions</button>
+    <button type="button" class="tab" id="tab-storage" data-target="panel-storage" hidden>Storage</button>
+  </div>
 
   <!-- Accounts. Administrators only; the card stays absent for everyone else
        rather than appearing and answering 403 to everything in it. -->
-  <section class="card" id="people-card" hidden>
+  <div class="admin-panel" id="panel-people" hidden>
+  <section class="card" id="people-card">
     <div class="admin-head">
       <h2>People</h2>
       <input id="people-search" type="search" placeholder="Filter by name" aria-label="Filter accounts">
@@ -80,11 +97,13 @@
       <span class="hint">Downloads a log of all logins and administrative actions. Automatically pruned.</span>
     </div>
   </section>
+  </div>
 
   <!-- Courses: the only unit of sharing Podium has. Everyone sees the ones
        they are in; an owner sees who else is in them and the room's settings;
        an administrator can make and archive them. -->
-  <section class="card" id="courses-card" hidden>
+  <div class="admin-panel" id="panel-courses" hidden>
+  <section class="card" id="courses-card">
     <div class="admin-head">
       <h2>Courses</h2>
     </div>
@@ -112,7 +131,9 @@
       </div>
     </div>
   </section>
+  </div>
 
+  <div class="admin-panel" id="panel-library" hidden>
   <section class="card">
     <h2>Add to the library</h2>
     <p class="hint" id="upload-help">Decks, PDFs, images, audio and video.</p>
@@ -140,9 +161,21 @@
     </div>
   </section>
 
+  <!-- Library items -->
+  <section class="card">
+    <div class="admin-head">
+      <h2>Library Items</h2>
+      <input id="lib-search" type="search" placeholder="Filter by title, course or type" aria-label="Filter the library">
+    </div>
+    <p class="hint" id="usage"></p>
+    <div id="items"></div>
+  </section>
+  </div>
+
   <!-- Past sessions. The display writes these as it goes (see
        server/lectures.js); this is where you read them back. -->
-  <section class="card" id="sessions-card" hidden>
+  <div class="admin-panel" id="panel-sessions" hidden>
+  <section class="card" id="sessions-card">
     <div class="admin-head">
       <h2>Past sessions</h2>
       <input id="sess-search" type="search" placeholder="Filter by name, room or course" aria-label="Filter sessions">
@@ -150,18 +183,11 @@
     <p class="hint" id="sess-note"></p>
     <div id="sessions"></div>
   </section>
-
-  <section class="card">
-    <div class="admin-head">
-      <h2>Library</h2>
-      <input id="lib-search" type="search" placeholder="Filter by title, course or type" aria-label="Filter the library">
-    </div>
-    <p class="hint" id="usage"></p>
-    <div id="items"></div>
-  </section>
+  </div>
 
   <!-- Content Management (Issue #54). Administrators only. -->
-  <section class="card" id="content-card" hidden>
+  <div class="admin-panel" id="panel-content" hidden>
+  <section class="card" id="content-card">
     <div class="admin-head">
       <h2>Content Management</h2>
     </div>
@@ -371,6 +397,7 @@
       </div>
     </div>
   </section>
+  </div>
 
   <!-- Sheet modal for editing text files (decks, html slides) -->
   <div id="file-editor-sheet" class="sheet" hidden>
@@ -390,7 +417,8 @@
 
   <!-- What the box is holding, and the one button that gets a copy of it out.
        Administrators only. -->
-  <section class="card" id="storage-card" hidden>
+  <div class="admin-panel" id="panel-storage" hidden>
+  <section class="card" id="storage-card">
     <h2>Storage</h2>
     <p class="hint" id="storage-note"></p>
     <div class="admin-actions">
@@ -405,6 +433,7 @@
       there, so a real backup is the whole data directory. See <code>deploy/README.md</code>.
     </p>
   </section>
+  </div>
 
   <footer id="admin-version-stamp" class="version-stamp" style="padding-bottom: 24px;"></footer>
 </div>
