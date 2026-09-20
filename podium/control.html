@@ -855,6 +855,13 @@
         you leave this tab or the browser backgrounds it.
       </p>
 
+      <label class="check"><input id="pref-haptics" type="checkbox"> Keep tactile haptic feedback enabled</label>
+      <p class="hint">
+        Provides physical vibration ticks when advancing slides, toggling freeze, blanking, or triggering TAKE,
+        so you know a tap registered without looking down at the tablet. Supported on phones and mobile devices.
+        <span id="pref-haptics-unsupported" style="color: var(--cue);" hidden>(This browser or device does not support vibration.)</span>
+      </p>
+
       <label class="check"><input id="pref-keep-photos" type="checkbox"> Keep photos on the server by default</label>
       <p class="hint">
         Only on a self-hosted Podium that records sessions; it does nothing anywhere else.

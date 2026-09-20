@@ -908,8 +908,8 @@ await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
 ok('and switches to Presentation without disturbing the connection form underneath', await pad.evaluate(() =>
   !document.querySelector('[data-settings-panel="presentation"]').hidden
   && document.querySelector('[data-settings-panel="connection"]').hidden));
-ok('all three presentation options default on',
-  (await pad.isChecked('#pref-poll-url')) && (await pad.isChecked('#pref-blank-on-connect')) && (await pad.isChecked('#pref-keep-awake')));
+ok('all presentation options default on (including haptics)',
+  (await pad.isChecked('#pref-poll-url')) && (await pad.isChecked('#pref-blank-on-connect')) && (await pad.isChecked('#pref-keep-awake')) && (await pad.isChecked('#pref-haptics')));
 
 await pad.uncheck('#pref-keep-awake');
 await pad.waitForFunction(() => window.__wakeLog.includes('release'), null, { timeout: 5000 });
@@ -917,6 +917,11 @@ ok('unchecking Keep awake actually releases the lock, not just the checkbox', tr
 await pad.check('#pref-keep-awake');
 await pad.waitForFunction(() => window.__wakeLog.filter((s) => s === 'request:screen').length >= 2, null, { timeout: 5000 });
 ok('and re-checking it requests a fresh one', true);
+
+await pad.uncheck('#pref-haptics');
+ok('unchecking haptics persists to presentation preferences',
+  await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).haptics === false));
+await pad.check('#pref-haptics');
 
 await pad.uncheck('#pref-poll-url');
 ok('a preference is saved the moment it changes, with no Save button of its own',

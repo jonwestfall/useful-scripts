@@ -32,6 +32,46 @@ let previewRenderer = null;
 let previewKey = null;
 let scrubbing = false;
 
+// Tactile haptic feedback (navigator.vibrate) for touch and navigation (Issue #32)
+let suppressHaptics = false;
+
+function haptic(pattern = 'tick') {
+  if (suppressHaptics) return;
+  if (typeof presentation !== 'undefined' && presentation?.haptics === false) return;
+  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
+  try {
+    if (pattern === 'tick') {
+      navigator.vibrate(15);
+    } else if (pattern === 'double') {
+      navigator.vibrate([10, 30, 10]);
+    } else if (pattern === 'pulse') {
+      navigator.vibrate(30);
+    } else if (pattern === 'alert') {
+      navigator.vibrate([80, 50, 80, 50, 120]);
+    } else if (typeof pattern === 'number' || Array.isArray(pattern)) {
+      navigator.vibrate(pattern);
+    }
+  } catch {
+    // Graceful no-op on security restrictions or unsupported contexts
+  }
+}
+
+function triggerCommandHaptic(cmd) {
+  if (!cmd || typeof cmd !== 'object') return;
+  switch (cmd.op) {
+    case 'nav':
+      haptic('tick');
+      break;
+    case 'freeze':
+      haptic('double');
+      break;
+    case 'blank':
+    case 'take':
+      haptic('pulse');
+      break;
+  }
+}
+
 const send = (cmd) => {
   if (cmd?.op === 'music') {
     applyCommand(state, cmd);
@@ -39,6 +79,7 @@ const send = (cmd) => {
     renderMixer();
   }
   checkPacingAutoStart(cmd);
+  triggerCommandHaptic(cmd);
   return bus?.send({ t: 'cmd', ...cmd });
 };
 
@@ -480,128 +521,133 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
   }
 
   if (plan.autoLaunch?.enabled) {
-    const isFreeze = plan.autoLaunch.initialState === 'freeze';
-    const isBlank = plan.autoLaunch.initialState === 'blank';
+    suppressHaptics = true;
+    try {
+      const isFreeze = plan.autoLaunch.initialState === 'freeze';
+      const isBlank = plan.autoLaunch.initialState === 'blank';
 
-    if (isFreeze) {
-      send({ op: 'freeze', on: true });
-    }
+      if (isFreeze) {
+        send({ op: 'freeze', on: true });
+      }
 
-    const count = LAYOUTS[plan.layout || 'single'] || 1;
-    const paneKeys = ['A', 'B', 'C', 'D'].slice(0, count);
+      const count = LAYOUTS[plan.layout || 'single'] || 1;
+      const paneKeys = ['A', 'B', 'C', 'D'].slice(0, count);
 
-    for (let i = 0; i < paneKeys.length; i++) {
-      const key = paneKeys[i];
-      const p = plan.autoLaunch.panes?.[key];
-      if (!p) continue;
+      for (let i = 0; i < paneKeys.length; i++) {
+        const key = paneKeys[i];
+        const p = plan.autoLaunch.panes?.[key];
+        if (!p) continue;
 
-      if (p.type === 'item' && p.itemId) {
-        const item = plan.items.find((it) => it.id === p.itemId);
-        if (item) {
-          const staged = itemForStage(item);
-          if (staged.src) pushAssetIfHeld(staged.src);
-          if (item.type === 'deck' && item.deckId && deckStore.has(item.deckId)) {
-            bus?.send({ t: 'deck', id: item.deckId, source: deckStore.get(item.deckId) });
+        if (p.type === 'item' && p.itemId) {
+          const item = plan.items.find((it) => it.id === p.itemId);
+          if (item) {
+            const staged = itemForStage(item);
+            if (staged.src) pushAssetIfHeld(staged.src);
+            if (item.type === 'deck' && item.deckId && deckStore.has(item.deckId)) {
+              bus?.send({ t: 'deck', id: item.deckId, source: deckStore.get(item.deckId) });
+              if (i === 0) {
+                try {
+                  const deck = await renderDeckSource(deckStore.get(item.deckId), item.deckId);
+                  deckGeneration++;
+                  deckView = { id: item.deckId, deck };
+                } catch {}
+              }
+            }
             if (i === 0) {
-              try {
-                const deck = await renderDeckSource(deckStore.get(item.deckId), item.deckId);
-                deckGeneration++;
-                deckView = { id: item.deckId, deck };
-              } catch {}
+              send({ op: 'stage', item: staged, where: isFreeze ? 'preview' : 'auto' });
+            } else {
+              send({ op: 'panel', index: i - 1, item: staged });
             }
           }
-          if (i === 0) {
-            send({ op: 'stage', item: staged, where: isFreeze ? 'preview' : 'auto' });
-          } else {
-            send({ op: 'panel', index: i - 1, item: staged });
+        } else if (p.type === 'set' && Array.isArray(p.entries) && p.entries.length) {
+          const entries = [];
+          for (const e of p.entries) {
+            const item = plan.items.find((it) => it.id === e.itemId);
+            if (!item) continue;
+            const staged = itemForStage(item);
+            if (staged.src) pushAssetIfHeld(staged.src);
+            if (item.type === 'deck' && item.deckId && deckStore.has(item.deckId)) {
+              bus?.send({ t: 'deck', id: item.deckId, source: deckStore.get(item.deckId) });
+            }
+            entries.push({ item: staged, seconds: e.seconds || 15 });
           }
-        }
-      } else if (p.type === 'set' && Array.isArray(p.entries) && p.entries.length) {
-        const entries = [];
-        for (const e of p.entries) {
-          const item = plan.items.find((it) => it.id === e.itemId);
-          if (!item) continue;
-          const staged = itemForStage(item);
-          if (staged.src) pushAssetIfHeld(staged.src);
-          if (item.type === 'deck' && item.deckId && deckStore.has(item.deckId)) {
-            bus?.send({ t: 'deck', id: item.deckId, source: deckStore.get(item.deckId) });
-          }
-          entries.push({ item: staged, seconds: e.seconds || 15 });
-        }
-        if (entries.length) {
-          const setItem = {
-            type: 'set',
-            title: p.title || `Pane ${key} set`,
-            mode: p.mode === 'random' ? 'random' : 'sequential',
-            entries,
-          };
-          if (i === 0) {
-            send({ op: 'stage', item: setItem, where: isFreeze ? 'preview' : 'auto' });
-          } else {
-            send({ op: 'panel', index: i - 1, item: setItem });
+          if (entries.length) {
+            const setItem = {
+              type: 'set',
+              title: p.title || `Pane ${key} set`,
+              mode: p.mode === 'random' ? 'random' : 'sequential',
+              entries,
+            };
+            if (i === 0) {
+              send({ op: 'stage', item: setItem, where: isFreeze ? 'preview' : 'auto' });
+            } else {
+              send({ op: 'panel', index: i - 1, item: setItem });
+            }
           }
         }
       }
-    }
 
-    if (isBlank) {
-      send({ op: 'blank', on: true });
-    }
-
-    if (plan.autoLaunch.music?.playlist) {
-      const musicConfig = plan.autoLaunch.music;
-      if (!playlists.length) {
-        try { await loadPlaylists(); } catch {}
+      if (isBlank) {
+        send({ op: 'blank', on: true });
       }
-      let targetName = musicConfig.playlist;
-      let matchedPlaylist = null;
-      let matchedAudioItem = null;
 
-      if (targetName.startsWith('item:')) {
-        const itemId = targetName.slice(5);
-        matchedAudioItem = plan.items.find((it) => it.id === itemId);
-      } else {
-        if (targetName.startsWith('playlist:')) targetName = targetName.slice(9);
-        matchedPlaylist = playlists.find((l) => l.name === targetName) || playlists[Number(targetName)];
-        if (!matchedPlaylist) {
-          matchedAudioItem = plan.items.find((it) => it.type === 'audio' && (it.id === targetName || it.title === targetName));
+      if (plan.autoLaunch.music?.playlist) {
+        const musicConfig = plan.autoLaunch.music;
+        if (!playlists.length) {
+          try { await loadPlaylists(); } catch {}
+        }
+        let targetName = musicConfig.playlist;
+        let matchedPlaylist = null;
+        let matchedAudioItem = null;
+
+        if (targetName.startsWith('item:')) {
+          const itemId = targetName.slice(5);
+          matchedAudioItem = plan.items.find((it) => it.id === itemId);
+        } else {
+          if (targetName.startsWith('playlist:')) targetName = targetName.slice(9);
+          matchedPlaylist = playlists.find((l) => l.name === targetName) || playlists[Number(targetName)];
+          if (!matchedPlaylist) {
+            matchedAudioItem = plan.items.find((it) => it.type === 'audio' && (it.id === targetName || it.title === targetName));
+          }
+        }
+
+        if (matchedPlaylist) {
+          send({
+            op: 'music',
+            action: 'load',
+            tracks: matchedPlaylist.tracks,
+            name: matchedPlaylist.name,
+            play: musicConfig.autoplay !== false,
+          });
+        } else if (matchedAudioItem) {
+          send({
+            op: 'music',
+            action: 'load',
+            tracks: [{ src: matchedAudioItem.src, title: matchedAudioItem.title, artist: matchedAudioItem.artist }],
+            name: matchedAudioItem.title || 'Audio',
+            play: musicConfig.autoplay !== false,
+          });
+        }
+
+        if (typeof musicConfig.volume === 'number') {
+          send({ op: 'music', action: 'volume', value: musicConfig.volume });
         }
       }
 
-      if (matchedPlaylist) {
-        send({
-          op: 'music',
-          action: 'load',
-          tracks: matchedPlaylist.tracks,
-          name: matchedPlaylist.name,
-          play: musicConfig.autoplay !== false,
-        });
-      } else if (matchedAudioItem) {
-        send({
-          op: 'music',
-          action: 'load',
-          tracks: [{ src: matchedAudioItem.src, title: matchedAudioItem.title, artist: matchedAudioItem.artist }],
-          name: matchedAudioItem.title || 'Audio',
-          play: musicConfig.autoplay !== false,
-        });
+      if (plan.autoLaunch.timer?.timerId) {
+        const timer = plan.timers.find((t) => t.id === plan.autoLaunch.timer.timerId);
+        if (timer) {
+          send({
+            op: 'timer',
+            action: 'start',
+            id: timer.id,
+            seconds: timer.mins * 60,
+            label: timer.label || '',
+          });
+        }
       }
-
-      if (typeof musicConfig.volume === 'number') {
-        send({ op: 'music', action: 'volume', value: musicConfig.volume });
-      }
-    }
-
-    if (plan.autoLaunch.timer?.timerId) {
-      const timer = plan.timers.find((t) => t.id === plan.autoLaunch.timer.timerId);
-      if (timer) {
-        send({
-          op: 'timer',
-          action: 'start',
-          id: timer.id,
-          seconds: timer.mins * 60,
-          label: timer.label || '',
-        });
-      }
+    } finally {
+      suppressHaptics = false;
     }
   }
 }
@@ -1857,6 +1903,8 @@ function renderTimers() {
     chip.classList.toggle('is-urgent', timer.running && left > 0 && left <= 30000);
   });
 
+  checkTimerCompletions(timers);
+
   const ms = active ? timerRemaining(active) : 0;
   $('#timer-readout').textContent = fmtTime(Math.ceil(ms / 1000));
   $('#timer-readout').classList.toggle('is-urgent', !!active?.running && ms <= 30000);
@@ -1865,6 +1913,26 @@ function renderTimers() {
   // The first is what every timer item falls back to, so it is the one that
   // cannot go away.
   $('#timer-remove').hidden = timers.length <= 1 || timers[0]?.id === shownId;
+}
+
+const runningTimers = new Set();
+
+function checkTimerCompletions(timers = state?.timers || []) {
+  const now = Date.now();
+  for (const timer of timers) {
+    if (!timer || !timer.id) continue;
+    if (timer.running) {
+      const left = Math.max(0, timer.endsAt - now);
+      if (left > 0) {
+        runningTimers.add(timer.id);
+      } else if (runningTimers.has(timer.id)) {
+        runningTimers.delete(timer.id);
+        haptic('alert');
+      }
+    } else {
+      runningTimers.delete(timer.id);
+    }
+  }
 }
 
 // Only on selection, never on a tick: copying a running clock into the minutes
@@ -4869,6 +4937,7 @@ const PRESENTATION_DEFAULTS = {
   showPollUrl: true,
   blankOnConnect: true,
   keepAwake: true,
+  haptics: true,
   keepPhotos: false,
   lectureDuration: 0,
   pacingAutoStart: true,
@@ -4882,6 +4951,7 @@ function loadPresentation() {
   try {
     const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
     const merged = { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
+    if (merged.haptics === undefined) merged.haptics = true;
     if (!Array.isArray(merged.bottomSlots) || merged.bottomSlots.length !== 8) {
       merged.bottomSlots = [
         merged.bottomSlot1 || 'music',
@@ -5278,6 +5348,11 @@ $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () =
 $('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
 $('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
 $('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(); applyWakeLock(); });
+$('#pref-haptics')?.addEventListener('change', (ev) => {
+  presentation.haptics = ev.target.checked;
+  savePresentation();
+  if (presentation.haptics) haptic('tick');
+});
 // Changing the default takes effect now as well as next time: turning it on in
 // Settings and finding the Photos tab still unticked would read as a bug.
 $('#pref-keep-photos').addEventListener('change', (ev) => {
@@ -5359,6 +5434,10 @@ function showSetup() {
   $('#pref-poll-url').checked = presentation.showPollUrl;
   $('#pref-blank-on-connect').checked = presentation.blankOnConnect;
   $('#pref-keep-awake').checked = presentation.keepAwake;
+  const prefHaptics = $('#pref-haptics');
+  if (prefHaptics) prefHaptics.checked = presentation.haptics !== false;
+  const unsuppHaptics = $('#pref-haptics-unsupported');
+  if (unsuppHaptics) unsuppHaptics.hidden = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
   $('#pref-keep-photos').checked = presentation.keepPhotos;
   const dur = presentation.lectureDuration || 0;
   const stdPresets = ['0', '30', '45', '50', '60', '75', '90'];
