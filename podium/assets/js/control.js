@@ -1483,10 +1483,7 @@ function renderNow() {
   $('#now-type').textContent = TYPES[type]?.label || type || '';
   $('#transport').hidden = !isMedia;
   $('#paging').hidden = !isPaged;
-  // Pause is the thing you reach for mid-sentence, so it also lives on the bar
-  // that is visible from every tab.
-  $('#bar-play').hidden = !isMedia;
-  $('#bar-play').textContent = telemetry.playing ? '⏸' : '▶';
+  renderBottomSlots();
   $('#page-label').textContent = type === 'pdf'
     ? `Page ${item.page || 1}`
     : (type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}` : 'Slide');
@@ -2993,12 +2990,8 @@ function renderMusic() {
   }
   $('#music-length').textContent = now.duration ? fmtTime(now.duration) : '--:--';
 
-  // The bottom bar carries it too, because the moment you want the music
-  // stopped is rarely the moment you are looking at the Music tab.
-  const bar = $('#bar-music');
-  bar.hidden = !music.tracks.length;
-  bar.textContent = music.playing ? '♪ ⏸' : '♪ ▶';
-  bar.classList.toggle('is-on', music.playing);
+  // The bottom bar carries quick slots, updated whenever music state changes.
+  renderBottomSlots();
 
   if (!musicSliding) $('#music-volume').value = String(music.volume);
   const pauseQueueBox = $('#music-pause-queue');
@@ -3626,7 +3619,7 @@ $('#mixer-music').addEventListener('input', (ev) => {
 $('#mixer-music').addEventListener('change', () => { mixerSliding = null; });
 
 $('#play-pause').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
-$('#bar-play').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
+$('#bar-play').addEventListener('click', () => executeSlotAction(presentation.bottomSlot2 || 'play'));
 $('#back10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: -10 }));
 $('#fwd10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: 10 }));
 $('#restart-media').addEventListener('click', () => send({ op: 'media', action: 'restart' }));
@@ -3744,6 +3737,7 @@ function setLaserActive(on) {
   $('#deck-laser').classList.toggle('is-on', on);
   nowMirror.frame.classList.toggle('laser-armed', on);
   if (!on) { laserDot.classList.remove('is-on'); bus?.send({ t: 'laser', on: false }); }
+  renderBottomSlots();
 }
 $('#deck-laser').addEventListener('click', () => setLaserActive(!laserActive));
 $$('.laser-swatch').forEach((b) => b.addEventListener('click', () => {
@@ -4074,7 +4068,7 @@ $('#music-next').addEventListener('click', () => send({ op: 'music', action: 'ne
 $('#music-fade').addEventListener('click', () => send({ op: 'music', action: 'fadeout' }));
 $('#music-shuffle').addEventListener('click', () => send({ op: 'music', action: 'shuffle' }));
 $('#music-clear').addEventListener('click', () => send({ op: 'music', action: 'clear' }));
-$('#bar-music').addEventListener('click', () => send({ op: 'music', action: 'toggle' }));
+$('#bar-music').addEventListener('click', () => executeSlotAction(presentation.bottomSlot1 || 'music'));
 
 const musicScrub = $('#music-scrub');
 if (musicScrub) {
@@ -4324,6 +4318,8 @@ const PRESENTATION_DEFAULTS = {
   keepPhotos: false,
   lectureDuration: 0,
   pacingAutoStart: true,
+  bottomSlot1: 'music',
+  bottomSlot2: 'play',
 };
 function loadPresentation() {
   try {
@@ -4426,6 +4422,134 @@ function renderClockAndPacing() {
 }
 renderClockAndPacing();
 
+function renderSlotButton(btn, slotType) {
+  if (!btn) return;
+  btn.dataset.slotAction = slotType || 'none';
+  btn.disabled = false;
+  btn.classList.remove('is-on');
+
+  switch (slotType) {
+    case 'music': {
+      const music = state.music || { tracks: [], playing: false };
+      btn.hidden = !music.tracks?.length;
+      btn.textContent = music.playing ? '♪ ⏸' : '♪ ▶';
+      btn.title = music.playing ? 'Pause background music' : 'Play background music';
+      btn.classList.toggle('is-on', !!music.playing);
+      break;
+    }
+
+    case 'play': {
+      const item = focusedItem(state);
+      const isMedia = ['video', 'audio', 'youtube'].includes(item?.type);
+      btn.hidden = !isMedia;
+      btn.textContent = telemetry.playing ? '⏸' : '▶';
+      btn.title = telemetry.playing ? 'Pause media' : 'Play media';
+      btn.classList.toggle('is-on', telemetry.playing);
+      break;
+    }
+
+    case 'whiteboard': {
+      btn.hidden = false;
+      const isWb = focusedItem(state)?.type === 'whiteboard';
+      btn.textContent = '✎';
+      btn.title = 'Quick whiteboard';
+      btn.classList.toggle('is-on', isWb);
+      break;
+    }
+
+    case 'laser':
+      btn.hidden = false;
+      btn.textContent = '🔦';
+      btn.title = 'Toggle laser pointer';
+      btn.classList.toggle('is-on', laserActive);
+      break;
+
+    case 'timer': {
+      btn.hidden = false;
+      const timer = currentTimer();
+      btn.textContent = timer?.running ? '⏱ ⏸' : '⏱ ▶';
+      btn.title = timer?.running ? 'Pause timer' : 'Start / resume timer';
+      btn.classList.toggle('is-on', !!timer?.running);
+      break;
+    }
+
+    case 'next': {
+      const item = focusedItem(state);
+      const isPaged = ['pdf', 'slides', 'web', 'deck'].includes(item?.type);
+      btn.hidden = false;
+      btn.disabled = !isPaged;
+      btn.textContent = '→';
+      btn.title = 'Next slide / page';
+      break;
+    }
+
+    case 'prev': {
+      const item = focusedItem(state);
+      const isPaged = ['pdf', 'slides', 'web', 'deck'].includes(item?.type);
+      btn.hidden = false;
+      btn.disabled = !isPaged;
+      btn.textContent = '←';
+      btn.title = 'Previous slide / page';
+      break;
+    }
+
+    case 'none':
+    default:
+      btn.hidden = true;
+      btn.textContent = '';
+      btn.title = '';
+      break;
+  }
+}
+
+function renderBottomSlots() {
+  renderSlotButton($('#bar-music'), presentation.bottomSlot1 || 'music');
+  renderSlotButton($('#bar-play'), presentation.bottomSlot2 || 'play');
+}
+
+function executeSlotAction(type) {
+  switch (type) {
+    case 'music':
+      send({ op: 'music', action: 'toggle' });
+      break;
+
+    case 'play':
+      send({ op: 'media', action: 'toggle' });
+      break;
+
+    case 'whiteboard':
+      stage({ title: 'Whiteboard', type: 'whiteboard', bg: '#f7f5ef' });
+      break;
+
+    case 'laser':
+      setLaserActive(!laserActive);
+      break;
+
+    case 'timer': {
+      const timer = currentTimer();
+      const id = timer?.id;
+      if (timer?.running) {
+        send({ op: 'timer', action: 'pause', id });
+      } else if ((timer?.remainingMs || 0) > 0) {
+        send({ op: 'timer', action: 'resume', id });
+      } else {
+        const mins = Number($('#timer-mins')?.value) || 5;
+        send({ op: 'timer', action: 'start', id, seconds: mins * 60, label: timer?.label || `${mins}m` });
+      }
+      break;
+    }
+
+    case 'next':
+      send({ op: 'nav', dir: 'next' });
+      break;
+
+    case 'prev':
+      send({ op: 'nav', dir: 'prev' });
+      break;
+  }
+}
+renderBottomSlots();
+
 // Keeping this device awake is a live effect, not just a stored preference -
 // toggling it in Settings has to take hold immediately, and a lock has to be
 // re-requested on return from the background the same way display.js already
@@ -4500,6 +4624,18 @@ $('#pref-pacing-autostart').addEventListener('change', (ev) => {
   savePresentation();
 });
 
+$('#pref-bottom-slot-1').addEventListener('change', (ev) => {
+  presentation.bottomSlot1 = ev.target.value;
+  savePresentation();
+  renderBottomSlots();
+});
+
+$('#pref-bottom-slot-2').addEventListener('change', (ev) => {
+  presentation.bottomSlot2 = ev.target.value;
+  savePresentation();
+  renderBottomSlots();
+});
+
 $('#topbar-pacing')?.addEventListener('click', () => {
   if (!pacingState.startedAt) {
     startPacingTimer();
@@ -4532,6 +4668,8 @@ function showSetup() {
     $('#pref-lecture-duration-custom').value = dur;
   }
   $('#pref-pacing-autostart').checked = presentation.pacingAutoStart !== false;
+  $('#pref-bottom-slot-1').value = presentation.bottomSlot1 || 'music';
+  $('#pref-bottom-slot-2').value = presentation.bottomSlot2 || 'play';
   renderKeepPhotos();
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {
