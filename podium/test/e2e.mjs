@@ -3247,12 +3247,14 @@ const alive = (page) => page.$$eval('.layer[data-role="program"]', (n) => n.leng
   const { page, close } = await openScreen(
     JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'stale-not-offline', passphrase: 'x' }),
     (ctx) => ctx.route('**/assets/js/protocol.js', async (route) => {
-      const res = await route.fetch();
-      if (route.request().resourceType() === 'script') {
-        await route.fulfill({ response: res, body: (await res.text()).replace(/export const BUILD = \d+;/, 'export const BUILD = 1;') });
-        return;
-      }
-      await route.fulfill({ response: res });
+      try {
+        const res = await route.fetch();
+        if (route.request().resourceType() === 'script') {
+          await route.fulfill({ response: res, body: (await res.text()).replace(/export const BUILD = \d+;/, 'export const BUILD = 1;') });
+          return;
+        }
+        await route.fulfill({ response: res });
+      } catch (e) { /* ignore disposed */ }
     }),
   );
   await page.waitForSelector('#hud[data-status="online"]', { timeout: 15000 }).catch(() => {});

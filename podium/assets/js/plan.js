@@ -316,7 +316,7 @@ function fieldFor(item, spec) {
 
   if (spec.kind === 'poll-options') {
     const rawOptions = (item[spec.key] || '').split('\n').map((s) => s.trim()).filter(Boolean);
-    const options = rawOptions.length ? rawOptions : [''];
+    const options = rawOptions.length ? rawOptions : ['', ''];
     
     let correctIdx = item.correct ?? -1;
     const container = el('div', { class: 'stack' });
