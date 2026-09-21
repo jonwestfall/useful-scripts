@@ -35,6 +35,12 @@ const CATEGORIES = {
     maxBytes: 20 * 1024 * 1024,
     isText: false,
   },
+  pdfs: {
+    dir: 'pdfs',
+    extensions: ['.pdf'],
+    maxBytes: 25 * 1024 * 1024,
+    isText: false,
+  },
 };
 
 function resolveRoots(ctx) {

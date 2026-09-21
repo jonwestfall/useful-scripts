@@ -70,6 +70,23 @@ chk('pdf paging', s.program.page === 3);
 applyCommand(s, {op:'nav', dir:'prev'});
 chk('pdf paging back', s.program.page === 2);
 
+// Zooming into a PDF page (Issue #82)
+chk('a freshly staged pdf starts at zoom 1, centered', s.program.zoom === 1 && s.program.panX === 0.5 && s.program.panY === 0.5);
+applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:0.5, panY:0.5});
+chk('zoom sets the level', s.program.zoom === 2);
+applyCommand(s, {op:'zoom', action:'set', zoom:10});
+chk('zoom is capped at 4', s.program.zoom === 4);
+applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:0, panY:0});
+chk('pan is clamped so the view never pans off the page (half the window is 1/(2*2) = 0.25 from either edge)',
+  s.program.panX === 0.25 && s.program.panY === 0.25);
+applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:1, panY:1});
+chk('clamped the other way too', s.program.panX === 0.75 && s.program.panY === 0.75);
+applyCommand(s, {op:'zoom', action:'reset'});
+chk('reset returns to zoom 1, centered', s.program.zoom === 1 && s.program.panX === 0.5 && s.program.panY === 0.5);
+applyCommand(s, {op:'stage', item:{type:'text', body:'not a pdf'}});
+const zoomedNonPdf = applyCommand(s, {op:'zoom', action:'set', zoom:2});
+chk('zoom does nothing to a non-pdf item', zoomedNonPdf === false);
+
 applyCommand(s, {op:'timer', action:'start', seconds:300, label:'Group work'});
 chk('timer runs', s.timers[0].running && timerRemaining(s.timers[0]) > 299000);
 applyCommand(s, {op:'timer', action:'pause'});

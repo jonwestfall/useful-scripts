@@ -8,7 +8,7 @@ import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
   inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, COMMIT, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
-import { createRenderer, itemTitle, TYPES } from './renderers.js';
+import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
 import { createZip } from './zip.js';
@@ -1955,6 +1955,16 @@ function renderNow() {
     ? `Page ${item.page || 1}`
     : (type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}` : 'Slide');
 
+  $('#pdf-zoom').hidden = type !== 'pdf';
+  $('#pdf-pan').hidden = type !== 'pdf';
+  if (type === 'pdf') {
+    const pdfZoom = item.zoom || 1;
+    $('#pdf-zoom-level').textContent = `${pdfZoom.toFixed(pdfZoom % 1 ? 1 : 0)}×`;
+    $('#pdf-zoom-out').disabled = pdfZoom <= 1;
+    $('#pdf-zoom-reset').disabled = pdfZoom <= 1;
+    $$('.pan-btn', $('#pdf-pan')).forEach((b) => { b.disabled = pdfZoom <= 1; });
+  }
+
   if (isMedia) {
     const t = currentTime();
     const d = telemetry.duration || 0;
@@ -2202,6 +2212,10 @@ serverInfo().then((info) => {
   allowPollNames = !!info.allowPollNames;
   renderKeepPhotos();
   renderPollsPanel();
+  // Unlike a deck or a photo, a PDF cannot be shrunk to fit one relay
+  // message - so this button only exists where there is a library to upload
+  // it to, straight through the same endpoint admin.html's own upload does.
+  $('#pdf-upload-row').hidden = !info.features.includes('library');
 });
 
 const recordingNow = () => serverKeepsSessions && !!state.lectureId;
@@ -2906,6 +2920,13 @@ function contentAspectFor(item) {
     const idx = Math.min(deckView.deck.aspects.length - 1, Math.max(0, item.slide || 0));
     return deckView.deck.aspects[idx] || 16 / 9;
   }
+  // Keyed by src rather than read off whichever renderer is mounted right
+  // now (see pdfAspectFor's own comment) - correct even when the focused
+  // panel is not the one the Now mirror is showing.
+  if (item?.type === 'pdf' && item.src) {
+    const aspect = pdfAspectFor(item.src);
+    if (aspect) return aspect;
+  }
   return state.stageAspect || 16 / 9;
 }
 
@@ -3052,6 +3073,7 @@ function pan(dx, dy) {
 // box; zoom is purely a visual transform on top and never touches this, so
 // the fraction-based drawing math in redrawPad()/padPoint() is the same at
 // any zoom level.
+let pendingPdfAspectRetry = null;
 function sizePad() {
   fitFrame();
   clampPan();
@@ -3062,6 +3084,20 @@ function sizePad() {
   padCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
   redrawPad();
   updatePadMirror();
+  // A PDF's real aspect ratio (pdfAspectFor) is not known until pdf.js
+  // finishes loading the page, which is well after the first sizePad() a
+  // freshly-staged PDF gets - fitFrame() above used the room's stage shape
+  // as a placeholder (see contentAspectFor). One retry, once it has almost
+  // certainly resolved, corrects the pad to the page's actual shape instead
+  // of leaving it letterboxed wrong until some unrelated redraw happens to
+  // call sizePad() again.
+  const item = focusedItem(state);
+  if (item?.type === 'pdf' && item.src && !pdfAspectFor(item.src) && !pendingPdfAspectRetry) {
+    pendingPdfAspectRetry = setTimeout(() => {
+      pendingPdfAspectRetry = null;
+      if (!$('[data-panel="ink"]')?.hidden) sizePad();
+    }, 400);
+  }
 }
 
 // A read-only mirror of whatever ink is currently drawing on top of, filling
@@ -4885,8 +4921,66 @@ $('#deck-file').addEventListener('change', async (ev) => {
   }
 });
 
+// Straight to the library, the same endpoint admin.html's own upload uses -
+// see #pdf-upload-row in control.html for why this one does not try to send
+// the file itself peer to peer the way a deck or a photo does.
+$('#pdf-upload').addEventListener('change', async (ev) => {
+  const file = ev.target.files?.[0];
+  ev.target.value = '';
+  if (!file) return;
+  const note = $('#pdf-upload-note');
+  note.textContent = `Uploading ${file.name}…`;
+  try {
+    const params = new URLSearchParams({ filename: file.name, title: file.name.replace(/\.pdf$/i, ''), course: '', group: '' });
+    const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not work');
+    note.textContent = `Added “${body.item.title}” to the library.`;
+    await loadLibrary();
+    stage(body.item);
+  } catch (err) {
+    note.textContent = `That did not upload: ${err.message}`;
+  }
+});
+
 $('#prev-page').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
 $('#next-page').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
+
+// Zooming into a PDF page on the projector (Issue #82) - distinct from the
+// Ink tab's own pad zoom, which only changes what you see while drawing and
+// never touches the projector. This does: the display renders the cropped,
+// zoomed region itself (see renderPdf's transform in renderers.js).
+// protocol.js's own 'zoom' case does the actual clamping (both of zoom to
+// [1,4] and pan to "still on the page"), so a press here can send whatever
+// the arithmetic works out to without duplicating that logic.
+const PDF_ZOOM_STEP = 1.6;
+function pdfZoomStep(dir) {
+  const item = focusedItem(state);
+  if (item?.type !== 'pdf') return;
+  const zoom = dir > 0 ? (item.zoom || 1) * PDF_ZOOM_STEP : (item.zoom || 1) / PDF_ZOOM_STEP;
+  send({ op: 'zoom', action: 'set', zoom, panX: item.panX ?? 0.5, panY: item.panY ?? 0.5 });
+}
+$('#pdf-zoom-in').addEventListener('click', () => pdfZoomStep(1));
+$('#pdf-zoom-out').addEventListener('click', () => pdfZoomStep(-1));
+$('#pdf-zoom-reset').addEventListener('click', () => send({ op: 'zoom', action: 'reset' }));
+
+function pdfPan(dx, dy) {
+  const item = focusedItem(state);
+  if (item?.type !== 'pdf' || (item.zoom || 1) <= 1) return;
+  // Half the visible window's share of the page at this zoom, so a press
+  // moves a consistent fraction of "what you can currently see" rather than
+  // a fixed amount that would feel huge zoomed in and tiny zoomed out.
+  const step = 0.6 / (item.zoom || 1);
+  send({
+    op: 'zoom', action: 'set', zoom: item.zoom,
+    panX: (item.panX ?? 0.5) + dx * step,
+    panY: (item.panY ?? 0.5) + dy * step,
+  });
+}
+$('#pdf-pan-left').addEventListener('click', () => pdfPan(-1, 0));
+$('#pdf-pan-right').addEventListener('click', () => pdfPan(1, 0));
+$('#pdf-pan-up').addEventListener('click', () => pdfPan(0, -1));
+$('#pdf-pan-down').addEventListener('click', () => pdfPan(0, 1));
 
 $('#lib-filter').addEventListener('input', renderLibrary);
 $('#url-form').addEventListener('submit', (ev) => {

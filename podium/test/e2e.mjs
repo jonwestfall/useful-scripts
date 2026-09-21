@@ -1241,7 +1241,7 @@ await screen.waitForFunction(() => document.querySelector('#ink').classList.cont
 ok('returning to that slide restores its own ink', true);
 
 await pad.click('.tab[data-tab="ink"]');
-await pad.waitForTimeout(200);
+await pad.waitForTimeout(700);
 await pad.click('#ink-clear');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 ok('Clear wipes only the surface currently on screen', true);
@@ -2115,7 +2115,7 @@ await screen.waitForFunction(() => !document.querySelector('#ink').classList.con
 
 await pad.click('#ink-zoom-in');
 await pad.click('#ink-zoom-in');
-await pad.waitForTimeout(200);
+await pad.waitForTimeout(700);
 const zoomedTransform = await pad.$eval('#pad-frame', (n) => n.style.transform);
 ok(`zooming in actually scales the pad (${zoomedTransform})`, /scale\(([2-9]|\d\d)/.test(zoomedTransform) || /scale\(2\.\d/.test(zoomedTransform));
 ok('pan buttons become available once zoomed', await pad.$eval('#pan-left', (b) => !b.disabled));
@@ -2128,7 +2128,7 @@ await screen.waitForFunction(() => document.querySelector('#ink').classList.cont
 ok('the same relative point still lands in the same place once zoomed', await pixelAt(0.5, 0.5));
 
 await pad.click('#ink-zoom-reset');
-await pad.waitForTimeout(200);
+await pad.waitForTimeout(700);
 ok('reset zoom returns to 1x and disables panning again', await pad.$eval('#pan-left', (b) => b.disabled));
 await ctx.close();
 }
@@ -5057,12 +5057,62 @@ await pad.click('.tile:has(.tile-title:text-is("Sample Handout"))');
 await screen.waitForSelector('.layer[data-role="program"] .r-pdf-canvas', { timeout: 10000 });
 await screen.waitForFunction(() => {
   const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
-  return canvas && canvas.width > 0 && canvas.height > 0;
+  // A bare <canvas> defaults to 300x150 in every browser - width/height > 0
+  // is true of that default too, so it proves nothing about whether pdf.js
+  // actually finished painting a page into it yet.
+  return canvas && canvas.width > 0 && canvas.height > 0 && canvas.width !== 300;
 }, null, { timeout: 10000 });
 ok('PDF renders to client-side <canvas> instead of iframe',
   await screen.evaluate(() => document.querySelector('.layer[data-role="program"] .r-pdf iframe') === null));
 
 ok('PDF panel is snapshotable for session exports and photos', true);
+
+// Issue #82: ink anchored to a PDF has to land at the same relative spot on
+// both ends, which needs both sides to agree on the page's own aspect ratio
+// - previously the display fell back to "no letterbox" (renderPdf had no
+// contentAspect()) and the controller separately fell back to the room's
+// stage shape (contentAspectFor had no 'pdf' case), two different wrong
+// answers that did not even agree with each other.
+const pageAspect = await screen.evaluate(() => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  return canvas.width / canvas.height;
+});
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(700);
+const padAspect = await pad.evaluate(() => {
+  const r = document.querySelector('#pad-frame').getBoundingClientRect();
+  return r.width / r.height;
+});
+ok(`the controller's ink pad is letterboxed to the PDF's actual page shape, not a guess (display ${pageAspect.toFixed(3)}, pad ${padAspect.toFixed(3)})`,
+  Math.abs(pageAspect - padAspect) < 0.05);
+
+// Zoom/pan navigation (Issue #82) - the display actually re-renders a
+// cropped, zoomed view, not just a state flag nobody draws.
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForSelector('#pdf-zoom:not([hidden])', { timeout: 5000 });
+ok('zoom starts at 1x with pan disabled', await pad.evaluate(() =>
+  document.querySelector('#pdf-zoom-level').textContent === '1×'
+  && document.querySelector('#pdf-pan-left').disabled === true));
+
+const pixelsAt1x = await screen.evaluate(() => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  return Array.from(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data);
+});
+await pad.click('#pdf-zoom-in');
+await pad.waitForFunction(() => document.querySelector('#pdf-zoom-level').textContent === '1.6×', null, { timeout: 5000 });
+ok('zooming in updates the level shown on the controller', true);
+await screen.waitForFunction((before) => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  const now = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  return now.length === before.length && !now.every((v, i) => v === before[i]);
+}, pixelsAt1x, { timeout: 8000 });
+ok('and the display actually re-renders a different (cropped, zoomed-in) image, not just a flag', true);
+ok('pan is enabled once zoomed in', await pad.evaluate(() => document.querySelector('#pdf-pan-left').disabled === false));
+
+await pad.click('#pdf-zoom-reset');
+await pad.waitForFunction(() => document.querySelector('#pdf-zoom-level').textContent === '1×', null, { timeout: 5000 });
+ok('reset zoom returns to 1x and disables pan again',
+  await pad.evaluate(() => document.querySelector('#pdf-pan-left').disabled === true));
 
 await ctx.close();
 }
@@ -5406,6 +5456,23 @@ await desk.click('#up-go');
 await desk.waitForFunction(() => document.querySelector('#up-note')?.classList.contains('is-bad'), null, { timeout: 8000 });
 ok(`an html upload is refused with a reason ("${(await desk.textContent('#up-note')).trim()}")`,
   /does not take html/.test(await desk.textContent('#up-note')));
+
+// Issue #82: a PDF uploaded straight from the controller's Library tab -
+// unlike a deck or a photo it cannot be sent peer to peer, so this button
+// only exists here (server-backed) and goes through the same upload route
+// admin.html's own does.
+await pad.click('.tab[data-tab="library"]');
+await pad.waitForSelector('#pdf-upload-row:not([hidden])', { timeout: 5000 });
+await pad.setInputFiles('#pdf-upload', path.join(ROOT, 'content', 'sample.pdf'));
+await pad.waitForFunction(() => /Added/.test(document.querySelector('#pdf-upload-note')?.textContent || ''), null, { timeout: 8000 });
+ok(`uploading a PDF from the controller adds it to the library ("${(await pad.textContent('#pdf-upload-note')).trim()}")`,
+  /Added/.test(await pad.textContent('#pdf-upload-note')));
+const uploadedPdfInLibrary = await pad.evaluate(async () => {
+  const res = await fetch('/api/library', { credentials: 'same-origin' });
+  const { items } = await res.json();
+  return items.some((i) => i.type === 'pdf' && i.title === 'sample');
+});
+ok('and it is really on the server, filed as a pdf item', uploadedPdfInLibrary);
 
 // Now the controller, which has to merge it in beside the shipped manifest.
 await pad.reload();
@@ -5845,8 +5912,10 @@ await desk.fill(passField, before);
 await desk.click('#tab-storage');
 await desk.waitForSelector('#panel-storage:not([hidden])');
 
+// 2 files: the deck uploaded earlier in this section, plus the PDF uploaded
+// from the controller's own Library tab (Issue #82).
 ok(`the page says what the box is holding (${(await desk.textContent('#storage-note')).slice(0, 60)}…)`,
-  /Library: 1 file/.test(await desk.textContent('#storage-note'))
+  /Library: 2 files/.test(await desk.textContent('#storage-note'))
   && /database:/.test(await desk.textContent('#storage-note')));
 
 const backup = desk.waitForEvent('download', { timeout: 30000 });
