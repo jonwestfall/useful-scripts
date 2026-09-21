@@ -141,6 +141,8 @@ export const PLAN_TYPES = {
       { key: 'question', label: 'Question', kind: 'textarea', placeholder: 'Which bias is this?' },
       { key: 'options', label: 'Options', kind: 'poll-options',
         hint: 'Ignored for a short-answer poll.' },
+      { key: 'askName', label: 'Ask for participant name', kind: 'check', def: false },
+      { key: 'namePrompt', label: 'Name prompt', kind: 'text', def: 'Name:', placeholder: 'Name:' },
       { key: 'correct', kind: 'number', def: -1, hidden: true },
     ],
   },

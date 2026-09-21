@@ -707,6 +707,16 @@ function renderPoll(item, opts) {
         results.replaceChildren(cloud);
         return;
       }
+      if (it.showNames && Array.isArray(it.responses) && it.responses.length) {
+        const visibleResponses = it.responses.filter((_, i) => !hidden.has(i));
+        results.replaceChildren(...(visibleResponses.length
+          ? visibleResponses.map((r) => el('div', { class: 'r-poll-answer' },
+              r.name ? el('span', { class: 'r-poll-author', style: 'color: var(--accent); font-weight: 600; margin-right: 8px;' }, `${r.name}: `) : '',
+              el('span', {}, r.answer)
+            ))
+          : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No answers yet')]));
+        return;
+      }
       results.replaceChildren(...(answers.length
         ? answers.map((a) => el('div', { class: 'r-poll-answer' }, a))
         : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No answers yet')]));
@@ -716,13 +726,17 @@ function renderPoll(item, opts) {
       const projected = (it.qnaFeed || []).find(q => q.projected);
       
       if (projected) {
-        results.replaceChildren(el('div', { class: 'r-poll-qna-projected', style: 'font-size: clamp(24px, 5cqw, 72px); font-weight: 600; text-align: center; margin: 4cqh 0; padding: 4cqw; background: var(--panel); border-radius: 2cqh;' }, projected.text));
+        results.replaceChildren(el('div', { class: 'r-poll-qna-projected', style: 'font-size: clamp(24px, 5cqw, 72px); font-weight: 600; text-align: center; margin: 4cqh 0; padding: 4cqw; background: var(--panel); border-radius: 2cqh;' },
+          projected.text,
+          (it.showNames && projected.authorName) ? el('div', { style: 'font-size: clamp(14px, 2.5cqw, 28px); color: var(--accent); margin-top: 12px; font-weight: 400;' }, `— ${projected.authorName}`) : ''
+        ));
       } else {
         const topQuestions = qnaFeed.sort((a, b) => (b.upvotes?.length || 0) - (a.upvotes?.length || 0)).slice(0, 4);
         results.replaceChildren(...(topQuestions.length
           ? topQuestions.map((q) => el('div', { class: 'r-poll-answer' }, 
               el('span', { class: 'mono', style: 'color: var(--dim); margin-right: 12px;' }, `▲ ${q.upvotes?.length || 0}`),
-              q.text
+              q.text,
+              (it.showNames && q.authorName) ? el('span', { style: 'color: var(--accent); margin-left: 8px; font-size: 0.9em;' }, `(${q.authorName})`) : ''
             ))
           : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No questions yet')]));
       }
@@ -730,20 +744,27 @@ function renderPoll(item, opts) {
     }
     const counts = it.counts || [];
     const max = Math.max(1, ...counts, 0);
-      results.replaceChildren(...(it.options || []).map((opt, i) => {
-        const count = counts[i] || 0;
-        const fill = el('div', { class: 'r-poll-bar-fill' });
-        fill.style.width = `${Math.round((count / max) * 100)}%`;
-        const isCorrect = it.revealed && it.correct === i;
-        const letter = String.fromCharCode(65 + i);
-        return el('div', { class: 'r-poll-bar-row' },
-          el('div', { class: 'r-poll-bar-label' }, 
-            el('span', {}, isCorrect ? el('strong', { class: 'ok-text' }, `[${letter}] `) : '', opt), 
-            el('span', { class: 'mono' }, String(count))
-          ),
-          el('div', { class: `r-poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill)
-        );
-      }));
+    results.replaceChildren(...(it.options || []).map((opt, i) => {
+      const count = counts[i] || 0;
+      const fill = el('div', { class: 'r-poll-bar-fill' });
+      fill.style.width = `${Math.round((count / max) * 100)}%`;
+      const isCorrect = it.revealed && it.correct === i;
+      const letter = String.fromCharCode(65 + i);
+      const votersForThisOption = (it.showNames && Array.isArray(it.responses))
+        ? it.responses.filter((r) => r.answer === i && r.name).map((r) => r.name)
+        : [];
+      const namesList = votersForThisOption.length
+        ? el('div', { class: 'r-poll-voters-list', style: 'font-size: 13px; color: var(--dim); margin-top: 3px;' }, votersForThisOption.join(', '))
+        : '';
+      return el('div', { class: 'r-poll-bar-row' },
+        el('div', { class: 'r-poll-bar-label' }, 
+          el('span', {}, isCorrect ? el('strong', { class: 'ok-text' }, `[${letter}] `) : '', opt), 
+          el('span', { class: 'mono' }, String(count))
+        ),
+        el('div', { class: `r-poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill),
+        namesList
+      );
+    }));
   };
 
   let tickTimer = null;

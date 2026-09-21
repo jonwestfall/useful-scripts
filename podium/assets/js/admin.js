@@ -208,13 +208,33 @@ const csvText = (rows) =>
 // saved in the lecture itself should open as the same spreadsheet.
 function pollCsvRows(poll) {
   const rows = [['question', poll.question]];
+  const nameLabel = poll.namePrompt || 'Name';
+  const hasNamedResponses = Array.isArray(poll.responses) && poll.responses.some((r) => r.name);
+
   if (poll.kind === 'text') {
     const hidden = new Set(poll.hiddenAnswers || []);
-    rows.push(['answer', 'shown to room']);
-    (poll.answers || []).forEach((answer, i) => rows.push([answer, hidden.has(i) ? 'no' : 'yes']));
+    if (hasNamedResponses) {
+      rows.push([nameLabel, 'answer', 'shown to room']);
+      poll.responses.forEach((resp, i) => {
+        rows.push([resp.name || '(Anonymous)', resp.answer, hidden.has(i) ? 'no' : 'yes']);
+      });
+    } else {
+      rows.push(['answer', 'shown to room']);
+      (poll.answers || []).forEach((answer, i) => rows.push([answer, hidden.has(i) ? 'no' : 'yes']));
+    }
   } else {
     rows.push(['option', 'votes']);
     (poll.options || []).forEach((option, i) => rows.push([option, String(poll.counts?.[i] || 0)]));
+    if (hasNamedResponses) {
+      rows.push([]);
+      rows.push([nameLabel, 'choice', 'option']);
+      poll.responses.forEach((resp) => {
+        const optIdx = typeof resp.answer === 'number' ? resp.answer : -1;
+        const optText = optIdx >= 0 && poll.options?.[optIdx] ? poll.options[optIdx] : String(resp.answer ?? '');
+        const letter = optIdx >= 0 ? String.fromCharCode(65 + optIdx) : '';
+        rows.push([resp.name || '(Anonymous)', letter, optText]);
+      });
+    }
   }
   return rows;
 }
@@ -716,6 +736,41 @@ async function refreshPeople() {
   if (!res.ok) return;
   people = (await res.json()).people || [];
   renderPeople();
+}
+
+async function refreshSystemSettings() {
+  const check = $('#allow-poll-names-check');
+  if (!check) return;
+  try {
+    const res = await fetch('/api/system/settings', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const body = await res.json();
+    check.checked = !!body.allowPollNames;
+  } catch { /* ignore */ }
+}
+
+async function updateAllowPollNames(ev) {
+  const checked = ev.target.checked;
+  const status = $('#system-settings-status');
+  if (status) status.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/system/settings', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ allowPollNames: checked }),
+    });
+    if (res.ok) {
+      if (status) {
+        status.textContent = 'Saved — controllers can now ask for participant names.';
+        setTimeout(() => { if (status.textContent.startsWith('Saved')) status.textContent = ''; }, 4000);
+      }
+    } else {
+      if (status) status.textContent = 'Could not save setting.';
+    }
+  } catch {
+    if (status) status.textContent = 'Could not reach server.';
+  }
 }
 
 // --- courses, membership, and the room each one connects to -------------------
@@ -1927,7 +1982,8 @@ if (!info.features.includes('library')) {
       $('#people-search').addEventListener('input', renderPeople);
       $('#new-user-go').addEventListener('click', addPerson);
       $('#backup-go').addEventListener('click', downloadBackup);
-      await Promise.all([refreshPeople(), refreshStorage()]);
+      $('#allow-poll-names-check')?.addEventListener('change', updateAllowPollNames);
+      await Promise.all([refreshPeople(), refreshStorage(), refreshSystemSettings()]);
     }
     await refreshCourses();
   }

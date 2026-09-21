@@ -2196,9 +2196,12 @@ function addToPollHistory(entry) {
 // silent - a file that fails to send is still in the strip, still exportable,
 // and still on screen, and none of it is worth interrupting a class about.
 let serverKeepsSessions = false;
+let allowPollNames = false;
 serverInfo().then((info) => {
   serverKeepsSessions = info.features.includes('sessions');
+  allowPollNames = !!info.allowPollNames;
   renderKeepPhotos();
+  renderPollsPanel();
 });
 
 const recordingNow = () => serverKeepsSessions && !!state.lectureId;
@@ -2333,7 +2336,7 @@ async function pollApi(suffix, opts = {}) {
 }
 
 function newPollDraft() {
-  pollDraft = { kind: 'choice', question: '', options: ['', ''], correct: -1 };
+  pollDraft = { kind: 'choice', question: '', options: ['', ''], correct: -1, askName: false, namePrompt: 'Name:' };
   pollError = '';
   pollOptionsDrawn = -1;
 }
@@ -2349,6 +2352,8 @@ function openPollDraftFromPlan(item) {
     question: item.question || '',
     options: options.length ? options : ['', ''],
     correct: Number.isFinite(Number(item.correct)) ? Number(item.correct) : -1,
+    askName: !!item.askName,
+    namePrompt: item.namePrompt || 'Name:',
   };
   pollError = '';
   pollOptionsDrawn = -1;
@@ -2376,6 +2381,8 @@ async function startPoll() {
     renderPollsPanel();
     return;
   }
+  const askName = !!pollDraft.askName;
+  const namePrompt = String(pollDraft.namePrompt || 'Name:').slice(0, 50);
   pollBusy = true;
   pollError = '';
   renderPollsPanel();
@@ -2384,11 +2391,12 @@ async function startPoll() {
     await pollApi(`/${created.code}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}` },
-      body: JSON.stringify({ kind: pollDraft.kind, question, options, correct, open: true }),
+      body: JSON.stringify({ kind: pollDraft.kind, question, options, correct, askName, namePrompt, open: true }),
     });
     stage({
       type: 'poll', title: 'Poll', pollId: created.code, token: created.token,
-      kind: pollDraft.kind, question, options, correct, open: true, revealed: false,
+      kind: pollDraft.kind, question, options, correct, askName, namePrompt, showNames: false,
+      open: true, revealed: false,
       showUrl: presentation.showPollUrl,
     });
     pollDraft = null;
@@ -2410,7 +2418,10 @@ async function setPollOpen(open) {
     await pollApi(`/${item.pollId}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${item.token}` },
-      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, correct: item.correct, open }),
+      body: JSON.stringify({
+        kind: item.kind, question: item.question, options: item.options, correct: item.correct,
+        askName: item.askName, namePrompt: item.namePrompt, open,
+      }),
     });
   } catch (err) {
     pollActionError = err.message || 'Could not reach the poll.';
@@ -2431,7 +2442,10 @@ async function setPollClosesAt(seconds) {
     await pollApi(`/${item.pollId}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${item.token}` },
-      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, correct: item.correct, open: true, closesAt }),
+      body: JSON.stringify({
+        kind: item.kind, question: item.question, options: item.options, correct: item.correct,
+        askName: item.askName, namePrompt: item.namePrompt, open: true, closesAt,
+      }),
     });
   } catch (err) {
     pollActionError = err.message || 'Could not reach the poll.';
@@ -2454,13 +2468,33 @@ function togglePollReveal() {
 // (archived, token-less) poll has left at all. One code path for both.
 function pollResultRows(item) {
   const rows = [['question', item.question]];
+  const nameLabel = item.namePrompt || 'Name';
+  const hasNamedResponses = Array.isArray(item.responses) && item.responses.some((r) => r.name);
+
   if (item.kind === 'text') {
     const hidden = new Set(item.hiddenAnswers || []);
-    rows.push(['answer', 'shown to room']);
-    (item.answers || []).forEach((a, i) => rows.push([a, hidden.has(i) ? 'no' : 'yes']));
+    if (hasNamedResponses) {
+      rows.push([nameLabel, 'answer', 'shown to room']);
+      item.responses.forEach((resp, i) => {
+        rows.push([resp.name || '(Anonymous)', resp.answer, hidden.has(i) ? 'no' : 'yes']);
+      });
+    } else {
+      rows.push(['answer', 'shown to room']);
+      (item.answers || []).forEach((a, i) => rows.push([a, hidden.has(i) ? 'no' : 'yes']));
+    }
   } else {
     rows.push(['option', 'votes']);
     (item.options || []).forEach((opt, i) => rows.push([opt, String(item.counts?.[i] || 0)]));
+    if (hasNamedResponses) {
+      rows.push([]);
+      rows.push([nameLabel, 'choice', 'option']);
+      item.responses.forEach((resp) => {
+        const optIdx = typeof resp.answer === 'number' ? resp.answer : -1;
+        const optText = optIdx >= 0 && item.options?.[optIdx] ? item.options[optIdx] : String(resp.answer ?? '');
+        const letter = optIdx >= 0 ? String.fromCharCode(65 + optIdx) : '';
+        rows.push([resp.name || '(Anonymous)', letter, optText]);
+      });
+    }
   }
   return rows;
 }
@@ -2493,6 +2527,7 @@ async function endPoll() {
   if (item.token) {
     addToPollHistory({
       pollId: item.pollId, kind: item.kind, question: item.question, options: item.options, correct: item.correct,
+      askName: item.askName, namePrompt: item.namePrompt, responses: item.responses || [],
       counts: item.counts || [], answers: item.answers || [], voters: item.voters || 0,
       hiddenAnswers: item.hiddenAnswers || [], endedAt: Date.now(),
       // Which lecture this poll belongs to, so a later export - in a
@@ -2528,7 +2563,14 @@ async function endPoll() {
 // history list itself disables them then instead, to keep a tap from
 // looking like a dead click.
 function reopenFromHistory(row) {
-  pollDraft = { kind: row.kind, question: row.question, options: row.kind === 'choice' ? [...row.options] : ['', ''], correct: Number.isFinite(Number(row.correct)) ? Number(row.correct) : -1 };
+  pollDraft = {
+    kind: row.kind,
+    question: row.question,
+    options: row.kind === 'choice' ? [...row.options] : ['', ''],
+    correct: Number.isFinite(Number(row.correct)) ? Number(row.correct) : -1,
+    askName: !!row.askName,
+    namePrompt: row.namePrompt || 'Name:',
+  };
   pollError = '';
   pollOptionsDrawn = -1;
   renderPollsPanel();
@@ -2538,7 +2580,8 @@ function redisplayFromHistory(row) {
   stage({
     type: 'poll', title: 'Poll', pollId: row.pollId, token: '',
     kind: row.kind, question: row.question, options: row.options,
-    open: false, revealed: true, voters: row.voters, counts: row.counts, answers: row.answers,
+    askName: row.askName, namePrompt: row.namePrompt, responses: row.responses || [],
+    open: false, revealed: true, showNames: false, voters: row.voters, counts: row.counts, answers: row.answers,
     hiddenAnswers: row.hiddenAnswers || [],
   });
 }
@@ -2553,6 +2596,17 @@ function renderPollBuilder() {
   if (!pollDraft) return;
   $('#poll-kind').value = pollDraft.kind;
   if (document.activeElement !== $('#poll-question')) $('#poll-question').value = pollDraft.question;
+  const nameRow = $('#poll-name-collection-row');
+  if (nameRow) {
+    nameRow.hidden = !allowPollNames;
+    const askNameCheck = $('#poll-ask-name');
+    if (askNameCheck) askNameCheck.checked = !!pollDraft.askName;
+    const namePromptInput = $('#poll-name-prompt');
+    if (namePromptInput) {
+      namePromptInput.hidden = !pollDraft.askName;
+      if (document.activeElement !== namePromptInput) namePromptInput.value = pollDraft.namePrompt || 'Name:';
+    }
+  }
   const showOptions = pollDraft.kind === 'choice';
   $('#poll-options').hidden = !showOptions;
   $('#poll-option-add').closest('.inline').hidden = !showOptions;
@@ -2628,6 +2682,12 @@ function renderRunningPoll(item) {
     if (pollTickTimer) { clearInterval(pollTickTimer); pollTickTimer = null; }
   }
   $('#poll-toggle-reveal').textContent = item.revealed ? 'Hide from room' : 'Reveal to room';
+  const namesBtn = $('#poll-toggle-names');
+  if (namesBtn) {
+    const hasNames = item.askName || (Array.isArray(item.responses) && item.responses.some((r) => r.name));
+    namesBtn.hidden = !hasNames;
+    namesBtn.textContent = item.showNames ? 'Hide names from room' : 'Show names to room';
+  }
   if (item.kind === 'text') {
     $('#poll-toggle-view').hidden = false;
     $('#poll-toggle-view').textContent = item.viewMode === 'cloud' ? 'List view' : 'Word cloud';
@@ -2637,21 +2697,26 @@ function renderRunningPoll(item) {
   $('#poll-action-error').hidden = !pollActionError;
   $('#poll-action-error').textContent = pollActionError;
 
-  const signature = `${item.kind}:${JSON.stringify(item.counts)}:${JSON.stringify(item.answers)}:${JSON.stringify(item.hiddenAnswers)}:${JSON.stringify(item.qnaFeed)}`;
+  const signature = `${item.kind}:${item.showNames}:${JSON.stringify(item.counts)}:${JSON.stringify(item.answers)}:${JSON.stringify(item.responses)}:${JSON.stringify(item.hiddenAnswers)}:${JSON.stringify(item.qnaFeed)}`;
   if (signature !== pollRunningDrawn) {
     pollRunningDrawn = signature;
     const results = $('#poll-running-results');
     if (item.kind === 'text') {
       const answers = item.answers || [];
       const hidden = new Set(item.hiddenAnswers || []);
+      const responses = item.responses || [];
       results.replaceChildren(...(answers.length
-        ? answers.map((a, i) => el('div', { class: `poll-answer-row${hidden.has(i) ? ' is-hidden' : ''}` },
-            el('span', { class: 'grow' }, a),
-            el('button', {
-              type: 'button', class: 'poll-answer-hide',
-              title: hidden.has(i) ? 'Hidden from the room — tap to show it' : 'Hide this one answer from the room',
-              onclick: () => send({ op: 'poll', pollId: item.pollId, action: 'hideAnswer', index: i, value: !hidden.has(i) }),
-            }, hidden.has(i) ? 'Unhide' : 'Hide')))
+        ? answers.map((a, i) => {
+            const resp = responses[i];
+            const nameEl = resp?.name ? el('strong', { style: 'color: var(--accent); margin-right: 6px;' }, `${resp.name}: `) : '';
+            return el('div', { class: `poll-answer-row${hidden.has(i) ? ' is-hidden' : ''}` },
+              el('span', { class: 'grow' }, nameEl, a),
+              el('button', {
+                type: 'button', class: 'poll-answer-hide',
+                title: hidden.has(i) ? 'Hidden from the room — tap to show it' : 'Hide this one answer from the room',
+                onclick: () => send({ op: 'poll', pollId: item.pollId, action: 'hideAnswer', index: i, value: !hidden.has(i) }),
+              }, hidden.has(i) ? 'Unhide' : 'Hide'));
+          })
         : [el('div', { class: 'poll-answer-row' }, 'No answers yet')]));
     } else if (item.kind === 'qna') {
       const qnaFeed = (item.qnaFeed || []).slice().sort((a, b) => (b.upvotes?.length || 0) - (a.upvotes?.length || 0));
@@ -2659,7 +2724,8 @@ function renderRunningPoll(item) {
         ? qnaFeed.map((q) => el('div', { class: `poll-answer-row${q.hidden ? ' is-hidden' : ''}${q.answered ? ' is-answered' : ''}${q.projected ? ' is-projected' : ''}`, style: 'flex-direction: column; align-items: stretch; gap: 8px;' },
             el('div', { style: 'display: flex; gap: 8px; font-weight: 600;' }, 
               el('span', { class: 'mono' }, `▲ ${q.upvotes?.length || 0}`),
-              el('span', { class: 'grow' }, q.text)
+              el('span', { class: 'grow' }, q.text),
+              q.authorName ? el('span', { style: 'color: var(--accent); font-size: 0.9em; font-weight: 400;' }, `(${q.authorName})`) : ''
             ),
             el('div', { style: 'display: flex; gap: 4px; justify-content: flex-end;' },
               el('button', {
@@ -2680,18 +2746,24 @@ function renderRunningPoll(item) {
     } else {
       const counts = item.counts || [];
       const max = Math.max(1, ...counts, 0);
+      const responses = item.responses || [];
       results.replaceChildren(...(item.options || []).map((opt, i) => {
         const count = counts[i] || 0;
         const fill = el('div', { class: 'poll-bar-fill' });
         fill.style.width = `${Math.round((count / max) * 100)}%`;
         const isCorrect = item.correct === i;
         const letter = String.fromCharCode(65 + i);
+        const votersForOpt = responses.filter((r) => r.answer === i && r.name).map((r) => r.name);
+        const votersHint = votersForOpt.length
+          ? el('div', { class: 'hint', style: 'font-size: 12px; margin-top: 3px;' }, votersForOpt.join(', '))
+          : '';
         return el('div', { class: 'poll-bar-row' },
           el('div', { class: 'poll-bar-label' }, 
             el('span', {}, isCorrect ? el('strong', { class: 'ok-text' }, `[${letter}] `) : '', opt), 
             el('span', { class: 'mono' }, String(count))
           ),
-          el('div', { class: `poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill)
+          el('div', { class: `poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill),
+          votersHint
         );
       }));
     }
@@ -4604,6 +4676,23 @@ $('#poll-timer-30').addEventListener('click', () => setPollClosesAt(30));
 $('#poll-timer-60').addEventListener('click', () => setPollClosesAt(60));
 $('#poll-timer-120').addEventListener('click', () => setPollClosesAt(120));
 $('#poll-toggle-reveal').addEventListener('click', togglePollReveal);
+$('#poll-toggle-names')?.addEventListener('click', () => {
+  const item = findPollItem();
+  if (item) {
+    send({ op: 'poll', pollId: item.pollId, action: 'showNames', value: !item.showNames });
+  }
+});
+$('#poll-ask-name')?.addEventListener('change', (ev) => {
+  if (pollDraft) {
+    pollDraft.askName = ev.target.checked;
+    renderPollsPanel();
+  }
+});
+$('#poll-name-prompt')?.addEventListener('input', (ev) => {
+  if (pollDraft) {
+    pollDraft.namePrompt = ev.target.value;
+  }
+});
 $('#poll-toggle-view')?.addEventListener('click', () => {
   const item = findPollItem();
   if (item && item.kind === 'text') {

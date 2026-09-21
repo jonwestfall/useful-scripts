@@ -280,6 +280,10 @@ function normalizeItem(item) {
       : [];
     copy.qnaFeed = copy.kind === 'qna' ? (Array.isArray(copy.qnaFeed) ? copy.qnaFeed : []) : [];
     copy.viewMode = copy.viewMode === 'cloud' ? 'cloud' : 'list';
+    copy.askName = !!copy.askName;
+    copy.namePrompt = String(copy.namePrompt || 'Name:').slice(0, 50);
+    copy.showNames = !!copy.showNames;
+    copy.responses = Array.isArray(copy.responses) ? copy.responses : [];
     // Whether the join card spells out the URL under the QR, alongside the
     // four-letter code - a controller-local presentation preference (see
     // control.js's `presentation` prefs), decided once by whoever composes
@@ -909,6 +913,8 @@ export function applyCommand(state, cmd) {
         item.hiddenAnswers = [...hidden];
       } else if (cmd.action === 'viewMode') {
         item.viewMode = cmd.value === 'cloud' ? 'cloud' : 'list';
+      } else if (cmd.action === 'showNames') {
+        item.showNames = !!cmd.value;
       } else {
         return false;
       }

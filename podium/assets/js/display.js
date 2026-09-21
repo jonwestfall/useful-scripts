@@ -1114,13 +1114,18 @@ async function tickPolls() {
         const current = pollItems().find((it) => it.key === key);
         if (!current) return;
         const changed = current.open !== tally.open || current.voters !== tally.voters
+          || current.askName !== tally.askName || current.namePrompt !== tally.namePrompt
           || JSON.stringify(current.counts) !== JSON.stringify(tally.counts)
           || JSON.stringify(current.answers) !== JSON.stringify(tally.answers)
+          || JSON.stringify(current.responses) !== JSON.stringify(tally.responses)
           || JSON.stringify(current.qnaFeed) !== JSON.stringify(tally.qnaFeed);
         if (!changed) return;
         current.open = tally.open !== false;
         current.closesAt = tally.closesAt;
         current.voters = tally.voters || 0;
+        current.askName = !!tally.askName;
+        current.namePrompt = tally.namePrompt || 'Name:';
+        current.responses = tally.responses || [];
         if (current.kind === 'choice') current.counts = tally.counts || [];
         else if (current.kind === 'text') current.answers = tally.answers || [];
         else if (current.kind === 'qna') current.qnaFeed = tally.qnaFeed || [];

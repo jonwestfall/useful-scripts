@@ -384,9 +384,20 @@ export async function renderPollPageToJpeg(poll, meta, pageNum, totalPages) {
       ctx.strokeStyle = '#334155';
       ctx.stroke();
 
-      ctx.font = '20px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = '#f1f5f9';
-      ctx.fillText(String(ans).slice(0, 60), x + 20, y + 52);
+      const respName = poll.responses?.[i]?.name;
+      if (respName) {
+        ctx.font = 'bold 16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillText(respName, x + 20, y + 36);
+
+        ctx.font = '18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillStyle = '#f1f5f9';
+        ctx.fillText(String(ans).slice(0, 50), x + 20, y + 66);
+      } else {
+        ctx.font = '20px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillStyle = '#f1f5f9';
+        ctx.fillText(String(ans).slice(0, 60), x + 20, y + 52);
+      }
     });
   } else {
     // Bar chart options

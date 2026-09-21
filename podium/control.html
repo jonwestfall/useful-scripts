@@ -638,6 +638,7 @@ try {
             <div class="inline">
               <button id="poll-toggle-open" type="button">Close voting</button>
               <button id="poll-toggle-reveal" type="button">Reveal to room</button>
+              <button id="poll-toggle-names" type="button" hidden>Show names to room</button>
               <button id="poll-toggle-view" type="button" hidden>Word cloud</button>
               <button id="poll-export" type="button">Export CSV</button>
             </div>
@@ -656,6 +657,13 @@ try {
             <div id="poll-options" class="stack"></div>
             <div class="inline">
               <button id="poll-option-add" type="button">+ Option</button>
+            </div>
+            <div id="poll-name-collection-row" class="inline" hidden style="margin: 4px 0; align-items: center; gap: 8px;">
+              <label class="check" style="margin-bottom: 0;">
+                <input id="poll-ask-name" type="checkbox">
+                Ask participants for name / ID
+              </label>
+              <input id="poll-name-prompt" type="text" placeholder="Name:" value="Name:" maxlength="50" style="max-width: 140px; padding: 4px 8px; font-size: 13px;" hidden>
             </div>
             <p id="poll-error" class="hint" hidden></p>
             <button id="poll-start" type="submit">Start poll</button>
