@@ -52,15 +52,21 @@
       <hr>
       <h3>This server</h3>
       <button id="plan-push" type="button" class="big-button">Send this lecture to the server</button>
+      <!-- Shown only once this lecture maps to a known server row - pulled
+           from the server, or just sent there - so there is something for it
+           to overwrite. See setCurrentServerPlanId in plan.js. -->
+      <button id="plan-push-update" type="button" hidden>Update the copy already there</button>
       <p class="hint" id="plan-push-note" role="status"></p>
       <div class="inline">
         <select id="plan-pull-pick" aria-label="A lecture on the server"></select>
         <button id="plan-pull" type="button">Open</button>
+        <button id="plan-pull-delete" type="button" class="danger-outline">Delete from server</button>
       </div>
       <p class="hint">
         A lecture sent here is on the iPad in class without a file to carry.
         Filing it under a course shares it with that course; otherwise it is
-        yours alone.
+        yours alone. Deleting one here only removes it from the server — a
+        plan file you saved for it is untouched.
       </p>
     </div>
     <hr>
