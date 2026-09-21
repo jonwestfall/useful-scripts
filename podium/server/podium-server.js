@@ -232,7 +232,10 @@ const { readJson } = api;
 function questionPayload(poll) {
   return JSON.stringify({
     seq: poll.seq, open: poll.open, kind: poll.kind,
-    question: poll.question, options: poll.options,
+    question: poll.question, options: poll.options, closesAt: poll.closesAt,
+    askName: !!poll.askName,
+    namePrompt: poll.namePrompt || 'Name:',
+    qnaFeed: poll.qnaFeed ? poll.qnaFeed.map(q => ({ ...q, upvotes: Array.from(q.upvotes) })) : [],
   });
 }
 
@@ -281,7 +284,8 @@ async function handlePoll(req, res, url) {
     const token = crypto.randomBytes(24).toString('base64url');
     polls.set(fresh, {
       token, seq: 0, open: false, kind: 'choice', question: '', options: [],
-      votes: new Map(), listeners: new Set(), touched: Date.now(),
+      askName: false, namePrompt: 'Name:',
+      votes: new Map(), qnaFeed: [], listeners: new Set(), touched: Date.now(),
     });
     pollJson(res, 200, { code: fresh, token });
     return;
@@ -324,12 +328,35 @@ async function handlePoll(req, res, url) {
   if (req.method === 'POST' && action === 'vote') {
     let body;
     try { body = await readJson(req, 8 * 1024); } catch { pollJson(res, 400, { error: 'bad body' }); return; }
-    if (!poll.open) { pollJson(res, 409, { error: 'this question is closed' }); return; }
+    if (!poll.open || (poll.closesAt && Date.now() > poll.closesAt)) { pollJson(res, 409, { error: 'this question is closed' }); return; }
     const voter = String(body.voter || '').slice(0, 64);
     if (!voter) { pollJson(res, 400, { error: 'no voter id' }); return; }
     if (!poll.votes.has(voter) && poll.votes.size >= MAX_VOTERS) { pollJson(res, 503, { error: 'this poll is full' }); return; }
+    const name = String(body.name || '').trim().slice(0, 100);
     let answer;
-    if (poll.kind === 'text') {
+    if (poll.kind === 'qna') {
+      const act = body.answer?.action;
+      if (act === 'ask') {
+        const text = String(body.answer?.text ?? '').trim().slice(0, MAX_ANSWER_CHARS);
+        if (!text) { pollJson(res, 400, { error: 'empty question' }); return; }
+        if (poll.qnaFeed.length >= MAX_VOTERS) { pollJson(res, 503, { error: 'too many questions' }); return; }
+        const id = crypto.randomBytes(8).toString('hex');
+        poll.qnaFeed.push({ id, text, author: voter, authorName: name, upvotes: new Set(), hidden: false, answered: false, projected: false });
+        pushQuestion(poll);
+      } else if (act === 'upvote') {
+        const id = String(body.answer?.id ?? '');
+        const q = poll.qnaFeed.find((x) => x.id === id);
+        if (!q) { pollJson(res, 404, { error: 'question not found' }); return; }
+        if (q.upvotes.has(voter)) q.upvotes.delete(voter);
+        else q.upvotes.add(voter);
+        pushQuestion(poll);
+      } else {
+        pollJson(res, 400, { error: 'invalid qna action' }); return;
+      }
+      poll.votes.set(voter, { answer: true, name }); // just record participation
+      pollJson(res, 200, { ok: true, seq: poll.seq });
+      return;
+    } else if (poll.kind === 'text') {
       answer = String(body.answer ?? '').trim().slice(0, MAX_ANSWER_CHARS);
       if (!answer) { pollJson(res, 400, { error: 'empty answer' }); return; }
     } else {
@@ -339,31 +366,55 @@ async function handlePoll(req, res, url) {
         return;
       }
     }
-    poll.votes.set(voter, answer);
+    poll.votes.set(voter, { answer, name });
     pollJson(res, 200, { ok: true, seq: poll.seq });
     return;
   }
 
   if (!isHost()) { pollJson(res, 401, { error: 'not the host of this poll' }); return; }
 
+  if (req.method === 'POST' && action === 'qna-action') {
+    let body;
+    try { body = await readJson(req); } catch { pollJson(res, 400, { error: 'bad body' }); return; }
+    const { id, type, value } = body;
+    const q = poll.qnaFeed.find((x) => x.id === id);
+    if (!q) { pollJson(res, 404, { error: 'question not found' }); return; }
+    if (type === 'hidden') q.hidden = !!value;
+    else if (type === 'answered') q.answered = !!value;
+    else if (type === 'projected') {
+      poll.qnaFeed.forEach((x) => { x.projected = false; });
+      q.projected = !!value;
+    }
+    pushQuestion(poll);
+    pollJson(res, 200, { ok: true });
+    return;
+  }
+
   if (req.method === 'PUT' && !action) {
     let body;
     try { body = await readJson(req); } catch { pollJson(res, 400, { error: 'bad body' }); return; }
-    const kind = body.kind === 'text' ? 'text' : 'choice';
+    const kind = ['text', 'qna'].includes(body.kind) ? body.kind : 'choice';
     const options = Array.isArray(body.options)
       ? body.options.slice(0, MAX_OPTIONS).map((option) => String(option).slice(0, MAX_ANSWER_CHARS))
       : [];
     const question = String(body.question || '').slice(0, 500);
+    const askName = !!body.askName;
+    const namePrompt = String(body.namePrompt || 'Name:').slice(0, 50);
     // A different question is a different count: rewording it, or changing
     // what can be answered, starts the tally again rather than blending two
     // questions' answers into one set of numbers.
     const changed = kind !== poll.kind || question !== poll.question
-      || options.join(' ') !== poll.options.join(' ');
-    if (changed) { poll.votes.clear(); poll.seq += 1; }
+      || options.join(' ') !== poll.options.join(' ')
+      || askName !== !!poll.askName
+      || namePrompt !== (poll.namePrompt || 'Name:');
+    if (changed) { poll.votes.clear(); poll.qnaFeed = []; poll.seq += 1; }
     poll.kind = kind;
     poll.question = question;
     poll.options = options;
+    poll.askName = askName;
+    poll.namePrompt = namePrompt;
     poll.open = body.open !== false;
+    poll.closesAt = Number.isFinite(Number(body.closesAt)) && body.closesAt > 0 ? Number(body.closesAt) : null;
     pushQuestion(poll);
     pollJson(res, 200, { seq: poll.seq, open: poll.open });
     return;
@@ -372,11 +423,23 @@ async function handlePoll(req, res, url) {
   if (req.method === 'GET' && action === 'results') {
     const counts = poll.options.map(() => 0);
     const answers = [];
-    for (const answer of poll.votes.values()) {
-      if (poll.kind === 'text') answers.push(answer);
-      else if (counts[answer] !== undefined) counts[answer] += 1;
+    const responses = [];
+    for (const [voterKey, vote] of poll.votes.entries()) {
+      const answer = (vote && typeof vote === 'object' && 'answer' in vote) ? vote.answer : vote;
+      const name = (vote && typeof vote === 'object') ? (vote.name || '') : '';
+      responses.push({ voter: voterKey, answer, name });
+      if (poll.kind === 'text') {
+        answers.push(answer);
+      } else if (typeof answer === 'number' && counts[answer] !== undefined) {
+        counts[answer] += 1;
+      }
     }
-    pollJson(res, 200, { seq: poll.seq, open: poll.open, voters: poll.votes.size, counts, answers });
+    const qnaFeed = poll.qnaFeed ? poll.qnaFeed.map(q => ({ ...q, upvotes: Array.from(q.upvotes) })) : [];
+    pollJson(res, 200, {
+      seq: poll.seq, open: poll.open, closesAt: poll.closesAt, voters: poll.votes.size,
+      counts, answers, qnaFeed, askName: !!poll.askName, namePrompt: poll.namePrompt || 'Name:',
+      responses,
+    });
     return;
   }
 

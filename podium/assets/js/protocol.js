@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 27;
+export const BUILD = 28;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -37,8 +37,8 @@ export const BUILD = 27;
 // the server itself read for the build (see servedBuild in util.js and
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
-export const VERSION = '1.0';
-export const COMMIT = 'ea05b26';
+export const VERSION = '1.1';
+export const COMMIT = 'e574165';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -254,11 +254,13 @@ function normalizeItem(item) {
     // was asked (kind/question/options, editable by re-staging) or a tally
     // the display fills in on its own polling tick (open/revealed/counts/
     // answers) and this normalization must not clobber on every re-stage.
-    copy.kind = copy.kind === 'text' ? 'text' : 'choice';
+    copy.kind = ['text', 'qna'].includes(copy.kind) ? copy.kind : 'choice';
     copy.question = String(copy.question || '').slice(0, 500);
     copy.options = copy.kind === 'choice'
       ? (Array.isArray(copy.options) ? copy.options : []).slice(0, 8).map((o) => String(o).slice(0, 200))
       : [];
+    copy.correct = Number.isFinite(Number(copy.correct)) ? Math.round(Number(copy.correct)) : -1;
+    copy.closesAt = Number.isFinite(Number(copy.closesAt)) && copy.closesAt > 0 ? Number(copy.closesAt) : null;
     copy.open = copy.open !== false;
     copy.revealed = !!copy.revealed;
     copy.voters = Math.max(0, Number(copy.voters) || 0);
@@ -276,6 +278,12 @@ function normalizeItem(item) {
     copy.hiddenAnswers = copy.kind === 'text' && Array.isArray(copy.hiddenAnswers)
       ? [...new Set(copy.hiddenAnswers.map((i) => Math.trunc(Number(i))).filter((i) => i >= 0 && i < copy.answers.length))]
       : [];
+    copy.qnaFeed = copy.kind === 'qna' ? (Array.isArray(copy.qnaFeed) ? copy.qnaFeed : []) : [];
+    copy.viewMode = copy.viewMode === 'cloud' ? 'cloud' : 'list';
+    copy.askName = !!copy.askName;
+    copy.namePrompt = String(copy.namePrompt || 'Name:').slice(0, 50);
+    copy.showNames = !!copy.showNames;
+    copy.responses = Array.isArray(copy.responses) ? copy.responses : [];
     // Whether the join card spells out the URL under the QR, alongside the
     // four-letter code - a controller-local presentation preference (see
     // control.js's `presentation` prefs), decided once by whoever composes
@@ -903,6 +911,10 @@ export function applyCommand(state, cmd) {
         const hidden = new Set(item.hiddenAnswers || []);
         if (cmd.value) hidden.add(index); else hidden.delete(index);
         item.hiddenAnswers = [...hidden];
+      } else if (cmd.action === 'viewMode') {
+        item.viewMode = cmd.value === 'cloud' ? 'cloud' : 'list';
+      } else if (cmd.action === 'showNames') {
+        item.showNames = !!cmd.value;
       } else {
         return false;
       }

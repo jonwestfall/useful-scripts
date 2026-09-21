@@ -15,6 +15,14 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>
+try {
+  const p = JSON.parse(localStorage.getItem('podium.presentation.v1') || '{}');
+  const t = p.theme || 'dark';
+  const eff = t === 'auto' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : t;
+  if (eff === 'light') document.documentElement.dataset.theme = 'light';
+} catch {}
+</script>
 </head>
 <body class="control">
 
@@ -619,11 +627,19 @@
               <button id="poll-copy-link" type="button">Copy join link</button>
             </div>
             <div id="poll-running-status" class="hint"></div>
+            <div id="poll-running-countdown" class="hint" style="font-variant-numeric: tabular-nums; font-weight: 700; color: var(--dim);" hidden></div>
             <div id="poll-running-results"></div>
             <p id="poll-action-error" class="hint" hidden></p>
+            <div class="inline" id="poll-timer-btns">
+              <button id="poll-timer-30" type="button" class="btn-small">+30s</button>
+              <button id="poll-timer-60" type="button" class="btn-small">+60s</button>
+              <button id="poll-timer-120" type="button" class="btn-small">+2m</button>
+            </div>
             <div class="inline">
               <button id="poll-toggle-open" type="button">Close voting</button>
               <button id="poll-toggle-reveal" type="button">Reveal to room</button>
+              <button id="poll-toggle-names" type="button" hidden>Show names to room</button>
+              <button id="poll-toggle-view" type="button" hidden>Word cloud</button>
               <button id="poll-export" type="button">Export CSV</button>
             </div>
             <button id="poll-end" class="danger-outline" type="button">End poll</button>
@@ -634,12 +650,20 @@
               <select id="poll-kind" aria-label="Poll type" class="grow">
                 <option value="choice">Multiple choice</option>
                 <option value="text">Short answer</option>
+                <option value="qna">Audience Q&A</option>
               </select>
             </div>
             <textarea id="poll-question" placeholder="Question" maxlength="500" rows="2"></textarea>
             <div id="poll-options" class="stack"></div>
             <div class="inline">
               <button id="poll-option-add" type="button">+ Option</button>
+            </div>
+            <div id="poll-name-collection-row" class="inline" hidden style="margin: 4px 0; align-items: center; gap: 8px;">
+              <label class="check" style="margin-bottom: 0;">
+                <input id="poll-ask-name" type="checkbox">
+                Ask participants for name / ID
+              </label>
+              <input id="poll-name-prompt" type="text" placeholder="Name:" value="Name:" maxlength="50" style="max-width: 140px; padding: 4px 8px; font-size: 13px;" hidden>
             </div>
             <p id="poll-error" class="hint" hidden></p>
             <button id="poll-start" type="submit">Start poll</button>
@@ -710,7 +734,8 @@
             <label class="check"><input id="photo-keep" type="checkbox"> Keep photos on the server with this lecture</label>
           </div>
           <div class="inline">
-            <button id="photo-export" class="big-button" type="button" disabled>Export this session…</button>
+            <button id="photo-export" class="big-button" type="button" disabled>Export this session (.zip)…</button>
+            <button id="photo-export-pdf" class="big-button" type="button" disabled>Download as PDF…</button>
           </div>
           <div class="inline">
             <button id="photo-clear" class="danger-outline" type="button">Discard every photo</button>
@@ -838,6 +863,18 @@
         Defaults for how <b>this device</b> presents — saved here only, nothing shared
         with other controllers or written into the room.
       </p>
+
+      <div class="field" style="margin-top:12px;">
+        <label for="pref-theme">Controller theme</label>
+        <select id="pref-theme" class="grow">
+          <option value="dark">Dark (default)</option>
+          <option value="light">Light / High contrast</option>
+          <option value="auto">Auto (match system)</option>
+        </select>
+        <p class="hint">
+          Light theme uses a clean, high-contrast palette for bright classrooms, outdoor lectures, or rooms with window glare.
+        </p>
+      </div>
 
       <label class="check"><input id="pref-poll-url" type="checkbox"> Show the voting URL below the QR code</label>
       <p class="hint">
@@ -1107,6 +1144,7 @@
 </div>
 
 <script src="assets/vendor/qrcode.js"></script>
+<script src="assets/vendor/pdf.min.js"></script>
 <script type="module" src="assets/js/control.js"></script>
 </body>
 </html>

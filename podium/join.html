@@ -60,6 +60,15 @@
   .note.bad { color: #ff9d9d; }
   .row { display: flex; gap: 10px; margin-top: 10px; }
   .version-stamp { text-align: center; margin-top: 28px; font-size: 11px; color: var(--dim); opacity: 0.7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  
+  .qna-item { display: flex; gap: 12px; background: #0f141b; border: 1px solid var(--line); padding: 12px; border-radius: 10px; align-items: flex-start; }
+  .qna-item.is-answered { opacity: 0.5; }
+  .qna-item-text { flex: 1; font-size: 15px; word-break: break-word; margin-top: 2px; }
+  .qna-item-upvote { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; background: none; border: none; padding: 4px 8px; border-radius: 6px; cursor: pointer; color: var(--dim); width: auto; min-width: 44px; }
+  .qna-item-upvote[aria-pressed="true"] { color: var(--live); background: #10251d; }
+  .qna-item-upvote svg { width: 16px; height: 16px; fill: currentColor; margin-bottom: 2px; }
+  .qna-item-upvote span { font-size: 13px; font-weight: 600; }
+  
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -78,17 +87,30 @@
 </form>
 
 <div id="live" class="card" hidden>
-  <p class="question" id="question">Waiting for the first question…</p>
+  <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+    <p class="question" id="question" style="margin-top: 0; flex: 1;">Waiting for the first question…</p>
+    <div id="countdown" hidden style="margin-left: 12px; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--dim);"></div>
+  </div>
+  <div id="voter-name-box" style="margin-bottom: 14px;" hidden>
+    <label id="voter-name-label" for="voter-name">Name:</label>
+    <input id="voter-name" type="text" maxlength="100" autocomplete="name" placeholder="Your name">
+  </div>
   <div id="choices"></div>
   <div id="typed" hidden>
     <label for="answer">Your answer</label>
     <textarea id="answer" rows="3" maxlength="200" placeholder="A few words is plenty"></textarea>
     <div class="row"><button id="send" type="button">Send</button></div>
   </div>
+  <div id="qna" hidden>
+    <label for="qna-ask">Ask a question</label>
+    <textarea id="qna-ask" rows="2" maxlength="200" placeholder="What would you like to know?"></textarea>
+    <div class="row"><button id="qna-send" type="button">Ask</button></div>
+    <div id="qna-feed" style="margin-top: 16px; display: flex; flex-direction: column; gap: 8px;"></div>
+  </div>
   <p class="note" id="note"></p>
 </div>
 
-<p id="join-version-stamp" class="version-stamp">v1.0 · build 27 · ea05b26</p>
+<p id="join-version-stamp" class="version-stamp">v1.1 · build 28 · e574165</p>
 
 <script type="module" src="assets/js/join.js"></script>
 </body>

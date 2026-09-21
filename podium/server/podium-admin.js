@@ -50,6 +50,8 @@ const USAGE = `podium-admin — accounts and courses for a server-backed Podium
   member remove <course-code> <username>
   sessions prune
   logs prune --days <n>
+  system get <key>
+  system set <key> <value>
   lectures list [--limit 20]
   lectures prune --days <n>
   doctor [--health-url http://127.0.0.1:8080/healthz] [--cert /path/fullchain.pem]
@@ -339,6 +341,23 @@ async function main(argv) {
     const { removed, bytes } = lectures.pruneFiles(db, dataDir, { days });
     say(`removed ${removed} file(s) from lectures older than ${days} day(s), freeing ${Math.round(bytes / 1024)} KB`);
     say('their timelines and poll results are kept - only the photos, ink and exported pages go');
+    return 0;
+  }
+
+  if (group === 'system' && action === 'get') {
+    const key = positional[2];
+    if (!key) throw new Error('system get needs <key>');
+    const val = store.getSystemSetting(db, key);
+    say(val !== null ? `${key} = ${val}` : `${key} is not set`);
+    return 0;
+  }
+
+  if (group === 'system' && action === 'set') {
+    const key = positional[2];
+    const value = positional[3];
+    if (!key || value === undefined) throw new Error('system set needs <key> <value>');
+    store.setSystemSetting(db, key, value);
+    say(`set ${key} = ${value}`);
     return 0;
   }
 
