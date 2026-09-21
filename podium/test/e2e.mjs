@@ -5361,6 +5361,13 @@ ok('a student reaches the join page with no account and no prompt',
   await joiner.isVisible('#enter') && joiner.url().endsWith('/join.html'));
 await joiner.close();
 
+// A guest lecturer is the same exception, for the same reason (Issue #77) -
+// see AUTH_OPEN_PATHS in podium-server.js.
+ok('a guest pairing link is reachable with no account either',
+  (await fetch(`${acctBase}/guest.html`)).status === 200);
+ok('and so is the script it needs to actually join the room',
+  (await fetch(`${acctBase}/assets/js/guest.js`)).status === 200);
+
 // A visitor who has never signed in sees the showcase itself, and a way in -
 // not the surfaces, which would 401 the moment they were clicked.
 const visitor = await acctCtx.newPage();
@@ -6237,6 +6244,118 @@ await multiCtx.close();
 multiServer.kill();
 await new Promise((resolve) => multiServer.on('exit', resolve));
 fs.rmSync(multiData, { recursive: true, force: true });
+}
+
+if (want('guest pairing: Simple Mode')) {
+console.log('\n-- guest pairing: Simple Mode --');
+// Issue #77: a substitute's clicker. Its own room on the main server - no
+// accounts needed, guest.html works wherever the existing full pairing QR
+// already does (see the comment on AUTH_OPEN_PATHS in podium-server.js).
+const gCtx = await browser.newContext();
+await gCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'guest-room', passphrase: 'hand this to a substitute' }));
+
+const gDisplay = await gCtx.newPage();
+trap(gDisplay, 'guest display');
+await gDisplay.goto(`${BASE}/display.html`);
+await gDisplay.click('#arm-button');
+await gDisplay.waitForSelector('#hud[data-status="online"]');
+
+const gControl = await gCtx.newPage();
+trap(gControl, 'guest instructor controller');
+await gControl.goto(`${BASE}/control.html`);
+await gControl.waitForSelector('#app:not([hidden])');
+await gControl.waitForFunction(
+  () => !document.querySelector('#display-state')?.textContent.includes('No display connected'),
+  null, { timeout: 10000 });
+
+// --- the pairing sheet offers a guest link without touching this device's
+// own settings (see showPairing in display.js). Reached with the P key
+// rather than #pair-button/#standby-pair: both those buttons live on sheets
+// that hide once a controller is connected and live, which this display
+// already is - P works regardless (see display.js's keydown handler). -----
+await gDisplay.keyboard.press('p');
+await gDisplay.waitForSelector('#pair:not([hidden])');
+ok('the pairing sheet defaults to full control, same as it always has',
+  await gDisplay.evaluate(() => document.querySelector('#pair-mode-full').classList.contains('is-on')
+    && document.querySelector('#pair-url').textContent.includes('control.html')));
+await gDisplay.click('#pair-mode-guest');
+ok('switching to guest mode swaps the link to guest.html, not control.html',
+  (await gDisplay.textContent('#pair-url')).includes('guest.html'));
+ok('and says what a guest link can actually do', /advance slides, blank the screen/.test(await gDisplay.textContent('#pair-warn')));
+await gDisplay.click('#pair-close');
+
+// --- a real deck live, so Next/Previous has somewhere to go --------------
+const waitForGuestSlide = (i) => gDisplay.waitForFunction((want) => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const svgs = [...(host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || [])];
+  return svgs.findIndex((s) => s.classList.contains('podium-on')) === want;
+}, i, { timeout: 15000 });
+await gControl.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await waitForGuestSlide(0);
+
+// --- the guest device itself - reached exactly the way a scanned QR would
+// leave it: this context's localStorage already carries the room, so
+// opening the page is the whole of "pairing". ------------------------------
+const gGuest = await gCtx.newPage();
+trap(gGuest, 'guest clicker');
+await gGuest.goto(`${BASE}/guest.html`);
+await gGuest.waitForSelector('#app:not([hidden])');
+await gGuest.waitForFunction(() => document.querySelector('#status')?.dataset.status === 'online', null, { timeout: 10000 });
+await gGuest.waitForFunction(() => !document.querySelector('#display-state')?.textContent.includes('No display connected'),
+  null, { timeout: 10000 });
+// itemTitle prefers the deck's own frontmatter title over the library
+// manifest's entry title (see the deck's own front matter) - "Weighing the
+// Evidence" is what actually lands in state.program.title, not the manifest
+// name the tile was picked from.
+await gGuest.waitForFunction(() => document.querySelector('#guest-now')?.textContent.includes('Weighing the Evidence'), null, { timeout: 10000 });
+ok('the guest device sees the live deck with no setup of its own', true);
+ok('Next/Previous are live for a deck', !(await gGuest.isDisabled('#guest-next')) && !(await gGuest.isDisabled('#guest-prev')));
+
+await gGuest.click('#guest-next');
+await waitForGuestSlide(1);
+ok('Next goes straight to the projector - no cueing concept, no TAKE', true);
+
+// --- Blank -----------------------------------------------------------------
+await gGuest.click('#guest-blank');
+await gDisplay.waitForFunction(() => document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
+ok('Blank from the guest device cuts the room to black', true);
+await gGuest.click('#guest-blank');
+await gDisplay.waitForFunction(() => !document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
+ok('and toggles back', true);
+
+// --- Laser -------------------------------------------------------------
+await gGuest.click('#guest-laser');
+ok('Laser arms and offers colour swatches', await gGuest.isVisible('#guest-laser-colors'));
+await gGuest.locator('#guest-pad').scrollIntoViewIfNeeded();
+const padBox = await gGuest.$eval('#guest-pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await gGuest.mouse.move(padBox.x + padBox.w * 0.5, padBox.y + padBox.h * 0.5);
+await gGuest.mouse.down();
+await gDisplay.waitForFunction(() => document.querySelector('#laser').classList.contains('is-on'), null, { timeout: 5000 });
+ok('a laser dot reaches the projector from the guest device', true);
+await gGuest.mouse.up();
+await gDisplay.waitForFunction(() => !document.querySelector('#laser').classList.contains('is-on'), null, { timeout: 3000 });
+
+// --- graceful degradation: sharing the room with a frozen, mid-cue full
+// controller must not touch what it has staged (Issue #77's last bullet) --
+await gControl.click('#freeze');
+await gDisplay.waitForFunction(() => document.body.classList.contains('is-frozen'), null, { timeout: 5000 });
+await gControl.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await gControl.waitForFunction(() => document.querySelector('#preview-label')?.textContent === 'Cued', null, { timeout: 5000 });
+ok('the instructor cues the Whiteboard while frozen', await gControl.$eval('#preview-stage', (n) => n.innerHTML.includes('r-whiteboard')));
+
+await gGuest.click('#guest-next');
+await waitForGuestSlide(2);
+ok('the guest advancing the deck still goes straight to the projector, freeze or not', true);
+ok('and never touches what the instructor has cued',
+  await gControl.$eval('#preview-stage', (n) => n.innerHTML.includes('r-whiteboard'))
+  && (await gControl.textContent('#preview-label')) === 'Cued');
+
+await gControl.click('#take');
+await gDisplay.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-whiteboard'), null, { timeout: 5000 });
+ok('TAKE still works normally afterward - the guest device changed nothing about how freeze/cue behaves', true);
+
+await gCtx.close();
 }
 
 if (want('back to the landing page')) {

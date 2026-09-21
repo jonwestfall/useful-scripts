@@ -49,7 +49,14 @@
 <div id="pair" class="sheet" hidden>
   <div class="card" style="text-align:center">
     <h2>Scan with your iPad or iPhone</h2>
-    <div class="warn">Anyone who scans this can control this screen. It hides itself after 90 seconds.</div>
+    <!-- Full control is the default every time this sheet opens - a guest
+         link is a deliberate extra tap, never something left armed from the
+         last person who used this machine (see showPairing in display.js). -->
+    <div class="row" id="pair-mode" role="group" aria-label="What this code grants">
+      <button id="pair-mode-full" type="button" class="is-on">Full control</button>
+      <button id="pair-mode-guest" type="button">Guest (Simple Mode)</button>
+    </div>
+    <div class="warn" id="pair-warn">Anyone who scans this can control this screen. It hides itself after 90 seconds.</div>
     <div id="pair-qr"></div>
     <div id="pair-url"></div>
     <button id="pair-close" style="margin-top:18px;width:100%">Done</button>
