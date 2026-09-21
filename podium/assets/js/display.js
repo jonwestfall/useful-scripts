@@ -2345,7 +2345,7 @@ $('#arm-resume-clear').addEventListener('click', () => {
   state.panels = [0, 1, 2].map(() => ({ type: 'black', title: 'Black' }));
   state.layout = 'single';
   state.focus = 0;
-  state.overlay = { text: '', visible: false };
+  state.overlay = { text: '', visible: false, live: false };
   $('#arm-resume').hidden = true;
   commit();
 });
