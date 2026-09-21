@@ -139,9 +139,9 @@ export const PLAN_TYPES = {
       { key: 'kind', label: 'Type', kind: 'select', def: 'choice',
         options: [['choice', 'Multiple choice'], ['text', 'Short answer']] },
       { key: 'question', label: 'Question', kind: 'textarea', placeholder: 'Which bias is this?' },
-      { key: 'options', label: 'Options, one per line (multiple choice only)', kind: 'textarea',
-        placeholder: 'Construct\nMethod\nNorming\nAccess',
+      { key: 'options', label: 'Options', kind: 'poll-options',
         hint: 'Ignored for a short-answer poll.' },
+      { key: 'correct', kind: 'number', def: -1, hidden: true },
     ],
   },
 };

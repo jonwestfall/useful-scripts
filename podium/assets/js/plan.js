@@ -311,7 +311,60 @@ function field(label, control, hint) {
 }
 
 function fieldFor(item, spec) {
+  if (spec.hidden) return '';
   const set = (value, opts) => { item[spec.key] = value; afterEdit(opts); };
+
+  if (spec.kind === 'poll-options') {
+    const rawOptions = (item[spec.key] || '').split('\n').map((s) => s.trim()).filter(Boolean);
+    const options = rawOptions.length ? rawOptions : ['', ''];
+    
+    let correctIdx = item.correct ?? -1;
+    const container = el('div', { class: 'stack' });
+    
+    const renderRows = () => {
+      container.replaceChildren(...options.map((opt, i) => {
+        const letter = String.fromCharCode(65 + i);
+        const isCorrect = correctIdx === i;
+        
+        return el('div', { class: 'poll-option-row' },
+          el('button', {
+            type: 'button',
+            class: `poll-chip ${isCorrect ? 'is-correct' : ''}`,
+            title: isCorrect ? 'Marked as correct' : 'Mark as correct',
+            onclick: () => {
+              item.correct = isCorrect ? -1 : i;
+              correctIdx = item.correct;
+              afterEdit({ remount: true });
+              renderRows();
+            },
+          }, letter),
+          el('input', {
+            type: 'text', placeholder: `Option ${i + 1}`, value: opt,
+            oninput: (ev) => {
+              options[i] = ev.target.value;
+              set(options.join('\n'), { remount: true });
+            },
+          }),
+          el('button', {
+            type: 'button', title: 'Remove', disabled: options.length <= 1,
+            onclick: () => {
+              options.splice(i, 1);
+              if (correctIdx === i) correctIdx = -1;
+              else if (correctIdx > i) correctIdx--;
+              item.correct = correctIdx;
+              set(options.join('\n'), { remount: true });
+              renderRows();
+            },
+          }, '×')
+        );
+      }));
+    };
+    renderRows();
+    const addBtn = el('div', { class: 'inline', style: 'margin-top: 4px;' },
+      el('button', { type: 'button', onclick: () => { options.push(''); renderRows(); } }, '+ Option')
+    );
+    return field(spec.label, el('div', { class: 'stack' }, container, addBtn), spec.hint);
+  }
 
   if (spec.kind === 'select') {
     return field(spec.label, el('select', { onchange: (ev) => set(ev.target.value, { remount: true }) },

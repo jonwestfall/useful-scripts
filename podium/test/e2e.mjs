@@ -3247,12 +3247,14 @@ const alive = (page) => page.$$eval('.layer[data-role="program"]', (n) => n.leng
   const { page, close } = await openScreen(
     JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'stale-not-offline', passphrase: 'x' }),
     (ctx) => ctx.route('**/assets/js/protocol.js', async (route) => {
-      const res = await route.fetch();
-      if (route.request().resourceType() === 'script') {
-        await route.fulfill({ response: res, body: (await res.text()).replace(/export const BUILD = \d+;/, 'export const BUILD = 1;') });
-        return;
-      }
-      await route.fulfill({ response: res });
+      try {
+        const res = await route.fetch();
+        if (route.request().resourceType() === 'script') {
+          await route.fulfill({ response: res, body: (await res.text()).replace(/export const BUILD = \d+;/, 'export const BUILD = 1;') });
+          return;
+        }
+        await route.fulfill({ response: res });
+      } catch (e) { /* ignore disposed */ }
     }),
   );
   await page.waitForSelector('#hud[data-status="online"]', { timeout: 15000 }).catch(() => {});
@@ -4846,7 +4848,10 @@ await desk.waitForSelector('#type-picker .type-btn');
 await desk.fill('#plan-title', 'Poll day');
 await desk.click('#type-picker .type-btn:has-text("Poll")');
 await desk.fill('#item-fields textarea >> nth=0', 'Which bias is this?');
-await desk.fill('#item-fields textarea >> nth=1', 'Construct\nMethod\nNorming');
+await desk.fill('#item-fields .poll-option-row:nth-child(1) input', 'Construct');
+await desk.fill('#item-fields .poll-option-row:nth-child(2) input', 'Method');
+await desk.click('#item-fields button:has-text("+ Option")');
+await desk.fill('#item-fields .poll-option-row:nth-child(3) input', 'Norming');
 const previewQuestion = await desk.textContent('.r-poll-question');
 ok(`the planning page previews a poll with the projector's own renderer ("${previewQuestion.trim()}")`, previewQuestion.trim() === 'Which bias is this?');
 await desk.waitForFunction(() => /^Saved/.test(document.querySelector('#save-state').textContent), null, { timeout: 10000 });

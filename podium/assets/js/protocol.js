@@ -254,11 +254,13 @@ function normalizeItem(item) {
     // was asked (kind/question/options, editable by re-staging) or a tally
     // the display fills in on its own polling tick (open/revealed/counts/
     // answers) and this normalization must not clobber on every re-stage.
-    copy.kind = copy.kind === 'text' ? 'text' : 'choice';
+    copy.kind = ['text', 'qna'].includes(copy.kind) ? copy.kind : 'choice';
     copy.question = String(copy.question || '').slice(0, 500);
     copy.options = copy.kind === 'choice'
       ? (Array.isArray(copy.options) ? copy.options : []).slice(0, 8).map((o) => String(o).slice(0, 200))
       : [];
+    copy.correct = Number.isFinite(Number(copy.correct)) ? Math.round(Number(copy.correct)) : -1;
+    copy.closesAt = Number.isFinite(Number(copy.closesAt)) && copy.closesAt > 0 ? Number(copy.closesAt) : null;
     copy.open = copy.open !== false;
     copy.revealed = !!copy.revealed;
     copy.voters = Math.max(0, Number(copy.voters) || 0);
@@ -276,6 +278,7 @@ function normalizeItem(item) {
     copy.hiddenAnswers = copy.kind === 'text' && Array.isArray(copy.hiddenAnswers)
       ? [...new Set(copy.hiddenAnswers.map((i) => Math.trunc(Number(i))).filter((i) => i >= 0 && i < copy.answers.length))]
       : [];
+    copy.qnaFeed = copy.kind === 'qna' ? (Array.isArray(copy.qnaFeed) ? copy.qnaFeed : []) : [];
     // Whether the join card spells out the URL under the QR, alongside the
     // four-letter code - a controller-local presentation preference (see
     // control.js's `presentation` prefs), decided once by whoever composes

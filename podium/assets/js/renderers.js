@@ -536,7 +536,8 @@ function renderPoll(item, opts) {
   // adds this third way in, for a room where typing a URL beats scanning.
   const urlText = el('div', { class: 'r-poll-url' }, '');
   const hint = el('div', { class: 'r-poll-hint' }, 'Scan, or join and enter the code');
-  const joinCard = el('div', { class: 'r-poll-join' }, qrHolder, code, urlText, hint);
+  const countdownText = el('div', { class: 'r-poll-countdown' }, '');
+  const joinCard = el('div', { class: 'r-poll-join' }, qrHolder, code, urlText, hint, countdownText);
   const status = el('div', { class: 'r-poll-status' }, '');
   const results = el('div', { class: 'r-poll-results' });
   const node = el('div', { class: 'r-poll' }, question, joinCard, status, results);
@@ -551,33 +552,76 @@ function renderPoll(item, opts) {
 
   const drawResults = (it) => {
     if (it.kind === 'text') {
-      // Hidden-by-index, not filtered out of `answers` itself - the room
-      // simply never gets a row for one, same as if it had never arrived.
       const hidden = new Set(it.hiddenAnswers || []);
       const answers = (it.answers || []).filter((_, i) => !hidden.has(i));
       results.replaceChildren(...(answers.length
         ? answers.map((a) => el('div', { class: 'r-poll-answer' }, a))
         : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No answers yet')]));
       return;
+    } else if (it.kind === 'qna') {
+      const qnaFeed = (it.qnaFeed || []).filter(q => !q.hidden && !q.answered);
+      const projected = (it.qnaFeed || []).find(q => q.projected);
+      
+      if (projected) {
+        results.replaceChildren(el('div', { class: 'r-poll-qna-projected', style: 'font-size: clamp(24px, 5cqw, 72px); font-weight: 600; text-align: center; margin: 4cqh 0; padding: 4cqw; background: var(--panel); border-radius: 2cqh;' }, projected.text));
+      } else {
+        const topQuestions = qnaFeed.sort((a, b) => (b.upvotes?.length || 0) - (a.upvotes?.length || 0)).slice(0, 4);
+        results.replaceChildren(...(topQuestions.length
+          ? topQuestions.map((q) => el('div', { class: 'r-poll-answer' }, 
+              el('span', { class: 'mono', style: 'color: var(--dim); margin-right: 12px;' }, `▲ ${q.upvotes?.length || 0}`),
+              q.text
+            ))
+          : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No questions yet')]));
+      }
+      return;
     }
     const counts = it.counts || [];
     const max = Math.max(1, ...counts, 0);
-    results.replaceChildren(...(it.options || []).map((opt, i) => {
-      const count = counts[i] || 0;
-      const fill = el('div', { class: 'r-poll-bar-fill' });
-      fill.style.width = `${Math.round((count / max) * 100)}%`;
-      return el('div', { class: 'r-poll-bar-row' },
-        el('div', { class: 'r-poll-bar-label' }, el('span', {}, opt), el('span', { class: 'mono' }, String(count))),
-        el('div', { class: 'r-poll-bar-track' }, fill));
-    }));
+      results.replaceChildren(...(it.options || []).map((opt, i) => {
+        const count = counts[i] || 0;
+        const fill = el('div', { class: 'r-poll-bar-fill' });
+        fill.style.width = `${Math.round((count / max) * 100)}%`;
+        const isCorrect = it.revealed && it.correct === i;
+        const letter = String.fromCharCode(65 + i);
+        return el('div', { class: 'r-poll-bar-row' },
+          el('div', { class: 'r-poll-bar-label' }, 
+            el('span', {}, isCorrect ? el('strong', { class: 'ok-text' }, `[${letter}] `) : '', opt), 
+            el('span', { class: 'mono' }, String(count))
+          ),
+          el('div', { class: `r-poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill)
+        );
+      }));
+  };
+
+  let tickTimer = null;
+  let currentClosesAt = null;
+
+  const tick = () => {
+    if (!currentClosesAt) {
+      countdownText.textContent = '';
+      countdownText.hidden = true;
+      return;
+    }
+    const remaining = Math.max(0, Math.ceil((currentClosesAt - Date.now()) / 1000));
+    countdownText.hidden = false;
+    const m = Math.floor(remaining / 60);
+    const s = String(remaining % 60).padStart(2, '0');
+    countdownText.textContent = remaining >= 60 ? `${m}:${s} left` : `${s} seconds left`;
+    countdownText.style.color = remaining <= 10 ? '#ff9d9d' : 'var(--dim)';
+    
+    // Auto-close visually on projector (server handles actual rejection)
+    if (remaining === 0) {
+      currentClosesAt = null;
+      countdownText.hidden = true;
+      if (!node.classList.contains('is-closed')) {
+        node.classList.add('is-closed');
+        const countText = status.textContent.split(' · ')[0];
+        status.textContent = `${countText} · closed`;
+      }
+    }
   };
 
   const draw = (it) => {
-    // A redisplay from history (see control.js's redisplayFromHistory) has a
-    // pollId, for a stable ink key, but no token - there is no relay poll
-    // behind it any more, so a join card would be a QR to a dead code. A plan
-    // item previewed in the office (planfile.js's PLAN_TYPES.poll) has
-    // neither - it is not a poll yet, just the question for one.
     const archived = !it.token && !!it.pollId;
     const joinUrl = it.pollId ? (opts.getPollJoinUrl?.(it.pollId) || '') : '';
     question.textContent = it.question || '';
@@ -587,14 +631,17 @@ function renderPoll(item, opts) {
       qrHolder.replaceChildren();
       urlText.textContent = '';
       hint.textContent = 'Not started yet.';
+      currentClosesAt = null;
     } else if (archived) {
       qrHolder.replaceChildren();
       urlText.textContent = '';
       hint.textContent = 'This poll has ended — results only, no new votes.';
+      currentClosesAt = null;
     } else {
       drawQr(joinUrl);
       urlText.textContent = it.showUrl !== false ? joinUrl : '';
       hint.textContent = 'Scan, or join and enter the code';
+      currentClosesAt = it.open ? it.closesAt : null;
     }
     urlText.hidden = !urlText.textContent;
     node.classList.toggle('is-revealed', !!it.revealed);
@@ -604,6 +651,10 @@ function renderPoll(item, opts) {
       : `${it.voters || 0} response${it.voters === 1 ? '' : 's'}${it.open === false ? ' · closed' : ''}`;
     if (it.revealed) drawResults(it);
     else results.replaceChildren();
+    
+    tick();
+    if (currentClosesAt && !tickTimer) tickTimer = setInterval(tick, 1000);
+    if (!currentClosesAt && tickTimer) { clearInterval(tickTimer); tickTimer = null; }
   };
   draw(item);
 
@@ -612,7 +663,10 @@ function renderPoll(item, opts) {
     update: draw,
     reconcile() {},
     telemetry: noTelemetry,
-    destroy() { node.remove(); },
+    destroy() { 
+      if (tickTimer) clearInterval(tickTimer);
+      node.remove(); 
+    },
   };
 }
 

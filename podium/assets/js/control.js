@@ -2036,6 +2036,24 @@ let pollBusy = false;    // a relay call is in flight - disable the buttons that
 let pollError = '';      // composer-side validation/relay error
 let pollActionError = ''; // running-poll-side relay error (close/reopen/end)
 let pollEndButton = null; // the wireDangerButton handle for #poll-end, wired further down
+let pollCurrentClosesAt = null;
+let pollTickTimer = null;
+
+function tickPollCountdown() {
+  const cd = document.getElementById('poll-running-countdown');
+  if (!cd || !pollCurrentClosesAt) return;
+  const remaining = Math.max(0, Math.ceil((pollCurrentClosesAt - Date.now()) / 1000));
+  cd.hidden = false;
+  const m = Math.floor(remaining / 60);
+  const s = String(remaining % 60).padStart(2, '0');
+  cd.textContent = remaining >= 60 ? `Voting closes in ${m}:${s}` : `Voting closes in ${s} seconds`;
+  cd.style.color = remaining <= 10 ? '#ff9d9d' : 'var(--dim)';
+  if (remaining === 0) {
+    cd.hidden = true;
+    const item = findPollItem();
+    if (item && item.open !== false && !pollBusy) setPollOpen(false);
+  }
+}
 
 function findPollItem() {
   return [state.program, state.preview, ...state.panels].find((it) => it?.type === 'poll') || null;
@@ -2217,7 +2235,7 @@ async function pollApi(suffix, opts = {}) {
 }
 
 function newPollDraft() {
-  pollDraft = { kind: 'choice', question: '', options: ['', ''] };
+  pollDraft = { kind: 'choice', question: '', options: ['', ''], correct: -1 };
   pollError = '';
   pollOptionsDrawn = -1;
 }
@@ -2229,9 +2247,10 @@ function newPollDraft() {
 function openPollDraftFromPlan(item) {
   const options = String(item.options || '').split('\n').map((s) => s.trim()).filter(Boolean);
   pollDraft = {
-    kind: item.kind === 'text' ? 'text' : 'choice',
+    kind: ['text', 'qna'].includes(item.kind) ? item.kind : 'choice',
     question: item.question || '',
     options: options.length ? options : ['', ''],
+    correct: Number.isFinite(Number(item.correct)) ? Number(item.correct) : -1,
   };
   pollError = '';
   pollOptionsDrawn = -1;
@@ -2243,9 +2262,17 @@ async function startPoll() {
   if (!pollDraft || pollBusy) return;
   const question = pollDraft.question.trim();
   if (!question) { pollError = 'Add a question first.'; renderPollsPanel(); return; }
-  const options = pollDraft.kind === 'choice'
-    ? pollDraft.options.map((o) => o.trim()).filter(Boolean)
-    : [];
+  let correct = -1;
+  const options = [];
+  if (pollDraft.kind === 'choice') {
+    for (let i = 0; i < pollDraft.options.length; i++) {
+      const trimmed = pollDraft.options[i].trim();
+      if (trimmed) {
+        if (pollDraft.correct === i) correct = options.length;
+        options.push(trimmed);
+      }
+    }
+  }
   if (pollDraft.kind === 'choice' && options.length < 2) {
     pollError = 'Add at least two options.';
     renderPollsPanel();
@@ -2259,11 +2286,11 @@ async function startPoll() {
     await pollApi(`/${created.code}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}` },
-      body: JSON.stringify({ kind: pollDraft.kind, question, options, open: true }),
+      body: JSON.stringify({ kind: pollDraft.kind, question, options, correct, open: true }),
     });
     stage({
       type: 'poll', title: 'Poll', pollId: created.code, token: created.token,
-      kind: pollDraft.kind, question, options, open: true, revealed: false,
+      kind: pollDraft.kind, question, options, correct, open: true, revealed: false,
       showUrl: presentation.showPollUrl,
     });
     pollDraft = null;
@@ -2285,7 +2312,28 @@ async function setPollOpen(open) {
     await pollApi(`/${item.pollId}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${item.token}` },
-      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, open }),
+      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, correct: item.correct, open }),
+    });
+  } catch (err) {
+    pollActionError = err.message || 'Could not reach the poll.';
+  } finally {
+    pollBusy = false;
+    renderPollsPanel();
+  }
+}
+
+async function setPollClosesAt(seconds) {
+  const item = findPollItem();
+  if (!item || !item.token || pollBusy) return;
+  pollBusy = true;
+  pollActionError = '';
+  renderPollsPanel();
+  try {
+    const closesAt = Date.now() + (seconds * 1000);
+    await pollApi(`/${item.pollId}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${item.token}` },
+      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, correct: item.correct, open: true, closesAt }),
     });
   } catch (err) {
     pollActionError = err.message || 'Could not reach the poll.';
@@ -2346,7 +2394,7 @@ async function endPoll() {
   // duplicate the entry. Only a poll that actually ran gets archived.
   if (item.token) {
     addToPollHistory({
-      pollId: item.pollId, kind: item.kind, question: item.question, options: item.options,
+      pollId: item.pollId, kind: item.kind, question: item.question, options: item.options, correct: item.correct,
       counts: item.counts || [], answers: item.answers || [], voters: item.voters || 0,
       hiddenAnswers: item.hiddenAnswers || [], endedAt: Date.now(),
       // Which lecture this poll belongs to, so a later export - in a
@@ -2382,7 +2430,7 @@ async function endPoll() {
 // history list itself disables them then instead, to keep a tap from
 // looking like a dead click.
 function reopenFromHistory(row) {
-  pollDraft = { kind: row.kind, question: row.question, options: row.kind === 'choice' ? [...row.options] : ['', ''] };
+  pollDraft = { kind: row.kind, question: row.question, options: row.kind === 'choice' ? [...row.options] : ['', ''], correct: Number.isFinite(Number(row.correct)) ? Number(row.correct) : -1 };
   pollError = '';
   pollOptionsDrawn = -1;
   renderPollsPanel();
@@ -2412,15 +2460,36 @@ function renderPollBuilder() {
   $('#poll-option-add').closest('.inline').hidden = !showOptions;
   if (showOptions && pollOptionsDrawn !== pollDraft.options.length) {
     pollOptionsDrawn = pollDraft.options.length;
-    $('#poll-options').replaceChildren(...pollDraft.options.map((_, i) => el('div', { class: 'poll-option-row' },
-      el('input', {
-        type: 'text', placeholder: `Option ${i + 1}`, maxlength: '200',
-        oninput: (ev) => { pollDraft.options[i] = ev.target.value; },
-      }),
-      el('button', {
-        type: 'button', title: 'Remove', disabled: pollDraft.options.length <= 2,
-        onclick: () => { pollDraft.options.splice(i, 1); pollOptionsDrawn = -1; renderPollsPanel(); },
-      }, '×'))));
+    $('#poll-options').replaceChildren(...pollDraft.options.map((_, i) => {
+      const letter = String.fromCharCode(65 + i);
+      const isCorrect = pollDraft.correct === i;
+      return el('div', { class: 'poll-option-row' },
+        el('button', {
+          type: 'button',
+          class: `poll-chip ${isCorrect ? 'is-correct' : ''}`,
+          title: isCorrect ? 'Marked as correct' : 'Mark as correct',
+          onclick: () => {
+            pollDraft.correct = isCorrect ? -1 : i;
+            pollOptionsDrawn = -1;
+            renderPollsPanel();
+          },
+        }, letter),
+        el('input', {
+          type: 'text', placeholder: `Option ${i + 1}`, maxlength: '200',
+          oninput: (ev) => { pollDraft.options[i] = ev.target.value; },
+        }),
+        el('button', {
+          type: 'button', title: 'Remove', disabled: pollDraft.options.length <= 2,
+          onclick: () => {
+            pollDraft.options.splice(i, 1);
+            if (pollDraft.correct === i) pollDraft.correct = -1;
+            else if (pollDraft.correct > i) pollDraft.correct--;
+            pollOptionsDrawn = -1;
+            renderPollsPanel();
+          },
+        }, '×')
+      );
+    }));
     pollDraft.options.forEach((v, i) => { $$('#poll-options input')[i].value = v; });
   }
   $('#poll-option-add').disabled = pollDraft.options.length >= 8;
@@ -2443,17 +2512,28 @@ function renderRunningPoll(item) {
   $('#poll-copy-link').disabled = !link;
   $('#poll-copy-link').hidden = archived;
   $('#poll-toggle-open').hidden = archived;
+  $('#poll-timer-btns').hidden = archived || item.open === false;
   $('#poll-running-status').textContent = archived
     ? `Redisplayed from history — ${item.voters} response${item.voters === 1 ? '' : 's'}, not accepting new votes`
     : `${item.voters} response${item.voters === 1 ? '' : 's'}${item.open === false ? ' · voting closed' : ' · voting open'}`
       + (item.revealed ? ' · shown to the room' : ' · visible to you only');
   $('#poll-toggle-open').textContent = item.open === false ? 'Reopen voting' : 'Close voting';
   $('#poll-toggle-open').disabled = pollBusy;
+  
+  if (item.closesAt && item.open !== false) {
+    pollCurrentClosesAt = item.closesAt;
+    if (!pollTickTimer) pollTickTimer = setInterval(tickPollCountdown, 1000);
+    tickPollCountdown();
+  } else {
+    pollCurrentClosesAt = null;
+    $('#poll-running-countdown').hidden = true;
+    if (pollTickTimer) { clearInterval(pollTickTimer); pollTickTimer = null; }
+  }
   $('#poll-toggle-reveal').textContent = item.revealed ? 'Hide from room' : 'Reveal to room';
   $('#poll-action-error').hidden = !pollActionError;
   $('#poll-action-error').textContent = pollActionError;
 
-  const signature = `${item.kind}:${JSON.stringify(item.counts)}:${JSON.stringify(item.answers)}:${JSON.stringify(item.hiddenAnswers)}`;
+  const signature = `${item.kind}:${JSON.stringify(item.counts)}:${JSON.stringify(item.answers)}:${JSON.stringify(item.hiddenAnswers)}:${JSON.stringify(item.qnaFeed)}`;
   if (signature !== pollRunningDrawn) {
     pollRunningDrawn = signature;
     const results = $('#poll-running-results');
@@ -2469,6 +2549,30 @@ function renderRunningPoll(item) {
               onclick: () => send({ op: 'poll', pollId: item.pollId, action: 'hideAnswer', index: i, value: !hidden.has(i) }),
             }, hidden.has(i) ? 'Unhide' : 'Hide')))
         : [el('div', { class: 'poll-answer-row' }, 'No answers yet')]));
+    } else if (item.kind === 'qna') {
+      const qnaFeed = (item.qnaFeed || []).slice().sort((a, b) => (b.upvotes?.length || 0) - (a.upvotes?.length || 0));
+      results.replaceChildren(...(qnaFeed.length
+        ? qnaFeed.map((q) => el('div', { class: `poll-answer-row${q.hidden ? ' is-hidden' : ''}${q.answered ? ' is-answered' : ''}${q.projected ? ' is-projected' : ''}`, style: 'flex-direction: column; align-items: stretch; gap: 8px;' },
+            el('div', { style: 'display: flex; gap: 8px; font-weight: 600;' }, 
+              el('span', { class: 'mono' }, `▲ ${q.upvotes?.length || 0}`),
+              el('span', { class: 'grow' }, q.text)
+            ),
+            el('div', { style: 'display: flex; gap: 4px; justify-content: flex-end;' },
+              el('button', {
+                type: 'button', class: 'poll-answer-hide',
+                onclick: () => sendQnaAction(item.pollId, item.token, q.id, 'projected', !q.projected),
+              }, q.projected ? 'Unproject' : 'Project'),
+              el('button', {
+                type: 'button', class: 'poll-answer-hide',
+                onclick: () => sendQnaAction(item.pollId, item.token, q.id, 'answered', !q.answered),
+              }, q.answered ? 'Unanswer' : 'Mark Answered'),
+              el('button', {
+                type: 'button', class: 'poll-answer-hide',
+                onclick: () => sendQnaAction(item.pollId, item.token, q.id, 'hidden', !q.hidden),
+              }, q.hidden ? 'Unhide' : 'Hide')
+            )
+          ))
+        : [el('div', { class: 'poll-answer-row' }, 'No questions yet')]));
     } else {
       const counts = item.counts || [];
       const max = Math.max(1, ...counts, 0);
@@ -2476,9 +2580,15 @@ function renderRunningPoll(item) {
         const count = counts[i] || 0;
         const fill = el('div', { class: 'poll-bar-fill' });
         fill.style.width = `${Math.round((count / max) * 100)}%`;
+        const isCorrect = item.correct === i;
+        const letter = String.fromCharCode(65 + i);
         return el('div', { class: 'poll-bar-row' },
-          el('div', { class: 'poll-bar-label' }, el('span', {}, opt), el('span', { class: 'mono' }, String(count))),
-          el('div', { class: 'poll-bar-track' }, fill));
+          el('div', { class: 'poll-bar-label' }, 
+            el('span', {}, isCorrect ? el('strong', { class: 'ok-text' }, `[${letter}] `) : '', opt), 
+            el('span', { class: 'mono' }, String(count))
+          ),
+          el('div', { class: `poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill)
+        );
       }));
     }
   }
@@ -2488,9 +2598,9 @@ function renderPollHistory() {
   const holder = $('#poll-history');
   const busy = !!findPollItem();
   holder.replaceChildren(...pollHistory.map((row) => {
-    const summary = row.kind === 'text'
-      ? `${row.voters} response${row.voters === 1 ? '' : 's'}`
-      : `${row.voters} response${row.voters === 1 ? '' : 's'} — ${(row.options || []).map((o, i) => `${o}: ${row.counts?.[i] || 0}`).join(', ')}`;
+    const summary = row.kind === 'text' ? `${row.voters} response${row.voters === 1 ? '' : 's'}` :
+                    row.kind === 'qna' ? `${row.qnaFeed?.length || 0} question${row.qnaFeed?.length === 1 ? '' : 's'} (${row.voters} participant${row.voters === 1 ? '' : 's'})` :
+                    `${row.voters} response${row.voters === 1 ? '' : 's'} — ${(row.options || []).map((o, i) => `${o}: ${row.counts?.[i] || 0}`).join(', ')}`;
     return el('div', { class: 'poll-history-row' },
       el('div', { class: 'poll-history-question' }, row.question || '(no question)'),
       el('div', { class: 'hint' }, summary),
@@ -4329,7 +4439,7 @@ $('#media-loop').addEventListener('change', (ev) => send({ op: 'media', action: 
 
 $('#poll-kind').addEventListener('change', (ev) => {
   if (!pollDraft) return;
-  pollDraft.kind = ev.target.value === 'text' ? 'text' : 'choice';
+  pollDraft.kind = ['text', 'qna'].includes(ev.target.value) ? ev.target.value : 'choice';
   renderPollsPanel();
 });
 $('#poll-question').addEventListener('input', (ev) => { if (pollDraft) pollDraft.question = ev.target.value; });
@@ -4357,6 +4467,9 @@ $('#poll-toggle-open').addEventListener('click', () => {
   const item = findPollItem();
   if (item) setPollOpen(item.open === false);
 });
+$('#poll-timer-30').addEventListener('click', () => setPollClosesAt(30));
+$('#poll-timer-60').addEventListener('click', () => setPollClosesAt(60));
+$('#poll-timer-120').addEventListener('click', () => setPollClosesAt(120));
 $('#poll-toggle-reveal').addEventListener('click', togglePollReveal);
 $('#poll-export').addEventListener('click', exportPollCsv);
 // wireDangerButton leaves a button disabled after a successful action - right
@@ -5815,4 +5928,17 @@ if (!isConfigured(cfg)) {
   await loadPlaylists();
   tab('library');
   renderAll();
+}
+
+async function sendQnaAction(pollId, token, id, type, value) {
+  try {
+    await pollApi(`/${pollId}/qna-action`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ id, type, value }),
+    });
+  } catch (err) {
+    pollActionError = err.message || 'Failed to update question.';
+    renderPolls();
+  }
 }

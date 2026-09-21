@@ -1436,3 +1436,65 @@ body.plan .linkish:hover { text-decoration: underline; }
     padding-right: 14px;
   }
 }
+
+/* Issue #40: Poll Correct Answers */
+.poll-chip {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  color: var(--dim);
+}
+.poll-chip:hover {
+  border-color: var(--dim);
+}
+.poll-chip.is-correct {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #0b0d10;
+}
+
+.poll-bar-track.is-correct .poll-bar-fill {
+  background: var(--ok);
+}
+
+.r-poll-bar-track.is-correct .r-poll-bar-fill {
+  background: var(--ok);
+}
+.ok-text {
+  color: var(--ok);
+}
+
+/* Issue #42: Timer Buttons */
+#poll-timer-btns {
+  margin-bottom: 12px;
+}
+#poll-timer-btns button {
+  padding: 6px 12px;
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--ink);
+}
+#poll-timer-btns button:hover {
+  background: var(--line);
+}
+
+.r-poll-countdown {
+  margin-top: 1cqh;
+  font-size: clamp(8px, 2.2cqw, 30px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* Q&A specific */
+.poll-answer-row.is-answered { opacity: 0.5; }
+.poll-answer-row.is-projected { border-left: 4px solid var(--live); padding-left: 8px; }
