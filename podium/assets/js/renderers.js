@@ -450,6 +450,9 @@ function renderPdf(item, opts) {
   const canvas = el('canvas', { class: 'r-pdf-canvas' });
   let pageNumber = item.page || 1;
   let src = item.src;
+  let zoom = item.zoom || 1;
+  let panX = Number.isFinite(item.panX) ? item.panX : 0.5;
+  let panY = Number.isFinite(item.panY) ? item.panY : 0.5;
   let currentDoc = null;
   let currentDocSrc = null;
   let currentRenderTask = null;
@@ -509,14 +512,30 @@ function renderPdf(item, opts) {
         3
       ));
 
+      // The canvas stays sized to the un-zoomed window (viewport at `scale`)
+      // regardless of zoom - what changes is a transform ahead of it that
+      // renders the page bigger and slides it so the pan point lands centered
+      // in that same window. Keeping the window's own size fixed is what
+      // keeps contentAspect() (and every ink coordinate anchored to it)
+      // correct at any zoom level - zooming crops the view, it never
+      // reshapes the letterboxed surface ink is drawn onto.
       const viewport = page.getViewport({ scale });
       canvas.width = Math.round(viewport.width);
       canvas.height = Math.round(viewport.height);
 
       const ctx = canvas.getContext('2d');
+      let transform;
+      if (zoom > 1) {
+        const bigW = viewport.width * zoom;
+        const bigH = viewport.height * zoom;
+        const offsetX = Math.min(bigW - viewport.width, Math.max(0, panX * bigW - viewport.width / 2));
+        const offsetY = Math.min(bigH - viewport.height, Math.max(0, panY * bigH - viewport.height / 2));
+        transform = [zoom, 0, 0, zoom, -offsetX, -offsetY];
+      }
       currentRenderTask = page.render({
         canvasContext: ctx,
         viewport: viewport,
+        transform,
       });
 
       await currentRenderTask.promise;
@@ -537,9 +556,15 @@ function renderPdf(item, opts) {
     el: node,
     update(it) {
       const nextPage = it.page || 1;
-      if (it.src !== src || nextPage !== pageNumber) {
+      const nextZoom = it.zoom || 1;
+      const nextPanX = Number.isFinite(it.panX) ? it.panX : 0.5;
+      const nextPanY = Number.isFinite(it.panY) ? it.panY : 0.5;
+      if (it.src !== src || nextPage !== pageNumber || nextZoom !== zoom || nextPanX !== panX || nextPanY !== panY) {
         src = it.src;
         pageNumber = nextPage;
+        zoom = nextZoom;
+        panX = nextPanX;
+        panY = nextPanY;
         render();
       }
     },

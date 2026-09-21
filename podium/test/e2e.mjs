@@ -5086,6 +5086,34 @@ const padAspect = await pad.evaluate(() => {
 ok(`the controller's ink pad is letterboxed to the PDF's actual page shape, not a guess (display ${pageAspect.toFixed(3)}, pad ${padAspect.toFixed(3)})`,
   Math.abs(pageAspect - padAspect) < 0.05);
 
+// Zoom/pan navigation (Issue #82) - the display actually re-renders a
+// cropped, zoomed view, not just a state flag nobody draws.
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForSelector('#pdf-zoom:not([hidden])', { timeout: 5000 });
+ok('zoom starts at 1x with pan disabled', await pad.evaluate(() =>
+  document.querySelector('#pdf-zoom-level').textContent === '1×'
+  && document.querySelector('#pdf-pan-left').disabled === true));
+
+const pixelsAt1x = await screen.evaluate(() => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  return Array.from(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data);
+});
+await pad.click('#pdf-zoom-in');
+await pad.waitForFunction(() => document.querySelector('#pdf-zoom-level').textContent === '1.6×', null, { timeout: 5000 });
+ok('zooming in updates the level shown on the controller', true);
+await screen.waitForFunction((before) => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  const now = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  return now.length === before.length && !now.every((v, i) => v === before[i]);
+}, pixelsAt1x, { timeout: 8000 });
+ok('and the display actually re-renders a different (cropped, zoomed-in) image, not just a flag', true);
+ok('pan is enabled once zoomed in', await pad.evaluate(() => document.querySelector('#pdf-pan-left').disabled === false));
+
+await pad.click('#pdf-zoom-reset');
+await pad.waitForFunction(() => document.querySelector('#pdf-zoom-level').textContent === '1×', null, { timeout: 5000 });
+ok('reset zoom returns to 1x and disables pan again',
+  await pad.evaluate(() => document.querySelector('#pdf-pan-left').disabled === true));
+
 await ctx.close();
 }
 

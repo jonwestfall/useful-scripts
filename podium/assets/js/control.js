@@ -1955,6 +1955,16 @@ function renderNow() {
     ? `Page ${item.page || 1}`
     : (type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}` : 'Slide');
 
+  $('#pdf-zoom').hidden = type !== 'pdf';
+  $('#pdf-pan').hidden = type !== 'pdf';
+  if (type === 'pdf') {
+    const pdfZoom = item.zoom || 1;
+    $('#pdf-zoom-level').textContent = `${pdfZoom.toFixed(pdfZoom % 1 ? 1 : 0)}×`;
+    $('#pdf-zoom-out').disabled = pdfZoom <= 1;
+    $('#pdf-zoom-reset').disabled = pdfZoom <= 1;
+    $$('.pan-btn', $('#pdf-pan')).forEach((b) => { b.disabled = pdfZoom <= 1; });
+  }
+
   if (isMedia) {
     const t = currentTime();
     const d = telemetry.duration || 0;
@@ -4935,6 +4945,42 @@ $('#pdf-upload').addEventListener('change', async (ev) => {
 
 $('#prev-page').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
 $('#next-page').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
+
+// Zooming into a PDF page on the projector (Issue #82) - distinct from the
+// Ink tab's own pad zoom, which only changes what you see while drawing and
+// never touches the projector. This does: the display renders the cropped,
+// zoomed region itself (see renderPdf's transform in renderers.js).
+// protocol.js's own 'zoom' case does the actual clamping (both of zoom to
+// [1,4] and pan to "still on the page"), so a press here can send whatever
+// the arithmetic works out to without duplicating that logic.
+const PDF_ZOOM_STEP = 1.6;
+function pdfZoomStep(dir) {
+  const item = focusedItem(state);
+  if (item?.type !== 'pdf') return;
+  const zoom = dir > 0 ? (item.zoom || 1) * PDF_ZOOM_STEP : (item.zoom || 1) / PDF_ZOOM_STEP;
+  send({ op: 'zoom', action: 'set', zoom, panX: item.panX ?? 0.5, panY: item.panY ?? 0.5 });
+}
+$('#pdf-zoom-in').addEventListener('click', () => pdfZoomStep(1));
+$('#pdf-zoom-out').addEventListener('click', () => pdfZoomStep(-1));
+$('#pdf-zoom-reset').addEventListener('click', () => send({ op: 'zoom', action: 'reset' }));
+
+function pdfPan(dx, dy) {
+  const item = focusedItem(state);
+  if (item?.type !== 'pdf' || (item.zoom || 1) <= 1) return;
+  // Half the visible window's share of the page at this zoom, so a press
+  // moves a consistent fraction of "what you can currently see" rather than
+  // a fixed amount that would feel huge zoomed in and tiny zoomed out.
+  const step = 0.6 / (item.zoom || 1);
+  send({
+    op: 'zoom', action: 'set', zoom: item.zoom,
+    panX: (item.panX ?? 0.5) + dx * step,
+    panY: (item.panY ?? 0.5) + dy * step,
+  });
+}
+$('#pdf-pan-left').addEventListener('click', () => pdfPan(-1, 0));
+$('#pdf-pan-right').addEventListener('click', () => pdfPan(1, 0));
+$('#pdf-pan-up').addEventListener('click', () => pdfPan(0, -1));
+$('#pdf-pan-down').addEventListener('click', () => pdfPan(0, 1));
 
 $('#lib-filter').addEventListener('input', renderLibrary);
 $('#url-form').addEventListener('submit', (ev) => {

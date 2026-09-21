@@ -215,7 +215,12 @@ function normalizeItem(item) {
     copy.playing = copy.playing ?? true;
     copy.startAt = Number(copy.startAt) || 0;
   }
-  if (copy.type === 'pdf') copy.page = Math.max(1, Number(copy.page) || 1);
+  if (copy.type === 'pdf') {
+    copy.page = Math.max(1, Number(copy.page) || 1);
+    copy.zoom = Math.min(4, Math.max(1, Number(copy.zoom) || 1));
+    copy.panX = Number.isFinite(copy.panX) ? copy.panX : 0.5;
+    copy.panY = Number.isFinite(copy.panY) ? copy.panY : 0.5;
+  }
   if (copy.type === 'slides') copy.slide = Math.max(0, Number(copy.slide) || 0);
   if (copy.type === 'deck') {
     copy.slide = Math.max(0, Number(copy.slide) || 0);
@@ -963,6 +968,34 @@ export function applyCommand(state, cmd) {
       const item = state.focus === 0 ? state[resolveVisualTarget(state, cmd)] : state.panels[state.focus - 1];
       if (!item) return false;
       item.fit = cmd.value === 'cover' ? 'cover' : 'contain';
+      return true;
+    }
+
+    // Zooming into a PDF page (Issue #82). panX/panY are fractions (0..1) of
+    // the page marking the point held at the center of the view - clamped so
+    // the visible window never pans past the page's own edge, the same
+    // "never show dead space" rule fit/contain already gives every other
+    // panel here.
+    case 'zoom': {
+      const item = state.focus === 0 ? state[resolveVisualTarget(state, cmd)] : state.panels[state.focus - 1];
+      if (!item || item.type !== 'pdf') return false;
+      if (cmd.action === 'reset') {
+        item.zoom = 1;
+        item.panX = 0.5;
+        item.panY = 0.5;
+        return true;
+      }
+      if (cmd.action !== 'set') return false;
+      const zoom = Math.min(4, Math.max(1, Number(cmd.zoom) || 1));
+      // Half the visible window's fraction of the page shrinks as zoom grows
+      // (a window 1/zoom as wide can only center within the middle 1-1/zoom
+      // of the page), which is what keeps a pan clamped to "still on the
+      // page" at every zoom level rather than just at zoom 1.
+      const half = 1 / (2 * zoom);
+      const clamp01 = (v) => Math.min(1 - half, Math.max(half, Number.isFinite(v) ? v : 0.5));
+      item.zoom = zoom;
+      item.panX = zoom === 1 ? 0.5 : clamp01(cmd.panX ?? item.panX ?? 0.5);
+      item.panY = zoom === 1 ? 0.5 : clamp01(cmd.panY ?? item.panY ?? 0.5);
       return true;
     }
 

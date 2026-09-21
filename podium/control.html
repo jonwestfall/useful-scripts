@@ -321,6 +321,21 @@ try {
             <span id="page-label"></span>
             <button id="next-page" type="button">Next ▶</button>
           </div>
+          <!-- Zooms the actual projector image (Issue #82) - not the Ink
+               tab's own pad zoom above, which only changes what you see
+               while drawing and never leaves this device. -->
+          <div id="pdf-zoom" class="inline" hidden>
+            <button id="pdf-zoom-out" type="button" title="Zoom out">−</button>
+            <span id="pdf-zoom-level" class="mono">1×</span>
+            <button id="pdf-zoom-in" type="button" title="Zoom in">+</button>
+            <button id="pdf-zoom-reset" type="button">Reset zoom</button>
+          </div>
+          <div id="pdf-pan" class="inline" hidden>
+            <button id="pdf-pan-left" class="pan-btn" type="button" disabled title="Pan left">◀</button>
+            <button id="pdf-pan-up" class="pan-btn" type="button" disabled title="Pan up">▲</button>
+            <button id="pdf-pan-down" class="pan-btn" type="button" disabled title="Pan down">▼</button>
+            <button id="pdf-pan-right" class="pan-btn" type="button" disabled title="Pan right">▶</button>
+          </div>
           <div class="inline">
             <button id="preview-mode" type="button">Always cue first</button>
           </div>
