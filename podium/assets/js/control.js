@@ -4502,9 +4502,20 @@ async function connect() {
 
 // --- wiring -----------------------------------------------------------------
 
+// The 12 tabs, in the order they ship in control.html - used to sanitize a
+// saved order (see loadPresentation) and to label the ones tucked under
+// "More". Adding a 13th tab here later needs nothing else done to it: an
+// unknown id in a saved order is dropped and a new one not yet saved is
+// appended, the same defensive merge bottomSlots already does above.
+const TAB_IDS = ['library', 'slides', 'now', 'ink', 'say', 'timer', 'camera', 'photos', 'music', 'mixer', 'sets', 'polls'];
+const TAB_LABELS = {
+  library: 'Library', slides: 'Slides', now: 'Now', ink: 'Ink', say: 'Say', timer: 'Timer',
+  camera: 'Camera', photos: 'Photos', music: 'Music', mixer: 'Mixer', sets: 'Sets', polls: 'Polls',
+};
+
 function tab(name) {
   const dualPane = document.body.classList.contains('dual-pane');
-  $$('.tab:not(#dual-pane-toggle)').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
+  $$('.tab:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
   $$('.panel').forEach((p) => {
     if (dualPane && p.dataset.panel === 'slides') {
       p.hidden = false;
@@ -4546,7 +4557,7 @@ function tab(name) {
   }
 }
 
-$$('.tab:not(#dual-pane-toggle)').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
+$$('.tab:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
 
 const savedDual = localStorage.getItem('podium.ui.dualPane') === '1';
 if (savedDual) {
@@ -5376,6 +5387,17 @@ $('#cam-flip').addEventListener('click', async () => {
 // A Magic Keyboard or a clicker paired to the iPad should just work.
 document.addEventListener('keydown', (ev) => {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target.tagName)) return;
+  // Cmd/Ctrl+Z is the one modified key every keyboard user already expects
+  // to work without being told, so it is the one exception to "a modified
+  // key is not ours" below - and only on the Ink tab, the same guard the
+  // digit/letter tool shortcuts already use, so it does not steal undo from
+  // a text field the INPUT/TEXTAREA/SELECT check above missed.
+  if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && !ev.shiftKey
+    && (ev.key === 'z' || ev.key === 'Z') && !$('[data-panel="ink"]')?.hidden) {
+    ev.preventDefault();
+    $('#ink-undo').click();
+    return;
+  }
   // Cmd/Ctrl+P is print and Cmd/Ctrl+F is find. Taking a photo of the
   // projector when someone asked the browser to print is worse than doing
   // nothing, so a modified key is not ours.
@@ -5479,6 +5501,8 @@ const PRESENTATION_DEFAULTS = {
   inkScrollGutter: false,
   inkControlsTop: false,
   snapShapes: true,
+  tabOrder: [...TAB_IDS],
+  hiddenTabs: [],
 };
 function loadPresentation() {
   try {
@@ -5487,6 +5511,17 @@ function loadPresentation() {
     if (!['dark', 'light', 'auto'].includes(merged.theme)) merged.theme = 'dark';
     if (merged.haptics === undefined) merged.haptics = true;
     if (merged.snapShapes === undefined) merged.snapShapes = true;
+    // A saved order is a permutation of whatever TAB_IDS was when it was
+    // saved - drop ids this build no longer has and append ones it grew,
+    // rather than reject the whole thing and silently reset someone's
+    // careful reordering over an unrelated code change.
+    if (!Array.isArray(merged.tabOrder)) merged.tabOrder = [...TAB_IDS];
+    merged.tabOrder = merged.tabOrder.filter((id) => TAB_IDS.includes(id));
+    for (const id of TAB_IDS) if (!merged.tabOrder.includes(id)) merged.tabOrder.push(id);
+    if (!Array.isArray(merged.hiddenTabs)) merged.hiddenTabs = [];
+    merged.hiddenTabs = merged.hiddenTabs.filter((id) => TAB_IDS.includes(id));
+    // At least one tab must stay reachable without opening Settings.
+    if (merged.hiddenTabs.length >= TAB_IDS.length) merged.hiddenTabs = [];
     if (!Array.isArray(merged.bottomSlots) || merged.bottomSlots.length !== 8) {
       merged.bottomSlots = [
         merged.bottomSlot1 || 'music',
@@ -5522,6 +5557,98 @@ function getBottomSlots() {
     'none',
   ];
 }
+
+/**
+ * Lay the 12 tab buttons out in presentation.tabOrder, hide the ones in
+ * presentation.hiddenTabs, and keep #tabs-more in sync. The buttons
+ * themselves are never rebuilt - appendChild on an existing node just moves
+ * it, so the click listener wired once at startup (see below) keeps working
+ * on every one of them, hidden or not, in whatever order they end up in.
+ */
+function renderTabBar() {
+  const nav = $('.tabs');
+  const moreWrap = $('.tabs-more-wrap');
+  if (!nav || !moreWrap) return;
+  for (const id of presentation.tabOrder) {
+    const btn = nav.querySelector(`.tab[data-tab="${id}"]`);
+    if (btn) nav.insertBefore(btn, moreWrap);
+  }
+  for (const id of TAB_IDS) {
+    const btn = nav.querySelector(`.tab[data-tab="${id}"]`);
+    if (btn) btn.hidden = presentation.hiddenTabs.includes(id);
+  }
+  renderTabsMoreMenu();
+}
+
+function renderTabsMoreMenu() {
+  const hiddenIds = presentation.tabOrder.filter((id) => presentation.hiddenTabs.includes(id));
+  const moreBtn = $('#tabs-more');
+  const menu = $('#tabs-more-menu');
+  if (!moreBtn || !menu) return;
+  moreBtn.hidden = hiddenIds.length === 0;
+  menu.replaceChildren(...hiddenIds.map((id) => el('button', {
+    type: 'button',
+    onclick: () => { menu.hidden = true; tab(id); },
+  }, TAB_LABELS[id] || id)));
+  if (hiddenIds.length === 0) menu.hidden = true;
+}
+
+/** Swap tab `id` with its neighbor in the saved order; `dir` is -1 or 1. */
+function moveTab(id, dir) {
+  const order = presentation.tabOrder.slice();
+  const i = order.indexOf(id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  presentation.tabOrder = order;
+  savePresentation();
+  renderTabBar();
+  renderTabOrderSettings();
+}
+
+function toggleTabHidden(id, hide) {
+  const hiddenTabs = presentation.hiddenTabs.filter((t) => t !== id);
+  if (hide) hiddenTabs.push(id);
+  // Hiding every tab would leave nothing to tap without opening Settings
+  // first - the one rule the reorder/hide UI enforces on itself.
+  if (hiddenTabs.length >= TAB_IDS.length) return;
+  presentation.hiddenTabs = hiddenTabs;
+  savePresentation();
+  renderTabBar();
+  renderTabOrderSettings();
+}
+
+function renderTabOrderSettings() {
+  const list = $('#tab-order-list');
+  if (!list) return;
+  list.replaceChildren(...presentation.tabOrder.map((id, i) => {
+    const isHidden = presentation.hiddenTabs.includes(id);
+    return el('div', { class: 'tab-order-row' },
+      el('div', { class: 'tab-order-move' },
+        el('button', { type: 'button', disabled: i === 0, title: 'Move earlier', onclick: () => moveTab(id, -1) }, '▲'),
+        el('button', { type: 'button', disabled: i === presentation.tabOrder.length - 1, title: 'Move later', onclick: () => moveTab(id, 1) }, '▼')),
+      el('span', { class: 'tab-order-label' }, TAB_LABELS[id] || id),
+      el('label', { class: 'check tab-order-show' },
+        el('input', {
+          type: 'checkbox',
+          checked: !isHidden,
+          onchange: (ev) => toggleTabHidden(id, !ev.target.checked),
+        }),
+        'Show'));
+  }));
+}
+renderTabBar();
+
+$('#tabs-more')?.addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  $('#tabs-more-menu').hidden = !$('#tabs-more-menu').hidden;
+});
+// Same dismissal a modal card gets elsewhere: tapping anything outside the
+// open menu closes it, so it never sits open over a tab you meant to press.
+document.addEventListener('click', (ev) => {
+  const menu = $('#tabs-more-menu');
+  if (menu && !menu.hidden && !ev.target.closest('.tabs-more-wrap')) menu.hidden = true;
+});
 
 function applyInkPreferences() {
   const inkPanel = $('[data-panel="ink"]');
@@ -6026,6 +6153,7 @@ function showSetup() {
   if (prefTop) prefTop.checked = !!presentation.inkControlsTop;
   const prefSnap = $('#pref-snap-shapes');
   if (prefSnap) prefSnap.checked = presentation.snapShapes !== false;
+  renderTabOrderSettings();
   renderKeepPhotos();
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {

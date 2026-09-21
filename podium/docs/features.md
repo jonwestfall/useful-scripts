@@ -69,7 +69,8 @@ Annotate over any slide, PDF, image, or whiteboard with an Apple Pencil or stylu
   - **Pen**: Opaque solid line for writing, sketching, and diagrams.
   - **Highlighter**: Semi-transparent (35% opacity) broad stroke designed to emphasize slide text, equations, or diagrams without obscuring content beneath.
   - **Targeted Stroke Eraser**: Tap or swipe across individual strokes to remove them via vector hit-testing without wiping the whole board or reversing newer annotations.
-- **Stylus & Apple Pencil Hardware Support**: Physical stylus eraser tips or barrel buttons automatically trigger eraser mode while in contact. Keyboard shortcuts `1` (Pen), `2` / `H` (Highlighter), `3` / `E` (Eraser) enable fast tool switching.
+- **Stylus & Apple Pencil Hardware Support**: Physical stylus eraser tips or barrel buttons automatically trigger eraser mode while in contact. Keyboard shortcuts `1` (Pen), `2` / `H` (Highlighter), `3` / `E` (Eraser) enable fast tool switching, and `Cmd/Ctrl+Z` undoes the last stroke on a physical keyboard.
+- **Undo**: A dedicated Undo button removes the most recently drawn stroke on the focused surface — the fast recovery for a slipped hand, distinct from the targeted eraser above, which is for removing a specific older stroke.
 - **Exporting Annotations**: At the end of class, export all annotated slides and whiteboard diagrams as high-resolution PNGs bundled in a session `.zip`.
 
 ---

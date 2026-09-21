@@ -609,6 +609,23 @@ body.control.is-frozen { background: #171006; }
 .settings-panel .check:first-of-type { margin-top: 4px; }
 .settings-panel .check input { transform: scale(1.15); }
 .tab.is-on { background: var(--panel-2); border-color: var(--accent); color: var(--ink); }
+
+/* "More", for tabs hidden via Settings -> Presentation -> Controller tabs.
+   Positioned relative to the wrap (not .tabs, which scrolls) so the menu
+   stays anchored to the button instead of scrolling out from under it. */
+.tabs-more-wrap { position: relative; flex: none; }
+.tabs-more-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+  display: flex; flex-direction: column; min-width: 10rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+}
+.tabs-more-menu button {
+  text-align: left; border: 0; background: transparent; border-radius: 8px;
+  min-height: 38px; padding: 0 10px; font-size: 14px;
+}
+.tabs-more-menu button:hover { background: var(--panel-2); }
+
 .panels { flex: 1; min-height: 0; overflow: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
 .panel { display: flex; flex-direction: column; gap: 14px; }
 
@@ -1119,6 +1136,16 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 .bottom-slot-field label { font-size: 11px; color: var(--dim); font-weight: 600; }
 .bottom-slot-field select { width: 100%; }
 
+.tab-order-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.tab-order-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px;
+}
+.tab-order-move { display: flex; gap: 2px; }
+.tab-order-move button { min-height: 30px; min-width: 30px; padding: 0; font-size: 12px; }
+.tab-order-label { flex: 1; font-size: 14px; }
+.tab-order-show { margin: 0; }
+
 /* On a phone the bar has to fit one row: drop the identifiers you only need
    when something is wrong, and let the buttons shrink. */
 @media (max-width: 640px) {
@@ -1435,320 +1462,113 @@ body.plan .linkish:hover { text-decoration: underline; }
   max-height: 100%;
 }
 
+/* ===================== LANDING =====================================
+   index.html, the showcase page. Reuses body.plan's sticky topbar and
+   scrollable page (it has the same "read down" shape), and is otherwise its
+   own thing - nobody else needs a hero or a pricing table. */
 
-/* Issue #47: Dual-pane layout on large landscape tablets */
-@media (min-width: 1000px) {
-  #dual-pane-toggle {
-    display: flex !important;
-    align-items: center;
-  }
-  
-  body.dual-pane .panels {
-    display: flex;
-    flex-direction: row;
-    gap: 14px;
-  }
-  
-  body.dual-pane .panel[data-panel="slides"] {
-    display: flex !important;
-    flex: 1;
-    min-width: 0;
-  }
-  
-  /* If a different tab is selected, show it on the right */
-  body.dual-pane .panel.is-on:not([data-panel="slides"]) {
-    display: flex;
-    flex: 1;
-    min-width: 0;
-  }
-  
-  /* Give the slides panel a border only if another tab is actively shown */
-  body.dual-pane:not(:has(.panel.is-on[data-panel="slides"])) .panel[data-panel="slides"] {
-    border-right: 1px solid var(--line);
-    padding-right: 14px;
-  }
+.landing-nav { display: flex; align-items: center; gap: 14px; }
+.landing-signin { font-weight: 700; }
+
+.landing-main { max-width: 68rem; margin: 0 auto; padding: 0 20px; }
+
+.landing-hero { padding: 56px 0 40px; text-align: center; }
+.landing-eyebrow {
+  color: var(--accent); font-size: 13px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; margin: 0 0 14px;
+}
+.landing-hero h1 { font-size: clamp(26px, 4.4vw, 44px); line-height: 1.15; margin: 0 0 18px; }
+.landing-lede { color: var(--dim); font-size: 17px; line-height: 1.55; max-width: 42rem; margin: 0 auto 28px; }
+.landing-cta-row { justify-content: center; max-width: 30rem; margin: 0 auto 56px; }
+.landing-cta-row .cta-link { text-decoration: none; display: block; flex: 1; }
+.landing-cta { width: 100%; }
+.landing-cta-secondary {
+  width: 100%; min-height: 66px; font-size: 16px; font-weight: 600;
+  background: transparent; border-color: var(--accent); color: var(--accent);
 }
 
-/* Issue #47: Dual-pane layout on large landscape tablets */
-@media (min-width: 1000px) {
-  #dual-pane-toggle {
-    display: flex !important;
-    align-items: center;
-  }
-  
-  body.dual-pane .panels {
-    display: flex;
-    flex-direction: row;
-    gap: 14px;
-  }
-  
-  body.dual-pane .panel[data-panel="slides"] {
-    display: flex !important;
-    flex: 1;
-    min-width: 0;
-  }
-  
-  body.dual-pane .panel.is-on:not([data-panel="slides"]) {
-    display: flex;
-    flex: 1;
-    min-width: 0;
-  }
-  
-  /* Give the slides panel a border only if another tab is actively shown */
-  body.dual-pane.dual-secondary .panel[data-panel="slides"] {
-    border-right: 1px solid var(--line);
-    padding-right: 14px;
-  }
+/* A CSS-only sketch of the two surfaces this whole product is: a display and
+   a controller, talking over an encrypted link. Not a screenshot - it never
+   goes stale when either page's real UI changes. */
+.landing-mock {
+  display: flex; align-items: center; justify-content: center;
+  gap: 20px; max-width: 46rem; margin: 0 auto; flex-wrap: wrap;
 }
+.mock-display {
+  width: min(360px, 100%); aspect-ratio: 16 / 9; background: #000;
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  display: flex; flex-direction: column;
+  box-shadow: 0 18px 50px -22px rgba(0, 0, 0, .7);
+}
+.mock-display-bar { height: 8px; background: var(--panel-2); flex: none; }
+.mock-display-slide {
+  position: relative; flex: 1; padding: 14px 18px;
+  display: flex; flex-direction: column; gap: 9px; justify-content: center;
+}
+.mock-slide-line { height: 6px; border-radius: 3px; background: var(--panel-2); }
+.mock-ink { position: absolute; inset: 0; }
+.mock-ink path { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; opacity: .85; }
 
-/* Issue #40: Poll Correct Answers */
-.poll-chip {
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  font-size: 13px;
-  cursor: pointer;
-  padding: 0;
-  color: var(--dim);
+.mock-link { display: flex; flex-direction: column; align-items: center; gap: 7px; min-width: 96px; }
+.mock-link-dot {
+  width: 9px; height: 9px; border-radius: 50%; background: var(--ok);
+  animation: mock-pulse 2.2s ease-out infinite;
 }
-.poll-chip:hover {
-  border-color: var(--dim);
+.mock-link-label { font-size: 10.5px; color: var(--dim); text-align: center; max-width: 96px; }
+@keyframes mock-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(69, 212, 131, .55); }
+  70% { box-shadow: 0 0 0 11px rgba(69, 212, 131, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(69, 212, 131, 0); }
 }
-.poll-chip.is-correct {
-  background: var(--ok);
-  border-color: var(--ok);
-  color: #0b0d10;
-}
+@media (prefers-reduced-motion: reduce) { .mock-link-dot { animation: none; } }
 
-.poll-bar-track.is-correct .poll-bar-fill {
-  background: var(--ok);
+.mock-controller {
+  width: 156px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 8px;
 }
+.mock-ctrl-tabs { display: flex; gap: 4px; }
+.mock-ctrl-tabs span { flex: 1; height: 5px; border-radius: 3px; background: var(--panel-2); }
+.mock-ctrl-tabs span.is-on { background: var(--accent); }
+.mock-ctrl-now { height: 54px; border-radius: 8px; background: #000; border: 1px solid var(--line); }
+.mock-ctrl-row { display: flex; gap: 6px; }
+.mock-ctrl-row span { flex: 1; height: 22px; border-radius: 6px; background: var(--panel-2); }
 
-.r-poll-bar-track.is-correct .r-poll-bar-fill {
-  background: var(--ok);
-}
-.ok-text {
-  color: var(--ok);
-}
+.landing-section { padding: 40px 0; border-top: 1px solid var(--line); }
+.landing-section h2 { font-size: clamp(19px, 2.6vw, 25px); margin: 0 0 24px; text-align: center; }
+.landing-grid { display: grid; gap: 16px; }
 
-/* Issue #42: Timer Buttons */
-#poll-timer-btns {
-  margin-bottom: 12px;
-}
-#poll-timer-btns button {
-  padding: 6px 12px;
-  background: var(--panel-2);
-  border-color: var(--line);
-  color: var(--ink);
-}
-#poll-timer-btns button:hover {
-  background: var(--line);
-}
+.landing-scenarios { grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+.landing-card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+.landing-card h3 { margin: 0 0 8px; font-size: 16px; }
+.landing-card p { margin: 0; color: var(--dim); font-size: 13.5px; line-height: 1.55; }
 
-.r-poll-countdown {
-  margin-top: 1cqh;
-  font-size: clamp(8px, 2.2cqw, 30px);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
+.landing-features { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+.landing-feature { display: flex; gap: 12px; padding: 4px 0; }
+.lf-icon { font-size: 20px; line-height: 1.3; flex: none; width: 26px; text-align: center; }
+.landing-feature b { font-size: 14px; }
+.landing-feature p { margin: 4px 0 0; color: var(--dim); font-size: 13px; line-height: 1.5; }
 
-/* Q&A specific */
-.poll-answer-row.is-answered { opacity: 0.5; }
-.poll-answer-row.is-projected { border-left: 4px solid var(--live); padding-left: 8px; }
+.landing-tiers { grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+.landing-tier { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; text-align: center; }
+.landing-tier-recommended { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.landing-tier-price {
+  color: var(--accent); font-weight: 700; font-size: 12px;
+  letter-spacing: .06em; text-transform: uppercase; margin: 0 0 6px;
+}
+.landing-tier h3 { margin: 0 0 8px; font-size: 16px; }
+.landing-tier p { margin: 0; color: var(--dim); font-size: 13px; line-height: 1.55; }
+.landing-tier code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.landing-tiers-note { text-align: center; max-width: 42rem; margin: 20px auto 0; }
 
-/* ==========================================================================
-   LIGHT / HIGH-CONTRAST THEME (Issue #48)
-   ========================================================================== */
+.landing-footer { max-width: 68rem; margin: 0 auto; padding: 20px 20px 48px; text-align: center; }
+.landing-footer-links { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin-bottom: 10px; }
+.landing-footer-links a { color: var(--dim); font-size: 13px; text-decoration: none; }
+.landing-footer-links a:hover { color: var(--ink); text-decoration: underline; }
 
-:root[data-theme="light"], body[data-theme="light"] {
-  --bg: #f8fafc;
-  --panel: #ffffff;
-  --panel-2: #f1f5f9;
-  --line: #cbd5e1;
-  --ink: #0f172a;
-  --dim: #475569;
-  --accent: #0284c7;
-  --live: #dc2626;
-  --cue: #d97706;
-  --ok: #16a34a;
-  color-scheme: light;
-}
-
-:root[data-theme="light"] input[type=text],
-:root[data-theme="light"] input[type=url],
-:root[data-theme="light"] input[type=number],
-:root[data-theme="light"] input[type=password],
-:root[data-theme="light"] select,
-:root[data-theme="light"] textarea {
-  background: #ffffff;
-  border-color: #cbd5e1;
-  color: #0f172a;
-}
-
-:root[data-theme="light"] button {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
-  color: #0f172a;
-}
-:root[data-theme="light"] button:hover {
-  background: #e2e8f0;
-}
-:root[data-theme="light"] button.is-on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #ffffff;
-}
-:root[data-theme="light"] button.danger-outline {
-  border-color: #fca5a5;
-  color: #dc2626;
-}
-
-:root[data-theme="light"] body.control.is-frozen {
-  background: #fef3c7;
-}
-
-:root[data-theme="light"] .topbar {
-  border-bottom-color: var(--line);
-  background: var(--panel);
-}
-
-:root[data-theme="light"] .topbar-pacing {
-  background: var(--panel-2);
-  border-color: var(--line);
-  color: var(--dim);
-}
-:root[data-theme="light"] .topbar-pacing:hover {
-  background: #e2e8f0;
-  color: var(--ink);
-}
-:root[data-theme="light"] .topbar-pacing.is-running {
-  color: var(--ink);
-  border-color: var(--accent);
-}
-:root[data-theme="light"] .topbar-pacing.is-near-end {
-  border-color: var(--cue);
-  color: #b45309;
-}
-:root[data-theme="light"] .topbar-pacing.is-overtime {
-  border-color: var(--live);
-  color: #991b1b;
-  background: #fee2e2;
-}
-:root[data-theme="light"] .pacing-track {
-  background: rgba(0, 0, 0, .08);
-}
-
-:root[data-theme="light"] .tab.is-on {
-  background: #e2e8f0;
-  border-color: var(--accent);
-  color: var(--ink);
-}
-
-:root[data-theme="light"] .layout-btn.is-on,
-:root[data-theme="light"] .panel-btn.is-on,
-:root[data-theme="light"] .music-row.is-on,
-:root[data-theme="light"] button.set-row.is-on,
-:root[data-theme="light"] .order-row.is-on,
-:root[data-theme="light"] .plan-row.is-on,
-:root[data-theme="light"] .music-quick-chip.is-on,
-:root[data-theme="light"] .timer-chip.is-on {
-  border-color: var(--accent);
-  background: #e0f2fe;
-  color: var(--ink);
-}
-
-:root[data-theme="light"] #deck-now-preview,
-:root[data-theme="light"] #deck-next-preview,
-:root[data-theme="light"] .mirror-frame,
-:root[data-theme="light"] .ink-pad-frame {
-  background: #f1f5f9;
-}
-:root[data-theme="light"] #deck-now-preview {
-  border-color: var(--accent);
-}
-
-:root[data-theme="light"] .bottombar {
-  background: var(--panel);
-  border-top-color: var(--line);
-}
-:root[data-theme="light"] #bar-music.is-on,
-:root[data-theme="light"] .bottombar .bar-slot.is-on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #ffffff;
-}
-:root[data-theme="light"] .bottombar #blank.is-on,
-:root[data-theme="light"] .bottombar .bar-slot[data-slot-action="blank"].is-on {
-  background: #0f172a;
-  border-color: #0f172a;
-  color: #ffffff;
-}
-:root[data-theme="light"] .bottombar #freeze.is-on,
-:root[data-theme="light"] .bottombar .bar-slot[data-slot-action="freeze"].is-on {
-  background: var(--cue);
-  border-color: var(--cue);
-  color: #ffffff;
-}
-
-:root[data-theme="light"] #panic {
-  background: #fee2e2;
-  border-color: #fca5a5;
-  color: #dc2626;
-}
-
-:root[data-theme="light"] #link-help,
-:root[data-theme="light"] #help-banner {
-  background: #fef3c7;
-  border-bottom-color: #fcd34d;
-  color: #92400e;
-}
-:root[data-theme="light"] #link-help.is-mismatch,
-:root[data-theme="light"] #relay-help .relay-log {
-  background: #fee2e2;
-  border-color: #fca5a5;
-  color: #991b1b;
-}
-
-:root[data-theme="light"] #build-note.is-stale,
-:root[data-theme="light"] .stale-note {
-  background: #fef3c7;
-  border-color: #fcd34d;
-  color: #92400e;
-}
-
-:root[data-theme="light"] .ink-tools .ink-tool-btn:hover {
-  background: #e2e8f0;
-  color: var(--ink);
-}
-:root[data-theme="light"] .ink-tools .ink-tool-btn.is-on {
-  background: var(--accent);
-  color: #ffffff;
-}
-
-:root[data-theme="light"] .laser-swatch {
-  border-color: #cbd5e1;
-}
-:root[data-theme="light"] .laser-swatch.is-on {
-  border-color: #0f172a;
-}
-
-:root[data-theme="light"] .tile-music:active {
-  background: #e2e8f0;
-}
-
-:root[data-theme="light"] #poll-timer-btns button {
-  background: var(--panel-2);
-  border-color: var(--line);
-  color: var(--ink);
-}
-:root[data-theme="light"] #poll-timer-btns button:hover {
-  background: var(--line);
+@media (max-width: 640px) {
+  .landing-hero { padding: 40px 0 32px; }
+  .landing-mock { gap: 14px; }
+  .mock-link { flex-direction: row; min-width: 0; }
+  .mock-link-label { max-width: 140px; text-align: left; }
 }
 

@@ -146,6 +146,13 @@ try {
         <button class="tab" data-tab="mixer" type="button">Mixer</button>
         <button class="tab" data-tab="sets" type="button">Sets</button>
         <button class="tab" data-tab="polls" type="button">Polls</button>
+        <!-- Hidden tabs (Settings -> Presentation -> Controller tabs) are never
+             removed from the DOM, only [hidden] - reordering and this menu both
+             work on the same 12 buttons the panels already key off of. -->
+        <div class="tabs-more-wrap">
+          <button id="tabs-more" class="tab" type="button" hidden>More &#9662;</button>
+          <div id="tabs-more-menu" class="tabs-more-menu" hidden></div>
+        </div>
         <button id="dual-pane-toggle" class="tab" type="button" title="Toggle Split View" style="margin-left: auto; padding: 0 10px;" hidden>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -956,6 +963,15 @@ try {
       <p class="hint">
         Pausing briefly (450ms) at the end of a stroke snaps freehand lines, arrows, rectangles, and circles into clean shapes.
       </p>
+
+      <div class="field" style="margin-top:16px;">
+        <label>Controller tabs</label>
+        <p class="hint" style="margin-bottom:10px;">
+          Hide tabs you never reach for and reorder the rest — a hidden tab
+          is never removed, just tucked under the tab bar's "More" button.
+        </p>
+        <div id="tab-order-list" class="tab-order-list"></div>
+      </div>
 
       <div class="field" style="margin-top:16px;">
         <label>Bottom bar dock shortcuts</label>

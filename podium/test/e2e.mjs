@@ -304,14 +304,38 @@ let expectingRecoveryConflict = false;
 const RECOVERY_CONFLICT = /409 \(Conflict\).*\/api\/lectures\/\d+\/events$/;
 
 const trap = (page, tag) => {
+  // The console message for a failed fetch and the network response that
+  // caused it are two different CDP domains, and PR #86's own CI run showed
+  // they do not always reach Playwright's listeners in the browser's true
+  // internal order: the url-less console line for a favicon 404 can arrive
+  // BEFORE the 'response' event that names it as a favicon, not just after.
+  // The old version only ever looked backwards from the console side within
+  // a fixed window, so a swap like that flagged a real, expected favicon 404
+  // as an error with nothing here to un-flag it. This version matches in
+  // whichever order the two events land, within WINDOW_MS of each other.
+  const WINDOW_MS = 3000;
   const recentFavicon404s = [];
+  const pendingUrllessErrors = []; // { at, entry } - provisionally flagged, awaiting a response to clear them
   const trimFavicon404s = () => {
-    const cutoff = Date.now() - 2000;
+    const cutoff = Date.now() - WINDOW_MS;
     while (recentFavicon404s.length && recentFavicon404s[0] < cutoff) recentFavicon404s.shift();
+  };
+  const trimPendingUrlless = () => {
+    const cutoff = Date.now() - WINDOW_MS;
+    while (pendingUrllessErrors.length && pendingUrllessErrors[0].at < cutoff) pendingUrllessErrors.shift();
   };
   page.on('response', (r) => {
     if (r.status() !== 404) return;
     if (!/\/favicon\.ico(?:\?|$)/.test(r.url())) return;
+    trimPendingUrlless();
+    const pending = pendingUrllessErrors.shift();
+    if (pending) {
+      // The console message beat this response here - un-flag it rather
+      // than leaving it sitting in errors as a false positive.
+      const idx = errors.indexOf(pending.entry);
+      if (idx !== -1) errors.splice(idx, 1);
+      return;
+    }
     recentFavicon404s.push(Date.now());
     trimFavicon404s();
   });
@@ -321,14 +345,21 @@ const trap = (page, tag) => {
     const text = m.text();
     const where = `${text} ${m.location()?.url || ''}`;
     if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where)) return;
-    trimFavicon404s();
-    if (recentFavicon404s.length && !m.location()?.url
-      && text === 'Failed to load resource: the server responded with a status of 404 (Not Found)') {
-      recentFavicon404s.shift();
-      return;
-    }
     if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     if (expectingRecoveryConflict && RECOVERY_CONFLICT.test(where)) return;
+    if (!m.location()?.url && text === 'Failed to load resource: the server responded with a status of 404 (Not Found)') {
+      trimFavicon404s();
+      if (recentFavicon404s.length) { recentFavicon404s.shift(); return; }
+      // No favicon 404 response seen yet - it may simply not have arrived
+      // here first. Flag it provisionally; the 'response' handler above
+      // clears it if a matching favicon 404 shows up within WINDOW_MS. An
+      // unrelated url-less 404 with no such response stays flagged, same
+      // as always.
+      const entry = `${tag} console: ${text}`;
+      errors.push(entry);
+      pendingUrllessErrors.push({ at: Date.now(), entry });
+      return;
+    }
     errors.push(`${tag} console: ${text}`);
   });
 };
@@ -952,6 +983,49 @@ ok('picking light theme applies data-theme="light" immediately and persists',
   await pad.evaluate(() => document.documentElement.dataset.theme === 'light' && JSON.parse(localStorage.getItem('podium.presentation.v1')).theme === 'light'));
 await pad.selectOption('#pref-theme', 'dark');
 
+// Controller tabs (Issue #76): hide one, reorder another, and check both the
+// main tab bar and the "More" menu actually reflect it - not just the saved
+// preference, which the unit tests in tabsettings.test.mjs already cover.
+// #app (the live tab bar) is hidden behind #setup while Settings is open
+// (see showSetup()), so the parts of this that click the live bar happen
+// after closing it, same as the poll-url re-check further down does.
+ok('the tab order settings list has one row per tab',
+  await pad.evaluate(() => document.querySelectorAll('#tab-order-list .tab-order-row').length === 12));
+
+await pad.uncheck('.tab-order-row:has-text("Camera") input[type=checkbox]');
+ok('hiding a tab persists to presentation preferences',
+  await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).hiddenTabs.includes('camera')));
+ok('and the Camera tab itself is marked hidden, reading its own attribute rather than what is visible right now',
+  await pad.evaluate(() => document.querySelector('.tab[data-tab="camera"]').hidden === true));
+
+const orderBefore = await pad.$$eval('.tabs .tab[data-tab]', (els) => els.map((e) => e.dataset.tab));
+await pad.click('.tab-order-row:has-text("Slides") .tab-order-move button:first-child');
+const orderAfter = await pad.$$eval('.tabs .tab[data-tab]', (els) => els.map((e) => e.dataset.tab));
+ok(`moving Slides up actually reorders the live tab bar (${orderBefore.join(',')} -> ${orderAfter.join(',')})`,
+  orderAfter[0] === 'slides' && orderAfter[1] === 'library' && orderAfter.length === orderBefore.length);
+
+await pad.click('#setup-close');
+await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+ok('"More" appears now that Camera is really out of the bar', await pad.isVisible('#tabs-more'));
+
+await pad.click('#tabs-more');
+ok('More lists the hidden tab by name', await pad.evaluate(() =>
+  Array.from(document.querySelectorAll('#tabs-more-menu button')).some((b) => b.textContent === 'Camera')));
+await pad.click('#tabs-more-menu button:has-text("Camera")');
+ok('picking it from the menu actually switches to it, same as tapping a visible tab would',
+  await pad.evaluate(() => !document.querySelector('[data-panel="camera"]').hidden));
+ok('and closes the menu behind it', await pad.isHidden('#tabs-more-menu'));
+
+// Undo both changes, the same courtesy the poll-url re-check below pays -
+// nothing later in this run should have to know a tab was ever hidden or moved.
+await pad.click('#open-settings');
+await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
+await pad.check('.tab-order-row:has-text("Camera") input[type=checkbox]');
+await pad.click('.tab-order-row:has-text("Slides") .tab-order-move button:nth-child(2)');
+ok('restored order and visibility match what the bar shipped with', await pad.evaluate(() => {
+  const p = JSON.parse(localStorage.getItem('podium.presentation.v1'));
+  return !p.hiddenTabs.includes('camera') && p.tabOrder[0] === 'library' && p.tabOrder[1] === 'slides';
+}));
 await pad.click('#setup-close');
 await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
 await pad.waitForSelector('.tile', { timeout: 15000 });
@@ -2030,6 +2104,13 @@ await dab(0.5, 0.5);
 await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 ok('a dot at the pad center lands at the stage center', await pixelAt(0.5, 0.5));
 await pad.click('#ink-undo');
+await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+
+// Same button, reached from a physical keyboard rather than a tap - the one
+// modified key exempted from "a modified key is not ours" (see control.js).
+await dab(0.5, 0.5);
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+await pad.keyboard.press('Control+z');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 
 await pad.click('#ink-zoom-in');
@@ -5199,6 +5280,16 @@ const caps = await fetch(`${acctBase}/api/capabilities`).then((r) => r.json());
 ok('the capabilities probe is answerable without signing in, and says so',
   caps.podium === true && caps.auth.mode === 'accounts' && caps.auth.required === true && caps.user === null);
 
+// The showcase page is the other thing that must never want an account - it
+// is what sells Podium to someone who has not signed in yet. Unlike the
+// gated pages above, this is the accounts-only exception (publicPaths in
+// server/api.js), so it says nothing about the AUTH_PASSWORD server tested
+// above, which keeps '/' behind Basic Auth exactly as it always has.
+ok('/ is reachable with no credentials, even with accounts configured',
+  (await fetch(`${acctBase}/`)).status === 200);
+ok('/index.html is too',
+  (await fetch(`${acctBase}/index.html`)).status === 200);
+
 // The audience page is the one thing that must never want an account.
 const acctCtx = await browser.newContext();
 await acctCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
@@ -5210,6 +5301,19 @@ await joiner.goto(`${acctBase}/join.html`);
 ok('a student reaches the join page with no account and no prompt',
   await joiner.isVisible('#enter') && joiner.url().endsWith('/join.html'));
 await joiner.close();
+
+// A visitor who has never signed in sees the showcase itself, and a way in -
+// not the surfaces, which would 401 the moment they were clicked.
+const visitor = await acctCtx.newPage();
+trap(visitor, 'acct showcase, signed out');
+await visitor.goto(`${acctBase}/index.html`);
+await visitor.waitForSelector('#topbar-nav:not([hidden])');
+ok('a signed-out visitor sees Sign in, not the surfaces',
+  await visitor.isVisible('.landing-signin')
+  && !(await visitor.isVisible('#topbar-nav a[href="control.html"]')));
+ok('and the hero\'s own call to action is the same Sign in link',
+  (await visitor.getAttribute('#hero-cta a', 'href') || '').startsWith('login.html?next='));
+await visitor.close();
 
 // A browser asking for a page it may not have gets a page back, not a native
 // credential dialog - which is the whole reason this is a cookie.
@@ -5238,6 +5342,22 @@ ok('the right password lands on the page that was asked for', /control\.html$/.t
 await pad.waitForSelector('#session-badge .session-who');
 ok(`the controller says who is signed in ("${await pad.textContent('#session-badge .session-who')}")`,
   (await pad.textContent('#session-badge .session-who')).trim() === 'Jon W');
+
+// Signed in, the same showcase page now offers the surfaces and an admin
+// link (jon is an administrator) instead of the Sign in prompt above. A
+// fresh tab, sharing acctCtx's cookie jar, so `pad` stays parked on
+// control.html for the library steps that follow.
+const home = await acctCtx.newPage();
+trap(home, 'acct showcase, signed in');
+await home.goto(`${acctBase}/index.html`);
+await home.waitForSelector('#topbar-nav:not([hidden])');
+ok('signed in, the showcase offers the surfaces instead of Sign in',
+  await home.isVisible('#topbar-nav a[href="control.html"]')
+  && await home.isVisible('#topbar-nav a[href="admin.html"]')
+  && !(await home.isVisible('.landing-signin')));
+ok('and says who is signed in, same as every other gated page',
+  (await home.textContent('#session-badge .session-who')).trim() === 'Jon W');
+await home.close();
 
 // --- the library, once there is a disk to keep it on ---------------------
 //

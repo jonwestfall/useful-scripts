@@ -1995,8 +1995,15 @@ if (!info.features.includes('library')) {
     await refreshContentManagement();
   }
 
-  // Select first available tab
-  const firstVisibleTab = document.querySelector('.admin-tabs .tab:not([hidden])');
-  if (firstVisibleTab) firstVisibleTab.click();
+  // Select a first tab - but only if nothing has been picked yet. Tabs are
+  // unhidden piecemeal as the awaits above resolve (Library first, People
+  // and Courses only once the accounts/courses block runs), so a click
+  // during that window - a person's, or a test's - would otherwise be
+  // silently overridden the moment a tab earlier in the DOM than the one
+  // they picked finally appears.
+  if (!document.querySelector('.admin-tabs .tab.is-on')) {
+    const firstVisibleTab = document.querySelector('.admin-tabs .tab:not([hidden])');
+    if (firstVisibleTab) firstVisibleTab.click();
+  }
 }
 
