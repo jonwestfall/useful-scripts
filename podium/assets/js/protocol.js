@@ -38,7 +38,7 @@ export const BUILD = 29;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.1';
-export const COMMIT = '74d34f7';
+export const COMMIT = 'c64e763';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
