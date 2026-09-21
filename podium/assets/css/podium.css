@@ -609,6 +609,23 @@ body.control.is-frozen { background: #171006; }
 .settings-panel .check:first-of-type { margin-top: 4px; }
 .settings-panel .check input { transform: scale(1.15); }
 .tab.is-on { background: var(--panel-2); border-color: var(--accent); color: var(--ink); }
+
+/* "More", for tabs hidden via Settings -> Presentation -> Controller tabs.
+   Positioned relative to the wrap (not .tabs, which scrolls) so the menu
+   stays anchored to the button instead of scrolling out from under it. */
+.tabs-more-wrap { position: relative; flex: none; }
+.tabs-more-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+  display: flex; flex-direction: column; min-width: 10rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+}
+.tabs-more-menu button {
+  text-align: left; border: 0; background: transparent; border-radius: 8px;
+  min-height: 38px; padding: 0 10px; font-size: 14px;
+}
+.tabs-more-menu button:hover { background: var(--panel-2); }
+
 .panels { flex: 1; min-height: 0; overflow: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
 .panel { display: flex; flex-direction: column; gap: 14px; }
 
@@ -1118,6 +1135,16 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 .bottom-slot-field { display: flex; flex-direction: column; gap: 4px; }
 .bottom-slot-field label { font-size: 11px; color: var(--dim); font-weight: 600; }
 .bottom-slot-field select { width: 100%; }
+
+.tab-order-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.tab-order-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px;
+}
+.tab-order-move { display: flex; gap: 2px; }
+.tab-order-move button { min-height: 30px; min-width: 30px; padding: 0; font-size: 12px; }
+.tab-order-label { flex: 1; font-size: 14px; }
+.tab-order-show { margin: 0; }
 
 /* On a phone the bar has to fit one row: drop the identifiers you only need
    when something is wrong, and let the buttons shrink. */
