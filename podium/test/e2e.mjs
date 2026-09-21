@@ -304,14 +304,38 @@ let expectingRecoveryConflict = false;
 const RECOVERY_CONFLICT = /409 \(Conflict\).*\/api\/lectures\/\d+\/events$/;
 
 const trap = (page, tag) => {
+  // The console message for a failed fetch and the network response that
+  // caused it are two different CDP domains, and PR #86's own CI run showed
+  // they do not always reach Playwright's listeners in the browser's true
+  // internal order: the url-less console line for a favicon 404 can arrive
+  // BEFORE the 'response' event that names it as a favicon, not just after.
+  // The old version only ever looked backwards from the console side within
+  // a fixed window, so a swap like that flagged a real, expected favicon 404
+  // as an error with nothing here to un-flag it. This version matches in
+  // whichever order the two events land, within WINDOW_MS of each other.
+  const WINDOW_MS = 3000;
   const recentFavicon404s = [];
+  const pendingUrllessErrors = []; // { at, entry } - provisionally flagged, awaiting a response to clear them
   const trimFavicon404s = () => {
-    const cutoff = Date.now() - 2000;
+    const cutoff = Date.now() - WINDOW_MS;
     while (recentFavicon404s.length && recentFavicon404s[0] < cutoff) recentFavicon404s.shift();
+  };
+  const trimPendingUrlless = () => {
+    const cutoff = Date.now() - WINDOW_MS;
+    while (pendingUrllessErrors.length && pendingUrllessErrors[0].at < cutoff) pendingUrllessErrors.shift();
   };
   page.on('response', (r) => {
     if (r.status() !== 404) return;
     if (!/\/favicon\.ico(?:\?|$)/.test(r.url())) return;
+    trimPendingUrlless();
+    const pending = pendingUrllessErrors.shift();
+    if (pending) {
+      // The console message beat this response here - un-flag it rather
+      // than leaving it sitting in errors as a false positive.
+      const idx = errors.indexOf(pending.entry);
+      if (idx !== -1) errors.splice(idx, 1);
+      return;
+    }
     recentFavicon404s.push(Date.now());
     trimFavicon404s();
   });
@@ -321,14 +345,21 @@ const trap = (page, tag) => {
     const text = m.text();
     const where = `${text} ${m.location()?.url || ''}`;
     if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where)) return;
-    trimFavicon404s();
-    if (recentFavicon404s.length && !m.location()?.url
-      && text === 'Failed to load resource: the server responded with a status of 404 (Not Found)') {
-      recentFavicon404s.shift();
-      return;
-    }
     if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     if (expectingRecoveryConflict && RECOVERY_CONFLICT.test(where)) return;
+    if (!m.location()?.url && text === 'Failed to load resource: the server responded with a status of 404 (Not Found)') {
+      trimFavicon404s();
+      if (recentFavicon404s.length) { recentFavicon404s.shift(); return; }
+      // No favicon 404 response seen yet - it may simply not have arrived
+      // here first. Flag it provisionally; the 'response' handler above
+      // clears it if a matching favicon 404 shows up within WINDOW_MS. An
+      // unrelated url-less 404 with no such response stays flagged, same
+      // as always.
+      const entry = `${tag} console: ${text}`;
+      errors.push(entry);
+      pendingUrllessErrors.push({ at: Date.now(), entry });
+      return;
+    }
     errors.push(`${tag} console: ${text}`);
   });
 };
