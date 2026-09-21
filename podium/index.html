@@ -3,43 +3,159 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="description" content="Podium turns the classroom PC into a presentation display you drive from your iPad or phone — slides, ink, polls, media and music, controlled from anywhere in the room.">
 <title>Podium</title>
 <link rel="stylesheet" href="assets/css/podium.css">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
 <meta name="theme-color" content="#0b0d10">
+<!--
+  The showcase page. It has to work for someone who has never opened Podium
+  before and, on a server with accounts, may not be signed in at all - see
+  AUTH_PUBLIC_WITH_ACCOUNTS in server/podium-server.js. assets/js/index.js
+  decides what the top bar shows once it knows what kind of server this is;
+  everything below that is static sell copy, true on every deployment.
+-->
 </head>
-<body class="control">
-<div class="sheet">
-  <div class="card">
-    <h1>Podium</h1>
-    <p>Drive the projector from your iPad. Open the display on the machine plugged into the projector, then open the controller on your tablet or phone.</p>
-    <div class="row">
-      <a href="display.html" style="text-decoration:none"><button class="big-button" style="width:100%">Display</button></a>
-      <a href="control.html" style="text-decoration:none"><button class="big-button" style="width:100%">Controller</button></a>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <a href="plan.html" style="text-decoration:none;flex:1"><button style="width:100%">Planning</button></a>
-      <!-- Only worth offering when something is actually serving this; on
-           GitHub Pages or from a folder there is nothing to administer, and
-           admin.js says so plainly rather than half-working. -->
-      <a id="admin-link" href="admin.html" style="text-decoration:none;flex:1" hidden><button style="width:100%">Admin</button></a>
-    </div>
-    <script type="module">
-      import { serverInfo } from './assets/js/server.js';
-      import { versionStamp } from './assets/js/protocol.js';
-      const info = await serverInfo();
-      if (info.features.includes('library')) document.getElementById('admin-link').hidden = false;
-      const stamp = document.getElementById('index-version-stamp');
-      if (stamp) stamp.textContent = versionStamp();
-    </script>
-    <p class="hint" style="margin-top:20px">
-      <b>Display</b> on the classroom PC — bookmark it. <b>Controller</b> on the iPad: open it and use
-      Share → Add to Home Screen so it launches without Safari's chrome.
-      <b>Planning</b> is the office page: build a lecture's running order, timers and media,
-      save it as a plan file, and load that on the iPad before class.
-    </p>
-    <p id="index-version-stamp" class="version-stamp"></p>
-  </div>
+<body class="plan landing">
+
+<div class="topbar">
+  <a class="brand" href="index.html" title="Podium">PODIUM</a>
+  <span class="spacer"></span>
+  <span id="session-badge" class="session-badge" hidden></span>
+  <nav id="topbar-nav" class="landing-nav" hidden></nav>
 </div>
+
+<main class="landing-main">
+
+  <section class="landing-hero">
+    <p class="landing-eyebrow">Free, encrypted, zero-build classroom control</p>
+    <h1>Drive the projector from your iPad.<br>Never touch the classroom PC again.</h1>
+    <p class="landing-lede">
+      Open one browser tab on the machine plugged into the projector and walk away.
+      Slides, PDFs, video, YouTube, background music, handwriting, QR codes, timers
+      and your phone's camera — all of it controlled from a tablet or phone in your
+      hand, from anywhere in the room.
+    </p>
+    <div class="row landing-cta-row" id="hero-cta"></div>
+
+    <div class="landing-mock" aria-hidden="true">
+      <div class="mock-display">
+        <div class="mock-display-bar"></div>
+        <div class="mock-display-slide">
+          <div class="mock-slide-line" style="width:60%"></div>
+          <div class="mock-slide-line" style="width:85%"></div>
+          <div class="mock-slide-line" style="width:40%"></div>
+          <svg class="mock-ink" viewBox="0 0 100 40" preserveAspectRatio="none">
+            <path d="M6,32 C20,6 34,6 48,20 S78,34 94,10" />
+          </svg>
+        </div>
+      </div>
+      <div class="mock-link">
+        <span class="mock-link-dot"></span>
+        <span class="mock-link-label">AES-256, encrypted end to end</span>
+      </div>
+      <div class="mock-controller">
+        <div class="mock-ctrl-tabs">
+          <span class="is-on"></span><span></span><span></span><span></span>
+        </div>
+        <div class="mock-ctrl-now"></div>
+        <div class="mock-ctrl-row"><span></span><span></span><span></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="landing-section">
+    <h2>Built for the room you're actually teaching in</h2>
+    <div class="landing-grid landing-scenarios">
+      <article class="landing-card">
+        <h3>🎓 The everyday lecture</h3>
+        <p>Freeze the projector to flip ahead or cue a video while the room stays on
+          the current slide. TAKE cuts it live the instant you're ready. A pacing
+          clock keeps you honest about the time you have left.</p>
+      </article>
+      <article class="landing-card">
+        <h3>🤝 Handing off to a guest</h3>
+        <p>Pair a device with a QR code in seconds. A substitute or guest lecturer
+          gets a controller that already knows the room — no accounts, no install,
+          nothing to configure before class starts.</p>
+      </article>
+      <article class="landing-card">
+        <h3>🗳️ An interactive session</h3>
+        <p>Run a live poll students answer on their own phones, results private
+          until you reveal them to the room. Point a laser, split the screen,
+          switch between a deck and a document camera without missing a beat.</p>
+      </article>
+      <article class="landing-card">
+        <h3>🖥️ Running your own server</h3>
+        <p>Self-host the relay and Podium gains accounts, a shared slide library,
+          durable session history with every stroke of ink, and course-level
+          access control — while every page keeps working with no server at all.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="landing-section">
+    <h2>Everything the room needs, none of it on the classroom PC</h2>
+    <div class="landing-grid landing-features">
+      <div class="landing-feature"><span class="lf-icon">🎬</span><div><b>Freeze is a cue</b><p>Preview, scrub and stage silently, then TAKE it live — a real video-switcher workflow, not a slideshow clicker.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">📝</span><div><b>Marp decks, in Markdown</b><p>Write slides in plain Markdown with KaTeX math and presenter notes — no build step, rendered live in the browser.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">🔭</span><div><b>Now / Next / Notes</b><p>A confidence monitor on your device: what the room sees, what's coming, and your notes — never turn around again.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">✏️</span><div><b>Live pencil ink</b><p>Pen, highlighter and a targeted eraser, anchored to the slide itself with an Apple Pencil or stylus.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">🔴</span><div><b>Laser pointer</b><p>Drag your finger across the preview; a laser dot follows it live on the projector and vanishes when you lift.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">🪟</span><div><b>Split-screen layouts</b><p>Single, side-by-side, stacked or a quad grid — each panel keeps its own item, zoom and ink.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">⏱️</span><div><b>Timers &amp; pacing</b><p>Countdown clocks for group work, plus a persistent lecture-budget bar that warns you before you run over.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">📷</span><div><b>Document camera</b><p>Stream your phone's camera to the projector over local WebRTC, or grab a crisp still of student work.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">🗳️</span><div><b>Audience polls</b><p>Multiple choice or short answer, answered by a QR code — private to you until you reveal it to the room.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">🔁</span><div><b>Automated sets</b><p>Timed rotations for pre-class announcements, lab rules or sponsor slides that run themselves.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">🏷️</span><div><b>Watermarks</b><p>Pin a course number, name or logo to a corner, anchored across every transition and layout.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">🎵</span><div><b>Music &amp; a real mixer</b><p>Pre-class background music that ducks automatically when lecture video plays, with independent channel faders.</p></div></div>
+    </div>
+  </section>
+
+  <section class="landing-section">
+    <h2>Free to start. Yours to own if you want more.</h2>
+    <div class="landing-grid landing-tiers">
+      <article class="landing-tier">
+        <p class="landing-tier-price">Free</p>
+        <h3>Public MQTT</h3>
+        <p>Zero signup. Point Podium at a public broker and pair a device in
+          under a minute — the fastest way to try it out.</p>
+      </article>
+      <article class="landing-tier landing-tier-recommended">
+        <p class="landing-tier-price">Free</p>
+        <h3>Supabase Realtime</h3>
+        <p>The recommended route for most classrooms: a managed broadcast
+          channel, no database tables, no server to maintain.</p>
+      </article>
+      <article class="landing-tier">
+        <p class="landing-tier-price">Low cost</p>
+        <h3>Self-hosted VPS</h3>
+        <p>Run <code>server/podium-server.js</code> on a small box you already
+          pay for and gain accounts, a shared library, session recording and
+          audience polls at real classroom scale.</p>
+      </article>
+    </div>
+    <p class="hint landing-tiers-note">
+      Every message between a controller and a display is encrypted in the
+      browser under a key derived from your room's passphrase — whichever
+      relay you choose only ever moves ciphertext.
+    </p>
+  </section>
+
+</main>
+
+<footer class="landing-footer">
+  <div class="landing-footer-links">
+    <a href="docs/quickstart.md">Quickstart</a>
+    <a href="docs/features.md">Features</a>
+    <a href="docs/architecture.md">Architecture</a>
+    <a href="docs/vps.md">Self-hosting</a>
+    <a href="https://github.com/jonwestfall/useful-scripts/tree/main/podium">Source on GitHub</a>
+  </div>
+  <p id="landing-version-stamp" class="version-stamp"></p>
+</footer>
+
+<script type="module" src="assets/js/index.js"></script>
 </body>
 </html>

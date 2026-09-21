@@ -886,6 +886,12 @@ function gate(req, res, pathname, ctx) {
   if (ctx.openPaths.has(pathname)) return true;
 
   if (ctx.hasAccounts()) {
+    // The showcase page: public even here, so it can sell Podium and offer
+    // a Sign in link to someone who has not signed in yet. See
+    // AUTH_PUBLIC_WITH_ACCOUNTS in podium-server.js for why this sits below
+    // openPaths rather than in it - it excuses only the accounts check, not
+    // AUTH_PASSWORD further down.
+    if (ctx.publicPaths?.has(pathname)) return true;
     const token = cookieToken(req);
     // Re-issue the cookie whenever the session's expiry slides forward.
     // setHeader rather than a writeHead argument, because the thing that

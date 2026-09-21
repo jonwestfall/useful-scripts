@@ -5049,6 +5049,16 @@ const caps = await fetch(`${acctBase}/api/capabilities`).then((r) => r.json());
 ok('the capabilities probe is answerable without signing in, and says so',
   caps.podium === true && caps.auth.mode === 'accounts' && caps.auth.required === true && caps.user === null);
 
+// The showcase page is the other thing that must never want an account - it
+// is what sells Podium to someone who has not signed in yet. Unlike the
+// gated pages above, this is the accounts-only exception (publicPaths in
+// server/api.js), so it says nothing about the AUTH_PASSWORD server tested
+// above, which keeps '/' behind Basic Auth exactly as it always has.
+ok('/ is reachable with no credentials, even with accounts configured',
+  (await fetch(`${acctBase}/`)).status === 200);
+ok('/index.html is too',
+  (await fetch(`${acctBase}/index.html`)).status === 200);
+
 // The audience page is the one thing that must never want an account.
 const acctCtx = await browser.newContext();
 await acctCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
@@ -5060,6 +5070,19 @@ await joiner.goto(`${acctBase}/join.html`);
 ok('a student reaches the join page with no account and no prompt',
   await joiner.isVisible('#enter') && joiner.url().endsWith('/join.html'));
 await joiner.close();
+
+// A visitor who has never signed in sees the showcase itself, and a way in -
+// not the surfaces, which would 401 the moment they were clicked.
+const visitor = await acctCtx.newPage();
+trap(visitor, 'acct showcase, signed out');
+await visitor.goto(`${acctBase}/index.html`);
+await visitor.waitForSelector('#topbar-nav:not([hidden])');
+ok('a signed-out visitor sees Sign in, not the surfaces',
+  await visitor.isVisible('.landing-signin')
+  && !(await visitor.isVisible('#topbar-nav a[href="control.html"]')));
+ok('and the hero\'s own call to action is the same Sign in link',
+  (await visitor.getAttribute('#hero-cta a', 'href') || '').startsWith('login.html?next='));
+await visitor.close();
 
 // A browser asking for a page it may not have gets a page back, not a native
 // credential dialog - which is the whole reason this is a cookie.
@@ -5088,6 +5111,22 @@ ok('the right password lands on the page that was asked for', /control\.html$/.t
 await pad.waitForSelector('#session-badge .session-who');
 ok(`the controller says who is signed in ("${await pad.textContent('#session-badge .session-who')}")`,
   (await pad.textContent('#session-badge .session-who')).trim() === 'Jon W');
+
+// Signed in, the same showcase page now offers the surfaces and an admin
+// link (jon is an administrator) instead of the Sign in prompt above. A
+// fresh tab, sharing acctCtx's cookie jar, so `pad` stays parked on
+// control.html for the library steps that follow.
+const home = await acctCtx.newPage();
+trap(home, 'acct showcase, signed in');
+await home.goto(`${acctBase}/index.html`);
+await home.waitForSelector('#topbar-nav:not([hidden])');
+ok('signed in, the showcase offers the surfaces instead of Sign in',
+  await home.isVisible('#topbar-nav a[href="control.html"]')
+  && await home.isVisible('#topbar-nav a[href="admin.html"]')
+  && !(await home.isVisible('.landing-signin')));
+ok('and says who is signed in, same as every other gated page',
+  (await home.textContent('#session-badge .session-who')).trim() === 'Jon W');
+await home.close();
 
 // --- the library, once there is a disk to keep it on ---------------------
 //

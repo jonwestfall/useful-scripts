@@ -90,7 +90,26 @@ const MAX_PER_ROOM = 12;
 // closes the one hole the AUTH_PASSWORD version had to leave open.
 const AUTH_USER = process.env.AUTH_USER || 'podium';
 const AUTH_PASSWORD = process.env.AUTH_PASSWORD || '';
-const AUTH_OPEN_PATHS = new Set(['/join.html', '/assets/js/join.js', '/login.html', '/favicon.ico']);
+const AUTH_OPEN_PATHS = new Set([
+  '/join.html', '/assets/js/join.js', '/login.html', '/favicon.ico',
+  // index.html is the showcase page (see below) - these are the static
+  // files it loads to render, none of which carry anything a stranger
+  // could not already read in the public repo. Opening them exposes no
+  // page: gate() still checks each request's own path, so control.html,
+  // display.html, plan.html and admin.html are untouched by this.
+  '/assets/css/podium.css', '/assets/js/server.js', '/assets/js/protocol.js',
+  '/assets/js/util.js', '/assets/js/index.js', '/assets/icons/apple-touch-icon.png',
+]);
+
+// index.html itself, reachable without signing in even where accounts are
+// configured - it is the showcase, meant to sell Podium to someone who has
+// not signed in yet and hand them a Sign in link, not a wall. This is
+// narrower than AUTH_OPEN_PATHS above on purpose: it excuses the splash
+// from the *accounts* check only (see gate() in api.js). A self-hosted
+// instance using the simpler AUTH_PASSWORD gate instead of accounts chose
+// that specifically to keep the whole thing off the public internet, splash
+// included, and still gets challenged for these two paths like every other.
+const AUTH_PUBLIC_WITH_ACCOUNTS = new Set(['/', '/index.html']);
 
 /**
  * The build this PROCESS is serving, read once at startup and reported on
@@ -145,6 +164,7 @@ const authContext = {
   basicPassword: AUTH_PASSWORD,
   isBasicAuthorized: (req) => isAuthorized(req),
   openPaths: AUTH_OPEN_PATHS,
+  publicPaths: AUTH_PUBLIC_WITH_ACCOUNTS,
 };
 
 function timingSafeEqualString(given, want) {
