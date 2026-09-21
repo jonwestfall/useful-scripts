@@ -2202,6 +2202,10 @@ serverInfo().then((info) => {
   allowPollNames = !!info.allowPollNames;
   renderKeepPhotos();
   renderPollsPanel();
+  // Unlike a deck or a photo, a PDF cannot be shrunk to fit one relay
+  // message - so this button only exists where there is a library to upload
+  // it to, straight through the same endpoint admin.html's own upload does.
+  $('#pdf-upload-row').hidden = !info.features.includes('library');
 });
 
 const recordingNow = () => serverKeepsSessions && !!state.lectureId;
@@ -4904,6 +4908,28 @@ $('#deck-file').addEventListener('change', async (ev) => {
     tab('slides');
   } catch (err) {
     note.textContent = `Could not open that file: ${err.message}`;
+  }
+});
+
+// Straight to the library, the same endpoint admin.html's own upload uses -
+// see #pdf-upload-row in control.html for why this one does not try to send
+// the file itself peer to peer the way a deck or a photo does.
+$('#pdf-upload').addEventListener('change', async (ev) => {
+  const file = ev.target.files?.[0];
+  ev.target.value = '';
+  if (!file) return;
+  const note = $('#pdf-upload-note');
+  note.textContent = `Uploading ${file.name}…`;
+  try {
+    const params = new URLSearchParams({ filename: file.name, title: file.name.replace(/\.pdf$/i, ''), course: '', group: '' });
+    const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not work');
+    note.textContent = `Added “${body.item.title}” to the library.`;
+    await loadLibrary();
+    stage(body.item);
+  } catch (err) {
+    note.textContent = `That did not upload: ${err.message}`;
   }
 });
 

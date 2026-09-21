@@ -5429,6 +5429,23 @@ await desk.waitForFunction(() => document.querySelector('#up-note')?.classList.c
 ok(`an html upload is refused with a reason ("${(await desk.textContent('#up-note')).trim()}")`,
   /does not take html/.test(await desk.textContent('#up-note')));
 
+// Issue #82: a PDF uploaded straight from the controller's Library tab -
+// unlike a deck or a photo it cannot be sent peer to peer, so this button
+// only exists here (server-backed) and goes through the same upload route
+// admin.html's own does.
+await pad.click('.tab[data-tab="library"]');
+await pad.waitForSelector('#pdf-upload-row:not([hidden])', { timeout: 5000 });
+await pad.setInputFiles('#pdf-upload', path.join(ROOT, 'content', 'sample.pdf'));
+await pad.waitForFunction(() => /Added/.test(document.querySelector('#pdf-upload-note')?.textContent || ''), null, { timeout: 8000 });
+ok(`uploading a PDF from the controller adds it to the library ("${(await pad.textContent('#pdf-upload-note')).trim()}")`,
+  /Added/.test(await pad.textContent('#pdf-upload-note')));
+const uploadedPdfInLibrary = await pad.evaluate(async () => {
+  const res = await fetch('/api/library', { credentials: 'same-origin' });
+  const { items } = await res.json();
+  return items.some((i) => i.type === 'pdf' && i.title === 'sample');
+});
+ok('and it is really on the server, filed as a pdf item', uploadedPdfInLibrary);
+
 // Now the controller, which has to merge it in beside the shipped manifest.
 await pad.reload();
 await pad.waitForSelector('#library .tile');
@@ -5867,8 +5884,10 @@ await desk.fill(passField, before);
 await desk.click('#tab-storage');
 await desk.waitForSelector('#panel-storage:not([hidden])');
 
+// 2 files: the deck uploaded earlier in this section, plus the PDF uploaded
+// from the controller's own Library tab (Issue #82).
 ok(`the page says what the box is holding (${(await desk.textContent('#storage-note')).slice(0, 60)}…)`,
-  /Library: 1 file/.test(await desk.textContent('#storage-note'))
+  /Library: 2 files/.test(await desk.textContent('#storage-note'))
   && /database:/.test(await desk.textContent('#storage-note')));
 
 const backup = desk.waitForEvent('download', { timeout: 30000 });

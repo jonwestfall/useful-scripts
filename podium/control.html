@@ -194,6 +194,15 @@ try {
             <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
             <span id="deck-file-note" class="hint"></span>
           </div>
+          <!-- Server-backed only: unlike a deck or a photo, a PDF cannot be
+               shrunk to fit one relay message, so this uploads straight to
+               the library instead of trying to send it peer to peer. Hidden
+               entirely on every other way of running Podium. -->
+          <div class="inline" id="pdf-upload-row" hidden>
+            <label class="filebtn" for="pdf-upload">Upload/Load a PDF…</label>
+            <input id="pdf-upload" type="file" accept=".pdf,application/pdf" hidden>
+            <span id="pdf-upload-note" class="hint"></span>
+          </div>
           <!-- A lecture plan built in plan.html. It belongs here rather than in
                Settings: it is content, not configuration, and Settings' Close
                button reloads the page. -->
