@@ -952,6 +952,49 @@ ok('picking light theme applies data-theme="light" immediately and persists',
   await pad.evaluate(() => document.documentElement.dataset.theme === 'light' && JSON.parse(localStorage.getItem('podium.presentation.v1')).theme === 'light'));
 await pad.selectOption('#pref-theme', 'dark');
 
+// Controller tabs (Issue #76): hide one, reorder another, and check both the
+// main tab bar and the "More" menu actually reflect it - not just the saved
+// preference, which the unit tests in tabsettings.test.mjs already cover.
+// #app (the live tab bar) is hidden behind #setup while Settings is open
+// (see showSetup()), so the parts of this that click the live bar happen
+// after closing it, same as the poll-url re-check further down does.
+ok('the tab order settings list has one row per tab',
+  await pad.evaluate(() => document.querySelectorAll('#tab-order-list .tab-order-row').length === 12));
+
+await pad.uncheck('.tab-order-row:has-text("Camera") input[type=checkbox]');
+ok('hiding a tab persists to presentation preferences',
+  await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).hiddenTabs.includes('camera')));
+ok('and the Camera tab itself is marked hidden, reading its own attribute rather than what is visible right now',
+  await pad.evaluate(() => document.querySelector('.tab[data-tab="camera"]').hidden === true));
+
+const orderBefore = await pad.$$eval('.tabs .tab[data-tab]', (els) => els.map((e) => e.dataset.tab));
+await pad.click('.tab-order-row:has-text("Slides") .tab-order-move button:first-child');
+const orderAfter = await pad.$$eval('.tabs .tab[data-tab]', (els) => els.map((e) => e.dataset.tab));
+ok(`moving Slides up actually reorders the live tab bar (${orderBefore.join(',')} -> ${orderAfter.join(',')})`,
+  orderAfter[0] === 'slides' && orderAfter[1] === 'library' && orderAfter.length === orderBefore.length);
+
+await pad.click('#setup-close');
+await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+ok('"More" appears now that Camera is really out of the bar', await pad.isVisible('#tabs-more'));
+
+await pad.click('#tabs-more');
+ok('More lists the hidden tab by name', await pad.evaluate(() =>
+  Array.from(document.querySelectorAll('#tabs-more-menu button')).some((b) => b.textContent === 'Camera')));
+await pad.click('#tabs-more-menu button:has-text("Camera")');
+ok('picking it from the menu actually switches to it, same as tapping a visible tab would',
+  await pad.evaluate(() => !document.querySelector('[data-panel="camera"]').hidden));
+ok('and closes the menu behind it', await pad.isHidden('#tabs-more-menu'));
+
+// Undo both changes, the same courtesy the poll-url re-check below pays -
+// nothing later in this run should have to know a tab was ever hidden or moved.
+await pad.click('#open-settings');
+await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
+await pad.check('.tab-order-row:has-text("Camera") input[type=checkbox]');
+await pad.click('.tab-order-row:has-text("Slides") .tab-order-move button:nth-child(2)');
+ok('restored order and visibility match what the bar shipped with', await pad.evaluate(() => {
+  const p = JSON.parse(localStorage.getItem('podium.presentation.v1'));
+  return !p.hiddenTabs.includes('camera') && p.tabOrder[0] === 'library' && p.tabOrder[1] === 'slides';
+}));
 await pad.click('#setup-close');
 await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
 await pad.waitForSelector('.tile', { timeout: 15000 });
