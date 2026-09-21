@@ -429,6 +429,24 @@ try {
               <button id="overlay-hide" type="button">Hide</button>
             </div>
           </form>
+          <!-- Live captions (Issue #79): speech recognized on THIS device
+               drives the same bottom bar above, through the 'caption' op -
+               see wireCaptions in control.js. No accessible-name label like
+               the forms above it: #caption-status already says what this
+               is and what state it is in, in the sentence itself. -->
+          <div class="stack" id="caption-block">
+            <div class="inline">
+              <button id="caption-toggle" type="button">Start live captions</button>
+              <span class="hint" id="caption-status"></span>
+            </div>
+            <p class="hint">
+              Live captions use this device's microphone and its browser's own speech
+              recognition. In Chrome and Edge that means the room's audio is sent to
+              Google's servers to be recognized - outside Podium's own encryption
+              entirely, the same as any other page's use of your browser's dictation.
+              Safari recognizes on-device instead. Not available in Firefox.
+            </p>
+          </div>
           <form id="qr-form" class="stack">
             <label for="qr-data">QR code for the class</label>
             <div class="inline">

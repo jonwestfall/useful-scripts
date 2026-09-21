@@ -6358,6 +6358,112 @@ ok('TAKE still works normally afterward - the guest device changed nothing about
 await gCtx.close();
 }
 
+if (want('live captions')) {
+console.log('\n-- live captions --');
+// Issue #79. Real SpeechRecognition needs a working microphone and, in
+// Chromium, a real network round trip to Google's recognition service -
+// neither belongs in this suite (no audio content to recognize, and a
+// sandboxed test run should never depend on reaching a third party over
+// the network). A fake constructor with the same event-driven shape
+// (start/stop, onresult/onerror/onend) exercises every line control.js
+// actually owns - the throttle, the silence timer, the manual-caption
+// handoff, the stop path - deterministically, the same reason the camera
+// tests use --use-fake-device-for-media-stream rather than a real webcam.
+const capCtx = await browser.newContext();
+await capCtx.addInitScript(() => {
+  class FakeSpeechRecognition {
+    constructor() {
+      window.__fakeRecognizers = window.__fakeRecognizers || [];
+      window.__fakeRecognizers.push(this);
+    }
+    start() { this.started = true; }
+    stop() { this.started = false; if (this.onend) setTimeout(() => this.onend(), 0); }
+  }
+  window.SpeechRecognition = FakeSpeechRecognition;
+});
+await capCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'captions-room', passphrase: 'read the room' }));
+
+const capDisplay = await capCtx.newPage();
+trap(capDisplay, 'captions display');
+await capDisplay.goto(`${BASE}/display.html`);
+await capDisplay.click('#arm-button');
+await capDisplay.waitForSelector('#hud[data-status="online"]');
+
+const capControl = await capCtx.newPage();
+trap(capControl, 'captions controller');
+await capControl.goto(`${BASE}/control.html`);
+await capControl.waitForSelector('#app:not([hidden])');
+await capControl.waitForFunction(
+  () => !document.querySelector('#display-state')?.textContent.includes('No display connected'),
+  null, { timeout: 10000 });
+await capControl.click('.tab[data-tab="say"]');
+
+const lastFakeRecognizer = () => capControl.evaluate(() => window.__fakeRecognizers?.length || 0);
+ok('starts idle, nothing armed yet', (await lastFakeRecognizer()) === 0);
+
+await capControl.click('#caption-toggle');
+await capControl.waitForFunction(() => document.querySelector('#caption-toggle').textContent === 'Stop live captions', null, { timeout: 5000 });
+ok('Start arms recognition and flips the button', (await capControl.textContent('#caption-status')) === 'Listening…');
+ok('and it is a continuous, interim-results session in the room language',
+  await capControl.evaluate(() => {
+    const r = window.__fakeRecognizers.at(-1);
+    return r.continuous === true && r.interimResults === true && r.started === true;
+  }));
+
+const fireResult = (transcript) => capControl.evaluate((text) => {
+  window.__fakeRecognizers.at(-1).onresult({ results: [[{ transcript: text }]], resultIndex: 0 });
+}, transcript);
+
+await fireResult('the mitochondria is the powerhouse of the cell');
+await capDisplay.waitForFunction(() => document.querySelector('#overlay').classList.contains('is-on'), null, { timeout: 5000 });
+ok('a recognized phrase reaches the display over the relay',
+  (await capDisplay.textContent('#overlay')).includes('powerhouse of the cell'));
+
+await fireResult('and next slide please');
+await capDisplay.waitForFunction(() => document.querySelector('#overlay').textContent.includes('next slide please'), null, { timeout: 5000 });
+ok('a later phrase replaces it in place rather than appending to a growing transcript', true);
+
+// Silence: nothing recognized for the full timeout clears the bar on its
+// own - a live caption bar is not the manual "stays over anything" one.
+await capDisplay.waitForFunction(() => !document.querySelector('#overlay').classList.contains('is-on'), null, { timeout: 6000 });
+ok('and a lull clears the bar without anyone pressing Hide', true);
+
+// A manual caption typed mid-session takes over, and further recognized
+// speech is not allowed to silently overwrite it.
+await capControl.fill('#overlay-text', 'Office hours moved to Thursday');
+await capControl.click('#overlay-form button[type=submit]');
+await capDisplay.waitForFunction(() => document.querySelector('#overlay').textContent.includes('Office hours'), null, { timeout: 5000 });
+await fireResult('this should not appear');
+await capControl.waitForTimeout(500);
+ok('a manually typed caption is not overwritten by speech still technically running',
+  (await capDisplay.textContent('#overlay')).includes('Office hours')
+  && !(await capDisplay.textContent('#overlay')).includes('should not appear'));
+
+await capControl.click('#caption-toggle');
+await capControl.waitForFunction(() => document.querySelector('#caption-toggle').textContent === 'Start live captions', null, { timeout: 5000 });
+await capDisplay.waitForFunction(() => !document.querySelector('#overlay').classList.contains('is-on'), null, { timeout: 5000 });
+ok('Stop clears the bar and rearms the button for next time', (await capControl.textContent('#caption-status')) === '');
+
+await capCtx.close();
+
+// --- no speech recognition in this browser at all (Firefox, e.g.) --------
+const noCapCtx = await browser.newContext();
+await noCapCtx.addInitScript(() => { window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined; });
+await noCapCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'no-captions-room', passphrase: 'no dictation here' }));
+const noCapControl = await noCapCtx.newPage();
+trap(noCapControl, 'no-speech-recognition controller');
+await noCapControl.goto(`${BASE}/control.html`);
+await noCapControl.waitForSelector('#app:not([hidden])');
+await noCapControl.click('.tab[data-tab="say"]');
+await noCapControl.click('#caption-toggle');
+ok('a browser with no SpeechRecognition at all says so rather than failing silently',
+  /no speech recognition/i.test(await noCapControl.textContent('#caption-status')));
+ok('and the button never claims to have started', (await noCapControl.textContent('#caption-toggle')) === 'Start live captions');
+await noCapCtx.close();
+}
+
 if (want('back to the landing page')) {
 console.log('\n-- back to the landing page --');
 const ctx = await browser.newContext();

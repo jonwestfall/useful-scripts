@@ -140,7 +140,13 @@ export function initialState() {
     volume: 0.8,
     contentVolume: 1,
     muted: false,
-    overlay: { text: '', visible: false },
+    // `live` is true while a device's speech recognition is actively
+    // feeding this bar (Issue #79) - see the 'caption' op below. It rides
+    // along with text/visible rather than living apart from them so a
+    // display reload restores it (see restoreState in display.js) and
+    // caption updates keep being honored afterward, exactly like the rest
+    // of what that restore preserves.
+    overlay: { text: '', visible: false, live: false },
     // More than one countdown, because a class often has more than one clock
     // running: eight minutes of group work inside a ninety-minute session, a
     // five-minute break with its own end. Each is independent, and a `timer`
@@ -1044,7 +1050,36 @@ export function applyCommand(state, cmd) {
     case 'overlay':
       if (cmd.text !== undefined) state.overlay.text = String(cmd.text).slice(0, 500);
       state.overlay.visible = cmd.visible ?? !!state.overlay.text;
+      // A manually TYPED caption ends live mode - otherwise the next
+      // recognized phrase would silently overwrite what was just typed. A
+      // bare Hide (#overlay-hide sends no text at all) does not: it is
+      // "clear the bar right now" for either kind of caption, and for a
+      // live one, staying in live mode is what lets the very next thing
+      // said bring the bar back on its own, with no separate Stop/Start.
+      if (cmd.text) state.overlay.live = false;
       return true;
+
+    // Live captions (Issue #79): speech recognized on whichever device
+    // started it (normally the controller, since it is the one near the
+    // instructor's voice) rides this SAME bottom bar rather than a second
+    // one competing for the same strip of screen - see the 'overlay' case
+    // above and overlayEl in display.js. A distinct op rather than driving
+    // 'overlay' directly: turning captions off has to know THIS is what is
+    // holding the bar, not blindly clear a caption the presenter typed by
+    // hand a moment ago.
+    case 'caption': {
+      if (cmd.on !== undefined) {
+        state.overlay.live = !!cmd.on;
+        if (!cmd.on) { state.overlay.text = ''; state.overlay.visible = false; }
+        return true;
+      }
+      // A stale update from a device that had captions running before
+      // someone else turned them off, or typed a manual caption over them.
+      if (!state.overlay.live) return false;
+      state.overlay.text = String(cmd.text || '').slice(0, 500);
+      state.overlay.visible = !!state.overlay.text;
+      return true;
+    }
 
     // A corner watermark, set field by field like overlay above: whichever
     // of text/image/position/enabled the caller names changes, the rest is
