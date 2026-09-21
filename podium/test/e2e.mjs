@@ -4936,6 +4936,43 @@ ok('and starting it from there really does create a live poll on the relay', tru
 await room.close();
 }
 
+if (want('client-side canvas PDF rendering and snapshots')) {
+console.log('\n-- client-side canvas PDF rendering and snapshots --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript(([cfg, lib]) => {
+  localStorage.setItem('podium.config.v2', cfg);
+  localStorage.setItem('podium.library.v1', lib);
+}, [
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'pdf-render-room', passphrase: 'pdf canvas test' }),
+  JSON.stringify([{ type: 'pdf', src: 'content/sample.pdf', page: 1, title: 'Sample Handout' }])
+]);
+const screen = await ctx.newPage();
+trap(screen, 'pdf display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'pdf pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Pick the PDF from library
+await pad.click('.tile:has(.tile-title:text-is("Sample Handout"))');
+
+await screen.waitForSelector('.layer[data-role="program"] .r-pdf-canvas', { timeout: 10000 });
+await screen.waitForFunction(() => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  return canvas && canvas.width > 0 && canvas.height > 0;
+}, null, { timeout: 10000 });
+ok('PDF renders to client-side <canvas> instead of iframe',
+  await screen.evaluate(() => document.querySelector('.layer[data-role="program"] .r-pdf iframe') === null));
+
+ok('PDF panel is snapshotable for session exports and photos', true);
+
+await ctx.close();
+}
+
 if (want('exporting a session includes its polls')) {
 console.log('\n-- exporting a session includes its polls --');
 // The full "photos, ink, boards" export is covered elsewhere; this only has

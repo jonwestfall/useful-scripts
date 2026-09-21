@@ -543,7 +543,8 @@ function whyNot(panel) {
       : 'the phone\'s camera has not reached this screen yet — start it on the Camera tab first';
   }
   if (type === 'deck') return 'that slide would not render on its own — a font or an image in it may be blocking it';
-  const embedded = { web: 'an embedded web page', slides: 'an embedded slide deck', pdf: 'a PDF in the browser\'s own viewer', youtube: 'a YouTube player' }[type];
+  if (type === 'pdf') return 'that PDF page would not render — the document may be unreadable or corrupt';
+  const embedded = { web: 'an embedded web page', slides: 'an embedded slide deck', youtube: 'a YouTube player' }[type];
   if (embedded) return `${embedded} cannot be photographed — a browser will not let a page read pixels out of a frame it does not own`;
   const known = { text: 'a big-text card', audio: 'an audio player' }[type];
   if (known) return `Podium cannot photograph ${known} yet`;

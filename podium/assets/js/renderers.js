@@ -434,31 +434,111 @@ function renderWeb(item, opts) {
   };
 }
 
-// The built-in PDF viewer only honours #page= on load, so a page change swaps
-// the frame. The file itself comes from cache, so it is quick after the first.
-function renderPdf(item) {
+// Client-side canvas PDF viewer (Issue #43)
+function renderPdf(item, opts) {
   const node = el('div', { class: 'r-fill r-pdf' });
-  let page = item.page || 1;
+  const canvas = el('canvas', { class: 'r-pdf-canvas' });
+  let pageNumber = item.page || 1;
   let src = item.src;
+  let currentDoc = null;
+  let currentDocSrc = null;
+  let currentRenderTask = null;
+  let isDestroyed = false;
 
-  const mount = () => {
-    node.replaceChildren(el('iframe', {
-      class: 'r-frame',
-      src: `${src}#page=${page}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,
-      frameborder: '0',
-    }));
+  node.appendChild(canvas);
+
+  const render = async () => {
+    if (!window.pdfjsLib || !src) {
+      node.replaceChildren(el('iframe', {
+        class: 'r-frame',
+        src: `${src}#page=${pageNumber}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,
+        frameborder: '0',
+      }));
+      return;
+    }
+
+    if (window.pdfjsLib.GlobalWorkerOptions && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'assets/vendor/pdf.worker.min.js';
+    }
+
+    try {
+      if (currentDocSrc !== src) {
+        currentDocSrc = src;
+        currentDoc = await window.pdfjsLib.getDocument(src).promise;
+      }
+      if (isDestroyed || !currentDoc) return;
+
+      const numPages = currentDoc.numPages;
+      const targetPage = Math.max(1, Math.min(numPages, pageNumber));
+      const page = await currentDoc.getPage(targetPage);
+      if (isDestroyed) return;
+
+      if (currentRenderTask) {
+        try { currentRenderTask.cancel(); } catch {}
+        currentRenderTask = null;
+      }
+
+      const unscaledViewport = page.getViewport({ scale: 1 });
+      const containerWidth = node.clientWidth || 1920;
+      const containerHeight = node.clientHeight || 1080;
+      const dpr = window.devicePixelRatio || 1;
+      
+      const scale = Math.max(1, Math.min(
+        (containerWidth / unscaledViewport.width) * dpr,
+        (containerHeight / unscaledViewport.height) * dpr,
+        3
+      ));
+
+      const viewport = page.getViewport({ scale });
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+
+      const ctx = canvas.getContext('2d');
+      currentRenderTask = page.render({
+        canvasContext: ctx,
+        viewport: viewport,
+      });
+
+      await currentRenderTask.promise;
+      currentRenderTask = null;
+    } catch (err) {
+      if (err?.name === 'RenderingCancelledException') return;
+      node.replaceChildren(el('iframe', {
+        class: 'r-frame',
+        src: `${src}#page=${pageNumber}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,
+        frameborder: '0',
+      }));
+    }
   };
-  mount();
+
+  render();
 
   return {
     el: node,
     update(it) {
       const nextPage = it.page || 1;
-      if (it.src !== src || nextPage !== page) { src = it.src; page = nextPage; mount(); }
+      if (it.src !== src || nextPage !== pageNumber) {
+        src = it.src;
+        pageNumber = nextPage;
+        render();
+      }
     },
     reconcile() {},
     telemetry: noTelemetry,
-    destroy() { node.remove(); },
+    snapshot(ctx, rect) {
+      if (!canvas || !canvas.width || !canvas.height) return false;
+      paintBackdrop(ctx, rect, node, '#000');
+      return drawFitted(ctx, rect, canvas, canvas.width, canvas.height, 'contain');
+    },
+    destroy() {
+      isDestroyed = true;
+      if (currentRenderTask) {
+        try { currentRenderTask.cancel(); } catch {}
+        currentRenderTask = null;
+      }
+      currentDoc = null;
+      node.remove();
+    },
   };
 }
 
