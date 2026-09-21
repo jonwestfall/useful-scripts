@@ -969,6 +969,7 @@ let gridBuildId = null;
 let gridBuildPromise = null;
 let activeSectionFilter = null;
 let lastScrolledSlideIndex = null;
+let lastScrolledSectionId = null;
 let selectedChipSection = null;
 
 function getSlideSectionIndex(sections, slideIndex) {
@@ -1059,12 +1060,23 @@ function updateActiveSectionChip(slideIndex) {
   const secIdx = getSlideSectionIndex(sections, slideIndex);
   const targetId = secIdx >= 0 ? String(secIdx) : 'all';
   container.querySelectorAll('.deck-chip').forEach((chip) => {
-    const isActive = chip.dataset.section === targetId;
-    chip.classList.toggle('is-active', isActive);
-    if (isActive) {
-      chip.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-    }
+    chip.classList.toggle('is-active', chip.dataset.section === targetId);
   });
+  // Follow the highlight into view only when the active SECTION actually
+  // moves (Issue #95) - this runs on every render highlightGrid does,
+  // including a build step within the same slide and every heartbeat while
+  // sitting on one, and with no guard here it used to re-scroll every
+  // single time regardless. On a slide with long presenter notes that
+  // scroll is a real distance (chip.scrollIntoView walks up through
+  // .panels, the same scrollable ancestor the notes and Prev/Next share),
+  // so this fired again the moment after a presenter scrolled back up to
+  // read notes or reach Prev/Next - the exact "jumps down once more" this
+  // issue describes, on every render rather than only a genuine change.
+  if (lastScrolledSectionId !== targetId) {
+    lastScrolledSectionId = targetId;
+    const activeChip = container.querySelector(`.deck-chip[data-section="${targetId}"]`);
+    activeChip?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }
 }
 
 function ensureGridShadow() {
@@ -1076,6 +1088,7 @@ function buildGrid(deck) {
   if (gridBuildId === deck.id) return gridBuildPromise;
   gridBuildId = deck.id;
   lastScrolledSlideIndex = null;
+  lastScrolledSectionId = null;
   activeSectionFilter = null;
   selectedChipSection = null;
   gridBuildPromise = buildGridNow(deck);
@@ -1230,7 +1243,7 @@ function highlightGrid(index, deckId = (deckView.id || (focusedItem(state)?.type
     const slidesPanel = $('[data-panel="slides"]');
     if (slidesPanel && !slidesPanel.hidden) {
       lastScrolledSlideIndex = index;
-      activeCell.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+      activeCell.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
     }
   }
 
@@ -1241,6 +1254,7 @@ async function ensureDeckView(item) {
   if (!item || item.type !== 'deck') {
     deckView = { id: null, deck: null };
     lastScrolledSlideIndex = null;
+    lastScrolledSectionId = null;
     activeSectionFilter = null;
     selectedChipSection = null;
     return;
@@ -4589,6 +4603,7 @@ function tab(name) {
   if (name === 'ink') { syncInkFromState(); applyInkPreferences(); sizePad(); }
   if (name === 'slides') {
     lastScrolledSlideIndex = null;
+    lastScrolledSectionId = null;
     renderSlides();
   }
 }
