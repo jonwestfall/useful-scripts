@@ -685,6 +685,7 @@ $('#deck-next').addEventListener('click', () => {
 function renderHeader() {
   $('#plan-title').value = plan.title || '';
   $('#plan-course').value = plan.course || '';
+  renderTemplateControls();
   $('#plan-notes').value = plan.notes || '';
   const targetSelect = $('#plan-target-mins');
   if (targetSelect) targetSelect.value = String(plan.targetDuration || 50);
@@ -698,7 +699,7 @@ $('#plan-target-mins')?.addEventListener('change', (ev) => {
 });
 
 $('#plan-title').addEventListener('input', (ev) => { plan.title = ev.target.value; touch(); renderPlanList(); });
-$('#plan-course').addEventListener('input', (ev) => { plan.course = ev.target.value; touch(); });
+$('#plan-course').addEventListener('input', (ev) => { plan.course = ev.target.value; touch(); renderTemplateControls(); });
 $('#plan-notes').addEventListener('input', (ev) => { plan.notes = ev.target.value; touch(); });
 $('#plan-layout').addEventListener('click', (ev) => {
   const button = ev.target.closest('.layout-btn');
@@ -1168,10 +1169,91 @@ deleteServerPlanButton = wireDangerButton($('#plan-pull-delete'), 'Delete from s
   deleteServerPlanButton.disarm();
 }, { armedLabel: 'Tap again to delete' });
 
+// --- course plan templates (Issue #80) ---------------------------------
+//
+// A template is a real plan's doc, filed under a course the same way a
+// pushed lecture is (see #plan-push above) - this page is the only one with
+// an editor to build one in, so "manage a template" here means "save this
+// lecture as one" rather than a second, separate editor somewhere else.
+
+let courseTemplates = [];
+
+function templateForCourse(code) {
+  const wanted = String(code || '').trim().toLowerCase();
+  return wanted ? courseTemplates.find((row) => row.course === wanted) : null;
+}
+
+function renderTemplateControls() {
+  const wanted = String($('#plan-course').value || '').trim();
+  const existing = templateForCourse(wanted);
+  $('#plan-new-from-template').hidden = !existing;
+  if (existing) $('#plan-new-from-template').textContent = `New lecture from ${existing.course}'s template…`;
+  $('#plan-template-row').hidden = !wanted;
+  $('#plan-remove-template').hidden = !existing;
+}
+
+async function refreshTemplates() {
+  try {
+    const res = await fetch('/api/templates', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    courseTemplates = (await res.json()).templates || [];
+  } catch { /* the rest of the page still works, which is the point */ }
+  renderTemplateControls();
+}
+
+$('#plan-new-from-template').addEventListener('click', async () => {
+  const existing = templateForCourse($('#plan-course').value);
+  if (!existing?.doc) return;
+  try {
+    const { plan: loaded, warnings } = readPlan(typeof existing.doc === 'string' ? existing.doc : JSON.stringify(existing.doc));
+    await newPlan(loaded);
+    warn(warnings.length ? `Opened with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}` : '');
+  } catch (err) {
+    warn(`That template did not open: ${err.message}`);
+  }
+});
+
+$('#plan-save-template').addEventListener('click', async () => {
+  await commit();
+  const note = $('#plan-template-note');
+  const course = String($('#plan-course').value || '').trim();
+  if (!course) { note.textContent = "Type a course above first - a template belongs to one."; return; }
+  try {
+    const res = await fetch(`/api/templates/${encodeURIComponent(course)}`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ doc: planToJson(plan) }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not work');
+    note.textContent = `Saved — new lectures for ${body.saved.course} can start from this.`;
+    await refreshTemplates();
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
+$('#plan-remove-template').addEventListener('click', async () => {
+  const note = $('#plan-template-note');
+  const course = String($('#plan-course').value || '').trim();
+  if (!course) return;
+  try {
+    const res = await fetch(`/api/templates/${encodeURIComponent(course)}`, { method: 'DELETE', credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not work');
+    note.textContent = `Removed — new lectures for ${course} start blank again.`;
+    await refreshTemplates();
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
 serverInfo().then((info) => {
   if (!info.features.includes('plans')) return;
   $('#plan-server').hidden = false;
   refreshServerPlans();
+  if (info.features.includes('templates')) refreshTemplates();
 });
 
 $('#plan-new').addEventListener('click', () => newPlan());

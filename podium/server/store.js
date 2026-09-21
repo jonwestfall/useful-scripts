@@ -321,6 +321,23 @@ const MIGRATIONS = [
       );
     `);
   },
+
+  (db) => {
+    db.exec(`
+      -- A course's plan skeleton (Issue #80): what plan.html starts a new
+      -- lecture from instead of blank, for a course that opens the same
+      -- shape of lecture every week. Exactly one per course, the same shape
+      -- course_settings already is - and doc is the same thing plans.doc is,
+      -- whatever planfile.js writes, so nothing here has to understand a
+      -- plan's insides any more than the plans table does.
+      CREATE TABLE course_templates (
+        course_id  INTEGER PRIMARY KEY REFERENCES courses(id) ON DELETE CASCADE,
+        doc        TEXT    NOT NULL,
+        updated_at INTEGER NOT NULL,
+        updated_by INTEGER REFERENCES users(id)
+      );
+    `);
+  },
 ];
 
 function migrate(db) {
