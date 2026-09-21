@@ -11,6 +11,7 @@ Podium is designed for real classroom lectures. It gives you total control over 
 - [The Presenter View (Now, Next & Notes)](#the-presenter-view-now-next--notes)
 - [Live Ink Annotations](#live-ink-annotations)
 - [Laser Pointer](#laser-pointer)
+- [Live Captions](#live-captions)
 - [Media Playback & Background Music](#media-playback--background-music)
 - [Screen Layouts & Split Screen](#screen-layouts--split-screen)
 - [Timers & Lecture Pacing](#timers--lecture-pacing)
@@ -82,6 +83,16 @@ Turn your iPad screen into a virtual laser pointer:
 - Drag your finger across the Now preview box. A bright, focused laser dot follows your finger on the classroom projector.
 - Available in red, green (for dark slides/photos), or blue (for bright slides).
 - Automatically disappears the moment you lift your finger.
+
+---
+
+## Live Captions
+
+Real-time captions along the bottom of the projector, for a hearing-impaired or ESL student in the room, generated from the instructor's own speech:
+- Tap **Start live captions** in the Say tab. Recognition runs on that device's microphone using the browser's own speech recognition — nothing to install, nothing to configure, and off by default.
+- Captions ride the same bottom bar as the manual "Caption along the bottom" overlay above it, and clear themselves after a few seconds of silence rather than sitting on the last thing said for the rest of class.
+- Typing a manual caption while captions are running takes over the bar immediately; the next recognized phrase does not overwrite it.
+- **The trade-off, stated plainly**: in Chrome and Edge, this sends the room's audio to Google's servers for recognition — outside Podium's own end-to-end encryption entirely, since it happens inside the browser's own code. Safari recognizes on-device instead. Firefox has no speech recognition at all. See [Security & End-to-End Cryptography](architecture.md#security--end-to-end-cryptography) for the full picture.
 
 ---
 
@@ -161,3 +172,4 @@ The **Plan** page (`plan.html`) is designed for your office computer:
 - Drag-and-drop your slides, PDFs, YouTube URLs, and notes into an ordered running order.
 - Test slide timings and configure timers.
 - Export as a single `.podium` file to load onto your iPad, or sync directly via the self-hosted server.
+- On a self-hosted server, **Update the copy already there** overwrites a lecture you previously sent instead of leaving a duplicate behind, and **Delete from server** removes one you no longer need — the plan file on your own machine, if you saved one, is untouched either way.

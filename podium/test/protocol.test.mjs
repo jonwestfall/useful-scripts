@@ -70,6 +70,23 @@ chk('pdf paging', s.program.page === 3);
 applyCommand(s, {op:'nav', dir:'prev'});
 chk('pdf paging back', s.program.page === 2);
 
+// Zooming into a PDF page (Issue #82)
+chk('a freshly staged pdf starts at zoom 1, centered', s.program.zoom === 1 && s.program.panX === 0.5 && s.program.panY === 0.5);
+applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:0.5, panY:0.5});
+chk('zoom sets the level', s.program.zoom === 2);
+applyCommand(s, {op:'zoom', action:'set', zoom:10});
+chk('zoom is capped at 4', s.program.zoom === 4);
+applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:0, panY:0});
+chk('pan is clamped so the view never pans off the page (half the window is 1/(2*2) = 0.25 from either edge)',
+  s.program.panX === 0.25 && s.program.panY === 0.25);
+applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:1, panY:1});
+chk('clamped the other way too', s.program.panX === 0.75 && s.program.panY === 0.75);
+applyCommand(s, {op:'zoom', action:'reset'});
+chk('reset returns to zoom 1, centered', s.program.zoom === 1 && s.program.panX === 0.5 && s.program.panY === 0.5);
+applyCommand(s, {op:'stage', item:{type:'text', body:'not a pdf'}});
+const zoomedNonPdf = applyCommand(s, {op:'zoom', action:'set', zoom:2});
+chk('zoom does nothing to a non-pdf item', zoomedNonPdf === false);
+
 applyCommand(s, {op:'timer', action:'start', seconds:300, label:'Group work'});
 chk('timer runs', s.timers[0].running && timerRemaining(s.timers[0]) > 299000);
 applyCommand(s, {op:'timer', action:'pause'});
@@ -470,5 +487,46 @@ chk('COMMIT is a string', typeof COMMIT === 'string' && COMMIT.length > 0);
 chk('versionStamp formats expected string', versionStamp().includes(`v${VERSION} · build ${BUILD}`));
 
 chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
+
+{
+  // Live captions (Issue #79) ride the same overlay bar a manually typed
+  // caption uses, gated by overlay.live so a stale update from a device
+  // whose captions were turned off elsewhere is rejected rather than
+  // reviving the bar.
+  const c = initialState();
+  chk('captions start off', c.overlay.live === false && c.overlay.visible === false);
+
+  chk('a caption update before "on" is rejected', applyCommand(c, {op:'caption', text:'too early'}) === false);
+  chk('and touches nothing', c.overlay.text === '' && c.overlay.visible === false);
+
+  applyCommand(c, {op:'caption', on:true});
+  chk('caption on arms live mode without showing anything yet', c.overlay.live === true && c.overlay.visible === false);
+
+  applyCommand(c, {op:'caption', text:'the mitochondria is the powerhouse of the cell'});
+  chk('a recognized phrase shows on the bar', c.overlay.text === 'the mitochondria is the powerhouse of the cell' && c.overlay.visible === true);
+
+  applyCommand(c, {op:'caption', text:''});
+  chk('an empty phrase (silence) clears the bar but stays live', c.overlay.text === '' && c.overlay.visible === false && c.overlay.live === true);
+
+  applyCommand(c, {op:'caption', text:'back again'});
+  chk('and a later phrase reappears on its own, no re-arming needed', c.overlay.text === 'back again' && c.overlay.visible === true);
+
+  applyCommand(c, {op:'overlay', visible:false});
+  chk('a bare Hide clears the bar but does not end live mode', c.overlay.visible === false && c.overlay.live === true);
+  applyCommand(c, {op:'caption', text:'still going'});
+  chk('so the next phrase still gets through after a Hide', c.overlay.text === 'still going' && c.overlay.visible === true);
+
+  applyCommand(c, {op:'overlay', text:'Chapter 4 · Working memory', visible:true});
+  chk('typing a manual caption ends live mode', c.overlay.live === false && c.overlay.text === 'Chapter 4 · Working memory');
+  chk('a caption update after that is rejected, not overwriting what was typed',
+    applyCommand(c, {op:'caption', text:'ignored'}) === false && c.overlay.text === 'Chapter 4 · Working memory');
+
+  applyCommand(c, {op:'caption', on:true});
+  applyCommand(c, {op:'caption', text:'live again'});
+  applyCommand(c, {op:'caption', on:false});
+  chk('caption off clears the bar and ends live mode in one step',
+    c.overlay.live === false && c.overlay.text === '' && c.overlay.visible === false);
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

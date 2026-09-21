@@ -34,6 +34,11 @@
     <div id="plan-list"></div>
     <div class="col-actions">
       <button id="plan-new" type="button" class="big-button">New lecture</button>
+      <!-- Only once the Course field up top names a course that actually has
+           a saved template (see refreshTemplates in plan.js) - a course with
+           none simply does not offer this, same as #plan-push-update only
+           appearing once there is something to update. -->
+      <button id="plan-new-from-template" type="button" hidden>New lecture from template…</button>
       <button id="plan-import" type="button">Open a plan file…</button>
       <input id="plan-import-file" type="file" accept=".json,application/json" hidden>
     </div>
@@ -52,16 +57,31 @@
       <hr>
       <h3>This server</h3>
       <button id="plan-push" type="button" class="big-button">Send this lecture to the server</button>
+      <!-- Shown only once this lecture maps to a known server row - pulled
+           from the server, or just sent there - so there is something for it
+           to overwrite. See setCurrentServerPlanId in plan.js. -->
+      <button id="plan-push-update" type="button" hidden>Update the copy already there</button>
       <p class="hint" id="plan-push-note" role="status"></p>
       <div class="inline">
         <select id="plan-pull-pick" aria-label="A lecture on the server"></select>
         <button id="plan-pull" type="button">Open</button>
+        <button id="plan-pull-delete" type="button" class="danger-outline">Delete from server</button>
       </div>
       <p class="hint">
         A lecture sent here is on the iPad in class without a file to carry.
         Filing it under a course shares it with that course; otherwise it is
-        yours alone.
+        yours alone. Deleting one here only removes it from the server — a
+        plan file you saved for it is untouched.
       </p>
+      <!-- The template a course starts a new lecture from (Issue #80) - built
+           from a real plan, since this is the only page with an editor for
+           one. Course owners and admins only; visible either way so the
+           error explains itself rather than the button just not working. -->
+      <div class="inline" id="plan-template-row" hidden>
+        <button id="plan-save-template" type="button">Save as this course's template</button>
+        <button id="plan-remove-template" type="button" class="danger-outline" hidden>Remove template</button>
+      </div>
+      <p class="hint" id="plan-template-note" role="status"></p>
     </div>
     <hr>
     <p class="hint">

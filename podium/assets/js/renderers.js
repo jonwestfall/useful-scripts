@@ -435,15 +435,36 @@ function renderWeb(item, opts) {
 }
 
 // Client-side canvas PDF viewer (Issue #43)
+
+// A page's aspect ratio, by src, filled in as any renderPdf instance
+// anywhere - a mirror, a preview, the display itself - finishes loading a
+// page. Item-keyed rather than tied to one renderer instance on purpose:
+// the controller's ink pad (contentAspectFor in control.js) needs an answer
+// for whichever item is focused, which is not always the one the "Now"
+// preview mirror happens to be showing (a non-A panel, mid split-screen).
+const pdfAspectCache = new Map();
+export function pdfAspectFor(src) { return pdfAspectCache.get(src) || null; }
+
 function renderPdf(item, opts) {
   const node = el('div', { class: 'r-fill r-pdf' });
   const canvas = el('canvas', { class: 'r-pdf-canvas' });
   let pageNumber = item.page || 1;
   let src = item.src;
+  let zoom = item.zoom || 1;
+  let panX = Number.isFinite(item.panX) ? item.panX : 0.5;
+  let panY = Number.isFinite(item.panY) ? item.panY : 0.5;
   let currentDoc = null;
   let currentDocSrc = null;
   let currentRenderTask = null;
   let isDestroyed = false;
+  // The page's own aspect ratio, independent of dpr or of whichever box this
+  // instance happens to be rendering into - unlike canvas.width/height below,
+  // which differ between the controller's small preview and the display's
+  // full stage on purpose (different pixel budgets), this must not, or ink
+  // anchored to a fraction of "the content" lands in a different place on
+  // each. Null until the first page load resolves it, the same async-then-
+  // correct shape contentAspect() already has for a deck below.
+  let aspect = null;
 
   node.appendChild(canvas);
 
@@ -479,6 +500,8 @@ function renderPdf(item, opts) {
       }
 
       const unscaledViewport = page.getViewport({ scale: 1 });
+      aspect = unscaledViewport.width / unscaledViewport.height;
+      if (src) pdfAspectCache.set(src, aspect);
       const containerWidth = node.clientWidth || 1920;
       const containerHeight = node.clientHeight || 1080;
       const dpr = window.devicePixelRatio || 1;
@@ -489,14 +512,30 @@ function renderPdf(item, opts) {
         3
       ));
 
+      // The canvas stays sized to the un-zoomed window (viewport at `scale`)
+      // regardless of zoom - what changes is a transform ahead of it that
+      // renders the page bigger and slides it so the pan point lands centered
+      // in that same window. Keeping the window's own size fixed is what
+      // keeps contentAspect() (and every ink coordinate anchored to it)
+      // correct at any zoom level - zooming crops the view, it never
+      // reshapes the letterboxed surface ink is drawn onto.
       const viewport = page.getViewport({ scale });
       canvas.width = Math.round(viewport.width);
       canvas.height = Math.round(viewport.height);
 
       const ctx = canvas.getContext('2d');
+      let transform;
+      if (zoom > 1) {
+        const bigW = viewport.width * zoom;
+        const bigH = viewport.height * zoom;
+        const offsetX = Math.min(bigW - viewport.width, Math.max(0, panX * bigW - viewport.width / 2));
+        const offsetY = Math.min(bigH - viewport.height, Math.max(0, panY * bigH - viewport.height / 2));
+        transform = [zoom, 0, 0, zoom, -offsetX, -offsetY];
+      }
       currentRenderTask = page.render({
         canvasContext: ctx,
         viewport: viewport,
+        transform,
       });
 
       await currentRenderTask.promise;
@@ -517,14 +556,25 @@ function renderPdf(item, opts) {
     el: node,
     update(it) {
       const nextPage = it.page || 1;
-      if (it.src !== src || nextPage !== pageNumber) {
+      const nextZoom = it.zoom || 1;
+      const nextPanX = Number.isFinite(it.panX) ? it.panX : 0.5;
+      const nextPanY = Number.isFinite(it.panY) ? it.panY : 0.5;
+      if (it.src !== src || nextPage !== pageNumber || nextZoom !== zoom || nextPanX !== panX || nextPanY !== panY) {
         src = it.src;
         pageNumber = nextPage;
+        zoom = nextZoom;
+        panX = nextPanX;
+        panY = nextPanY;
         render();
       }
     },
     reconcile() {},
     telemetry: noTelemetry,
+    // Null until the first page finishes loading - callers already handle
+    // that (see contentRectFor's own `?? null` and the deck renderer below),
+    // falling back to an un-letterboxed guess for the one frame or two this
+    // is missing rather than waiting on it.
+    contentAspect() { return aspect; },
     snapshot(ctx, rect) {
       if (!canvas || !canvas.width || !canvas.height) return false;
       paintBackdrop(ctx, rect, node, '#000');
