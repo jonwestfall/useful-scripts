@@ -49,6 +49,9 @@ const USAGE = `podium-admin — accounts and courses for a server-backed Podium
   member add <course-code> <username> [--role owner|member]
   member remove <course-code> <username>
   sessions prune
+  logs prune --days <n>
+  system get <key>
+  system set <key> <value>
   lectures list [--limit 20]
   lectures prune --days <n>
   doctor [--health-url http://127.0.0.1:8080/healthz] [--cert /path/fullchain.pem]
@@ -300,6 +303,14 @@ async function main(argv) {
     return 0;
   }
 
+  if (group === 'logs' && action === 'prune') {
+    const days = Number(flags.days);
+    if (!days || days < 1) throw new Error('--days <n> is required and must be at least 1');
+    const removed = accounts.pruneLogs(db, Date.now() - days * 24 * 60 * 60 * 1000);
+    say(`removed ${removed} audit log(s) older than ${days} days`);
+    return 0;
+  }
+
   // "sessions" above is logins; a lecture is the other thing this program calls
   // a session, and the admin page calls "Past sessions". Two words for two
   // tables, kept apart here because pruning the wrong one is not a mistake you
@@ -330,6 +341,23 @@ async function main(argv) {
     const { removed, bytes } = lectures.pruneFiles(db, dataDir, { days });
     say(`removed ${removed} file(s) from lectures older than ${days} day(s), freeing ${Math.round(bytes / 1024)} KB`);
     say('their timelines and poll results are kept - only the photos, ink and exported pages go');
+    return 0;
+  }
+
+  if (group === 'system' && action === 'get') {
+    const key = positional[2];
+    if (!key) throw new Error('system get needs <key>');
+    const val = store.getSystemSetting(db, key);
+    say(val !== null ? `${key} = ${val}` : `${key} is not set`);
+    return 0;
+  }
+
+  if (group === 'system' && action === 'set') {
+    const key = positional[2];
+    const value = positional[3];
+    if (!key || value === undefined) throw new Error('system set needs <key> <value>');
+    store.setSystemSetting(db, key, value);
+    say(`set ${key} = ${value}`);
     return 0;
   }
 

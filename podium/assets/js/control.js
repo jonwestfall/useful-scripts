@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress } from './util.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
@@ -12,6 +12,7 @@ import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
 import { createZip } from './zip.js';
+import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
 import { mountSessionBadge, serverInfo } from './server.js';
@@ -831,12 +832,31 @@ async function pick(item, where = 'auto') {
 
 const trackDurations = new Map();
 
-function probeTrackDuration(src) {
-  if (!src || trackDurations.has(src)) return;
+function trackDurationStr(t) {
+  if (!t) return '';
+  let dur = null;
+  if (typeof t.duration === 'number' && t.duration > 0) dur = t.duration;
+  else if (typeof t.duration === 'string' && t.duration.trim()) return t.duration.trim();
+  else if (typeof t.length === 'number' && t.length > 0) dur = t.length;
+  else if (typeof t.length === 'string' && t.length.trim()) return t.length.trim();
+  else if (t.src && trackDurations.has(t.src) && trackDurations.get(t.src) > 0) dur = trackDurations.get(t.src);
+  if (dur != null && dur > 0) return fmtTime(Math.round(dur));
+  return '';
+}
+
+function probeTrackDuration(src, onDoneCallback) {
+  if (!src) return;
+  if (trackDurations.has(src)) {
+    const d = trackDurations.get(src);
+    if (d > 0 && onDoneCallback) onDoneCallback(d);
+    return;
+  }
   try {
     const fullUrl = new URL(src, location.href).href;
     if (trackDurations.has(fullUrl)) {
-      trackDurations.set(src, trackDurations.get(fullUrl));
+      const d = trackDurations.get(fullUrl);
+      trackDurations.set(src, d);
+      if (d > 0 && onDoneCallback) onDoneCallback(d);
       return;
     }
     const a = new Audio();
@@ -847,6 +867,8 @@ function probeTrackDuration(src) {
       trackDurations.set(fullUrl, dur);
       a.removeEventListener('loadedmetadata', onLoaded);
       a.removeEventListener('error', onError);
+      if (onDoneCallback && dur > 0) onDoneCallback(dur);
+      musicDrawn = '';
     };
     const onLoaded = () => {
       const d = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
@@ -1278,7 +1300,11 @@ function renderSlides() {
     notesEl.classList.add('is-empty');
   } else {
     const note = deck.notes[index] || '';
-    notesEl.textContent = note || 'No notes on this slide.';
+    if (note) {
+      notesEl.innerHTML = miniMarkdown(note);
+    } else {
+      notesEl.textContent = 'No notes on this slide.';
+    }
     notesEl.classList.toggle('is-empty', !note);
   }
 
@@ -1435,9 +1461,19 @@ function loadImage(src) {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     const timer = setTimeout(() => reject(new Error('timed out loading it')), 8000);
-    img.onload = () => { clearTimeout(timer); resolve(img); };
-    img.onerror = () => { clearTimeout(timer); reject(new Error('it could not be loaded here')); };
-    img.src = src;
+    const isBlob = typeof Blob !== 'undefined' && src instanceof Blob;
+    const url = isBlob ? URL.createObjectURL(src) : src;
+    img.onload = () => {
+      clearTimeout(timer);
+      if (isBlob) URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      clearTimeout(timer);
+      if (isBlob) URL.revokeObjectURL(url);
+      reject(new Error('it could not be loaded here'));
+    };
+    img.src = url;
   });
 }
 
@@ -1515,126 +1551,13 @@ async function exportSession() {
   if (exporting) return;
   exporting = true;
   const btn = $('#photo-export');
+  const btnPdf = $('#photo-export-pdf');
   const status = $('#photo-export-status');
   btn.disabled = true;
-  const files = [];
-  const lines = [`Podium session — ${new Date().toLocaleString()}`, `Room: ${cfg.room}`, ''];
-  const skipped = [];
+  if (btnPdf) btnPdf.disabled = true;
 
   try {
-    // 1. The photos, which are already images and already in hand.
-    if (photos.length) {
-      status.textContent = 'Packing the photos…';
-      lines.push(`Photos (${photos.length}):`);
-      // Oldest first in the zip: the strip shows newest first because that is
-      // what you just took, but a folder wants to read forwards.
-      [...photos].reverse().forEach((photo) => {
-        const data = assetStore.get(photo.id);
-        if (!data) { skipped.push(`photo "${photo.title}" (no longer held)`); return; }
-        const name = photoFileName(photo);
-        files.push({ name, data: dataUrlToBytes(data) });
-        lines.push(`  ${name}  —  ${new Date(photo.at).toLocaleTimeString()}`);
-      });
-      lines.push('');
-    }
-
-    // 2. Everything the display has ink on.
-    status.textContent = 'Asking the display for your ink…';
-    const bySurface = await requestAllInk();
-    const surfaces = Object.entries(bySurface).filter(([, strokes]) => strokes?.length);
-
-    // Ink lives only on the display. With the display gone the pull above just
-    // times out quietly, and "Saved 3 files" would read as a complete record of
-    // the lecture when the annotations - often the whole reason for exporting -
-    // are exactly what is missing.
-    if (!bus?.hasPeer('display')) {
-      lines.push('The display was not connected while this was built, so no ink could be collected.', '');
-      skipped.push('every annotation — the display was not connected, so its ink could not be fetched');
-    }
-
-    const deckSlides = new Map();   // deckId -> Map(slide -> strokes)
-    const others = [];
-    for (const [key, strokes] of surfaces) {
-      const deckMatch = /^deck:(.+):(\d+)$/.exec(key);
-      if (deckMatch) {
-        const [, id, slide] = deckMatch;
-        if (!deckSlides.has(id)) deckSlides.set(id, new Map());
-        deckSlides.get(id).set(Number(slide), strokes);
-      } else {
-        others.push([key, strokes]);
-      }
-    }
-
-    // 3. Annotated slides, deck by deck.
-    if (deckSlides.size) lines.push('Annotated slides:');
-    for (const [id, slides] of deckSlides) {
-      const source = await deckSourceById(id);
-      if (source == null) {
-        skipped.push(`${slides.size} annotated slide${slides.size === 1 ? '' : 's'} from a deck this device does not hold`);
-        continue;
-      }
-      const deck = await renderDeckSource(source, id);
-      const folder = `slides/${safeName(frontMatterTitle(source, 'deck'), 'deck')}`;
-      const mounted = await mountDeckForExport(deck);
-      try {
-        for (const [index, strokes] of [...slides.entries()].sort((a, b) => a[0] - b[0])) {
-          const svg = mounted.svgs[index];
-          if (!svg) { skipped.push(`slide ${index + 1} of ${folder} (not in the deck any more)`); continue; }
-          status.textContent = `Drawing slide ${index + 1} of ${deck.count}…`;
-          try {
-            const png = await rasterizeSlide(svg, deck.css, deck.aspects[index] || 16 / 9, strokes);
-            const name = `${folder}/slide-${String(index + 1).padStart(2, '0')}.png`;
-            files.push({ name, data: png });
-            lines.push(`  ${name}  —  ${deck.titles[index] || ''}`);
-          } catch (err) {
-            skipped.push(`slide ${index + 1} of ${folder} (${err.message})`);
-          }
-        }
-      } finally {
-        mounted.release();
-      }
-    }
-    if (deckSlides.size) lines.push('');
-
-    // 4. Boards and pictures that were drawn on.
-    if (others.length) lines.push('Other annotations:');
-    let boardNumber = 0;
-    for (const [key, strokes] of others) {
-      status.textContent = 'Drawing your boards…';
-      try {
-        const made = await renderInkSurface(key, strokes);
-        if (!made) { skipped.push(`ink on ${key} (nothing left to draw it on)`); continue; }
-        boardNumber += 1;
-        const name = `boards/${String(boardNumber).padStart(2, '0')}-${made.name}.png`;
-        files.push({ name, data: made.blob });
-        lines.push(`  ${name}  —  ${strokes.length} stroke${strokes.length === 1 ? '' : 's'}`);
-      } catch (err) {
-        skipped.push(`ink on ${key} (${err.message})`);
-      }
-    }
-    if (others.length) lines.push('');
-
-    // 5. Polls: whatever is currently on screen (a live snapshot - the
-    // display's own poll loop keeps it within a second of the relay) plus
-    // everything already ended THIS lecture. pollHistory outlives any one
-    // lecture - it is the presenter's own scrollback across a whole term -
-    // so an export built during or just after a LATER lecture must not
-    // bundle an earlier one's polls into files that fileExportWithLecture is
-    // about to upload under the new lecture's id. An entry with no lectureId
-    // at all (saved before this field existed) is excluded the same way, for
-    // the same reason: better left out than misattributed.
-    const currentPoll = findPollItem();
-    const pollRows = [...(currentPoll ? [{ ...currentPoll, endedAt: null }] : []),
-      ...pollHistory.filter((row) => row.lectureId === lastKnownLectureId)];
-    if (pollRows.length) {
-      lines.push(`Polls (${pollRows.length}):`);
-      pollRows.forEach((row, i) => {
-        const name = `polls/${String(i + 1).padStart(2, '0')}-${safeName(row.question, row.pollId || 'poll')}.csv`;
-        files.push({ name, data: new TextEncoder().encode(csvText(pollResultRows(row))) });
-        lines.push(`  ${name}${row.endedAt ? `  —  ended ${new Date(row.endedAt).toLocaleTimeString()}` : '  —  still running when this was built'}`);
-      });
-      lines.push('');
-    }
+    const { files, skipped, lines } = await collectSessionBundle(status);
 
     if (!files.length) {
       status.textContent = 'Nothing to export yet — take a photo, annotate something, or run a poll.';
@@ -1642,14 +1565,6 @@ async function exportSession() {
     }
 
     if (skipped.length) lines.push('Not included:', ...skipped.map((line) => `  - ${line}`), '');
-    // Matches fileExportWithLecture's own gate below, not recordingNow(): the
-    // ordinary flow is teach, stand down, THEN export, and standing down is
-    // exactly what clears state.lectureId - recordingNow() would say this
-    // export stays on the device only, while fileExportWithLecture is in fact
-    // about to file it under lastKnownLectureId. The photo-switch clause
-    // matches that same function's own skip (file.name.startsWith('photos/'))
-    // - claiming photos "can be downloaded again" when the switch is off
-    // would be a promise this zip is not the one keeping.
     lines.push(serverKeepsSessions && lastKnownLectureId
       ? (photosKept()
         ? 'This lecture is also kept on the server; the same files can be downloaded again from the Admin page.'
@@ -1657,11 +1572,6 @@ async function exportSession() {
       : 'Photos and ink are held only while the app is open; this zip is the copy that lasts.');
     files.push({ name: 'session.txt', data: new TextEncoder().encode(lines.join('\n')) });
 
-    // The same files, filed with the lecture: this is what makes "export that
-    // session again in March" possible from a browser that was never in the
-    // room. Sent before the zip is built rather than after, because the zip is
-    // what ends the export and a tab closed on the download is a tab that never
-    // got here.
     await fileExportWithLecture(files, status);
 
     status.textContent = 'Building the zip…';
@@ -1682,7 +1592,199 @@ async function exportSession() {
   } finally {
     exporting = false;
     btn.disabled = !bus;
+    if (btnPdf) btnPdf.disabled = !bus;
   }
+}
+
+async function exportSessionPdf() {
+  if (exporting) return;
+  exporting = true;
+  const btn = $('#photo-export');
+  const btnPdf = $('#photo-export-pdf');
+  const status = $('#photo-export-status');
+  btn.disabled = true;
+  if (btnPdf) btnPdf.disabled = true;
+
+  try {
+    const { visualPages, pollRows, skipped } = await collectSessionBundle(status);
+    const totalPages = visualPages.length + pollRows.length;
+
+    if (!totalPages) {
+      status.textContent = 'Nothing to export yet — take a photo, annotate something, or run a poll.';
+      return;
+    }
+
+    const meta = {
+      title: state.lectureTitle || cfg.title || cfg.room || 'Podium Session',
+      course: cfg.course || '',
+      room: cfg.room || '',
+      date: new Date(),
+    };
+
+    const pages = [];
+    let pageNum = 1;
+    for (const item of visualPages) {
+      status.textContent = `Rendering page ${pageNum} of ${totalPages}…`;
+      const img = await loadImage(item.imgBlobOrData);
+      const jpegPage = await renderSessionPageToJpeg(img, { ...meta, itemTitle: item.itemTitle, itemType: item.itemType, itemNote: item.itemNote }, pageNum, totalPages);
+      pages.push(jpegPage);
+      pageNum++;
+    }
+
+    for (const poll of pollRows) {
+      status.textContent = `Rendering poll ${pageNum} of ${totalPages}…`;
+      const jpegPage = await renderPollPageToJpeg(poll, meta, pageNum, totalPages);
+      pages.push(jpegPage);
+      pageNum++;
+    }
+
+    status.textContent = 'Building the PDF…';
+    const blob = createPdf(pages, meta);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `podium-${safeName(cfg.room, 'session')}-${stamp}.pdf`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    status.textContent = skipped.length
+      ? `Saved ${pages.length} page PDF, with ${skipped.length} left out.`
+      : `Saved ${pages.length} page PDF.`;
+  } catch (err) {
+    status.textContent = `Export failed: ${err.message}`;
+  } finally {
+    exporting = false;
+    btn.disabled = !bus;
+    if (btnPdf) btnPdf.disabled = !bus;
+  }
+}
+
+async function collectSessionBundle(status) {
+  const files = [];
+  const lines = [`Podium session — ${new Date().toLocaleString()}`, `Room: ${cfg.room}`, ''];
+  const skipped = [];
+  const visualPages = [];
+
+  // 1. The photos
+  if (photos.length) {
+    status.textContent = 'Packing the photos…';
+    lines.push(`Photos (${photos.length}):`);
+    [...photos].reverse().forEach((photo) => {
+      const data = assetStore.get(photo.id);
+      if (!data) { skipped.push(`photo "${photo.title}" (no longer held)`); return; }
+      const name = photoFileName(photo);
+      files.push({ name, data: dataUrlToBytes(data) });
+      visualPages.push({
+        imgBlobOrData: data,
+        itemTitle: photo.title || name,
+        itemType: 'Photo capture',
+        itemNote: new Date(photo.at).toLocaleTimeString(),
+      });
+      lines.push(`  ${name}  —  ${new Date(photo.at).toLocaleTimeString()}`);
+    });
+    lines.push('');
+  }
+
+  // 2. Everything the display has ink on
+  status.textContent = 'Asking the display for your ink…';
+  const bySurface = await requestAllInk();
+  const surfaces = Object.entries(bySurface).filter(([, strokes]) => strokes?.length);
+
+  if (!bus?.hasPeer('display')) {
+    lines.push('The display was not connected while this was built, so no ink could be collected.', '');
+    skipped.push('every annotation — the display was not connected, so its ink could not be fetched');
+  }
+
+  const deckSlides = new Map();
+  const others = [];
+  for (const [key, strokes] of surfaces) {
+    const deckMatch = /^deck:(.+):(\d+)$/.exec(key);
+    if (deckMatch) {
+      const [, id, slide] = deckMatch;
+      if (!deckSlides.has(id)) deckSlides.set(id, new Map());
+      deckSlides.get(id).set(Number(slide), strokes);
+    } else {
+      others.push([key, strokes]);
+    }
+  }
+
+  // 3. Annotated slides
+  if (deckSlides.size) lines.push('Annotated slides:');
+  for (const [id, slides] of deckSlides) {
+    const source = await deckSourceById(id);
+    if (source == null) {
+      skipped.push(`${slides.size} annotated slide${slides.size === 1 ? '' : 's'} from a deck this device does not hold`);
+      continue;
+    }
+    const deck = await renderDeckSource(source, id);
+    const folder = `slides/${safeName(frontMatterTitle(source, 'deck'), 'deck')}`;
+    const mounted = await mountDeckForExport(deck);
+    try {
+      for (const [index, strokes] of [...slides.entries()].sort((a, b) => a[0] - b[0])) {
+        const svg = mounted.svgs[index];
+        if (!svg) { skipped.push(`slide ${index + 1} of ${folder} (not in the deck any more)`); continue; }
+        status.textContent = `Drawing slide ${index + 1} of ${deck.count}…`;
+        try {
+          const png = await rasterizeSlide(svg, deck.css, deck.aspects[index] || 16 / 9, strokes);
+          const name = `${folder}/slide-${String(index + 1).padStart(2, '0')}.png`;
+          files.push({ name, data: png });
+          visualPages.push({
+            imgBlobOrData: png,
+            itemTitle: deck.titles[index] || `Slide ${index + 1}`,
+            itemType: 'Annotated Slide',
+            itemNote: `${folder} · slide ${index + 1}`,
+          });
+          lines.push(`  ${name}  —  ${deck.titles[index] || ''}`);
+        } catch (err) {
+          skipped.push(`slide ${index + 1} of ${folder} (${err.message})`);
+        }
+      }
+    } finally {
+      mounted.release();
+    }
+  }
+  if (deckSlides.size) lines.push('');
+
+  // 4. Boards and pictures
+  if (others.length) lines.push('Other annotations:');
+  let boardNumber = 0;
+  for (const [key, strokes] of others) {
+    status.textContent = 'Drawing your boards…';
+    try {
+      const made = await renderInkSurface(key, strokes);
+      if (!made) { skipped.push(`ink on ${key} (nothing left to draw it on)`); continue; }
+      boardNumber += 1;
+      const name = `boards/${String(boardNumber).padStart(2, '0')}-${made.name}.png`;
+      files.push({ name, data: made.blob });
+      visualPages.push({
+        imgBlobOrData: made.blob,
+        itemTitle: made.name || 'Whiteboard',
+        itemType: 'Annotated Board',
+        itemNote: `${strokes.length} stroke${strokes.length === 1 ? '' : 's'}`,
+      });
+      lines.push(`  ${name}  —  ${strokes.length} stroke${strokes.length === 1 ? '' : 's'}`);
+    } catch (err) {
+      skipped.push(`ink on ${key} (${err.message})`);
+    }
+  }
+  if (others.length) lines.push('');
+
+  // 5. Polls
+  const currentPoll = findPollItem();
+  const pollRows = [...(currentPoll ? [{ ...currentPoll, endedAt: null }] : []),
+    ...pollHistory.filter((row) => row.lectureId === lastKnownLectureId)];
+  if (pollRows.length) {
+    lines.push(`Polls (${pollRows.length}):`);
+    pollRows.forEach((row, i) => {
+      const name = `polls/${String(i + 1).padStart(2, '0')}-${safeName(row.question, row.pollId || 'poll')}.csv`;
+      files.push({ name, data: new TextEncoder().encode(csvText(pollResultRows(row))) });
+      lines.push(`  ${name}${row.endedAt ? `  —  ended ${new Date(row.endedAt).toLocaleTimeString()}` : '  —  still running when this was built'}`);
+    });
+    lines.push('');
+  }
+
+  return { files, visualPages, pollRows, skipped, lines };
 }
 
 // Every prefix (or exact name) an export's own bundle can ever produce - see
@@ -2032,6 +2134,24 @@ let pollBusy = false;    // a relay call is in flight - disable the buttons that
 let pollError = '';      // composer-side validation/relay error
 let pollActionError = ''; // running-poll-side relay error (close/reopen/end)
 let pollEndButton = null; // the wireDangerButton handle for #poll-end, wired further down
+let pollCurrentClosesAt = null;
+let pollTickTimer = null;
+
+function tickPollCountdown() {
+  const cd = document.getElementById('poll-running-countdown');
+  if (!cd || !pollCurrentClosesAt) return;
+  const remaining = Math.max(0, Math.ceil((pollCurrentClosesAt - Date.now()) / 1000));
+  cd.hidden = false;
+  const m = Math.floor(remaining / 60);
+  const s = String(remaining % 60).padStart(2, '0');
+  cd.textContent = remaining >= 60 ? `Voting closes in ${m}:${s}` : `Voting closes in ${s} seconds`;
+  cd.style.color = remaining <= 10 ? '#ff9d9d' : 'var(--dim)';
+  if (remaining === 0) {
+    cd.hidden = true;
+    const item = findPollItem();
+    if (item && item.open !== false && !pollBusy) setPollOpen(false);
+  }
+}
 
 function findPollItem() {
   return [state.program, state.preview, ...state.panels].find((it) => it?.type === 'poll') || null;
@@ -2076,9 +2196,12 @@ function addToPollHistory(entry) {
 // silent - a file that fails to send is still in the strip, still exportable,
 // and still on screen, and none of it is worth interrupting a class about.
 let serverKeepsSessions = false;
+let allowPollNames = false;
 serverInfo().then((info) => {
   serverKeepsSessions = info.features.includes('sessions');
+  allowPollNames = !!info.allowPollNames;
   renderKeepPhotos();
+  renderPollsPanel();
 });
 
 const recordingNow = () => serverKeepsSessions && !!state.lectureId;
@@ -2213,7 +2336,7 @@ async function pollApi(suffix, opts = {}) {
 }
 
 function newPollDraft() {
-  pollDraft = { kind: 'choice', question: '', options: ['', ''] };
+  pollDraft = { kind: 'choice', question: '', options: ['', ''], correct: -1, askName: false, namePrompt: 'Name:' };
   pollError = '';
   pollOptionsDrawn = -1;
 }
@@ -2225,9 +2348,12 @@ function newPollDraft() {
 function openPollDraftFromPlan(item) {
   const options = String(item.options || '').split('\n').map((s) => s.trim()).filter(Boolean);
   pollDraft = {
-    kind: item.kind === 'text' ? 'text' : 'choice',
+    kind: ['text', 'qna'].includes(item.kind) ? item.kind : 'choice',
     question: item.question || '',
     options: options.length ? options : ['', ''],
+    correct: Number.isFinite(Number(item.correct)) ? Number(item.correct) : -1,
+    askName: !!item.askName,
+    namePrompt: item.namePrompt || 'Name:',
   };
   pollError = '';
   pollOptionsDrawn = -1;
@@ -2239,14 +2365,24 @@ async function startPoll() {
   if (!pollDraft || pollBusy) return;
   const question = pollDraft.question.trim();
   if (!question) { pollError = 'Add a question first.'; renderPollsPanel(); return; }
-  const options = pollDraft.kind === 'choice'
-    ? pollDraft.options.map((o) => o.trim()).filter(Boolean)
-    : [];
+  let correct = -1;
+  const options = [];
+  if (pollDraft.kind === 'choice') {
+    for (let i = 0; i < pollDraft.options.length; i++) {
+      const trimmed = pollDraft.options[i].trim();
+      if (trimmed) {
+        if (pollDraft.correct === i) correct = options.length;
+        options.push(trimmed);
+      }
+    }
+  }
   if (pollDraft.kind === 'choice' && options.length < 2) {
     pollError = 'Add at least two options.';
     renderPollsPanel();
     return;
   }
+  const askName = !!pollDraft.askName;
+  const namePrompt = String(pollDraft.namePrompt || 'Name:').slice(0, 50);
   pollBusy = true;
   pollError = '';
   renderPollsPanel();
@@ -2255,11 +2391,12 @@ async function startPoll() {
     await pollApi(`/${created.code}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}` },
-      body: JSON.stringify({ kind: pollDraft.kind, question, options, open: true }),
+      body: JSON.stringify({ kind: pollDraft.kind, question, options, correct, askName, namePrompt, open: true }),
     });
     stage({
       type: 'poll', title: 'Poll', pollId: created.code, token: created.token,
-      kind: pollDraft.kind, question, options, open: true, revealed: false,
+      kind: pollDraft.kind, question, options, correct, askName, namePrompt, showNames: false,
+      open: true, revealed: false,
       showUrl: presentation.showPollUrl,
     });
     pollDraft = null;
@@ -2281,7 +2418,34 @@ async function setPollOpen(open) {
     await pollApi(`/${item.pollId}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${item.token}` },
-      body: JSON.stringify({ kind: item.kind, question: item.question, options: item.options, open }),
+      body: JSON.stringify({
+        kind: item.kind, question: item.question, options: item.options, correct: item.correct,
+        askName: item.askName, namePrompt: item.namePrompt, open,
+      }),
+    });
+  } catch (err) {
+    pollActionError = err.message || 'Could not reach the poll.';
+  } finally {
+    pollBusy = false;
+    renderPollsPanel();
+  }
+}
+
+async function setPollClosesAt(seconds) {
+  const item = findPollItem();
+  if (!item || !item.token || pollBusy) return;
+  pollBusy = true;
+  pollActionError = '';
+  renderPollsPanel();
+  try {
+    const closesAt = Date.now() + (seconds * 1000);
+    await pollApi(`/${item.pollId}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${item.token}` },
+      body: JSON.stringify({
+        kind: item.kind, question: item.question, options: item.options, correct: item.correct,
+        askName: item.askName, namePrompt: item.namePrompt, open: true, closesAt,
+      }),
     });
   } catch (err) {
     pollActionError = err.message || 'Could not reach the poll.';
@@ -2304,13 +2468,33 @@ function togglePollReveal() {
 // (archived, token-less) poll has left at all. One code path for both.
 function pollResultRows(item) {
   const rows = [['question', item.question]];
+  const nameLabel = item.namePrompt || 'Name';
+  const hasNamedResponses = Array.isArray(item.responses) && item.responses.some((r) => r.name);
+
   if (item.kind === 'text') {
     const hidden = new Set(item.hiddenAnswers || []);
-    rows.push(['answer', 'shown to room']);
-    (item.answers || []).forEach((a, i) => rows.push([a, hidden.has(i) ? 'no' : 'yes']));
+    if (hasNamedResponses) {
+      rows.push([nameLabel, 'answer', 'shown to room']);
+      item.responses.forEach((resp, i) => {
+        rows.push([resp.name || '(Anonymous)', resp.answer, hidden.has(i) ? 'no' : 'yes']);
+      });
+    } else {
+      rows.push(['answer', 'shown to room']);
+      (item.answers || []).forEach((a, i) => rows.push([a, hidden.has(i) ? 'no' : 'yes']));
+    }
   } else {
     rows.push(['option', 'votes']);
     (item.options || []).forEach((opt, i) => rows.push([opt, String(item.counts?.[i] || 0)]));
+    if (hasNamedResponses) {
+      rows.push([]);
+      rows.push([nameLabel, 'choice', 'option']);
+      item.responses.forEach((resp) => {
+        const optIdx = typeof resp.answer === 'number' ? resp.answer : -1;
+        const optText = optIdx >= 0 && item.options?.[optIdx] ? item.options[optIdx] : String(resp.answer ?? '');
+        const letter = optIdx >= 0 ? String.fromCharCode(65 + optIdx) : '';
+        rows.push([resp.name || '(Anonymous)', letter, optText]);
+      });
+    }
   }
   return rows;
 }
@@ -2342,7 +2526,8 @@ async function endPoll() {
   // duplicate the entry. Only a poll that actually ran gets archived.
   if (item.token) {
     addToPollHistory({
-      pollId: item.pollId, kind: item.kind, question: item.question, options: item.options,
+      pollId: item.pollId, kind: item.kind, question: item.question, options: item.options, correct: item.correct,
+      askName: item.askName, namePrompt: item.namePrompt, responses: item.responses || [],
       counts: item.counts || [], answers: item.answers || [], voters: item.voters || 0,
       hiddenAnswers: item.hiddenAnswers || [], endedAt: Date.now(),
       // Which lecture this poll belongs to, so a later export - in a
@@ -2378,7 +2563,14 @@ async function endPoll() {
 // history list itself disables them then instead, to keep a tap from
 // looking like a dead click.
 function reopenFromHistory(row) {
-  pollDraft = { kind: row.kind, question: row.question, options: row.kind === 'choice' ? [...row.options] : ['', ''] };
+  pollDraft = {
+    kind: row.kind,
+    question: row.question,
+    options: row.kind === 'choice' ? [...row.options] : ['', ''],
+    correct: Number.isFinite(Number(row.correct)) ? Number(row.correct) : -1,
+    askName: !!row.askName,
+    namePrompt: row.namePrompt || 'Name:',
+  };
   pollError = '';
   pollOptionsDrawn = -1;
   renderPollsPanel();
@@ -2388,7 +2580,8 @@ function redisplayFromHistory(row) {
   stage({
     type: 'poll', title: 'Poll', pollId: row.pollId, token: '',
     kind: row.kind, question: row.question, options: row.options,
-    open: false, revealed: true, voters: row.voters, counts: row.counts, answers: row.answers,
+    askName: row.askName, namePrompt: row.namePrompt, responses: row.responses || [],
+    open: false, revealed: true, showNames: false, voters: row.voters, counts: row.counts, answers: row.answers,
     hiddenAnswers: row.hiddenAnswers || [],
   });
 }
@@ -2403,20 +2596,52 @@ function renderPollBuilder() {
   if (!pollDraft) return;
   $('#poll-kind').value = pollDraft.kind;
   if (document.activeElement !== $('#poll-question')) $('#poll-question').value = pollDraft.question;
+  const nameRow = $('#poll-name-collection-row');
+  if (nameRow) {
+    nameRow.hidden = !allowPollNames;
+    const askNameCheck = $('#poll-ask-name');
+    if (askNameCheck) askNameCheck.checked = !!pollDraft.askName;
+    const namePromptInput = $('#poll-name-prompt');
+    if (namePromptInput) {
+      namePromptInput.hidden = !pollDraft.askName;
+      if (document.activeElement !== namePromptInput) namePromptInput.value = pollDraft.namePrompt || 'Name:';
+    }
+  }
   const showOptions = pollDraft.kind === 'choice';
   $('#poll-options').hidden = !showOptions;
   $('#poll-option-add').closest('.inline').hidden = !showOptions;
   if (showOptions && pollOptionsDrawn !== pollDraft.options.length) {
     pollOptionsDrawn = pollDraft.options.length;
-    $('#poll-options').replaceChildren(...pollDraft.options.map((_, i) => el('div', { class: 'poll-option-row' },
-      el('input', {
-        type: 'text', placeholder: `Option ${i + 1}`, maxlength: '200',
-        oninput: (ev) => { pollDraft.options[i] = ev.target.value; },
-      }),
-      el('button', {
-        type: 'button', title: 'Remove', disabled: pollDraft.options.length <= 2,
-        onclick: () => { pollDraft.options.splice(i, 1); pollOptionsDrawn = -1; renderPollsPanel(); },
-      }, '×'))));
+    $('#poll-options').replaceChildren(...pollDraft.options.map((_, i) => {
+      const letter = String.fromCharCode(65 + i);
+      const isCorrect = pollDraft.correct === i;
+      return el('div', { class: 'poll-option-row' },
+        el('button', {
+          type: 'button',
+          class: `poll-chip ${isCorrect ? 'is-correct' : ''}`,
+          title: isCorrect ? 'Marked as correct' : 'Mark as correct',
+          onclick: () => {
+            pollDraft.correct = isCorrect ? -1 : i;
+            pollOptionsDrawn = -1;
+            renderPollsPanel();
+          },
+        }, letter),
+        el('input', {
+          type: 'text', placeholder: `Option ${i + 1}`, maxlength: '200',
+          oninput: (ev) => { pollDraft.options[i] = ev.target.value; },
+        }),
+        el('button', {
+          type: 'button', title: 'Remove', disabled: pollDraft.options.length <= 2,
+          onclick: () => {
+            pollDraft.options.splice(i, 1);
+            if (pollDraft.correct === i) pollDraft.correct = -1;
+            else if (pollDraft.correct > i) pollDraft.correct--;
+            pollOptionsDrawn = -1;
+            renderPollsPanel();
+          },
+        }, '×')
+      );
+    }));
     pollDraft.options.forEach((v, i) => { $$('#poll-options input')[i].value = v; });
   }
   $('#poll-option-add').disabled = pollDraft.options.length >= 8;
@@ -2439,42 +2664,107 @@ function renderRunningPoll(item) {
   $('#poll-copy-link').disabled = !link;
   $('#poll-copy-link').hidden = archived;
   $('#poll-toggle-open').hidden = archived;
+  $('#poll-timer-btns').hidden = archived || item.open === false;
   $('#poll-running-status').textContent = archived
     ? `Redisplayed from history — ${item.voters} response${item.voters === 1 ? '' : 's'}, not accepting new votes`
     : `${item.voters} response${item.voters === 1 ? '' : 's'}${item.open === false ? ' · voting closed' : ' · voting open'}`
       + (item.revealed ? ' · shown to the room' : ' · visible to you only');
   $('#poll-toggle-open').textContent = item.open === false ? 'Reopen voting' : 'Close voting';
   $('#poll-toggle-open').disabled = pollBusy;
+  
+  if (item.closesAt && item.open !== false) {
+    pollCurrentClosesAt = item.closesAt;
+    if (!pollTickTimer) pollTickTimer = setInterval(tickPollCountdown, 1000);
+    tickPollCountdown();
+  } else {
+    pollCurrentClosesAt = null;
+    $('#poll-running-countdown').hidden = true;
+    if (pollTickTimer) { clearInterval(pollTickTimer); pollTickTimer = null; }
+  }
   $('#poll-toggle-reveal').textContent = item.revealed ? 'Hide from room' : 'Reveal to room';
+  const namesBtn = $('#poll-toggle-names');
+  if (namesBtn) {
+    const hasNames = item.askName || (Array.isArray(item.responses) && item.responses.some((r) => r.name));
+    namesBtn.hidden = !hasNames;
+    namesBtn.textContent = item.showNames ? 'Hide names from room' : 'Show names to room';
+  }
+  if (item.kind === 'text') {
+    $('#poll-toggle-view').hidden = false;
+    $('#poll-toggle-view').textContent = item.viewMode === 'cloud' ? 'List view' : 'Word cloud';
+  } else {
+    $('#poll-toggle-view').hidden = true;
+  }
   $('#poll-action-error').hidden = !pollActionError;
   $('#poll-action-error').textContent = pollActionError;
 
-  const signature = `${item.kind}:${JSON.stringify(item.counts)}:${JSON.stringify(item.answers)}:${JSON.stringify(item.hiddenAnswers)}`;
+  const signature = `${item.kind}:${item.showNames}:${JSON.stringify(item.counts)}:${JSON.stringify(item.answers)}:${JSON.stringify(item.responses)}:${JSON.stringify(item.hiddenAnswers)}:${JSON.stringify(item.qnaFeed)}`;
   if (signature !== pollRunningDrawn) {
     pollRunningDrawn = signature;
     const results = $('#poll-running-results');
     if (item.kind === 'text') {
       const answers = item.answers || [];
       const hidden = new Set(item.hiddenAnswers || []);
+      const responses = item.responses || [];
       results.replaceChildren(...(answers.length
-        ? answers.map((a, i) => el('div', { class: `poll-answer-row${hidden.has(i) ? ' is-hidden' : ''}` },
-            el('span', { class: 'grow' }, a),
-            el('button', {
-              type: 'button', class: 'poll-answer-hide',
-              title: hidden.has(i) ? 'Hidden from the room — tap to show it' : 'Hide this one answer from the room',
-              onclick: () => send({ op: 'poll', pollId: item.pollId, action: 'hideAnswer', index: i, value: !hidden.has(i) }),
-            }, hidden.has(i) ? 'Unhide' : 'Hide')))
+        ? answers.map((a, i) => {
+            const resp = responses[i];
+            const nameEl = resp?.name ? el('strong', { style: 'color: var(--accent); margin-right: 6px;' }, `${resp.name}: `) : '';
+            return el('div', { class: `poll-answer-row${hidden.has(i) ? ' is-hidden' : ''}` },
+              el('span', { class: 'grow' }, nameEl, a),
+              el('button', {
+                type: 'button', class: 'poll-answer-hide',
+                title: hidden.has(i) ? 'Hidden from the room — tap to show it' : 'Hide this one answer from the room',
+                onclick: () => send({ op: 'poll', pollId: item.pollId, action: 'hideAnswer', index: i, value: !hidden.has(i) }),
+              }, hidden.has(i) ? 'Unhide' : 'Hide'));
+          })
         : [el('div', { class: 'poll-answer-row' }, 'No answers yet')]));
+    } else if (item.kind === 'qna') {
+      const qnaFeed = (item.qnaFeed || []).slice().sort((a, b) => (b.upvotes?.length || 0) - (a.upvotes?.length || 0));
+      results.replaceChildren(...(qnaFeed.length
+        ? qnaFeed.map((q) => el('div', { class: `poll-answer-row${q.hidden ? ' is-hidden' : ''}${q.answered ? ' is-answered' : ''}${q.projected ? ' is-projected' : ''}`, style: 'flex-direction: column; align-items: stretch; gap: 8px;' },
+            el('div', { style: 'display: flex; gap: 8px; font-weight: 600;' }, 
+              el('span', { class: 'mono' }, `▲ ${q.upvotes?.length || 0}`),
+              el('span', { class: 'grow' }, q.text),
+              q.authorName ? el('span', { style: 'color: var(--accent); font-size: 0.9em; font-weight: 400;' }, `(${q.authorName})`) : ''
+            ),
+            el('div', { style: 'display: flex; gap: 4px; justify-content: flex-end;' },
+              el('button', {
+                type: 'button', class: 'poll-answer-hide',
+                onclick: () => sendQnaAction(item.pollId, item.token, q.id, 'projected', !q.projected),
+              }, q.projected ? 'Unproject' : 'Project'),
+              el('button', {
+                type: 'button', class: 'poll-answer-hide',
+                onclick: () => sendQnaAction(item.pollId, item.token, q.id, 'answered', !q.answered),
+              }, q.answered ? 'Unanswer' : 'Mark Answered'),
+              el('button', {
+                type: 'button', class: 'poll-answer-hide',
+                onclick: () => sendQnaAction(item.pollId, item.token, q.id, 'hidden', !q.hidden),
+              }, q.hidden ? 'Unhide' : 'Hide')
+            )
+          ))
+        : [el('div', { class: 'poll-answer-row' }, 'No questions yet')]));
     } else {
       const counts = item.counts || [];
       const max = Math.max(1, ...counts, 0);
+      const responses = item.responses || [];
       results.replaceChildren(...(item.options || []).map((opt, i) => {
         const count = counts[i] || 0;
         const fill = el('div', { class: 'poll-bar-fill' });
         fill.style.width = `${Math.round((count / max) * 100)}%`;
+        const isCorrect = item.correct === i;
+        const letter = String.fromCharCode(65 + i);
+        const votersForOpt = responses.filter((r) => r.answer === i && r.name).map((r) => r.name);
+        const votersHint = votersForOpt.length
+          ? el('div', { class: 'hint', style: 'font-size: 12px; margin-top: 3px;' }, votersForOpt.join(', '))
+          : '';
         return el('div', { class: 'poll-bar-row' },
-          el('div', { class: 'poll-bar-label' }, el('span', {}, opt), el('span', { class: 'mono' }, String(count))),
-          el('div', { class: 'poll-bar-track' }, fill));
+          el('div', { class: 'poll-bar-label' }, 
+            el('span', {}, isCorrect ? el('strong', { class: 'ok-text' }, `[${letter}] `) : '', opt), 
+            el('span', { class: 'mono' }, String(count))
+          ),
+          el('div', { class: `poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill),
+          votersHint
+        );
       }));
     }
   }
@@ -2484,9 +2774,9 @@ function renderPollHistory() {
   const holder = $('#poll-history');
   const busy = !!findPollItem();
   holder.replaceChildren(...pollHistory.map((row) => {
-    const summary = row.kind === 'text'
-      ? `${row.voters} response${row.voters === 1 ? '' : 's'}`
-      : `${row.voters} response${row.voters === 1 ? '' : 's'} — ${(row.options || []).map((o, i) => `${o}: ${row.counts?.[i] || 0}`).join(', ')}`;
+    const summary = row.kind === 'text' ? `${row.voters} response${row.voters === 1 ? '' : 's'}` :
+                    row.kind === 'qna' ? `${row.qnaFeed?.length || 0} question${row.qnaFeed?.length === 1 ? '' : 's'} (${row.voters} participant${row.voters === 1 ? '' : 's'})` :
+                    `${row.voters} response${row.voters === 1 ? '' : 's'} — ${(row.options || []).map((o, i) => `${o}: ${row.counts?.[i] || 0}`).join(', ')}`;
     return el('div', { class: 'poll-history-row' },
       el('div', { class: 'poll-history-question' }, row.question || '(no question)'),
       el('div', { class: 'hint' }, summary),
@@ -3401,6 +3691,7 @@ function renderPhotos() {
   // the button half a second into an export, where a second tap starts a second
   // one that steals the first's reply from the display.
   $('#photo-export').disabled = !bus || exporting;
+  if ($('#photo-export-pdf')) $('#photo-export-pdf').disabled = !bus || exporting;
   $('#photo-count').textContent = empty ? '' : `${photos.length} saved this session`;
   // The tab itself keeps the count, because a photo taken by holding a button
   // in the top bar otherwise lands somewhere you are not looking.
@@ -3559,6 +3850,9 @@ async function loadPlaylists() {
   const trackRow = $('#music-track-row');
   if (trackRow && none) trackRow.hidden = true;
   if (none) $('#music-note').textContent = 'No content/music.json yet — paste a link below, or add that file to keep playlists between lectures.';
+  if (!none && playlists[0]) {
+    updateMusicTrackSelect(playlists[0].tracks);
+  }
 }
 
 function chosenPlaylist() {
@@ -3577,10 +3871,31 @@ function updateMusicTrackSelect(tracks) {
     select.replaceChildren();
     return;
   }
-  select.replaceChildren(...loadedTracks.map((t, i) => el('option', { value: String(i) },
-    `${i + 1}. ${t.title || 'Track'}${t.artist ? ` — ${t.artist}` : ''}`
-  )));
-  select.value = '0';
+  for (const t of loadedTracks) {
+    if (t?.src) {
+      probeTrackDuration(t.src, () => {
+        if (!row.hidden && select.options.length === loadedTracks.length) {
+          const currentVal = select.value;
+          select.replaceChildren(...loadedTracks.map((trk, idx) => {
+            const d = trackDurationStr(trk);
+            return el('option', { value: String(idx) },
+              `${idx + 1}. ${trk.title || 'Track'}${trk.artist ? ` — ${trk.artist}` : ''}${d ? ` (${d})` : ''}`
+            );
+          }));
+          if (currentVal && Number(currentVal) < loadedTracks.length) select.value = currentVal;
+        }
+      });
+    }
+  }
+  const currentVal = select.value;
+  select.replaceChildren(...loadedTracks.map((t, i) => {
+    const d = trackDurationStr(t);
+    return el('option', { value: String(i) },
+      `${i + 1}. ${t.title || 'Track'}${t.artist ? ` — ${t.artist}` : ''}${d ? ` (${d})` : ''}`
+    );
+  }));
+  if (currentVal && Number(currentVal) < loadedTracks.length) select.value = currentVal;
+  else select.value = '0';
   row.hidden = false;
 }
 
@@ -3675,18 +3990,22 @@ function renderMusic() {
 
   // The queue is rebuilt only when it changes: it is redrawn from a heartbeat
   // like everything else here.
-  const signature = `${music.tracks.map((t) => t.src).join('|')}::${music.index}::${music.playing}`;
+  const signature = `${music.tracks.map((t) => `${t.src}:${trackDurationStr(t)}`).join('|')}::${music.index}::${music.playing}`;
   if (signature === musicDrawn) return;
   musicDrawn = signature;
-  $('#music-queue').replaceChildren(...music.tracks.map((t, i) => el('button', {
-    class: `music-row${i === music.index ? ' is-on' : ''}`,
-    type: 'button',
-    title: `${t.title}${t.artist ? ` — ${t.artist}` : ''}`,
-    onclick: () => send({ op: 'music', action: 'select', index: i }),
-  },
-    el('span', { class: 'music-row-n' }, i === music.index && music.playing ? '♪' : String(i + 1)),
-    el('span', { class: 'music-row-title' }, t.title),
-    el('span', { class: 'music-row-artist' }, t.artist || ''))));
+  $('#music-queue').replaceChildren(...music.tracks.map((t, i) => {
+    const durStr = trackDurationStr(t);
+    return el('button', {
+      class: `music-row${i === music.index ? ' is-on' : ''}`,
+      type: 'button',
+      title: `${t.title}${t.artist ? ` — ${t.artist}` : ''}${durStr ? ` (${durStr})` : ''}`,
+      onclick: () => send({ op: 'music', action: 'select', index: i }),
+    },
+      el('span', { class: 'music-row-n' }, i === music.index && music.playing ? '♪' : String(i + 1)),
+      el('span', { class: 'music-row-title' }, t.title),
+      el('span', { class: 'music-row-artist' }, t.artist || ''),
+      el('span', { class: 'music-row-duration' }, durStr || ''));
+  }));
 }
 
 let musicSliding = false;
@@ -4184,8 +4503,18 @@ async function connect() {
 // --- wiring -----------------------------------------------------------------
 
 function tab(name) {
-  $$('.tab').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
-  $$('.panel').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+  const dualPane = document.body.classList.contains('dual-pane');
+  $$('.tab:not(#dual-pane-toggle)').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
+  $$('.panel').forEach((p) => {
+    if (dualPane && p.dataset.panel === 'slides') {
+      p.hidden = false;
+    } else {
+      p.hidden = p.dataset.panel !== name;
+    }
+  });
+  if (dualPane) {
+    document.body.classList.toggle('dual-secondary', name !== 'slides');
+  }
   // The list of lectures on the server is asked for again every time the tab
   // carrying it is opened. Reading it once at startup would mean a lecture
   // sent from the desk five minutes ago was invisible here until a reload -
@@ -4217,7 +4546,22 @@ function tab(name) {
   }
 }
 
-$$('.tab').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
+$$('.tab:not(#dual-pane-toggle)').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
+
+const savedDual = localStorage.getItem('podium.ui.dualPane') === '1';
+if (savedDual) {
+  document.body.classList.add('dual-pane');
+  $('#dual-pane-toggle').classList.add('is-on');
+}
+
+$('#dual-pane-toggle').addEventListener('click', () => {
+  const isDual = document.body.classList.toggle('dual-pane');
+  $('#dual-pane-toggle').classList.toggle('is-on', isDual);
+  localStorage.setItem('podium.ui.dualPane', isDual ? '1' : '0');
+  const activeTab = document.querySelector('.tab.is-on:not(#dual-pane-toggle)');
+  if (activeTab) tab(activeTab.dataset.tab);
+  window.dispatchEvent(new Event('resize'));
+});
 
 $$('.layout-btn').forEach((b) => {
   b.addEventListener('click', () => send({ op: 'layout', mode: b.dataset.layout }));
@@ -4300,7 +4644,7 @@ $('#media-loop').addEventListener('change', (ev) => send({ op: 'media', action: 
 
 $('#poll-kind').addEventListener('change', (ev) => {
   if (!pollDraft) return;
-  pollDraft.kind = ev.target.value === 'text' ? 'text' : 'choice';
+  pollDraft.kind = ['text', 'qna'].includes(ev.target.value) ? ev.target.value : 'choice';
   renderPollsPanel();
 });
 $('#poll-question').addEventListener('input', (ev) => { if (pollDraft) pollDraft.question = ev.target.value; });
@@ -4328,7 +4672,33 @@ $('#poll-toggle-open').addEventListener('click', () => {
   const item = findPollItem();
   if (item) setPollOpen(item.open === false);
 });
+$('#poll-timer-30').addEventListener('click', () => setPollClosesAt(30));
+$('#poll-timer-60').addEventListener('click', () => setPollClosesAt(60));
+$('#poll-timer-120').addEventListener('click', () => setPollClosesAt(120));
 $('#poll-toggle-reveal').addEventListener('click', togglePollReveal);
+$('#poll-toggle-names')?.addEventListener('click', () => {
+  const item = findPollItem();
+  if (item) {
+    send({ op: 'poll', pollId: item.pollId, action: 'showNames', value: !item.showNames });
+  }
+});
+$('#poll-ask-name')?.addEventListener('change', (ev) => {
+  if (pollDraft) {
+    pollDraft.askName = ev.target.checked;
+    renderPollsPanel();
+  }
+});
+$('#poll-name-prompt')?.addEventListener('input', (ev) => {
+  if (pollDraft) {
+    pollDraft.namePrompt = ev.target.value;
+  }
+});
+$('#poll-toggle-view')?.addEventListener('click', () => {
+  const item = findPollItem();
+  if (item && item.kind === 'text') {
+    send({ op: 'poll', pollId: item.pollId, action: 'viewMode', value: item.viewMode === 'cloud' ? 'list' : 'cloud' });
+  }
+});
 $('#poll-export').addEventListener('click', exportPollCsv);
 // wireDangerButton leaves a button disabled after a successful action - right
 // for the settings reset it was written for, wrong here: a session with
@@ -4773,6 +5143,11 @@ $('#cam-start').addEventListener('click', async () => {
 $('#cam-shot').addEventListener('click', takeCameraPhoto);
 // --- music wiring ------------------------------------------------------------
 
+$('#music-playlist')?.addEventListener('change', () => {
+  const list = chosenPlaylist();
+  if (list) updateMusicTrackSelect(list.tracks);
+});
+
 $('#music-load').addEventListener('click', () => {
   const list = chosenPlaylist();
   if (!list) return;
@@ -4964,6 +5339,7 @@ $('#music-pause-queue')?.addEventListener('change', (ev) => {
 });
 
 $('#photo-export').addEventListener('click', exportSession);
+$('#photo-export-pdf')?.addEventListener('click', exportSessionPdf);
 $('#photo-keep').addEventListener('change', (ev) => setKeepPhotos(ev.target.checked));
 // Two taps, like every other irreversible button here. Clearing the strip
 // costs nothing that is on screen - the display keeps what it was sent - but
@@ -5089,6 +5465,7 @@ $('#update-reload').addEventListener('click', () => {
 // (the Presentation tab) rather than a single quick-access toggle.
 const PRESENTATION_KEY = 'podium.presentation.v1';
 const PRESENTATION_DEFAULTS = {
+  theme: 'dark',
   showPollUrl: true,
   blankOnConnect: true,
   keepAwake: true,
@@ -5107,6 +5484,7 @@ function loadPresentation() {
   try {
     const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
     const merged = { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
+    if (!['dark', 'light', 'auto'].includes(merged.theme)) merged.theme = 'dark';
     if (merged.haptics === undefined) merged.haptics = true;
     if (merged.snapShapes === undefined) merged.snapShapes = true;
     if (!Array.isArray(merged.bottomSlots) || merged.bottomSlots.length !== 8) {
@@ -5496,12 +5874,33 @@ async function applyWakeLock() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') applyWakeLock(); });
 applyWakeLock();
 
+function applyTheme() {
+  const theme = presentation.theme || 'dark';
+  let effective = theme;
+  if (theme === 'auto') {
+    effective = (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  }
+  document.documentElement.dataset.theme = effective;
+  document.body.dataset.theme = effective;
+}
+if (typeof window !== 'undefined' && window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (presentation.theme === 'auto') applyTheme();
+  });
+}
+applyTheme();
+
 function settingsTab(name) {
   $$('#setup .settings-tabs .tab').forEach((b) => b.classList.toggle('is-on', b.dataset.settingsTab === name));
   $$('#setup [data-settings-panel]').forEach((p) => { p.hidden = p.dataset.settingsPanel !== name; });
 }
 $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () => settingsTab(b.dataset.settingsTab)));
 
+$('#pref-theme')?.addEventListener('change', (ev) => {
+  presentation.theme = ev.target.value;
+  savePresentation();
+  applyTheme();
+});
 $('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
 $('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
 $('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(); applyWakeLock(); });
@@ -5593,6 +5992,8 @@ function showSetup() {
   $('#app').hidden = true;
   $('#setup-close').hidden = !isConfigured(cfg);
   settingsTab('connection');
+  const prefTheme = $('#pref-theme');
+  if (prefTheme) prefTheme.value = presentation.theme || 'dark';
   $('#pref-poll-url').checked = presentation.showPollUrl;
   $('#pref-blank-on-connect').checked = presentation.blankOnConnect;
   $('#pref-keep-awake').checked = presentation.keepAwake;
@@ -5786,4 +6187,17 @@ if (!isConfigured(cfg)) {
   await loadPlaylists();
   tab('library');
   renderAll();
+}
+
+async function sendQnaAction(pollId, token, id, type, value) {
+  try {
+    await pollApi(`/${pollId}/qna-action`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ id, type, value }),
+    });
+  } catch (err) {
+    pollActionError = err.message || 'Failed to update question.';
+    renderPolls();
+  }
 }

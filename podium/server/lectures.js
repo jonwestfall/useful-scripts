@@ -532,6 +532,15 @@ function recordPoll(db, user, id, poll) {
     // rewriting it here would quietly change what "hidden" means.
     hiddenAnswers: Array.isArray(poll?.hiddenAnswers)
       ? poll.hiddenAnswers.slice(0, 500).map((n) => Number(n) || 0) : [],
+    ...(poll?.askName ? {
+      askName: true,
+      namePrompt: String(poll.namePrompt || 'Name:').slice(0, 100),
+      responses: Array.isArray(poll?.responses) ? poll.responses.slice(0, 500).map((r) => ({
+        voter: String(r?.voter || '').slice(0, 64),
+        answer: typeof r?.answer === 'number' ? r.answer : String(r?.answer ?? '').slice(0, 1000),
+        name: String(r?.name || '').slice(0, 100),
+      })) : [],
+    } : {}),
   };
   const text = JSON.stringify(results);
   if (Buffer.byteLength(text) > 256 * 1024) {

@@ -28,6 +28,7 @@ const lectures = require('./lectures.js');
 const plans = require('./plans.js');
 const settings = require('./settings.js');
 const content = require('./content.js');
+const store = require('./store.js');
 
 const COOKIE = 'podium_session';
 const API_VERSION = 1;
@@ -146,6 +147,7 @@ function capabilities(ctx, user) {
   // to, so it is only advertised once an account exists. Otherwise a freshly
   // installed instance with no accounts yet would offer an Admin page whose
   // every request answers 401 - a feature announced before it can be used.
+  const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
   const features = ctx.db && ctx.hasAccounts()
     ? ['auth', 'library', 'plans', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content'] : [])]
     : (ctx.db ? ['auth'] : []);
@@ -153,12 +155,26 @@ function capabilities(ctx, user) {
     podium: true,
     version: API_VERSION,
     features,
+    allowPollNames,
     auth: {
       mode: ctx.hasAccounts() ? 'accounts' : (ctx.basicPassword ? 'password' : 'open'),
       required: ctx.hasAccounts() || !!ctx.basicPassword,
     },
     user: user || null,
   };
+}
+
+function auditLog(ctx, req, user, action, details) {
+  if (ctx.db) {
+    accounts.logEvent(ctx.db, {
+      userId: user?.id,
+      username: user?.username,
+      action,
+      ip: clientIp(req),
+      userAgent: req.headers['user-agent'],
+      details,
+    });
+  }
 }
 
 /**
@@ -210,7 +226,10 @@ async function handleApi(req, res, url, ctx) {
 
   if (route === 'logout' && req.method === 'POST') {
     if (!sameOrigin(req)) { json(res, 403, { error: 'cross-origin request refused' }); return true; }
-    if (ctx.db) accounts.endSession(ctx.db, cookieToken(req));
+    if (ctx.db) accounts.endSession(ctx.db, cookieToken(req), {
+      userAgent: req.headers['user-agent'] || '',
+      ip: clientIp(req),
+    });
     json(res, 200, { ok: true }, { 'set-cookie': setCookie(req, '', 0) });
     return true;
   }
@@ -236,15 +255,17 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'courses' && !rest.length && req.method === 'POST') {
       const body = await readJson(req, 8 * 1024);
-      json(res, 200, { course: courses.create(ctx.db, user, { code: body.code, title: body.title }) });
+      const course = courses.create(ctx.db, user, { code: body.code, title: body.title });
+      auditLog(ctx, req, user, 'course_created', { courseCode: course.code, title: course.title });
+      json(res, 200, { course });
       return true;
     }
 
     if (head === 'courses' && rest.length === 1 && req.method === 'PATCH') {
       const body = await readJson(req, 8 * 1024);
-      json(res, 200, {
-        course: courses.update(ctx.db, user, rest[0], { title: body.title, archived: body.archived }),
-      });
+      const course = courses.update(ctx.db, user, rest[0], { title: body.title, archived: body.archived });
+      auditLog(ctx, req, user, 'course_modified', { courseCode: course.code, title: course.title, archived: course.archived });
+      json(res, 200, { course });
       return true;
     }
 
@@ -274,19 +295,19 @@ async function handleApi(req, res, url, ctx) {
 
       if (!rest.length && req.method === 'POST') {
         const body = await readJson(req, 8 * 1024);
-        json(res, 200, {
-          person: await accounts.createUser(ctx.db, {
-            username: body.username,
-            password: body.password,
-            displayName: body.displayName,
-            isAdmin: !!body.isAdmin,
-          }),
+        const person = await accounts.createUser(ctx.db, {
+          username: body.username,
+          password: body.password,
+          displayName: body.displayName,
+          isAdmin: !!body.isAdmin,
         });
+        auditLog(ctx, req, user, 'user_created', { targetUsername: person.username });
+        json(res, 200, { person });
         return true;
       }
 
       if (rest.length === 1 && req.method === 'PATCH') {
-        json(res, 200, { person: await changePerson(ctx, user, decodeURIComponent(rest[0]), await readJson(req, 8 * 1024)) });
+        json(res, 200, { person: await changePerson(ctx, req, user, decodeURIComponent(rest[0]), await readJson(req, 8 * 1024)) });
         return true;
       }
     }
@@ -506,9 +527,57 @@ async function handleApi(req, res, url, ctx) {
     }
 
     if (head === 'settings' && rest.length === 1 && req.method === 'PUT') {
-      const body = await readJson(req);
-      json(res, 200, { saved: settings.write(ctx.db, user, rest[0], body.settings || body) });
+      const body = await readJson(req, 8 * 1024);
+      const saved = settings.write(ctx.db, user, rest[0], body.settings || body);
+      auditLog(ctx, req, user, 'settings_updated', { courseCode: rest[0] });
+      json(res, 200, { saved });
       return true;
+    }
+
+    if (head === 'logs' && rest[0] === 'download' && req.method === 'GET') {
+      if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can download logs' }); return true; }
+      auditLog(ctx, req, user, 'logs_downloaded', {});
+      const rows = ctx.db.prepare('SELECT * FROM audit_logs ORDER BY created_at DESC').all();
+      let csv = 'ID,Timestamp,User ID,Username,Action,IP Address,User Agent,Details\n';
+      for (const row of rows) {
+        csv += [
+          row.id,
+          new Date(row.created_at).toISOString(),
+          row.user_id || '',
+          row.username || '',
+          row.action || '',
+          row.ip_address || '',
+          row.user_agent || '',
+          row.details || ''
+        ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
+      }
+      res.writeHead(200, {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="podium-logs-${new Date().toISOString().slice(0, 10)}.csv"`,
+        'cache-control': 'no-store'
+      });
+      res.end(csv);
+      return true;
+    }
+
+    // --- system settings (Issue #72) --------------------------------------
+    if (head === 'system' && rest[0] === 'settings') {
+      if (rest.length === 1 && req.method === 'GET') {
+        const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
+        json(res, 200, { allowPollNames });
+        return true;
+      }
+      if (rest.length === 1 && req.method === 'PUT') {
+        if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can change system settings' }); return true; }
+        const body = await readJson(req, 8 * 1024);
+        if (body.allowPollNames !== undefined) {
+          store.setSystemSetting(ctx.db, 'allow_poll_names', body.allowPollNames ? '1' : '0');
+        }
+        auditLog(ctx, req, user, 'system_settings_updated', { allowPollNames: !!body.allowPollNames });
+        const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
+        json(res, 200, { allowPollNames });
+        return true;
+      }
     }
 
     // --- content management (Issue #54) -----------------------------------
@@ -749,7 +818,7 @@ async function receiveUpload(req, url, ctx, user) {
  * is where a slip happens; podium-admin at a shell is what a slip is recovered
  * with, and it keeps its teeth.
  */
-async function changePerson(ctx, user, username, body) {
+async function changePerson(ctx, req, user, username, body) {
   const person = accounts.findUser(ctx.db, username);
   if (!person) throw Object.assign(new Error(`no account called ${username}`), { status: 404 });
 
@@ -784,6 +853,11 @@ async function changePerson(ctx, user, username, body) {
   // a new password it can never use. setPassword drops every session that
   // account had, which is the point of doing it in a hurry.
   if (body.password) await accounts.setPassword(ctx.db, username, body.password);
+
+  auditLog(ctx, req, user, 'user_modified', {
+    targetUsername: username,
+    updates: Object.keys(body).filter((k) => ['displayName', 'isAdmin', 'disabled', 'password'].includes(k)),
+  });
 
   return accounts.publicUser(accounts.findUser(ctx.db, username));
 }

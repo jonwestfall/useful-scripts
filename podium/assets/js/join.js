@@ -16,6 +16,7 @@ const $ = (sel) => document.querySelector(sel);
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const VOTER_KEY = 'podium.voter.v1';
+const VOTER_NAME_KEY = 'podium.voterName.v1';
 
 // Kept rather than regenerated, so a phone that reloads mid-question is still
 // the same answer rather than a second one. localStorage rather than session:
@@ -30,9 +31,17 @@ function voterId() {
   return id;
 }
 
+function getVoterName() {
+  try { return localStorage.getItem(VOTER_NAME_KEY) || ''; } catch { return ''; }
+}
+
+function setVoterName(name) {
+  try { if (name) localStorage.setItem(VOTER_NAME_KEY, name); } catch { /* private mode */ }
+}
+
 const voter = voterId();
 let code = '';
-let current = { seq: -1, open: false, kind: 'choice', question: '', options: [] };
+let current = { seq: -1, open: false, kind: 'choice', question: '', options: [], askName: false, namePrompt: 'Name:' };
 let answered = null;      // what this phone last sent for the current seq
 let stream = null;
 
@@ -46,10 +55,14 @@ async function send(answer) {
   if (!current.open) { say('This question is closed.', 'bad'); return; }
   say('Sending…');
   try {
+    const nameInput = $('#voter-name');
+    const name = current.askName && nameInput ? nameInput.value.trim() : '';
+    if (name) setVoterName(name);
+
     const res = await fetch(`poll/${encodeURIComponent(code)}/vote`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ voter, answer }),
+      body: JSON.stringify({ voter, answer, ...(name ? { name } : {}) }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -69,11 +82,25 @@ async function send(answer) {
 function render() {
   $('#question').textContent = current.question || 'Waiting for the next question…';
 
-  const asText = current.kind === 'text';
-  $('#typed').hidden = !asText || !current.question;
-  $('#choices').hidden = asText;
+  const nameBox = $('#voter-name-box');
+  if (nameBox) {
+    nameBox.hidden = !current.askName || !current.question;
+    const nameLabel = $('#voter-name-label');
+    if (nameLabel) nameLabel.textContent = current.namePrompt || 'Name:';
+    const nameInput = $('#voter-name');
+    if (nameInput && !nameInput.value) {
+      nameInput.value = getVoterName();
+    }
+  }
 
-  if (!asText) {
+  const asText = current.kind === 'text';
+  const asQna = current.kind === 'qna';
+  
+  $('#typed').hidden = !asText || !current.question;
+  $('#choices').hidden = (!asText && !asQna) ? false : true;
+  $('#qna').hidden = !asQna || !current.question;
+
+  if (current.kind === 'choice') {
     const choices = $('#choices');
     choices.replaceChildren(...current.options.map((option, i) => {
       const button = document.createElement('button');
@@ -90,13 +117,65 @@ function render() {
       button.addEventListener('click', () => send(i));
       return button;
     }));
-  } else {
+  } else if (asText) {
     $('#answer').disabled = !current.open;
     $('#send').disabled = !current.open;
+  } else if (asQna) {
+    $('#qna-ask').disabled = !current.open;
+    $('#qna-send').disabled = !current.open;
+    
+    const feed = $('#qna-feed');
+    const questions = (current.qnaFeed || [])
+      .filter((q) => !q.hidden)
+      .sort((a, b) => (b.upvotes?.length || 0) - (a.upvotes?.length || 0));
+    
+    feed.replaceChildren(...questions.map((q) => {
+      const item = document.createElement('div');
+      item.className = `qna-item${q.answered ? ' is-answered' : ''}`;
+      
+      const text = document.createElement('div');
+      text.className = 'qna-item-text';
+      text.textContent = q.text;
+      
+      const upvote = document.createElement('button');
+      upvote.type = 'button';
+      upvote.className = 'qna-item-upvote';
+      const upvoted = (q.upvotes || []).includes(voter);
+      upvote.setAttribute('aria-pressed', String(upvoted));
+      upvote.disabled = !current.open;
+      upvote.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 4l-8 8h16z"/></svg><span>${q.upvotes?.length || 0}</span>`;
+      upvote.addEventListener('click', () => send({ action: 'upvote', id: q.id }));
+      
+      item.append(text, upvote);
+      return item;
+    }));
   }
 
   if (!current.question) say('');
-  else if (!current.open) say(answered === null ? 'This question is closed.' : 'Closed — your answer is in.', '');
+  else if (!current.open) say((answered === null && !asQna) ? 'This question is closed.' : 'Closed — your answer is in.', '');
+  
+  if (!tickTimer) tickTimer = setInterval(tick, 1000);
+  tick();
+}
+
+let tickTimer = null;
+function tick() {
+  const cd = document.getElementById('countdown');
+  if (!cd) return;
+  if (!current.closesAt || !current.open) {
+    cd.hidden = true;
+    return;
+  }
+  const remaining = Math.max(0, Math.ceil((current.closesAt - Date.now()) / 1000));
+  cd.hidden = false;
+  const m = Math.floor(remaining / 60);
+  const s = String(remaining % 60).padStart(2, '0');
+  cd.textContent = remaining >= 60 ? `${m}:${s}` : s;
+  cd.style.color = remaining <= 10 ? '#ff9d9d' : 'var(--dim)';
+  if (remaining === 0 && current.open) {
+    current.open = false;
+    render();
+  }
 }
 
 let everConnected = false;
@@ -165,6 +244,12 @@ $('#send').addEventListener('click', () => {
   const text = $('#answer').value.trim();
   if (!text) { say('Type something first.', 'bad'); return; }
   send(text);
+});
+$('#qna-send').addEventListener('click', () => {
+  const text = $('#qna-ask').value.trim();
+  if (!text) { say('Type a question first.', 'bad'); return; }
+  send({ action: 'ask', text });
+  $('#qna-ask').value = '';
 });
 
 // Arriving by QR code skips the form entirely - which is the point of the QR.

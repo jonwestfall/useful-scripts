@@ -294,6 +294,33 @@ const MIGRATIONS = [
       CREATE INDEX lectures_open_by_seen ON lectures(last_seen_at) WHERE ended_at IS NULL;
     `);
   },
+
+  (db) => {
+    db.exec(`
+      -- Audit log to track user interactions and administrative actions (Issue #55)
+      CREATE TABLE audit_logs (
+        id            INTEGER PRIMARY KEY,
+        user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        username      TEXT,
+        action        TEXT NOT NULL,
+        ip_address    TEXT,
+        user_agent    TEXT,
+        created_at    INTEGER NOT NULL,
+        details       TEXT
+      );
+      CREATE INDEX audit_logs_by_time ON audit_logs(created_at);
+    `);
+  },
+
+  (db) => {
+    db.exec(`
+      -- System-wide administrative settings (Issue #72)
+      CREATE TABLE system_settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `);
+  },
 ];
 
 function migrate(db) {
@@ -396,9 +423,33 @@ function open(dataDir, { create = true } = {}) {
   }
 }
 
+/** Read a system-wide setting value. */
+function getSystemSetting(db, key, defaultValue = null) {
+  if (!db) return defaultValue;
+  try {
+    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key);
+    return row ? row.value : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+}
+
+/** Write a system-wide setting value. */
+function setSystemSetting(db, key, value) {
+  if (!db) return;
+  db.prepare(`
+    INSERT INTO system_settings (key, value)
+    VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(key, String(value));
+}
+
 /** Where the data lives, given the environment. Null means "store nothing". */
 function dataDirFromEnv(env = process.env) {
   return env.DATA_DIR ? path.resolve(env.DATA_DIR) : null;
 }
 
-module.exports = { open, migrate, dataDirFromEnv, SCHEMA_VERSION: MIGRATIONS.length };
+module.exports = {
+  open, migrate, dataDirFromEnv, SCHEMA_VERSION: MIGRATIONS.length,
+  getSystemSetting, setSystemSetting,
+};
