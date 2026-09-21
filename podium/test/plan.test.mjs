@@ -168,6 +168,23 @@ chk('a poll round-trips through a plan file with its options intact',
 chk('a poll item carries no pollId or token - a plan cannot pre-create one on a relay it has not talked to',
   !('pollId' in polled.plan.items[0]) && !('token' in polled.plan.items[0]));
 
+// --- lecture pacing & duration budgeting (Issue #46) -----------------------
+chk('emptyPlan defaults targetDuration to 50', plan.targetDuration === 50);
+chk('newItem defaults durationMins to 0', newItem('text').durationMins === 0);
+
+const pacingPlan = readPlan(JSON.stringify({
+  podium: 'plan', v: 1,
+  targetDuration: 75,
+  items: [
+    { type: 'text', body: 'Intro', durationMins: 15 },
+    { type: 'deck', title: 'Main Slides', duration: 45 },
+    { type: 'timer', durationMins: -10 },
+  ],
+}));
+chk('targetDuration round-trips correctly', pacingPlan.plan.targetDuration === 75);
+chk('durationMins is parsed and clamped',
+  pacingPlan.plan.items[0].durationMins === 15 && pacingPlan.plan.items[1].durationMins === 45 && pacingPlan.plan.items[2].durationMins === 0);
+
 // --- auto-launch on plan load (Issue #52) -----------------------------------
 chk('emptyAutoLaunch provides default structure', (() => {
   const al = emptyAutoLaunch();

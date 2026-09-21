@@ -171,6 +171,7 @@ export function emptyPlan(title = 'Untitled lecture') {
     title,
     course: '',
     notes: '',
+    targetDuration: 50,
     created: now,
     updated: now,
     layout: 'single',
@@ -186,7 +187,7 @@ export function emptyPlan(title = 'Untitled lecture') {
 export function newItem(type) {
   const spec = PLAN_TYPES[type];
   if (!spec) throw new Error(`unknown item type: ${type}`);
-  const item = { id: uid(8), type, title: '', note: '' };
+  const item = { id: uid(8), type, title: '', note: '', durationMins: 0 };
   for (const field of spec.fields) {
     if (field.def !== undefined) item[field.key] = field.def;
   }
@@ -328,7 +329,13 @@ export function readPlan(raw) {
   for (const raw2 of Array.isArray(data.items) ? data.items : []) {
     const spec = PLAN_TYPES[raw2?.type];
     if (!spec) { warnings.push(`An item of unknown kind "${str(raw2?.type, 30)}" was dropped.`); continue; }
-    const item = { id: str(raw2.id, 40) || uid(8), type: raw2.type, title: str(raw2.title, 200), note: str(raw2.note, 2000) };
+    const item = {
+      id: str(raw2.id, 40) || uid(8),
+      type: raw2.type,
+      title: str(raw2.title, 200),
+      note: str(raw2.note, 2000),
+      durationMins: num(raw2.durationMins ?? raw2.duration, 0, 0, 360),
+    };
     for (const field of spec.fields) {
       const value = raw2[field.key];
       if (field.kind === 'number') item[field.key] = num(value, field.def ?? 0, field.min ?? 0, field.max ?? 1e9);
@@ -438,6 +445,7 @@ export function readPlan(raw) {
     title: str(data.title, 200) || 'Untitled lecture',
     course: str(data.course, 120),
     notes: str(data.notes, 4000),
+    targetDuration: num(data.targetDuration, 50, 1, 360),
     created: Number(data.created) || Date.now(),
     updated: Number(data.updated) || Date.now(),
     layout: ['single', '2h', '2v', '3', '4'].includes(data.layout) ? data.layout : 'single',

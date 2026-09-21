@@ -4873,6 +4873,23 @@ await desk.fill('#item-fields .poll-option-row:nth-child(1) input', 'Construct')
 await desk.fill('#item-fields .poll-option-row:nth-child(2) input', 'Method');
 await desk.click('#item-fields button:has-text("+ Option")');
 await desk.fill('#item-fields .poll-option-row:nth-child(3) input', 'Norming');
+await desk.fill('#item-duration', '15');
+
+await desk.click('#type-picker .type-btn:has-text("Text sign")');
+await desk.fill('#item-duration', '20');
+ok('item durations create cumulative timestamps in running order',
+  await desk.evaluate(() => {
+    const times = Array.from(document.querySelectorAll('.order-time')).map((t) => t.textContent);
+    return times.includes('0:00 - 0:15 (15m)') && times.includes('0:15 - 0:35 (20m)');
+  }));
+ok('pacing summary bar tracks planned duration against target',
+  await desk.evaluate(() => document.querySelector('#plan-pacing-summary').textContent.includes('35 min planned') && document.querySelector('#plan-pacing-summary').textContent.includes('15m remaining')));
+
+await desk.selectOption('#plan-target-mins', '30');
+ok('changing target duration recalculates over budget warning',
+  await desk.evaluate(() => document.querySelector('#plan-pacing-summary').textContent.includes('5m over budget!')));
+
+await desk.click('#order li:first-child .order-open');
 const previewQuestion = await desk.textContent('.r-poll-question');
 ok(`the planning page previews a poll with the projector's own renderer ("${previewQuestion.trim()}")`, previewQuestion.trim() === 'Which bias is this?');
 await desk.waitForFunction(() => /^Saved/.test(document.querySelector('#save-state').textContent), null, { timeout: 10000 });

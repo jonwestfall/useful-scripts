@@ -74,6 +74,27 @@
   <!-- The running order -->
   <section class="plan-col" id="col-order">
     <h2>Running order</h2>
+    <div id="plan-pacing-wrap" class="plan-pacing-wrap">
+      <div class="inline" style="justify-content: space-between; margin-bottom: 6px;">
+        <span id="plan-pacing-summary" class="plan-pacing-summary"><b>0 min</b> planned</span>
+        <div class="inline" style="gap: 6px;">
+          <label for="plan-target-mins" style="font-size: 12px; margin: 0; align-self: center;">Target:</label>
+          <select id="plan-target-mins" style="min-height: 28px; height: 28px; padding: 2px 6px; font-size: 12px; width: auto;">
+            <option value="30">30m</option>
+            <option value="45">45m</option>
+            <option value="50" selected>50m</option>
+            <option value="60">60m</option>
+            <option value="75">75m</option>
+            <option value="90">90m</option>
+            <option value="120">120m</option>
+            <option value="180">180m</option>
+          </select>
+        </div>
+      </div>
+      <div class="plan-pacing-track">
+        <div id="plan-pacing-bar" class="plan-pacing-bar"></div>
+      </div>
+    </div>
     <p class="hint">Drag to reorder. This is the order the Library shows on the iPad, numbered.</p>
     <ol id="order"></ol>
     <p class="empty" id="order-empty">Nothing in this lecture yet. Add the first thing below.</p>

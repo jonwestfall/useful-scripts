@@ -1205,18 +1205,39 @@ body.plan .linkish:hover { text-decoration: underline; }
   cursor: grab;
 }
 .order-open {
-  flex: 1; min-width: 0; display: grid; gap: 1px; text-align: left;
-  grid-template-columns: 24px 1fr; grid-template-areas: 'icon title' 'icon type' 'note note';
+  flex: 1; min-width: 0; display: grid; gap: 1px 6px; text-align: left;
+  grid-template-columns: 24px 1fr auto; grid-template-areas: 'icon title time' 'icon type time' 'note note note';
   background: none; border: 0; padding: 4px 2px; min-height: 0;
 }
 .order-open:hover { background: none; }
 .order-icon { grid-area: icon; font-size: 17px; line-height: 1.2; }
 .order-title { grid-area: title; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .order-type { grid-area: type; font-size: 11px; color: var(--dim); }
+.order-time { grid-area: time; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; align-self: center; }
 .order-note { grid-area: note; font-size: 11.5px; color: var(--cue); margin-top: 3px; }
 .order-tools { flex: none; display: flex; gap: 3px; align-items: center; }
 .order-tools button { min-height: 30px; width: 30px; padding: 0; font-size: 13px; }
 .order-tools .order-del { color: #ff9d9d; }
+
+/* Lecture pacing & budgeting (Issue #46) */
+.plan-pacing-wrap {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px 12px; margin: 8px 0 12px;
+}
+.plan-pacing-summary { font-size: 13px; color: var(--dim); }
+.plan-pacing-summary b { color: var(--ink); }
+.pacing-over { color: #ff8f8f; font-weight: 600; }
+.pacing-under { color: var(--ok); }
+.pacing-ok { color: var(--ok); font-weight: 600; }
+.plan-pacing-track {
+  height: 6px; background: var(--panel-2); border-radius: 999px; overflow: hidden; margin-top: 4px;
+}
+.plan-pacing-bar {
+  height: 100%; width: 0%; background: var(--accent); border-radius: 999px;
+  transition: width .3s ease, background-color .3s ease;
+}
+.plan-pacing-bar.is-over { background: var(--live); }
+.plan-pacing-bar.is-exact { background: var(--ok); }
 
 /* Add: every type Podium can put on a screen, with its own icon */
 .type-picker { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
