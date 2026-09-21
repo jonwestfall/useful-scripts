@@ -832,12 +832,31 @@ async function pick(item, where = 'auto') {
 
 const trackDurations = new Map();
 
-function probeTrackDuration(src) {
-  if (!src || trackDurations.has(src)) return;
+function trackDurationStr(t) {
+  if (!t) return '';
+  let dur = null;
+  if (typeof t.duration === 'number' && t.duration > 0) dur = t.duration;
+  else if (typeof t.duration === 'string' && t.duration.trim()) return t.duration.trim();
+  else if (typeof t.length === 'number' && t.length > 0) dur = t.length;
+  else if (typeof t.length === 'string' && t.length.trim()) return t.length.trim();
+  else if (t.src && trackDurations.has(t.src) && trackDurations.get(t.src) > 0) dur = trackDurations.get(t.src);
+  if (dur != null && dur > 0) return fmtTime(Math.round(dur));
+  return '';
+}
+
+function probeTrackDuration(src, onDoneCallback) {
+  if (!src) return;
+  if (trackDurations.has(src)) {
+    const d = trackDurations.get(src);
+    if (d > 0 && onDoneCallback) onDoneCallback(d);
+    return;
+  }
   try {
     const fullUrl = new URL(src, location.href).href;
     if (trackDurations.has(fullUrl)) {
-      trackDurations.set(src, trackDurations.get(fullUrl));
+      const d = trackDurations.get(fullUrl);
+      trackDurations.set(src, d);
+      if (d > 0 && onDoneCallback) onDoneCallback(d);
       return;
     }
     const a = new Audio();
@@ -848,6 +867,8 @@ function probeTrackDuration(src) {
       trackDurations.set(fullUrl, dur);
       a.removeEventListener('loadedmetadata', onLoaded);
       a.removeEventListener('error', onError);
+      if (onDoneCallback && dur > 0) onDoneCallback(dur);
+      musicDrawn = '';
     };
     const onLoaded = () => {
       const d = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
@@ -3757,6 +3778,9 @@ async function loadPlaylists() {
   const trackRow = $('#music-track-row');
   if (trackRow && none) trackRow.hidden = true;
   if (none) $('#music-note').textContent = 'No content/music.json yet — paste a link below, or add that file to keep playlists between lectures.';
+  if (!none && playlists[0]) {
+    updateMusicTrackSelect(playlists[0].tracks);
+  }
 }
 
 function chosenPlaylist() {
@@ -3775,10 +3799,31 @@ function updateMusicTrackSelect(tracks) {
     select.replaceChildren();
     return;
   }
-  select.replaceChildren(...loadedTracks.map((t, i) => el('option', { value: String(i) },
-    `${i + 1}. ${t.title || 'Track'}${t.artist ? ` — ${t.artist}` : ''}`
-  )));
-  select.value = '0';
+  for (const t of loadedTracks) {
+    if (t?.src) {
+      probeTrackDuration(t.src, () => {
+        if (!row.hidden && select.options.length === loadedTracks.length) {
+          const currentVal = select.value;
+          select.replaceChildren(...loadedTracks.map((trk, idx) => {
+            const d = trackDurationStr(trk);
+            return el('option', { value: String(idx) },
+              `${idx + 1}. ${trk.title || 'Track'}${trk.artist ? ` — ${trk.artist}` : ''}${d ? ` (${d})` : ''}`
+            );
+          }));
+          if (currentVal && Number(currentVal) < loadedTracks.length) select.value = currentVal;
+        }
+      });
+    }
+  }
+  const currentVal = select.value;
+  select.replaceChildren(...loadedTracks.map((t, i) => {
+    const d = trackDurationStr(t);
+    return el('option', { value: String(i) },
+      `${i + 1}. ${t.title || 'Track'}${t.artist ? ` — ${t.artist}` : ''}${d ? ` (${d})` : ''}`
+    );
+  }));
+  if (currentVal && Number(currentVal) < loadedTracks.length) select.value = currentVal;
+  else select.value = '0';
   row.hidden = false;
 }
 
@@ -3873,18 +3918,22 @@ function renderMusic() {
 
   // The queue is rebuilt only when it changes: it is redrawn from a heartbeat
   // like everything else here.
-  const signature = `${music.tracks.map((t) => t.src).join('|')}::${music.index}::${music.playing}`;
+  const signature = `${music.tracks.map((t) => `${t.src}:${trackDurationStr(t)}`).join('|')}::${music.index}::${music.playing}`;
   if (signature === musicDrawn) return;
   musicDrawn = signature;
-  $('#music-queue').replaceChildren(...music.tracks.map((t, i) => el('button', {
-    class: `music-row${i === music.index ? ' is-on' : ''}`,
-    type: 'button',
-    title: `${t.title}${t.artist ? ` — ${t.artist}` : ''}`,
-    onclick: () => send({ op: 'music', action: 'select', index: i }),
-  },
-    el('span', { class: 'music-row-n' }, i === music.index && music.playing ? '♪' : String(i + 1)),
-    el('span', { class: 'music-row-title' }, t.title),
-    el('span', { class: 'music-row-artist' }, t.artist || ''))));
+  $('#music-queue').replaceChildren(...music.tracks.map((t, i) => {
+    const durStr = trackDurationStr(t);
+    return el('button', {
+      class: `music-row${i === music.index ? ' is-on' : ''}`,
+      type: 'button',
+      title: `${t.title}${t.artist ? ` — ${t.artist}` : ''}${durStr ? ` (${durStr})` : ''}`,
+      onclick: () => send({ op: 'music', action: 'select', index: i }),
+    },
+      el('span', { class: 'music-row-n' }, i === music.index && music.playing ? '♪' : String(i + 1)),
+      el('span', { class: 'music-row-title' }, t.title),
+      el('span', { class: 'music-row-artist' }, t.artist || ''),
+      el('span', { class: 'music-row-duration' }, durStr || ''));
+  }));
 }
 
 let musicSliding = false;
@@ -5004,6 +5053,11 @@ $('#cam-start').addEventListener('click', async () => {
 });
 $('#cam-shot').addEventListener('click', takeCameraPhoto);
 // --- music wiring ------------------------------------------------------------
+
+$('#music-playlist')?.addEventListener('change', () => {
+  const list = chosenPlaylist();
+  if (list) updateMusicTrackSelect(list.tracks);
+});
 
 $('#music-load').addEventListener('click', () => {
   const list = chosenPlaylist();

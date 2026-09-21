@@ -996,12 +996,14 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 
 .music-queue { display: flex; flex-direction: column; gap: 4px; max-height: 42vh; overflow: auto; }
 .music-row {
-  display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center;
+  display: grid; grid-template-columns: 26px 1fr auto auto; gap: 10px; align-items: center;
   min-height: 42px; padding: 6px 10px; text-align: left; border-radius: 10px;
 }
 .music-row.is-on { border-color: var(--accent); background: #16202c; }
 .music-row-n { color: var(--dim); font-size: 12px; text-align: center; }
 .music-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.music-row-artist { color: var(--dim); font-size: 13px; }
+.music-row-duration { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 #bar-music.is-on, .bottombar .bar-slot.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
 .bottombar .bar-slot[data-slot-action="laser"].is-on { background: var(--live); border-color: var(--live); color: #fff; }
 .bottombar .bar-slot[data-slot-action="spotlight"].is-on { background: #d29922; border-color: #d29922; color: #fff; }

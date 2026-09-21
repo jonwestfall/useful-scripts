@@ -1520,6 +1520,18 @@ ok('loading tracks shows the track dropdown under the loaded message', await pad
   return row && !row.hidden && sel && sel.options.length > 0;
 }));
 
+await pad.waitForFunction(() => {
+  const sel = document.querySelector('#music-track-select');
+  return sel && sel.textContent.includes(':');
+}, null, { timeout: 5000 });
+ok('track dropdown shows track duration length', await pad.evaluate(() => document.querySelector('#music-track-select').textContent.includes(':')));
+
+await pad.waitForFunction(() => {
+  const dur = document.querySelector('.music-row .music-row-duration');
+  return dur && dur.textContent.includes(':');
+}, null, { timeout: 5000 });
+ok('music queue row shows track duration length', await pad.evaluate(() => document.querySelector('.music-row .music-row-duration').textContent.includes(':')));
+
 ok('pause queue checkbox is present and unchecked by default', await pad.evaluate(() => {
   const cb = document.querySelector('#music-pause-queue');
   return cb && !cb.checked;
