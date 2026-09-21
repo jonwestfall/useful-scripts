@@ -303,6 +303,14 @@ const LECTURE_RENAME_FORBIDDEN = /403 \(Forbidden\).*\/api\/lectures\/\d+$/;
 let expectingRecoveryConflict = false;
 const RECOVERY_CONFLICT = /409 \(Conflict\).*\/api\/lectures\/\d+\/events$/;
 
+// A sixth: a plain member's PUT to /api/templates/<course> forced to answer
+// 403, to prove membership is not ownership (see Issue #80's e2e block).
+// Anchored the same way as the rename case above, for the same reason - a
+// bare status+path match would also swallow a genuine forbidden GET or
+// DELETE on this same route.
+let expectingTemplateWriteForbidden = false;
+const TEMPLATE_WRITE_FORBIDDEN = /403 \(Forbidden\).*\/api\/templates\/[^/]+$/;
+
 const trap = (page, tag) => {
   // The console message for a failed fetch and the network response that
   // caused it are two different CDP domains, and PR #86's own CI run showed
@@ -347,6 +355,7 @@ const trap = (page, tag) => {
     if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where)) return;
     if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     if (expectingRecoveryConflict && RECOVERY_CONFLICT.test(where)) return;
+    if (expectingTemplateWriteForbidden && TEMPLATE_WRITE_FORBIDDEN.test(where)) return;
     if (!m.location()?.url && text === 'Failed to load resource: the server responded with a status of 404 (Not Found)') {
       trimFavicon404s();
       if (recentFavicon404s.length) { recentFavicon404s.shift(); return; }
@@ -5592,6 +5601,63 @@ ok('Update button hides itself once the plan it pointed at is gone',
   await planner.isHidden('#plan-push-update'));
 ok('and the button re-arms for the next lecture rather than staying locked',
   await planner.isEnabled('#plan-pull-delete') && await planner.textContent('#plan-pull-delete') === 'Delete from server');
+
+// -- Issue #80: a course's plan template ----------------------------------
+await planner.fill('#plan-course', 'psy415');
+ok('no template yet, so "New lecture from template" is not offered', await planner.isHidden('#plan-new-from-template'));
+ok('but the row itself is, once a course is named, so Save is reachable', await planner.isVisible('#plan-template-row'));
+
+await planner.fill('#plan-title', "This week's shape");
+await planner.click('#plan-save-template');
+await planner.waitForFunction(() => /can start from this/.test(document.querySelector('#plan-template-note')?.textContent || ''), null, { timeout: 8000 });
+ok('saving the current lecture as psy415\'s template works', true);
+ok('and "New lecture from template" now offers it', await planner.isVisible('#plan-new-from-template'));
+ok('and Remove appears alongside Save now that there is something to remove',
+  await planner.isVisible('#plan-remove-template'));
+
+await planner.click('#plan-new');
+// newPlan() is async (it autosaves the outgoing lecture first) and its click
+// handler is not awaited by the DOM, so the blank plan's own render can land
+// AFTER a fill immediately following the click - wait for the course field to
+// actually go blank (emptyPlan() gives it '', unlike title's 'Untitled
+// lecture' default) before touching it again.
+await planner.waitForFunction(() => document.querySelector('#plan-course').value === '', null, { timeout: 5000 });
+await planner.fill('#plan-course', 'psy415');
+await planner.click('#plan-new-from-template');
+await planner.waitForFunction(() => document.querySelector('#plan-title').value === "This week's shape", null, { timeout: 5000 });
+ok('starting a new lecture from the template loads its content, not a blank one', true);
+ok('and carries the course forward with it', await planner.inputValue('#plan-course') === 'psy415');
+
+// A plain member may use the template but not change it - same bar course
+// ownership already sets on the connection settings above. A context of its
+// own: acctCtx's cookie jar is shared by every other page still in play here
+// (desk, pad, acctScreen, planner), and signing in as a second account in it
+// would silently swap who THEY are authenticated as for the rest of the
+// section, the same reason freshCtx and twoCtx get their own below.
+const taCtx = await browser.newContext();
+const memberPlanner = await taCtx.newPage();
+trap(memberPlanner, 'acct plan (member)');
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'ta', '--name', 'A TA', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData }, input: 'a good long password too\n',
+});
+execFileSync(process.execPath, ['podium-admin.js', 'member', 'add', 'psy415', 'ta', '--role', 'member'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData },
+});
+await memberPlanner.goto(`${acctBase}/login.html`);
+await memberPlanner.fill('#username', 'ta');
+await memberPlanner.fill('#password', 'a good long password too');
+await Promise.all([memberPlanner.waitForURL(/index\.html/), memberPlanner.click('#go')]);
+await memberPlanner.goto(`${acctBase}/plan.html`);
+await memberPlanner.fill('#plan-course', 'psy415');
+ok('a member sees the template is there to use',
+  await memberPlanner.waitForSelector('#plan-new-from-template:not([hidden])', { timeout: 5000 }).then(() => true, () => false));
+expectingTemplateWriteForbidden = true;
+await memberPlanner.click('#plan-save-template');
+await memberPlanner.waitForFunction(() => (document.querySelector('#plan-template-note')?.textContent || '').length > 0, null, { timeout: 8000 });
+expectingTemplateWriteForbidden = false;
+ok('but may not overwrite it - membership is not ownership',
+  /you can change/.test(await memberPlanner.textContent('#plan-template-note')));
+await taCtx.close();
 
 await planner.close();
 

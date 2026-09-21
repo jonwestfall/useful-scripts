@@ -34,6 +34,11 @@
     <div id="plan-list"></div>
     <div class="col-actions">
       <button id="plan-new" type="button" class="big-button">New lecture</button>
+      <!-- Only once the Course field up top names a course that actually has
+           a saved template (see refreshTemplates in plan.js) - a course with
+           none simply does not offer this, same as #plan-push-update only
+           appearing once there is something to update. -->
+      <button id="plan-new-from-template" type="button" hidden>New lecture from template…</button>
       <button id="plan-import" type="button">Open a plan file…</button>
       <input id="plan-import-file" type="file" accept=".json,application/json" hidden>
     </div>
@@ -68,6 +73,15 @@
         yours alone. Deleting one here only removes it from the server — a
         plan file you saved for it is untouched.
       </p>
+      <!-- The template a course starts a new lecture from (Issue #80) - built
+           from a real plan, since this is the only page with an editor for
+           one. Course owners and admins only; visible either way so the
+           error explains itself rather than the button just not working. -->
+      <div class="inline" id="plan-template-row" hidden>
+        <button id="plan-save-template" type="button">Save as this course's template</button>
+        <button id="plan-remove-template" type="button" class="danger-outline" hidden>Remove template</button>
+      </div>
+      <p class="hint" id="plan-template-note" role="status"></p>
     </div>
     <hr>
     <p class="hint">

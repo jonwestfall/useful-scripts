@@ -27,6 +27,7 @@ const library = require('./library.js');
 const lectures = require('./lectures.js');
 const plans = require('./plans.js');
 const settings = require('./settings.js');
+const templates = require('./templates.js');
 const content = require('./content.js');
 const store = require('./store.js');
 
@@ -149,7 +150,7 @@ function capabilities(ctx, user) {
   // every request answers 401 - a feature announced before it can be used.
   const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
   const features = ctx.db && ctx.hasAccounts()
-    ? ['auth', 'library', 'plans', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content'] : [])]
+    ? ['auth', 'library', 'plans', 'templates', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content'] : [])]
     : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
@@ -398,6 +399,29 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'plans' && rest.length === 1 && req.method === 'DELETE') {
       json(res, 200, { removed: plans.deletePlan(ctx.db, user, rest[0]).id });
+      return true;
+    }
+
+    // --- course plan templates (Issue #80) ---------------------------------
+    //
+    // Read follows course membership, same as settings - starting from the
+    // template is not different from being handed the room's passphrase,
+    // both are things membership already grants. Writing one is an owner's
+    // or an admin's, enforced inside templates.write/remove themselves.
+
+    if (head === 'templates' && !rest.length && req.method === 'GET') {
+      json(res, 200, { templates: templates.forUser(ctx.db, user) });
+      return true;
+    }
+
+    if (head === 'templates' && rest.length === 1 && req.method === 'PUT') {
+      const body = await readJson(req, templates.MAX_DOC_BYTES + 1024);
+      json(res, 200, { saved: templates.write(ctx.db, user, rest[0], body.doc) });
+      return true;
+    }
+
+    if (head === 'templates' && rest.length === 1 && req.method === 'DELETE') {
+      json(res, 200, { removed: templates.remove(ctx.db, user, rest[0]) });
       return true;
     }
 
