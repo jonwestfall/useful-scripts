@@ -232,7 +232,7 @@ seconds then move on" for a question the room is still answering.
    sees it, without hiding the whole poll to buy time to read it first.
 4. ~~**Export**, into the existing session zip, alongside the per-poll CSV
    button step 2 already shipped.~~ **Done** — see "Export" above.
-5. Word cloud, if the list turns out to want it.
+5. ~~**Word cloud**, if the list turns out to want it.~~ **Done** — short-answer polls can toggle between List and Word Cloud views on the fly, with stop-word filtering and live frequency scaling.
 
 Beyond the original four steps: **live results on the controller**
 (reveal now gates only the projector, not the presenter's own view),

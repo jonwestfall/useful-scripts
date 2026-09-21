@@ -434,31 +434,111 @@ function renderWeb(item, opts) {
   };
 }
 
-// The built-in PDF viewer only honours #page= on load, so a page change swaps
-// the frame. The file itself comes from cache, so it is quick after the first.
-function renderPdf(item) {
+// Client-side canvas PDF viewer (Issue #43)
+function renderPdf(item, opts) {
   const node = el('div', { class: 'r-fill r-pdf' });
-  let page = item.page || 1;
+  const canvas = el('canvas', { class: 'r-pdf-canvas' });
+  let pageNumber = item.page || 1;
   let src = item.src;
+  let currentDoc = null;
+  let currentDocSrc = null;
+  let currentRenderTask = null;
+  let isDestroyed = false;
 
-  const mount = () => {
-    node.replaceChildren(el('iframe', {
-      class: 'r-frame',
-      src: `${src}#page=${page}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,
-      frameborder: '0',
-    }));
+  node.appendChild(canvas);
+
+  const render = async () => {
+    if (!window.pdfjsLib || !src) {
+      node.replaceChildren(el('iframe', {
+        class: 'r-frame',
+        src: `${src}#page=${pageNumber}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,
+        frameborder: '0',
+      }));
+      return;
+    }
+
+    if (window.pdfjsLib.GlobalWorkerOptions && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'assets/vendor/pdf.worker.min.js';
+    }
+
+    try {
+      if (currentDocSrc !== src) {
+        currentDocSrc = src;
+        currentDoc = await window.pdfjsLib.getDocument(src).promise;
+      }
+      if (isDestroyed || !currentDoc) return;
+
+      const numPages = currentDoc.numPages;
+      const targetPage = Math.max(1, Math.min(numPages, pageNumber));
+      const page = await currentDoc.getPage(targetPage);
+      if (isDestroyed) return;
+
+      if (currentRenderTask) {
+        try { currentRenderTask.cancel(); } catch {}
+        currentRenderTask = null;
+      }
+
+      const unscaledViewport = page.getViewport({ scale: 1 });
+      const containerWidth = node.clientWidth || 1920;
+      const containerHeight = node.clientHeight || 1080;
+      const dpr = window.devicePixelRatio || 1;
+      
+      const scale = Math.max(1, Math.min(
+        (containerWidth / unscaledViewport.width) * dpr,
+        (containerHeight / unscaledViewport.height) * dpr,
+        3
+      ));
+
+      const viewport = page.getViewport({ scale });
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+
+      const ctx = canvas.getContext('2d');
+      currentRenderTask = page.render({
+        canvasContext: ctx,
+        viewport: viewport,
+      });
+
+      await currentRenderTask.promise;
+      currentRenderTask = null;
+    } catch (err) {
+      if (err?.name === 'RenderingCancelledException') return;
+      node.replaceChildren(el('iframe', {
+        class: 'r-frame',
+        src: `${src}#page=${pageNumber}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,
+        frameborder: '0',
+      }));
+    }
   };
-  mount();
+
+  render();
 
   return {
     el: node,
     update(it) {
       const nextPage = it.page || 1;
-      if (it.src !== src || nextPage !== page) { src = it.src; page = nextPage; mount(); }
+      if (it.src !== src || nextPage !== pageNumber) {
+        src = it.src;
+        pageNumber = nextPage;
+        render();
+      }
     },
     reconcile() {},
     telemetry: noTelemetry,
-    destroy() { node.remove(); },
+    snapshot(ctx, rect) {
+      if (!canvas || !canvas.width || !canvas.height) return false;
+      paintBackdrop(ctx, rect, node, '#000');
+      return drawFitted(ctx, rect, canvas, canvas.width, canvas.height, 'contain');
+    },
+    destroy() {
+      isDestroyed = true;
+      if (currentRenderTask) {
+        try { currentRenderTask.cancel(); } catch {}
+        currentRenderTask = null;
+      }
+      currentDoc = null;
+      node.remove();
+    },
   };
 }
 
@@ -521,6 +601,42 @@ function renderQr(item) {
   };
 }
 
+const POLL_STOP_WORDS = new Set([
+  'a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', "aren't",
+  'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by', "can't",
+  'cannot', 'could', "couldn't", 'did', "didn't", 'do', 'does', "doesn't", 'doing', "don't", 'down', 'during',
+  'each', 'few', 'for', 'from', 'further', 'had', "hadn't", 'has', "hasn't", 'have', "haven't", 'having',
+  'he', "he'd", "he'll", "he's", 'her', 'here', "here's", 'hers', 'herself', 'him', 'himself', 'his',
+  'how', "how's", 'i', "i'd", "i'll", "i'm", "i've", 'if', 'in', 'into', 'is', "isn't", 'it', "it's",
+  'its', 'itself', 'just', "let's", 'me', 'more', 'most', "mustn't", 'my', 'myself', 'no', 'nor', 'not',
+  'of', 'off', 'on', 'once', 'only', 'or', 'other', 'ought', 'our', 'ours', 'ourselves', 'out', 'over',
+  'own', 'same', "shan't", 'she', "she'd", "she'll", "she's", 'should', "shouldn't", 'so', 'some', 'such',
+  'than', 'that', "that's", 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', "there's",
+  'these', 'they', "they'd", "they'll", "they're", "they've", 'this', 'those', 'through', 'to', 'too',
+  'under', 'until', 'up', 'very', 'was', "wasn't", 'we', "we'd", "we'll", "we're", "we've", 'were',
+  "weren't", 'what', "what's", 'when', "when's", 'where', "where's", 'which', 'while', 'who', "who's",
+  'whom', 'why', "why's", 'with', "won't", 'would', "wouldn't", 'you', "you'd", "you'll", "you're",
+  "you've", 'your', 'yours', 'yourself', 'yourselves', 'like', 'really', 'also'
+]);
+
+function extractWordFrequencies(answers) {
+  const counts = new Map();
+  for (const text of answers) {
+    if (!text || typeof text !== 'string') continue;
+    const tokens = text.toLowerCase()
+      .replace(/[^\p{L}\p{N}\s'-]/gu, ' ')
+      .split(/[\s,.;:!?()"'`/\\]+/)
+      .map((w) => w.trim().replace(/^['"-]+|['"-]+$/g, ''))
+      .filter((w) => w.length > 1 && !POLL_STOP_WORDS.has(w));
+    for (const token of tokens) {
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .map(([word, count]) => ({ word, count }))
+    .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
+}
+
 // The join card (QR + code) is what's on screen while a poll is collecting
 // answers; opts.getPollJoinUrl(pollId) supplies the URL since the renderer
 // itself has no access to cfg. Reveal is a separate, explicit action (never
@@ -554,6 +670,53 @@ function renderPoll(item, opts) {
     if (it.kind === 'text') {
       const hidden = new Set(it.hiddenAnswers || []);
       const answers = (it.answers || []).filter((_, i) => !hidden.has(i));
+      if (it.viewMode === 'cloud') {
+        const words = extractWordFrequencies(answers);
+        if (!words.length) {
+          results.replaceChildren(el('div', { class: 'r-poll-answer r-poll-empty' }, answers.length ? 'No keywords found' : 'No answers yet'));
+          return;
+        }
+        const maxCount = Math.max(1, ...words.map((w) => w.count));
+        const minCount = Math.min(...words.map((w) => w.count));
+        const palette = [
+          'var(--accent)',
+          'var(--ok)',
+          'var(--cue)',
+          '#a78bfa',
+          '#38bdf8',
+          '#fb7185',
+          '#f472b6',
+          '#2dd4bf',
+          '#fb923c',
+        ];
+        const cloud = el('div', { class: 'r-poll-cloud' });
+        const items = words.map(({ word, count }, i) => {
+          const ratio = maxCount === minCount ? 0.5 : (count - minCount) / (maxCount - minCount);
+          const fontSize = `clamp(${Math.round(16 + ratio * 18)}px, ${Number((2.2 + ratio * 4.3).toFixed(1))}cqw, ${Math.round(28 + ratio * 48)}px)`;
+          const color = palette[i % palette.length];
+          return el('span', {
+            class: 'r-poll-cloud-word',
+            style: `font-size: ${fontSize}; color: ${color};`,
+            title: `${count} mention${count === 1 ? '' : 's'}`,
+          },
+            el('span', { class: 'r-poll-cloud-text' }, word),
+            count > 1 ? el('span', { class: 'r-poll-cloud-count' }, String(count)) : ''
+          );
+        });
+        cloud.replaceChildren(...items);
+        results.replaceChildren(cloud);
+        return;
+      }
+      if (it.showNames && Array.isArray(it.responses) && it.responses.length) {
+        const visibleResponses = it.responses.filter((_, i) => !hidden.has(i));
+        results.replaceChildren(...(visibleResponses.length
+          ? visibleResponses.map((r) => el('div', { class: 'r-poll-answer' },
+              r.name ? el('span', { class: 'r-poll-author', style: 'color: var(--accent); font-weight: 600; margin-right: 8px;' }, `${r.name}: `) : '',
+              el('span', {}, r.answer)
+            ))
+          : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No answers yet')]));
+        return;
+      }
       results.replaceChildren(...(answers.length
         ? answers.map((a) => el('div', { class: 'r-poll-answer' }, a))
         : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No answers yet')]));
@@ -563,13 +726,17 @@ function renderPoll(item, opts) {
       const projected = (it.qnaFeed || []).find(q => q.projected);
       
       if (projected) {
-        results.replaceChildren(el('div', { class: 'r-poll-qna-projected', style: 'font-size: clamp(24px, 5cqw, 72px); font-weight: 600; text-align: center; margin: 4cqh 0; padding: 4cqw; background: var(--panel); border-radius: 2cqh;' }, projected.text));
+        results.replaceChildren(el('div', { class: 'r-poll-qna-projected', style: 'font-size: clamp(24px, 5cqw, 72px); font-weight: 600; text-align: center; margin: 4cqh 0; padding: 4cqw; background: var(--panel); border-radius: 2cqh;' },
+          projected.text,
+          (it.showNames && projected.authorName) ? el('div', { style: 'font-size: clamp(14px, 2.5cqw, 28px); color: var(--accent); margin-top: 12px; font-weight: 400;' }, `— ${projected.authorName}`) : ''
+        ));
       } else {
         const topQuestions = qnaFeed.sort((a, b) => (b.upvotes?.length || 0) - (a.upvotes?.length || 0)).slice(0, 4);
         results.replaceChildren(...(topQuestions.length
           ? topQuestions.map((q) => el('div', { class: 'r-poll-answer' }, 
               el('span', { class: 'mono', style: 'color: var(--dim); margin-right: 12px;' }, `▲ ${q.upvotes?.length || 0}`),
-              q.text
+              q.text,
+              (it.showNames && q.authorName) ? el('span', { style: 'color: var(--accent); margin-left: 8px; font-size: 0.9em;' }, `(${q.authorName})`) : ''
             ))
           : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No questions yet')]));
       }
@@ -577,20 +744,27 @@ function renderPoll(item, opts) {
     }
     const counts = it.counts || [];
     const max = Math.max(1, ...counts, 0);
-      results.replaceChildren(...(it.options || []).map((opt, i) => {
-        const count = counts[i] || 0;
-        const fill = el('div', { class: 'r-poll-bar-fill' });
-        fill.style.width = `${Math.round((count / max) * 100)}%`;
-        const isCorrect = it.revealed && it.correct === i;
-        const letter = String.fromCharCode(65 + i);
-        return el('div', { class: 'r-poll-bar-row' },
-          el('div', { class: 'r-poll-bar-label' }, 
-            el('span', {}, isCorrect ? el('strong', { class: 'ok-text' }, `[${letter}] `) : '', opt), 
-            el('span', { class: 'mono' }, String(count))
-          ),
-          el('div', { class: `r-poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill)
-        );
-      }));
+    results.replaceChildren(...(it.options || []).map((opt, i) => {
+      const count = counts[i] || 0;
+      const fill = el('div', { class: 'r-poll-bar-fill' });
+      fill.style.width = `${Math.round((count / max) * 100)}%`;
+      const isCorrect = it.revealed && it.correct === i;
+      const letter = String.fromCharCode(65 + i);
+      const votersForThisOption = (it.showNames && Array.isArray(it.responses))
+        ? it.responses.filter((r) => r.answer === i && r.name).map((r) => r.name)
+        : [];
+      const namesList = votersForThisOption.length
+        ? el('div', { class: 'r-poll-voters-list', style: 'font-size: 13px; color: var(--dim); margin-top: 3px;' }, votersForThisOption.join(', '))
+        : '';
+      return el('div', { class: 'r-poll-bar-row' },
+        el('div', { class: 'r-poll-bar-label' }, 
+          el('span', {}, isCorrect ? el('strong', { class: 'ok-text' }, `[${letter}] `) : '', opt), 
+          el('span', { class: 'mono' }, String(count))
+        ),
+        el('div', { class: `r-poll-bar-track${isCorrect ? ' is-correct' : ''}` }, fill),
+        namesList
+      );
+    }));
   };
 
   let tickTimer = null;

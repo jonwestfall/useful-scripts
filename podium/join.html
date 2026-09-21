@@ -91,6 +91,10 @@
     <p class="question" id="question" style="margin-top: 0; flex: 1;">Waiting for the first question…</p>
     <div id="countdown" hidden style="margin-left: 12px; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--dim);"></div>
   </div>
+  <div id="voter-name-box" style="margin-bottom: 14px;" hidden>
+    <label id="voter-name-label" for="voter-name">Name:</label>
+    <input id="voter-name" type="text" maxlength="100" autocomplete="name" placeholder="Your name">
+  </div>
   <div id="choices"></div>
   <div id="typed" hidden>
     <label for="answer">Your answer</label>
@@ -106,7 +110,7 @@
   <p class="note" id="note"></p>
 </div>
 
-<p id="join-version-stamp" class="version-stamp">v1.0 · build 27 · bee520e</p>
+<p id="join-version-stamp" class="version-stamp">v1.1 · build 27 · 4b3c787</p>
 
 <script type="module" src="assets/js/join.js"></script>
 </body>

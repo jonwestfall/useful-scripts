@@ -7,6 +7,7 @@
 import { $, el } from './util.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { createZip } from './zip.js';
+import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg, loadImage } from './pdf-writer.js';
 import { versionStamp } from './protocol.js';
 import { TYPES } from './renderers.js';
 
@@ -207,13 +208,33 @@ const csvText = (rows) =>
 // saved in the lecture itself should open as the same spreadsheet.
 function pollCsvRows(poll) {
   const rows = [['question', poll.question]];
+  const nameLabel = poll.namePrompt || 'Name';
+  const hasNamedResponses = Array.isArray(poll.responses) && poll.responses.some((r) => r.name);
+
   if (poll.kind === 'text') {
     const hidden = new Set(poll.hiddenAnswers || []);
-    rows.push(['answer', 'shown to room']);
-    (poll.answers || []).forEach((answer, i) => rows.push([answer, hidden.has(i) ? 'no' : 'yes']));
+    if (hasNamedResponses) {
+      rows.push([nameLabel, 'answer', 'shown to room']);
+      poll.responses.forEach((resp, i) => {
+        rows.push([resp.name || '(Anonymous)', resp.answer, hidden.has(i) ? 'no' : 'yes']);
+      });
+    } else {
+      rows.push(['answer', 'shown to room']);
+      (poll.answers || []).forEach((answer, i) => rows.push([answer, hidden.has(i) ? 'no' : 'yes']));
+    }
   } else {
     rows.push(['option', 'votes']);
     (poll.options || []).forEach((option, i) => rows.push([option, String(poll.counts?.[i] || 0)]));
+    if (hasNamedResponses) {
+      rows.push([]);
+      rows.push([nameLabel, 'choice', 'option']);
+      poll.responses.forEach((resp) => {
+        const optIdx = typeof resp.answer === 'number' ? resp.answer : -1;
+        const optText = optIdx >= 0 && poll.options?.[optIdx] ? poll.options[optIdx] : String(resp.answer ?? '');
+        const letter = optIdx >= 0 ? String.fromCharCode(65 + optIdx) : '';
+        rows.push([resp.name || '(Anonymous)', letter, optText]);
+      });
+    }
   }
   return rows;
 }
@@ -311,6 +332,85 @@ async function downloadSessionZip(detail, button) {
   button.textContent = was;
 }
 
+async function downloadSessionPdf(detail, button) {
+  button.disabled = true;
+  const was = button.textContent;
+  try {
+    const imageFiles = (detail.files || []).filter((f) =>
+      f.name.startsWith('photos/') || f.name.startsWith('slides/') || f.name.startsWith('boards/'));
+    const pollResults = detail.pollResults || [];
+    const totalPages = imageFiles.length + pollResults.length;
+
+    if (!totalPages) {
+      button.textContent = 'No pages to export';
+      setTimeout(() => { if (button.isConnected) { button.textContent = was; button.disabled = false; } }, 2000);
+      return;
+    }
+
+    const meta = {
+      title: detail.title || detail.room || 'Podium Session',
+      course: detail.course || '',
+      room: detail.room || '',
+      date: detail.startedAt ? new Date(detail.startedAt) : new Date(),
+    };
+
+    const pages = [];
+    let pageNum = 1;
+    for (const file of imageFiles) {
+      button.textContent = `Rendering page ${pageNum} of ${totalPages}…`;
+      const res = await fetch(file.url, { credentials: 'same-origin' });
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      const img = await loadImage(blob);
+
+      let itemType = 'Image';
+      let itemTitle = file.name;
+      if (file.name.startsWith('slides/')) {
+        itemType = 'Slide';
+        const match = file.name.match(/slide-(\d+)\.png/);
+        itemTitle = match ? `Slide ${parseInt(match[1], 10)}` : 'Slide';
+      } else if (file.name.startsWith('boards/')) {
+        itemType = 'Board';
+        itemTitle = 'Whiteboard / Chalkboard';
+      } else if (file.name.startsWith('photos/')) {
+        itemType = 'Photo';
+        itemTitle = 'Photo capture';
+      }
+
+      const jpegPage = await renderSessionPageToJpeg(img, { ...meta, itemTitle, itemType }, pageNum, totalPages);
+      pages.push(jpegPage);
+      pageNum++;
+    }
+
+    for (const poll of pollResults) {
+      button.textContent = `Rendering poll ${pageNum} of ${totalPages}…`;
+      const jpegPage = await renderPollPageToJpeg(poll, meta, pageNum, totalPages);
+      pages.push(jpegPage);
+      pageNum++;
+    }
+
+    if (!pages.length) {
+      button.textContent = 'Nothing could be rendered';
+      return;
+    }
+
+    button.textContent = 'Building the PDF…';
+    const stamp = new Date(detail.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const blob = createPdf(pages, meta);
+    const a = el('a', { href: URL.createObjectURL(blob), download: `podium-${safeName(detail)}-${stamp}.pdf` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  } catch {
+    button.textContent = 'That did not work';
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  button.textContent = was;
+}
+
 function renderSessionBody(detail) {
   const body = el('div', { class: 'session-body' });
 
@@ -326,6 +426,12 @@ function renderSessionBody(detail) {
       class: 'admin-small', type: 'button',
       onclick: (ev) => downloadSessionZip(detail, ev.target),
     }, `Download the session (${detail.files.length} files, ${bytes(kept)})`));
+  }
+  if (detail.files.length || detail.pollResults?.length) {
+    actions.append(el('button', {
+      class: 'admin-small', type: 'button',
+      onclick: (ev) => downloadSessionPdf(detail, ev.target),
+    }, 'Download as PDF'));
   }
   for (const poll of detail.pollResults) {
     actions.append(el('button', {
@@ -630,6 +736,41 @@ async function refreshPeople() {
   if (!res.ok) return;
   people = (await res.json()).people || [];
   renderPeople();
+}
+
+async function refreshSystemSettings() {
+  const check = $('#allow-poll-names-check');
+  if (!check) return;
+  try {
+    const res = await fetch('/api/system/settings', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const body = await res.json();
+    check.checked = !!body.allowPollNames;
+  } catch { /* ignore */ }
+}
+
+async function updateAllowPollNames(ev) {
+  const checked = ev.target.checked;
+  const status = $('#system-settings-status');
+  if (status) status.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/system/settings', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ allowPollNames: checked }),
+    });
+    if (res.ok) {
+      if (status) {
+        status.textContent = 'Saved — controllers can now ask for participant names.';
+        setTimeout(() => { if (status.textContent.startsWith('Saved')) status.textContent = ''; }, 4000);
+      }
+    } else {
+      if (status) status.textContent = 'Could not save setting.';
+    }
+  } catch {
+    if (status) status.textContent = 'Could not reach server.';
+  }
 }
 
 // --- courses, membership, and the room each one connects to -------------------
@@ -1841,7 +1982,8 @@ if (!info.features.includes('library')) {
       $('#people-search').addEventListener('input', renderPeople);
       $('#new-user-go').addEventListener('click', addPerson);
       $('#backup-go').addEventListener('click', downloadBackup);
-      await Promise.all([refreshPeople(), refreshStorage()]);
+      $('#allow-poll-names-check')?.addEventListener('change', updateAllowPollNames);
+      await Promise.all([refreshPeople(), refreshStorage(), refreshSystemSettings()]);
     }
     await refreshCourses();
   }

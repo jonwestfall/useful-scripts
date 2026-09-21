@@ -96,6 +96,18 @@
       <button type="button" onclick="window.location.href='api/logs/download'">Download Logs (CSV)</button>
       <span class="hint">Downloads a log of all logins and administrative actions. Automatically pruned.</span>
     </div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 12px 0">
+    <div class="admin-head">
+      <h2>Poll &amp; Privacy Policy</h2>
+    </div>
+    <div class="admin-actions" style="align-items: flex-start; flex-direction: column; gap: 8px;">
+      <label class="check">
+        <input id="allow-poll-names-check" type="checkbox">
+        Allow participant name collection on polls
+      </label>
+      <span class="hint">Allow presenters to collect participant names, email addresses, or IDs during polls and quizzes. When enabled, presenters can configure a name prompt in the controller and record participant identities in session exports.</span>
+      <span class="hint" id="system-settings-status" role="status"></span>
+    </div>
   </section>
   </div>
 

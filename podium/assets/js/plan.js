@@ -119,11 +119,54 @@ async function newPlan(seed = null) {
   renderAll();
 }
 
-// --- the running order -------------------------------------------------------
+// --- the running order & pacing ----------------------------------------------
+
+function fmtTimelineTime(mins) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${h}:${String(m).padStart(2, '0')}`;
+}
+
+function renderPacing() {
+  const totalPlanned = plan.items.reduce((sum, item) => sum + (Number(item.durationMins) || 0), 0);
+  const target = Number(plan.targetDuration) || 50;
+  const isOver = totalPlanned > target;
+  const diff = Math.abs(totalPlanned - target);
+
+  let statusText = `<b>${totalPlanned} min</b> planned of ${target}m target`;
+  if (totalPlanned === 0) {
+    statusText = `<b>0 min</b> planned · target:`;
+  } else if (isOver) {
+    statusText = `<b>${totalPlanned} min</b> planned · <span class="pacing-over">${diff}m over budget!</span>`;
+  } else if (totalPlanned === target) {
+    statusText = `<b>${totalPlanned} min</b> planned · <span class="pacing-ok">exact match</span>`;
+  } else {
+    statusText = `<b>${totalPlanned} min</b> planned · <span class="pacing-under">${diff}m remaining</span>`;
+  }
+
+  const summary = $('#plan-pacing-summary');
+  if (summary) summary.innerHTML = statusText;
+  const bar = $('#plan-pacing-bar');
+  if (bar) {
+    bar.style.width = `${Math.min(100, target > 0 ? (totalPlanned / target) * 100 : 0)}%`;
+    bar.classList.toggle('is-over', isOver);
+    bar.classList.toggle('is-exact', totalPlanned === target && totalPlanned > 0);
+  }
+}
 
 function renderOrder() {
   const list = $('#order');
+  let accumulatedMins = 0;
   list.replaceChildren(...plan.items.map((item, index) => {
+    const dur = Number(item.durationMins) || 0;
+    const startMins = accumulatedMins;
+    accumulatedMins += dur;
+    const endMins = accumulatedMins;
+
+    const timeLabel = dur > 0
+      ? `${fmtTimelineTime(startMins)} - ${fmtTimelineTime(endMins)} (${dur}m)`
+      : (accumulatedMins > 0 ? `${fmtTimelineTime(startMins)}` : '');
+
     const row = el('li', {
       class: `order-row${item.id === selectedId ? ' is-on' : ''}`,
       draggable: 'true',
@@ -134,6 +177,7 @@ function renderOrder() {
         el('span', { class: 'order-icon' }, PLAN_TYPES[item.type]?.icon || '?'),
         el('span', { class: 'order-title' }, itemLabel(item, plan)),
         el('span', { class: 'order-type' }, PLAN_TYPES[item.type]?.label || item.type),
+        timeLabel ? el('span', { class: 'order-time' }, timeLabel) : null,
         item.note ? el('span', { class: 'order-note' }, item.note) : null),
       el('div', { class: 'order-tools' },
         el('button', { type: 'button', title: 'Move up', 'aria-label': 'Move up', disabled: index === 0, onclick: () => move(item.id, -1) }, '↑'),
@@ -143,6 +187,7 @@ function renderOrder() {
     return row;
   }));
   $('#order-empty').hidden = plan.items.length > 0;
+  renderPacing();
 }
 
 // Drag to reorder, delegated so it survives every re-render. Keyboard and
@@ -294,6 +339,22 @@ function renderEditor() {
   }), 'Optional. Left blank, the iPad labels it from its contents.'));
 
   for (const spec2 of spec.fields) fields.append(fieldFor(item, spec2));
+
+  fields.append(field('Planned duration', el('div', { class: 'inline', style: 'align-items: center;' },
+    el('input', {
+      type: 'number', min: '0', max: '360', step: '1',
+      id: 'item-duration',
+      style: 'width: 100px;',
+      value: item.durationMins || '',
+      placeholder: '0',
+      oninput: (ev) => {
+        const val = Math.max(0, Math.min(360, Math.round(Number(ev.target.value)) || 0));
+        item.durationMins = val;
+        afterEdit({ label: true });
+      },
+    }),
+    el('span', { class: 'hint', style: 'margin: 0;' }, 'minutes (for pacing budget)')),
+  'Optional. Helps you budget and pace your lecture.'));
 
   fields.append(field('Note to yourself', el('textarea', {
     rows: '2', placeholder: 'Shown under this item on the iPad.',
@@ -618,8 +679,16 @@ function renderHeader() {
   $('#plan-title').value = plan.title || '';
   $('#plan-course').value = plan.course || '';
   $('#plan-notes').value = plan.notes || '';
+  const targetSelect = $('#plan-target-mins');
+  if (targetSelect) targetSelect.value = String(plan.targetDuration || 50);
   $$('#plan-layout .layout-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.layout === plan.layout));
 }
+
+$('#plan-target-mins')?.addEventListener('change', (ev) => {
+  plan.targetDuration = Number(ev.target.value) || 50;
+  touch();
+  renderPacing();
+});
 
 $('#plan-title').addEventListener('input', (ev) => { plan.title = ev.target.value; touch(); renderPlanList(); });
 $('#plan-course').addEventListener('input', (ev) => { plan.course = ev.target.value; touch(); });

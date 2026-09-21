@@ -37,8 +37,8 @@ export const BUILD = 27;
 // the server itself read for the build (see servedBuild in util.js and
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
-export const VERSION = '1.0';
-export const COMMIT = 'bee520e';
+export const VERSION = '1.1';
+export const COMMIT = '4b3c787';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -279,6 +279,11 @@ function normalizeItem(item) {
       ? [...new Set(copy.hiddenAnswers.map((i) => Math.trunc(Number(i))).filter((i) => i >= 0 && i < copy.answers.length))]
       : [];
     copy.qnaFeed = copy.kind === 'qna' ? (Array.isArray(copy.qnaFeed) ? copy.qnaFeed : []) : [];
+    copy.viewMode = copy.viewMode === 'cloud' ? 'cloud' : 'list';
+    copy.askName = !!copy.askName;
+    copy.namePrompt = String(copy.namePrompt || 'Name:').slice(0, 50);
+    copy.showNames = !!copy.showNames;
+    copy.responses = Array.isArray(copy.responses) ? copy.responses : [];
     // Whether the join card spells out the URL under the QR, alongside the
     // four-letter code - a controller-local presentation preference (see
     // control.js's `presentation` prefs), decided once by whoever composes
@@ -906,6 +911,10 @@ export function applyCommand(state, cmd) {
         const hidden = new Set(item.hiddenAnswers || []);
         if (cmd.value) hidden.add(index); else hidden.delete(index);
         item.hiddenAnswers = [...hidden];
+      } else if (cmd.action === 'viewMode') {
+        item.viewMode = cmd.value === 'cloud' ? 'cloud' : 'list';
+      } else if (cmd.action === 'showNames') {
+        item.showNames = !!cmd.value;
       } else {
         return false;
       }

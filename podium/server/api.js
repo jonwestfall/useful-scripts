@@ -28,6 +28,7 @@ const lectures = require('./lectures.js');
 const plans = require('./plans.js');
 const settings = require('./settings.js');
 const content = require('./content.js');
+const store = require('./store.js');
 
 const COOKIE = 'podium_session';
 const API_VERSION = 1;
@@ -146,6 +147,7 @@ function capabilities(ctx, user) {
   // to, so it is only advertised once an account exists. Otherwise a freshly
   // installed instance with no accounts yet would offer an Admin page whose
   // every request answers 401 - a feature announced before it can be used.
+  const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
   const features = ctx.db && ctx.hasAccounts()
     ? ['auth', 'library', 'plans', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content'] : [])]
     : (ctx.db ? ['auth'] : []);
@@ -153,6 +155,7 @@ function capabilities(ctx, user) {
     podium: true,
     version: API_VERSION,
     features,
+    allowPollNames,
     auth: {
       mode: ctx.hasAccounts() ? 'accounts' : (ctx.basicPassword ? 'password' : 'open'),
       required: ctx.hasAccounts() || !!ctx.basicPassword,
@@ -555,6 +558,26 @@ async function handleApi(req, res, url, ctx) {
       });
       res.end(csv);
       return true;
+    }
+
+    // --- system settings (Issue #72) --------------------------------------
+    if (head === 'system' && rest[0] === 'settings') {
+      if (rest.length === 1 && req.method === 'GET') {
+        const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
+        json(res, 200, { allowPollNames });
+        return true;
+      }
+      if (rest.length === 1 && req.method === 'PUT') {
+        if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can change system settings' }); return true; }
+        const body = await readJson(req, 8 * 1024);
+        if (body.allowPollNames !== undefined) {
+          store.setSystemSetting(ctx.db, 'allow_poll_names', body.allowPollNames ? '1' : '0');
+        }
+        auditLog(ctx, req, user, 'system_settings_updated', { allowPollNames: !!body.allowPollNames });
+        const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
+        json(res, 200, { allowPollNames });
+        return true;
+      }
     }
 
     // --- content management (Issue #54) -----------------------------------

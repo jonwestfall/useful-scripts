@@ -16,6 +16,7 @@ const $ = (sel) => document.querySelector(sel);
 
 const LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 const VOTER_KEY = 'podium.voter.v1';
+const VOTER_NAME_KEY = 'podium.voterName.v1';
 
 // Kept rather than regenerated, so a phone that reloads mid-question is still
 // the same answer rather than a second one. localStorage rather than session:
@@ -30,9 +31,17 @@ function voterId() {
   return id;
 }
 
+function getVoterName() {
+  try { return localStorage.getItem(VOTER_NAME_KEY) || ''; } catch { return ''; }
+}
+
+function setVoterName(name) {
+  try { if (name) localStorage.setItem(VOTER_NAME_KEY, name); } catch { /* private mode */ }
+}
+
 const voter = voterId();
 let code = '';
-let current = { seq: -1, open: false, kind: 'choice', question: '', options: [] };
+let current = { seq: -1, open: false, kind: 'choice', question: '', options: [], askName: false, namePrompt: 'Name:' };
 let answered = null;      // what this phone last sent for the current seq
 let stream = null;
 
@@ -46,10 +55,14 @@ async function send(answer) {
   if (!current.open) { say('This question is closed.', 'bad'); return; }
   say('Sending…');
   try {
+    const nameInput = $('#voter-name');
+    const name = current.askName && nameInput ? nameInput.value.trim() : '';
+    if (name) setVoterName(name);
+
     const res = await fetch(`poll/${encodeURIComponent(code)}/vote`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ voter, answer }),
+      body: JSON.stringify({ voter, answer, ...(name ? { name } : {}) }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -68,6 +81,17 @@ async function send(answer) {
 
 function render() {
   $('#question').textContent = current.question || 'Waiting for the next question…';
+
+  const nameBox = $('#voter-name-box');
+  if (nameBox) {
+    nameBox.hidden = !current.askName || !current.question;
+    const nameLabel = $('#voter-name-label');
+    if (nameLabel) nameLabel.textContent = current.namePrompt || 'Name:';
+    const nameInput = $('#voter-name');
+    if (nameInput && !nameInput.value) {
+      nameInput.value = getVoterName();
+    }
+  }
 
   const asText = current.kind === 'text';
   const asQna = current.kind === 'qna';

@@ -543,7 +543,8 @@ function whyNot(panel) {
       : 'the phone\'s camera has not reached this screen yet — start it on the Camera tab first';
   }
   if (type === 'deck') return 'that slide would not render on its own — a font or an image in it may be blocking it';
-  const embedded = { web: 'an embedded web page', slides: 'an embedded slide deck', pdf: 'a PDF in the browser\'s own viewer', youtube: 'a YouTube player' }[type];
+  if (type === 'pdf') return 'that PDF page would not render — the document may be unreadable or corrupt';
+  const embedded = { web: 'an embedded web page', slides: 'an embedded slide deck', youtube: 'a YouTube player' }[type];
   if (embedded) return `${embedded} cannot be photographed — a browser will not let a page read pixels out of a frame it does not own`;
   const known = { text: 'a big-text card', audio: 'an audio player' }[type];
   if (known) return `Podium cannot photograph ${known} yet`;
@@ -1113,13 +1114,18 @@ async function tickPolls() {
         const current = pollItems().find((it) => it.key === key);
         if (!current) return;
         const changed = current.open !== tally.open || current.voters !== tally.voters
+          || current.askName !== tally.askName || current.namePrompt !== tally.namePrompt
           || JSON.stringify(current.counts) !== JSON.stringify(tally.counts)
           || JSON.stringify(current.answers) !== JSON.stringify(tally.answers)
+          || JSON.stringify(current.responses) !== JSON.stringify(tally.responses)
           || JSON.stringify(current.qnaFeed) !== JSON.stringify(tally.qnaFeed);
         if (!changed) return;
         current.open = tally.open !== false;
         current.closesAt = tally.closesAt;
         current.voters = tally.voters || 0;
+        current.askName = !!tally.askName;
+        current.namePrompt = tally.namePrompt || 'Name:';
+        current.responses = tally.responses || [];
         if (current.kind === 'choice') current.counts = tally.counts || [];
         else if (current.kind === 'text') current.answers = tally.answers || [];
         else if (current.kind === 'qna') current.qnaFeed = tally.qnaFeed || [];
