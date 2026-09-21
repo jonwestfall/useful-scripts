@@ -84,14 +84,20 @@ const MAX_PER_ROOM = 12;
 // /favicon.ico is open too, so a browser's automatic request for one on the
 // (credential-free) join page gets a plain 404 rather than a login challenge.
 //
-// Basic Auth cannot reach the relay's own WebSocket route - browsers give page
-// script no way to attach an Authorization header to a handshake. A cookie has
-// no such problem, so once there are accounts the socket is gated too, which
-// closes the one hole the AUTH_PASSWORD version had to leave open.
+// guest.html (Issue #77) is the same exception for the same reason: a
+// substitute handed a guest pairing link has the room passphrase and no
+// account, and asking them to sign in first defeats the whole point of a
+// link an instructor can hand to someone cold. Unlike join.html it is a real
+// controller (it joins the room over the encrypted bus), so it needs more of
+// what control.html needs to run - listed alongside it rather than folded
+// into the plain-file list below, which is index.html's alone.
 const AUTH_USER = process.env.AUTH_USER || 'podium';
 const AUTH_PASSWORD = process.env.AUTH_PASSWORD || '';
 const AUTH_OPEN_PATHS = new Set([
   '/join.html', '/assets/js/join.js', '/login.html', '/favicon.ico',
+  '/guest.html', '/assets/js/guest.js', '/assets/js/bus.js', '/assets/js/config.js',
+  '/assets/js/crypto.js', '/assets/js/transport/index.js', '/assets/js/transport/ws.js',
+  '/assets/js/transport/mqtt.js', '/assets/js/transport/supabase.js',
   // index.html is the showcase page (see below) - these are the static
   // files it loads to render, none of which carry anything a stranger
   // could not already read in the public repo. Opening them exposes no
@@ -748,6 +754,16 @@ server.on('upgrade', (req, socket, head) => {
   // A deployment that serves the pages from somewhere else (GitHub Pages
   // talking to this relay) has no same-origin cookie to send: such an instance
   // wants ORIGIN rather than accounts. See VPS.md.
+  //
+  // This is also the edge guest.html (Issue #77) cannot get around: opening
+  // the page needs no account (see AUTH_OPEN_PATHS above), but this socket
+  // still does when accounts are configured, exactly like the instructor's
+  // own control.html on the same deployment. A guest pairing link works
+  // everywhere the existing full-control one already does - GitHub Pages,
+  // Supabase/MQTT transports, a self-hosted relay with no accounts at all -
+  // and needs a signed-in device for the same reason control.html would on
+  // this one combination. Solving that is a different, larger feature
+  // (anonymous room-scoped socket tokens) that #77 did not ask for.
   if (hasAccounts() && !accounts.sessionUser(db, api.cookieToken(req))) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     socket.destroy();

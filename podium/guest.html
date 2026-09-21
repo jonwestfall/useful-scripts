@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Podium — Guest</title>
+<meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Podium Guest">
+<link rel="stylesheet" href="assets/css/podium.css">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0b0d10">
+</head>
+<body class="guest">
+
+<!-- Issue #77: a substitute's clicker. Same room, same passphrase as the
+     instructor's own control.html - just none of the freeze/cue/take video-
+     switcher chrome, and paired with its own distinct link/QR (see "Guest
+     (Simple Mode)" in display.js's pairing sheet) so the instructor never
+     touches their own device to hand one out. -->
+<div id="app" hidden>
+  <div class="topbar">
+    <span class="brand">PODIUM · Guest</span>
+    <span id="status" data-status="connecting">Connecting…</span>
+    <span id="display-state">No display connected</span>
+    <span class="spacer"></span>
+    <span id="guest-version-tag" class="version-tag"></span>
+  </div>
+
+  <main class="guest-main">
+    <p class="hint" id="guest-now">Nothing on screen yet.</p>
+
+    <div class="guest-nav">
+      <button id="guest-prev" type="button" class="big-button" aria-label="Previous">◀ Previous</button>
+      <button id="guest-next" type="button" class="big-button" aria-label="Next">Next ▶</button>
+    </div>
+
+    <button id="guest-blank" type="button" class="big-button">Blank screen</button>
+
+    <div class="guest-laser-block">
+      <button id="guest-laser" type="button">Laser pointer</button>
+      <div class="laser-picker" id="guest-laser-colors" role="group" aria-label="Laser colour" hidden>
+        <button class="laser-swatch laser-red is-on" type="button" data-color="red" title="Red" aria-label="Red laser"></button>
+        <button class="laser-swatch laser-green" type="button" data-color="green" title="Green" aria-label="Green laser"></button>
+        <button class="laser-swatch laser-blue" type="button" data-color="blue" title="Blue" aria-label="Blue laser"></button>
+      </div>
+      <!-- Not a mirror of the actual slide - guest.html deliberately does not
+           pull in the render pipeline that would take to draw one (see the
+           comment in guest.js). A plain, fixed-aspect surface to point on is
+           the same gesture a real presentation remote's touchpad gives you. -->
+      <div id="guest-pad" class="guest-pad" hidden>
+        <div id="guest-laser-dot" class="laser-dot"></div>
+        <p class="hint">Touch and drag here to point at the screen.</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Shown when this device has never been paired: no settings form to fumble,
+     just what to do about it - the same reasoning as join.html having no
+     configuration of its own. -->
+<div id="guest-setup" hidden>
+  <div class="card" style="text-align:center; max-width: 420px; margin: 15vh auto 0;">
+    <h1>Podium</h1>
+    <p>This device has not been paired yet.</p>
+    <p class="hint">Ask whoever is teaching for the guest pairing code or QR, and open it on this device.</p>
+  </div>
+</div>
+
+<script type="module" src="assets/js/guest.js"></script>
+</body>
+</html>

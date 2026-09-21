@@ -465,8 +465,40 @@ body.control.is-frozen { background: #171006; }
 .topbar-pacing.is-overtime #topbar-pacing-bar { background: var(--live); width: 100% !important; }
 /* Who is signed in, on a server that has accounts. Empty and hidden on every
    other deployment, so it costs nothing in the bar it is not needed in. */
-/* The admin page. Same furniture as the planning page (body.plan), with a
-   column of cards rather than an editor - it is a page you read down. */
+
+/* ===================== GUEST (Simple Mode) =========================
+   Issue #77's substitute clicker: the same #app/.topbar furniture body.control
+   uses (both rules above are unscoped on purpose), a lot less inside it. */
+body.guest {
+  display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overscroll-behavior: none;
+}
+.guest-main {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 18px 16px calc(24px + env(safe-area-inset-bottom));
+}
+#guest-now { font-size: 16px; text-align: center; margin: 0; }
+.guest-nav { display: flex; gap: 10px; }
+.guest-nav .big-button { flex: 1; width: auto; min-height: 96px; font-size: 22px; }
+#guest-blank { min-height: 60px; }
+.guest-laser-block { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.guest-laser-block .laser-picker { justify-content: center; }
+/* No live mirror to point at (see the comment in guest.html) - a plain,
+   fixed-aspect surface stands in for the screen, same fraction-of-a-box math
+   as control.js's own laserPoint. Capped by height rather than just width:
+   at full device width, 16:9 of it is taller than a phone or a landscape
+   tablet has room for underneath Next/Previous and Blank without scrolling
+   to reach it - which is exactly wrong for something meant to be immediate. */
+.guest-pad {
+  position: relative; height: min(38vh, 340px); width: auto; max-width: 100%;
+  aspect-ratio: 16 / 9; margin: 0 auto; border-radius: var(--radius);
+  border: 2px dashed var(--line); background: var(--panel-2);
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  cursor: crosshair; touch-action: none;
+}
+.guest-pad .hint { margin: 0; padding: 0 20px; }
 .admin-wrap { max-width: 56rem; margin: 18px auto; padding: 0 14px; display: grid; gap: 14px; }
 .admin-wrap .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
 .admin-wrap h2 { margin: 0 0 6px; font-size: 16px; }

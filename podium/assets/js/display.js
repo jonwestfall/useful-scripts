@@ -2168,9 +2168,17 @@ function showSetup() {
 
 let pairTimer = null;
 
-function showPairing() {
+// guest.html is the same room, the same passphrase, and none of the cueing
+// concept - a substitute handed this code can advance slides, blank the
+// screen and point a laser, and cannot touch what the instructor's own
+// controller has cued (see Issue #77). Reusing pairingUrl unchanged - it
+// already takes a base URL - is what keeps this one function correct for
+// either link instead of two near-copies to keep in sync.
+function showPairing(mode = 'full') {
   const holder = $('#pair-qr');
-  const url = pairingUrl(cfg);
+  const url = mode === 'guest'
+    ? pairingUrl(cfg, new URL('guest.html', location.href))
+    : pairingUrl(cfg);
   if (typeof window.qrcode === 'function') {
     const qr = window.qrcode(0, 'M');
     qr.addData(url);
@@ -2178,6 +2186,11 @@ function showPairing() {
     holder.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
   }
   $('#pair-url').textContent = url;
+  $('#pair-warn').textContent = mode === 'guest'
+    ? 'Anyone who scans this can advance slides, blank the screen and use the laser - nothing else. It hides itself after 90 seconds.'
+    : 'Anyone who scans this can control this screen. It hides itself after 90 seconds.';
+  $('#pair-mode-full').classList.toggle('is-on', mode !== 'guest');
+  $('#pair-mode-guest').classList.toggle('is-on', mode === 'guest');
   $('#pair').hidden = false;
   clearTimeout(pairTimer);
   // The code grants control of this screen, so it does not stay up.
@@ -2220,10 +2233,12 @@ wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
   $('#reset-note').textContent = removed.length ? `Cleared ${removed.join(', ')}.` : 'Nothing was stored on this device.';
   reloadClean();
 });
-$('#pair-button').addEventListener('click', showPairing);
+$('#pair-button').addEventListener('click', () => showPairing());
+$('#pair-mode-full').addEventListener('click', () => showPairing('full'));
+$('#pair-mode-guest').addEventListener('click', () => showPairing('guest'));
 $('#pair-close').addEventListener('click', hidePairing);
 $('#keys-close').addEventListener('click', hideShortcuts);
-$('#standby-pair').addEventListener('click', showPairing);
+$('#standby-pair').addEventListener('click', () => showPairing());
 $('#standby-settings').addEventListener('click', showSetup);
 
 // Entering fullscreen (see goLive()) is the other real trigger for a stale
