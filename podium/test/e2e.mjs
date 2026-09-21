@@ -2032,6 +2032,13 @@ ok('a dot at the pad center lands at the stage center', await pixelAt(0.5, 0.5))
 await pad.click('#ink-undo');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 
+// Same button, reached from a physical keyboard rather than a tap - the one
+// modified key exempted from "a modified key is not ours" (see control.js).
+await dab(0.5, 0.5);
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+await pad.keyboard.press('Control+z');
+await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+
 await pad.click('#ink-zoom-in');
 await pad.click('#ink-zoom-in');
 await pad.waitForTimeout(200);

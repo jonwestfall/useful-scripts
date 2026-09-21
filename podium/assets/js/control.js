@@ -5376,6 +5376,17 @@ $('#cam-flip').addEventListener('click', async () => {
 // A Magic Keyboard or a clicker paired to the iPad should just work.
 document.addEventListener('keydown', (ev) => {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target.tagName)) return;
+  // Cmd/Ctrl+Z is the one modified key every keyboard user already expects
+  // to work without being told, so it is the one exception to "a modified
+  // key is not ours" below - and only on the Ink tab, the same guard the
+  // digit/letter tool shortcuts already use, so it does not steal undo from
+  // a text field the INPUT/TEXTAREA/SELECT check above missed.
+  if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && !ev.shiftKey
+    && (ev.key === 'z' || ev.key === 'Z') && !$('[data-panel="ink"]')?.hidden) {
+    ev.preventDefault();
+    $('#ink-undo').click();
+    return;
+  }
   // Cmd/Ctrl+P is print and Cmd/Ctrl+F is find. Taking a photo of the
   // projector when someone asked the browser to print is worse than doing
   // nothing, so a modified key is not ours.
