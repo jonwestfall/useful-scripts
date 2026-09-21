@@ -7,6 +7,7 @@
 import { $, el } from './util.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { createZip } from './zip.js';
+import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg, loadImage } from './pdf-writer.js';
 import { versionStamp } from './protocol.js';
 import { TYPES } from './renderers.js';
 
@@ -311,6 +312,85 @@ async function downloadSessionZip(detail, button) {
   button.textContent = was;
 }
 
+async function downloadSessionPdf(detail, button) {
+  button.disabled = true;
+  const was = button.textContent;
+  try {
+    const imageFiles = (detail.files || []).filter((f) =>
+      f.name.startsWith('photos/') || f.name.startsWith('slides/') || f.name.startsWith('boards/'));
+    const pollResults = detail.pollResults || [];
+    const totalPages = imageFiles.length + pollResults.length;
+
+    if (!totalPages) {
+      button.textContent = 'No pages to export';
+      setTimeout(() => { if (button.isConnected) { button.textContent = was; button.disabled = false; } }, 2000);
+      return;
+    }
+
+    const meta = {
+      title: detail.title || detail.room || 'Podium Session',
+      course: detail.course || '',
+      room: detail.room || '',
+      date: detail.startedAt ? new Date(detail.startedAt) : new Date(),
+    };
+
+    const pages = [];
+    let pageNum = 1;
+    for (const file of imageFiles) {
+      button.textContent = `Rendering page ${pageNum} of ${totalPages}…`;
+      const res = await fetch(file.url, { credentials: 'same-origin' });
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      const img = await loadImage(blob);
+
+      let itemType = 'Image';
+      let itemTitle = file.name;
+      if (file.name.startsWith('slides/')) {
+        itemType = 'Slide';
+        const match = file.name.match(/slide-(\d+)\.png/);
+        itemTitle = match ? `Slide ${parseInt(match[1], 10)}` : 'Slide';
+      } else if (file.name.startsWith('boards/')) {
+        itemType = 'Board';
+        itemTitle = 'Whiteboard / Chalkboard';
+      } else if (file.name.startsWith('photos/')) {
+        itemType = 'Photo';
+        itemTitle = 'Photo capture';
+      }
+
+      const jpegPage = await renderSessionPageToJpeg(img, { ...meta, itemTitle, itemType }, pageNum, totalPages);
+      pages.push(jpegPage);
+      pageNum++;
+    }
+
+    for (const poll of pollResults) {
+      button.textContent = `Rendering poll ${pageNum} of ${totalPages}…`;
+      const jpegPage = await renderPollPageToJpeg(poll, meta, pageNum, totalPages);
+      pages.push(jpegPage);
+      pageNum++;
+    }
+
+    if (!pages.length) {
+      button.textContent = 'Nothing could be rendered';
+      return;
+    }
+
+    button.textContent = 'Building the PDF…';
+    const stamp = new Date(detail.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const blob = createPdf(pages, meta);
+    const a = el('a', { href: URL.createObjectURL(blob), download: `podium-${safeName(detail)}-${stamp}.pdf` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  } catch {
+    button.textContent = 'That did not work';
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  button.textContent = was;
+}
+
 function renderSessionBody(detail) {
   const body = el('div', { class: 'session-body' });
 
@@ -326,6 +406,12 @@ function renderSessionBody(detail) {
       class: 'admin-small', type: 'button',
       onclick: (ev) => downloadSessionZip(detail, ev.target),
     }, `Download the session (${detail.files.length} files, ${bytes(kept)})`));
+  }
+  if (detail.files.length || detail.pollResults?.length) {
+    actions.append(el('button', {
+      class: 'admin-small', type: 'button',
+      onclick: (ev) => downloadSessionPdf(detail, ev.target),
+    }, 'Download as PDF'));
   }
   for (const poll of detail.pollResults) {
     actions.append(el('button', {

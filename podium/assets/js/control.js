@@ -12,6 +12,7 @@ import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
 import { createZip } from './zip.js';
+import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
 import { mountSessionBadge, serverInfo } from './server.js';
@@ -1439,9 +1440,19 @@ function loadImage(src) {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     const timer = setTimeout(() => reject(new Error('timed out loading it')), 8000);
-    img.onload = () => { clearTimeout(timer); resolve(img); };
-    img.onerror = () => { clearTimeout(timer); reject(new Error('it could not be loaded here')); };
-    img.src = src;
+    const isBlob = typeof Blob !== 'undefined' && src instanceof Blob;
+    const url = isBlob ? URL.createObjectURL(src) : src;
+    img.onload = () => {
+      clearTimeout(timer);
+      if (isBlob) URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      clearTimeout(timer);
+      if (isBlob) URL.revokeObjectURL(url);
+      reject(new Error('it could not be loaded here'));
+    };
+    img.src = url;
   });
 }
 
@@ -1519,126 +1530,13 @@ async function exportSession() {
   if (exporting) return;
   exporting = true;
   const btn = $('#photo-export');
+  const btnPdf = $('#photo-export-pdf');
   const status = $('#photo-export-status');
   btn.disabled = true;
-  const files = [];
-  const lines = [`Podium session — ${new Date().toLocaleString()}`, `Room: ${cfg.room}`, ''];
-  const skipped = [];
+  if (btnPdf) btnPdf.disabled = true;
 
   try {
-    // 1. The photos, which are already images and already in hand.
-    if (photos.length) {
-      status.textContent = 'Packing the photos…';
-      lines.push(`Photos (${photos.length}):`);
-      // Oldest first in the zip: the strip shows newest first because that is
-      // what you just took, but a folder wants to read forwards.
-      [...photos].reverse().forEach((photo) => {
-        const data = assetStore.get(photo.id);
-        if (!data) { skipped.push(`photo "${photo.title}" (no longer held)`); return; }
-        const name = photoFileName(photo);
-        files.push({ name, data: dataUrlToBytes(data) });
-        lines.push(`  ${name}  —  ${new Date(photo.at).toLocaleTimeString()}`);
-      });
-      lines.push('');
-    }
-
-    // 2. Everything the display has ink on.
-    status.textContent = 'Asking the display for your ink…';
-    const bySurface = await requestAllInk();
-    const surfaces = Object.entries(bySurface).filter(([, strokes]) => strokes?.length);
-
-    // Ink lives only on the display. With the display gone the pull above just
-    // times out quietly, and "Saved 3 files" would read as a complete record of
-    // the lecture when the annotations - often the whole reason for exporting -
-    // are exactly what is missing.
-    if (!bus?.hasPeer('display')) {
-      lines.push('The display was not connected while this was built, so no ink could be collected.', '');
-      skipped.push('every annotation — the display was not connected, so its ink could not be fetched');
-    }
-
-    const deckSlides = new Map();   // deckId -> Map(slide -> strokes)
-    const others = [];
-    for (const [key, strokes] of surfaces) {
-      const deckMatch = /^deck:(.+):(\d+)$/.exec(key);
-      if (deckMatch) {
-        const [, id, slide] = deckMatch;
-        if (!deckSlides.has(id)) deckSlides.set(id, new Map());
-        deckSlides.get(id).set(Number(slide), strokes);
-      } else {
-        others.push([key, strokes]);
-      }
-    }
-
-    // 3. Annotated slides, deck by deck.
-    if (deckSlides.size) lines.push('Annotated slides:');
-    for (const [id, slides] of deckSlides) {
-      const source = await deckSourceById(id);
-      if (source == null) {
-        skipped.push(`${slides.size} annotated slide${slides.size === 1 ? '' : 's'} from a deck this device does not hold`);
-        continue;
-      }
-      const deck = await renderDeckSource(source, id);
-      const folder = `slides/${safeName(frontMatterTitle(source, 'deck'), 'deck')}`;
-      const mounted = await mountDeckForExport(deck);
-      try {
-        for (const [index, strokes] of [...slides.entries()].sort((a, b) => a[0] - b[0])) {
-          const svg = mounted.svgs[index];
-          if (!svg) { skipped.push(`slide ${index + 1} of ${folder} (not in the deck any more)`); continue; }
-          status.textContent = `Drawing slide ${index + 1} of ${deck.count}…`;
-          try {
-            const png = await rasterizeSlide(svg, deck.css, deck.aspects[index] || 16 / 9, strokes);
-            const name = `${folder}/slide-${String(index + 1).padStart(2, '0')}.png`;
-            files.push({ name, data: png });
-            lines.push(`  ${name}  —  ${deck.titles[index] || ''}`);
-          } catch (err) {
-            skipped.push(`slide ${index + 1} of ${folder} (${err.message})`);
-          }
-        }
-      } finally {
-        mounted.release();
-      }
-    }
-    if (deckSlides.size) lines.push('');
-
-    // 4. Boards and pictures that were drawn on.
-    if (others.length) lines.push('Other annotations:');
-    let boardNumber = 0;
-    for (const [key, strokes] of others) {
-      status.textContent = 'Drawing your boards…';
-      try {
-        const made = await renderInkSurface(key, strokes);
-        if (!made) { skipped.push(`ink on ${key} (nothing left to draw it on)`); continue; }
-        boardNumber += 1;
-        const name = `boards/${String(boardNumber).padStart(2, '0')}-${made.name}.png`;
-        files.push({ name, data: made.blob });
-        lines.push(`  ${name}  —  ${strokes.length} stroke${strokes.length === 1 ? '' : 's'}`);
-      } catch (err) {
-        skipped.push(`ink on ${key} (${err.message})`);
-      }
-    }
-    if (others.length) lines.push('');
-
-    // 5. Polls: whatever is currently on screen (a live snapshot - the
-    // display's own poll loop keeps it within a second of the relay) plus
-    // everything already ended THIS lecture. pollHistory outlives any one
-    // lecture - it is the presenter's own scrollback across a whole term -
-    // so an export built during or just after a LATER lecture must not
-    // bundle an earlier one's polls into files that fileExportWithLecture is
-    // about to upload under the new lecture's id. An entry with no lectureId
-    // at all (saved before this field existed) is excluded the same way, for
-    // the same reason: better left out than misattributed.
-    const currentPoll = findPollItem();
-    const pollRows = [...(currentPoll ? [{ ...currentPoll, endedAt: null }] : []),
-      ...pollHistory.filter((row) => row.lectureId === lastKnownLectureId)];
-    if (pollRows.length) {
-      lines.push(`Polls (${pollRows.length}):`);
-      pollRows.forEach((row, i) => {
-        const name = `polls/${String(i + 1).padStart(2, '0')}-${safeName(row.question, row.pollId || 'poll')}.csv`;
-        files.push({ name, data: new TextEncoder().encode(csvText(pollResultRows(row))) });
-        lines.push(`  ${name}${row.endedAt ? `  —  ended ${new Date(row.endedAt).toLocaleTimeString()}` : '  —  still running when this was built'}`);
-      });
-      lines.push('');
-    }
+    const { files, skipped, lines } = await collectSessionBundle(status);
 
     if (!files.length) {
       status.textContent = 'Nothing to export yet — take a photo, annotate something, or run a poll.';
@@ -1646,14 +1544,6 @@ async function exportSession() {
     }
 
     if (skipped.length) lines.push('Not included:', ...skipped.map((line) => `  - ${line}`), '');
-    // Matches fileExportWithLecture's own gate below, not recordingNow(): the
-    // ordinary flow is teach, stand down, THEN export, and standing down is
-    // exactly what clears state.lectureId - recordingNow() would say this
-    // export stays on the device only, while fileExportWithLecture is in fact
-    // about to file it under lastKnownLectureId. The photo-switch clause
-    // matches that same function's own skip (file.name.startsWith('photos/'))
-    // - claiming photos "can be downloaded again" when the switch is off
-    // would be a promise this zip is not the one keeping.
     lines.push(serverKeepsSessions && lastKnownLectureId
       ? (photosKept()
         ? 'This lecture is also kept on the server; the same files can be downloaded again from the Admin page.'
@@ -1661,11 +1551,6 @@ async function exportSession() {
       : 'Photos and ink are held only while the app is open; this zip is the copy that lasts.');
     files.push({ name: 'session.txt', data: new TextEncoder().encode(lines.join('\n')) });
 
-    // The same files, filed with the lecture: this is what makes "export that
-    // session again in March" possible from a browser that was never in the
-    // room. Sent before the zip is built rather than after, because the zip is
-    // what ends the export and a tab closed on the download is a tab that never
-    // got here.
     await fileExportWithLecture(files, status);
 
     status.textContent = 'Building the zip…';
@@ -1686,7 +1571,199 @@ async function exportSession() {
   } finally {
     exporting = false;
     btn.disabled = !bus;
+    if (btnPdf) btnPdf.disabled = !bus;
   }
+}
+
+async function exportSessionPdf() {
+  if (exporting) return;
+  exporting = true;
+  const btn = $('#photo-export');
+  const btnPdf = $('#photo-export-pdf');
+  const status = $('#photo-export-status');
+  btn.disabled = true;
+  if (btnPdf) btnPdf.disabled = true;
+
+  try {
+    const { visualPages, pollRows, skipped } = await collectSessionBundle(status);
+    const totalPages = visualPages.length + pollRows.length;
+
+    if (!totalPages) {
+      status.textContent = 'Nothing to export yet — take a photo, annotate something, or run a poll.';
+      return;
+    }
+
+    const meta = {
+      title: state.lectureTitle || cfg.title || cfg.room || 'Podium Session',
+      course: cfg.course || '',
+      room: cfg.room || '',
+      date: new Date(),
+    };
+
+    const pages = [];
+    let pageNum = 1;
+    for (const item of visualPages) {
+      status.textContent = `Rendering page ${pageNum} of ${totalPages}…`;
+      const img = await loadImage(item.imgBlobOrData);
+      const jpegPage = await renderSessionPageToJpeg(img, { ...meta, itemTitle: item.itemTitle, itemType: item.itemType, itemNote: item.itemNote }, pageNum, totalPages);
+      pages.push(jpegPage);
+      pageNum++;
+    }
+
+    for (const poll of pollRows) {
+      status.textContent = `Rendering poll ${pageNum} of ${totalPages}…`;
+      const jpegPage = await renderPollPageToJpeg(poll, meta, pageNum, totalPages);
+      pages.push(jpegPage);
+      pageNum++;
+    }
+
+    status.textContent = 'Building the PDF…';
+    const blob = createPdf(pages, meta);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `podium-${safeName(cfg.room, 'session')}-${stamp}.pdf`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    status.textContent = skipped.length
+      ? `Saved ${pages.length} page PDF, with ${skipped.length} left out.`
+      : `Saved ${pages.length} page PDF.`;
+  } catch (err) {
+    status.textContent = `Export failed: ${err.message}`;
+  } finally {
+    exporting = false;
+    btn.disabled = !bus;
+    if (btnPdf) btnPdf.disabled = !bus;
+  }
+}
+
+async function collectSessionBundle(status) {
+  const files = [];
+  const lines = [`Podium session — ${new Date().toLocaleString()}`, `Room: ${cfg.room}`, ''];
+  const skipped = [];
+  const visualPages = [];
+
+  // 1. The photos
+  if (photos.length) {
+    status.textContent = 'Packing the photos…';
+    lines.push(`Photos (${photos.length}):`);
+    [...photos].reverse().forEach((photo) => {
+      const data = assetStore.get(photo.id);
+      if (!data) { skipped.push(`photo "${photo.title}" (no longer held)`); return; }
+      const name = photoFileName(photo);
+      files.push({ name, data: dataUrlToBytes(data) });
+      visualPages.push({
+        imgBlobOrData: data,
+        itemTitle: photo.title || name,
+        itemType: 'Photo capture',
+        itemNote: new Date(photo.at).toLocaleTimeString(),
+      });
+      lines.push(`  ${name}  —  ${new Date(photo.at).toLocaleTimeString()}`);
+    });
+    lines.push('');
+  }
+
+  // 2. Everything the display has ink on
+  status.textContent = 'Asking the display for your ink…';
+  const bySurface = await requestAllInk();
+  const surfaces = Object.entries(bySurface).filter(([, strokes]) => strokes?.length);
+
+  if (!bus?.hasPeer('display')) {
+    lines.push('The display was not connected while this was built, so no ink could be collected.', '');
+    skipped.push('every annotation — the display was not connected, so its ink could not be fetched');
+  }
+
+  const deckSlides = new Map();
+  const others = [];
+  for (const [key, strokes] of surfaces) {
+    const deckMatch = /^deck:(.+):(\d+)$/.exec(key);
+    if (deckMatch) {
+      const [, id, slide] = deckMatch;
+      if (!deckSlides.has(id)) deckSlides.set(id, new Map());
+      deckSlides.get(id).set(Number(slide), strokes);
+    } else {
+      others.push([key, strokes]);
+    }
+  }
+
+  // 3. Annotated slides
+  if (deckSlides.size) lines.push('Annotated slides:');
+  for (const [id, slides] of deckSlides) {
+    const source = await deckSourceById(id);
+    if (source == null) {
+      skipped.push(`${slides.size} annotated slide${slides.size === 1 ? '' : 's'} from a deck this device does not hold`);
+      continue;
+    }
+    const deck = await renderDeckSource(source, id);
+    const folder = `slides/${safeName(frontMatterTitle(source, 'deck'), 'deck')}`;
+    const mounted = await mountDeckForExport(deck);
+    try {
+      for (const [index, strokes] of [...slides.entries()].sort((a, b) => a[0] - b[0])) {
+        const svg = mounted.svgs[index];
+        if (!svg) { skipped.push(`slide ${index + 1} of ${folder} (not in the deck any more)`); continue; }
+        status.textContent = `Drawing slide ${index + 1} of ${deck.count}…`;
+        try {
+          const png = await rasterizeSlide(svg, deck.css, deck.aspects[index] || 16 / 9, strokes);
+          const name = `${folder}/slide-${String(index + 1).padStart(2, '0')}.png`;
+          files.push({ name, data: png });
+          visualPages.push({
+            imgBlobOrData: png,
+            itemTitle: deck.titles[index] || `Slide ${index + 1}`,
+            itemType: 'Annotated Slide',
+            itemNote: `${folder} · slide ${index + 1}`,
+          });
+          lines.push(`  ${name}  —  ${deck.titles[index] || ''}`);
+        } catch (err) {
+          skipped.push(`slide ${index + 1} of ${folder} (${err.message})`);
+        }
+      }
+    } finally {
+      mounted.release();
+    }
+  }
+  if (deckSlides.size) lines.push('');
+
+  // 4. Boards and pictures
+  if (others.length) lines.push('Other annotations:');
+  let boardNumber = 0;
+  for (const [key, strokes] of others) {
+    status.textContent = 'Drawing your boards…';
+    try {
+      const made = await renderInkSurface(key, strokes);
+      if (!made) { skipped.push(`ink on ${key} (nothing left to draw it on)`); continue; }
+      boardNumber += 1;
+      const name = `boards/${String(boardNumber).padStart(2, '0')}-${made.name}.png`;
+      files.push({ name, data: made.blob });
+      visualPages.push({
+        imgBlobOrData: made.blob,
+        itemTitle: made.name || 'Whiteboard',
+        itemType: 'Annotated Board',
+        itemNote: `${strokes.length} stroke${strokes.length === 1 ? '' : 's'}`,
+      });
+      lines.push(`  ${name}  —  ${strokes.length} stroke${strokes.length === 1 ? '' : 's'}`);
+    } catch (err) {
+      skipped.push(`ink on ${key} (${err.message})`);
+    }
+  }
+  if (others.length) lines.push('');
+
+  // 5. Polls
+  const currentPoll = findPollItem();
+  const pollRows = [...(currentPoll ? [{ ...currentPoll, endedAt: null }] : []),
+    ...pollHistory.filter((row) => row.lectureId === lastKnownLectureId)];
+  if (pollRows.length) {
+    lines.push(`Polls (${pollRows.length}):`);
+    pollRows.forEach((row, i) => {
+      const name = `polls/${String(i + 1).padStart(2, '0')}-${safeName(row.question, row.pollId || 'poll')}.csv`;
+      files.push({ name, data: new TextEncoder().encode(csvText(pollResultRows(row))) });
+      lines.push(`  ${name}${row.endedAt ? `  —  ended ${new Date(row.endedAt).toLocaleTimeString()}` : '  —  still running when this was built'}`);
+    });
+    lines.push('');
+  }
+
+  return { files, visualPages, pollRows, skipped, lines };
 }
 
 // Every prefix (or exact name) an export's own bundle can ever produce - see
@@ -3521,6 +3598,7 @@ function renderPhotos() {
   // the button half a second into an export, where a second tap starts a second
   // one that steals the first's reply from the display.
   $('#photo-export').disabled = !bus || exporting;
+  if ($('#photo-export-pdf')) $('#photo-export-pdf').disabled = !bus || exporting;
   $('#photo-count').textContent = empty ? '' : `${photos.length} saved this session`;
   // The tab itself keeps the count, because a photo taken by holding a button
   // in the top bar otherwise lands somewhere you are not looking.
@@ -5118,6 +5196,7 @@ $('#music-pause-queue')?.addEventListener('change', (ev) => {
 });
 
 $('#photo-export').addEventListener('click', exportSession);
+$('#photo-export-pdf')?.addEventListener('click', exportSessionPdf);
 $('#photo-keep').addEventListener('change', (ev) => setKeepPhotos(ev.target.checked));
 // Two taps, like every other irreversible button here. Clearing the strip
 // costs nothing that is on screen - the display keeps what it was sent - but

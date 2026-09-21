@@ -27,6 +27,7 @@ async function loadPlaywright() {
   for (const spec of [
     process.env.PLAYWRIGHT_PATH,
     'playwright',
+    path.join(ROOT, 'node_modules', 'playwright', 'index.mjs'),
     '/opt/node22/lib/node_modules/playwright/index.mjs',
   ].filter(Boolean)) {
     try { return await import(spec); } catch { /* try the next one */ }
@@ -5021,6 +5022,63 @@ ok(`a poll with nothing else running still produces an exportable zip (${names.j
 
 const csvEntry = names.find((n) => n.startsWith('polls/'));
 ok(`named for its question (${csvEntry})`, /which-bias-is-this/i.test(csvEntry));
+
+await ctx.close();
+}
+
+if (want('exporting a session to a single merged PDF')) {
+console.log('\n-- exporting a session to a single merged PDF --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'pdf-merged-room', passphrase: 'pdf merge test' }));
+const screen = await ctx.newPage();
+trap(screen, 'pdf-merge display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'pdf-merge pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Create a poll
+await pad.click('.tab[data-tab="polls"]');
+await pad.fill('#poll-question', 'Which outcome is expected?');
+await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'Higher yield');
+await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'Lower cost');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+
+// Switch to whiteboard and draw ink
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await pad.waitForFunction(() => !!document.querySelector('.tab[data-tab="ink"]'), null, { timeout: 5000 });
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad');
+const box = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(box.x + box.w * 0.2, box.y + box.h * 0.3);
+await pad.mouse.down();
+for (let i = 1; i <= 10; i++) await pad.mouse.move(box.x + box.w * (0.2 + i * 0.05), box.y + box.h * (0.3 + i * 0.04));
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink')?.classList.contains('has-ink'), null, { timeout: 5000 });
+
+await pad.click('.tab[data-tab="photos"]');
+await pad.waitForFunction(() => !document.querySelector('#photo-export-pdf').disabled, null, { timeout: 8000 });
+
+const downloadPromise = pad.waitForEvent('download', { timeout: 20000 });
+await pad.click('#photo-export-pdf');
+const file = await downloadPromise;
+ok('Download as PDF button triggers a .pdf file download', file.suggestedFilename().endsWith('.pdf'));
+
+const pdfPath = path.join(HERE, 'fixtures', 'session-export.pdf');
+await file.saveAs(pdfPath);
+const buf = fs.readFileSync(pdfPath);
+const pdfText = buf.toString('latin1');
+
+ok('PDF starts with standard PDF 1.4 header', pdfText.startsWith('%PDF-1.4'));
+ok('PDF contains embedded JPEG pages and DCTDecode filter', pdfText.includes('/Filter /DCTDecode'));
+ok('PDF contains metadata trailer and EOF marker', pdfText.includes('%%EOF'));
 
 await ctx.close();
 }
