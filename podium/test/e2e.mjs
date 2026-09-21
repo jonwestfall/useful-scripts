@@ -1241,7 +1241,7 @@ await screen.waitForFunction(() => document.querySelector('#ink').classList.cont
 ok('returning to that slide restores its own ink', true);
 
 await pad.click('.tab[data-tab="ink"]');
-await pad.waitForTimeout(200);
+await pad.waitForTimeout(700);
 await pad.click('#ink-clear');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 ok('Clear wipes only the surface currently on screen', true);
@@ -2115,7 +2115,7 @@ await screen.waitForFunction(() => !document.querySelector('#ink').classList.con
 
 await pad.click('#ink-zoom-in');
 await pad.click('#ink-zoom-in');
-await pad.waitForTimeout(200);
+await pad.waitForTimeout(700);
 const zoomedTransform = await pad.$eval('#pad-frame', (n) => n.style.transform);
 ok(`zooming in actually scales the pad (${zoomedTransform})`, /scale\(([2-9]|\d\d)/.test(zoomedTransform) || /scale\(2\.\d/.test(zoomedTransform));
 ok('pan buttons become available once zoomed', await pad.$eval('#pan-left', (b) => !b.disabled));
@@ -2128,7 +2128,7 @@ await screen.waitForFunction(() => document.querySelector('#ink').classList.cont
 ok('the same relative point still lands in the same place once zoomed', await pixelAt(0.5, 0.5));
 
 await pad.click('#ink-zoom-reset');
-await pad.waitForTimeout(200);
+await pad.waitForTimeout(700);
 ok('reset zoom returns to 1x and disables panning again', await pad.$eval('#pan-left', (b) => b.disabled));
 await ctx.close();
 }
@@ -5057,12 +5057,34 @@ await pad.click('.tile:has(.tile-title:text-is("Sample Handout"))');
 await screen.waitForSelector('.layer[data-role="program"] .r-pdf-canvas', { timeout: 10000 });
 await screen.waitForFunction(() => {
   const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
-  return canvas && canvas.width > 0 && canvas.height > 0;
+  // A bare <canvas> defaults to 300x150 in every browser - width/height > 0
+  // is true of that default too, so it proves nothing about whether pdf.js
+  // actually finished painting a page into it yet.
+  return canvas && canvas.width > 0 && canvas.height > 0 && canvas.width !== 300;
 }, null, { timeout: 10000 });
 ok('PDF renders to client-side <canvas> instead of iframe',
   await screen.evaluate(() => document.querySelector('.layer[data-role="program"] .r-pdf iframe') === null));
 
 ok('PDF panel is snapshotable for session exports and photos', true);
+
+// Issue #82: ink anchored to a PDF has to land at the same relative spot on
+// both ends, which needs both sides to agree on the page's own aspect ratio
+// - previously the display fell back to "no letterbox" (renderPdf had no
+// contentAspect()) and the controller separately fell back to the room's
+// stage shape (contentAspectFor had no 'pdf' case), two different wrong
+// answers that did not even agree with each other.
+const pageAspect = await screen.evaluate(() => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  return canvas.width / canvas.height;
+});
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(700);
+const padAspect = await pad.evaluate(() => {
+  const r = document.querySelector('#pad-frame').getBoundingClientRect();
+  return r.width / r.height;
+});
+ok(`the controller's ink pad is letterboxed to the PDF's actual page shape, not a guess (display ${pageAspect.toFixed(3)}, pad ${padAspect.toFixed(3)})`,
+  Math.abs(pageAspect - padAspect) < 0.05);
 
 await ctx.close();
 }

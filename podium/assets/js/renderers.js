@@ -435,6 +435,16 @@ function renderWeb(item, opts) {
 }
 
 // Client-side canvas PDF viewer (Issue #43)
+
+// A page's aspect ratio, by src, filled in as any renderPdf instance
+// anywhere - a mirror, a preview, the display itself - finishes loading a
+// page. Item-keyed rather than tied to one renderer instance on purpose:
+// the controller's ink pad (contentAspectFor in control.js) needs an answer
+// for whichever item is focused, which is not always the one the "Now"
+// preview mirror happens to be showing (a non-A panel, mid split-screen).
+const pdfAspectCache = new Map();
+export function pdfAspectFor(src) { return pdfAspectCache.get(src) || null; }
+
 function renderPdf(item, opts) {
   const node = el('div', { class: 'r-fill r-pdf' });
   const canvas = el('canvas', { class: 'r-pdf-canvas' });
@@ -444,6 +454,14 @@ function renderPdf(item, opts) {
   let currentDocSrc = null;
   let currentRenderTask = null;
   let isDestroyed = false;
+  // The page's own aspect ratio, independent of dpr or of whichever box this
+  // instance happens to be rendering into - unlike canvas.width/height below,
+  // which differ between the controller's small preview and the display's
+  // full stage on purpose (different pixel budgets), this must not, or ink
+  // anchored to a fraction of "the content" lands in a different place on
+  // each. Null until the first page load resolves it, the same async-then-
+  // correct shape contentAspect() already has for a deck below.
+  let aspect = null;
 
   node.appendChild(canvas);
 
@@ -479,6 +497,8 @@ function renderPdf(item, opts) {
       }
 
       const unscaledViewport = page.getViewport({ scale: 1 });
+      aspect = unscaledViewport.width / unscaledViewport.height;
+      if (src) pdfAspectCache.set(src, aspect);
       const containerWidth = node.clientWidth || 1920;
       const containerHeight = node.clientHeight || 1080;
       const dpr = window.devicePixelRatio || 1;
@@ -525,6 +545,11 @@ function renderPdf(item, opts) {
     },
     reconcile() {},
     telemetry: noTelemetry,
+    // Null until the first page finishes loading - callers already handle
+    // that (see contentRectFor's own `?? null` and the deck renderer below),
+    // falling back to an un-letterboxed guess for the one frame or two this
+    // is missing rather than waiting on it.
+    contentAspect() { return aspect; },
     snapshot(ctx, rect) {
       if (!canvas || !canvas.width || !canvas.height) return false;
       paintBackdrop(ctx, rect, node, '#000');

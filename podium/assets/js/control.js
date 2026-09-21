@@ -8,7 +8,7 @@ import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
   inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, COMMIT, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
-import { createRenderer, itemTitle, TYPES } from './renderers.js';
+import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
 import { createZip } from './zip.js';
@@ -2906,6 +2906,13 @@ function contentAspectFor(item) {
     const idx = Math.min(deckView.deck.aspects.length - 1, Math.max(0, item.slide || 0));
     return deckView.deck.aspects[idx] || 16 / 9;
   }
+  // Keyed by src rather than read off whichever renderer is mounted right
+  // now (see pdfAspectFor's own comment) - correct even when the focused
+  // panel is not the one the Now mirror is showing.
+  if (item?.type === 'pdf' && item.src) {
+    const aspect = pdfAspectFor(item.src);
+    if (aspect) return aspect;
+  }
   return state.stageAspect || 16 / 9;
 }
 
@@ -3052,6 +3059,7 @@ function pan(dx, dy) {
 // box; zoom is purely a visual transform on top and never touches this, so
 // the fraction-based drawing math in redrawPad()/padPoint() is the same at
 // any zoom level.
+let pendingPdfAspectRetry = null;
 function sizePad() {
   fitFrame();
   clampPan();
@@ -3062,6 +3070,20 @@ function sizePad() {
   padCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
   redrawPad();
   updatePadMirror();
+  // A PDF's real aspect ratio (pdfAspectFor) is not known until pdf.js
+  // finishes loading the page, which is well after the first sizePad() a
+  // freshly-staged PDF gets - fitFrame() above used the room's stage shape
+  // as a placeholder (see contentAspectFor). One retry, once it has almost
+  // certainly resolved, corrects the pad to the page's actual shape instead
+  // of leaving it letterboxed wrong until some unrelated redraw happens to
+  // call sizePad() again.
+  const item = focusedItem(state);
+  if (item?.type === 'pdf' && item.src && !pdfAspectFor(item.src) && !pendingPdfAspectRetry) {
+    pendingPdfAspectRetry = setTimeout(() => {
+      pendingPdfAspectRetry = null;
+      if (!$('[data-panel="ink"]')?.hidden) sizePad();
+    }, 400);
+  }
 }
 
 // A read-only mirror of whatever ink is currently drawing on top of, filling
