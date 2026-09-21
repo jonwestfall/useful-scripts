@@ -521,6 +521,42 @@ function renderQr(item) {
   };
 }
 
+const POLL_STOP_WORDS = new Set([
+  'a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', "aren't",
+  'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by', "can't",
+  'cannot', 'could', "couldn't", 'did', "didn't", 'do', 'does', "doesn't", 'doing', "don't", 'down', 'during',
+  'each', 'few', 'for', 'from', 'further', 'had', "hadn't", 'has', "hasn't", 'have', "haven't", 'having',
+  'he', "he'd", "he'll", "he's", 'her', 'here', "here's", 'hers', 'herself', 'him', 'himself', 'his',
+  'how', "how's", 'i', "i'd", "i'll", "i'm", "i've", 'if', 'in', 'into', 'is', "isn't", 'it', "it's",
+  'its', 'itself', 'just', "let's", 'me', 'more', 'most', "mustn't", 'my', 'myself', 'no', 'nor', 'not',
+  'of', 'off', 'on', 'once', 'only', 'or', 'other', 'ought', 'our', 'ours', 'ourselves', 'out', 'over',
+  'own', 'same', "shan't", 'she', "she'd", "she'll", "she's", 'should', "shouldn't", 'so', 'some', 'such',
+  'than', 'that', "that's", 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', "there's",
+  'these', 'they', "they'd", "they'll", "they're", "they've", 'this', 'those', 'through', 'to', 'too',
+  'under', 'until', 'up', 'very', 'was', "wasn't", 'we', "we'd", "we'll", "we're", "we've", 'were',
+  "weren't", 'what', "what's", 'when', "when's", 'where', "where's", 'which', 'while', 'who', "who's",
+  'whom', 'why', "why's", 'with', "won't", 'would', "wouldn't", 'you', "you'd", "you'll", "you're",
+  "you've", 'your', 'yours', 'yourself', 'yourselves', 'like', 'really', 'also'
+]);
+
+function extractWordFrequencies(answers) {
+  const counts = new Map();
+  for (const text of answers) {
+    if (!text || typeof text !== 'string') continue;
+    const tokens = text.toLowerCase()
+      .replace(/[^\p{L}\p{N}\s'-]/gu, ' ')
+      .split(/[\s,.;:!?()"'`/\\]+/)
+      .map((w) => w.trim().replace(/^['"-]+|['"-]+$/g, ''))
+      .filter((w) => w.length > 1 && !POLL_STOP_WORDS.has(w));
+    for (const token of tokens) {
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .map(([word, count]) => ({ word, count }))
+    .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word));
+}
+
 // The join card (QR + code) is what's on screen while a poll is collecting
 // answers; opts.getPollJoinUrl(pollId) supplies the URL since the renderer
 // itself has no access to cfg. Reveal is a separate, explicit action (never
@@ -554,6 +590,43 @@ function renderPoll(item, opts) {
     if (it.kind === 'text') {
       const hidden = new Set(it.hiddenAnswers || []);
       const answers = (it.answers || []).filter((_, i) => !hidden.has(i));
+      if (it.viewMode === 'cloud') {
+        const words = extractWordFrequencies(answers);
+        if (!words.length) {
+          results.replaceChildren(el('div', { class: 'r-poll-answer r-poll-empty' }, answers.length ? 'No keywords found' : 'No answers yet'));
+          return;
+        }
+        const maxCount = Math.max(1, ...words.map((w) => w.count));
+        const minCount = Math.min(...words.map((w) => w.count));
+        const palette = [
+          'var(--accent)',
+          'var(--ok)',
+          'var(--cue)',
+          '#a78bfa',
+          '#38bdf8',
+          '#fb7185',
+          '#f472b6',
+          '#2dd4bf',
+          '#fb923c',
+        ];
+        const cloud = el('div', { class: 'r-poll-cloud' });
+        const items = words.map(({ word, count }, i) => {
+          const ratio = maxCount === minCount ? 0.5 : (count - minCount) / (maxCount - minCount);
+          const fontSize = `clamp(${Math.round(16 + ratio * 18)}px, ${Number((2.2 + ratio * 4.3).toFixed(1))}cqw, ${Math.round(28 + ratio * 48)}px)`;
+          const color = palette[i % palette.length];
+          return el('span', {
+            class: 'r-poll-cloud-word',
+            style: `font-size: ${fontSize}; color: ${color};`,
+            title: `${count} mention${count === 1 ? '' : 's'}`,
+          },
+            el('span', { class: 'r-poll-cloud-text' }, word),
+            count > 1 ? el('span', { class: 'r-poll-cloud-count' }, String(count)) : ''
+          );
+        });
+        cloud.replaceChildren(...items);
+        results.replaceChildren(cloud);
+        return;
+      }
       results.replaceChildren(...(answers.length
         ? answers.map((a) => el('div', { class: 'r-poll-answer' }, a))
         : [el('div', { class: 'r-poll-answer r-poll-empty' }, 'No answers yet')]));

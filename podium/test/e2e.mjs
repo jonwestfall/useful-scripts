@@ -4812,6 +4812,21 @@ await screen.waitForFunction(() => document.querySelector('.r-poll')?.classList.
 const shown = await screen.$$eval('.r-poll-answer', (els) => els.map((e) => e.textContent));
 ok(`the hidden answer never reaches the room (shown: ${shown.join(',')})`, shown.length === 1 && shown[0] === 'seen');
 
+ok('Word cloud view button is available for short-answer text polls',
+  await pad.evaluate(() => !document.querySelector('#poll-toggle-view').hidden));
+await pad.click('#poll-toggle-view');
+await screen.waitForFunction(() => document.querySelector('.r-poll-cloud'), null, { timeout: 5000 });
+ok('toggling to word cloud renders .r-poll-cloud on the projector',
+  await screen.evaluate(() => document.querySelector('.r-poll-cloud') !== null));
+ok('word cloud reflects the non-hidden answer ("seen")',
+  await screen.evaluate(() => document.querySelector('.r-poll-cloud-word')?.textContent.includes('seen')));
+await pad.waitForFunction(() => document.querySelector('#poll-toggle-view')?.textContent.includes('List view'), null, { timeout: 5000 });
+ok('and the Word cloud button on the pad now reads List view', true);
+await pad.click('#poll-toggle-view');
+await screen.waitForFunction(() => document.querySelector('.r-poll-answer'), null, { timeout: 5000 });
+ok('toggling back restores the list view',
+  await screen.evaluate(() => document.querySelectorAll('.r-poll-answer').length === 1));
+
 await pad.click('#poll-end');
 await pad.click('#poll-end');
 await pad.waitForSelector('#poll-history .poll-history-row', { timeout: 5000 });

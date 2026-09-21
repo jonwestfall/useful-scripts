@@ -279,6 +279,7 @@ function normalizeItem(item) {
       ? [...new Set(copy.hiddenAnswers.map((i) => Math.trunc(Number(i))).filter((i) => i >= 0 && i < copy.answers.length))]
       : [];
     copy.qnaFeed = copy.kind === 'qna' ? (Array.isArray(copy.qnaFeed) ? copy.qnaFeed : []) : [];
+    copy.viewMode = copy.viewMode === 'cloud' ? 'cloud' : 'list';
     // Whether the join card spells out the URL under the QR, alongside the
     // four-letter code - a controller-local presentation preference (see
     // control.js's `presentation` prefs), decided once by whoever composes
@@ -906,6 +907,8 @@ export function applyCommand(state, cmd) {
         const hidden = new Set(item.hiddenAnswers || []);
         if (cmd.value) hidden.add(index); else hidden.delete(index);
         item.hiddenAnswers = [...hidden];
+      } else if (cmd.action === 'viewMode') {
+        item.viewMode = cmd.value === 'cloud' ? 'cloud' : 'list';
       } else {
         return false;
       }

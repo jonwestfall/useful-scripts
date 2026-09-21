@@ -359,6 +359,45 @@ dl.keys dd { margin: 0; color: var(--dim); }
 .r-poll-answer { font-size: clamp(9px, 2.6cqw, 34px); background: #151b23; border-radius: 1.2cqh; padding: 1.2cqh 1.8cqw; text-align: left; }
 .r-poll-answer.r-poll-empty { color: var(--dim); text-align: center; }
 
+.r-poll-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2cqh 2cqw;
+  padding: 2cqh 3cqw;
+  max-width: 90cqw;
+  max-height: 70cqh;
+  overflow: auto;
+  text-align: center;
+}
+.r-poll-cloud-word {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25em;
+  font-weight: 700;
+  line-height: 1.15;
+  padding: 0.2em 0.4em;
+  border-radius: 0.5em;
+  user-select: none;
+  transition: transform 0.15s ease;
+}
+.r-poll-cloud-word:hover {
+  transform: scale(1.06);
+}
+.r-poll-cloud-count {
+  font-size: 0.5em;
+  font-weight: 700;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, 0.12);
+  padding: 0.1em 0.4em;
+  border-radius: 999px;
+}
+:root[data-theme="light"] .r-poll-cloud-count {
+  background: rgba(0, 0, 0, 0.08);
+}
+
 .r-camera { background: #000; }
 .r-camera-hint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: clamp(9px, 2.2cqw, 22px); text-align: center; padding: 0 4cqw; }
 .r-camera.has-stream .r-camera-hint { display: none; }

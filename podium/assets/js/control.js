@@ -2530,6 +2530,12 @@ function renderRunningPoll(item) {
     if (pollTickTimer) { clearInterval(pollTickTimer); pollTickTimer = null; }
   }
   $('#poll-toggle-reveal').textContent = item.revealed ? 'Hide from room' : 'Reveal to room';
+  if (item.kind === 'text') {
+    $('#poll-toggle-view').hidden = false;
+    $('#poll-toggle-view').textContent = item.viewMode === 'cloud' ? 'List view' : 'Word cloud';
+  } else {
+    $('#poll-toggle-view').hidden = true;
+  }
   $('#poll-action-error').hidden = !pollActionError;
   $('#poll-action-error').textContent = pollActionError;
 
@@ -4471,6 +4477,12 @@ $('#poll-timer-30').addEventListener('click', () => setPollClosesAt(30));
 $('#poll-timer-60').addEventListener('click', () => setPollClosesAt(60));
 $('#poll-timer-120').addEventListener('click', () => setPollClosesAt(120));
 $('#poll-toggle-reveal').addEventListener('click', togglePollReveal);
+$('#poll-toggle-view')?.addEventListener('click', () => {
+  const item = findPollItem();
+  if (item && item.kind === 'text') {
+    send({ op: 'poll', pollId: item.pollId, action: 'viewMode', value: item.viewMode === 'cloud' ? 'list' : 'cloud' });
+  }
+});
 $('#poll-export').addEventListener('click', exportPollCsv);
 // wireDangerButton leaves a button disabled after a successful action - right
 // for the settings reset it was written for, wrong here: a session with
