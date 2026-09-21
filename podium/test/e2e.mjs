@@ -5483,6 +5483,49 @@ await pad.waitForFunction(() => /Loaded/.test(document.querySelector('#plan-note
 ok(`opening it in class needs no file at all ("${(await pad.textContent('#plan-note')).trim()}")`,
   /Day 6 — sent, not carried/.test(await pad.textContent('#plan-note')));
 
+// -- Issue #88: overwrite and delete a plan already on the server ------------
+//
+// planner's second push above (the "not-a-real-course" one) is the plan under
+// test here - a private one nothing else in this section reads from, so
+// updating and deleting it cannot disturb "Day 6 — sent, not carried" itself,
+// which the controller just opened and the rest of this section still needs.
+ok('pushing a second time left Update visible for what it just created',
+  await planner.isVisible('#plan-push-update'));
+
+await planner.fill('#plan-title', 'Day 6 — sent, not carried (revised)');
+await planner.click('#plan-push-update');
+await planner.waitForFunction(() => /Updated/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+
+const afterUpdate = await planner.evaluate(async () => {
+  const res = await fetch('/api/plans', { credentials: 'same-origin' });
+  return (await res.json()).plans;
+});
+ok('Update overwrote the same server row rather than creating another (still 2 of planner\'s own plans)',
+  afterUpdate.filter((p) => /sent, not carried/.test(p.title)).length === 2);
+ok('and the title on the server actually changed',
+  afterUpdate.some((p) => p.title === 'Day 6 — sent, not carried (revised)'));
+
+const revisedId = afterUpdate.find((p) => p.title === 'Day 6 — sent, not carried (revised)').id;
+await planner.selectOption('#plan-pull-pick', String(revisedId));
+await planner.click('#plan-pull-delete');
+await planner.waitForFunction(() => /Tap again to delete/.test(document.querySelector('#plan-pull-delete')?.textContent || ''), null, { timeout: 3000 });
+ok('deleting a server plan asks twice, like other destructive buttons here', true);
+await planner.click('#plan-pull-delete');
+await planner.waitForFunction(() => /Removed/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+
+const afterDelete = await planner.evaluate(async () => {
+  const res = await fetch('/api/plans', { credentials: 'same-origin' });
+  return (await res.json()).plans;
+});
+ok('the deleted plan is actually gone from the server, not just the picker',
+  !afterDelete.some((p) => p.id === revisedId));
+ok('and the OTHER plan this section still needs is untouched',
+  afterDelete.some((p) => p.title === 'Day 6 — sent, not carried'));
+ok('Update button hides itself once the plan it pointed at is gone',
+  await planner.isHidden('#plan-push-update'));
+ok('and the button re-arms for the next lecture rather than staying locked',
+  await planner.isEnabled('#plan-pull-delete') && await planner.textContent('#plan-pull-delete') === 'Delete from server');
+
 await planner.close();
 
 // The second half: a device nobody has configured sets itself up from the

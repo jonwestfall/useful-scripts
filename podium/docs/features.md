@@ -161,3 +161,4 @@ The **Plan** page (`plan.html`) is designed for your office computer:
 - Drag-and-drop your slides, PDFs, YouTube URLs, and notes into an ordered running order.
 - Test slide timings and configure timers.
 - Export as a single `.podium` file to load onto your iPad, or sync directly via the self-hosted server.
+- On a self-hosted server, **Update the copy already there** overwrites a lecture you previously sent instead of leaving a duplicate behind, and **Delete from server** removes one you no longer need — the plan file on your own machine, if you saved one, is untouched either way.
