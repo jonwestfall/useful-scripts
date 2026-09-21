@@ -5231,6 +5231,7 @@ $('#update-reload').addEventListener('click', () => {
 // (the Presentation tab) rather than a single quick-access toggle.
 const PRESENTATION_KEY = 'podium.presentation.v1';
 const PRESENTATION_DEFAULTS = {
+  theme: 'dark',
   showPollUrl: true,
   blankOnConnect: true,
   keepAwake: true,
@@ -5249,6 +5250,7 @@ function loadPresentation() {
   try {
     const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
     const merged = { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
+    if (!['dark', 'light', 'auto'].includes(merged.theme)) merged.theme = 'dark';
     if (merged.haptics === undefined) merged.haptics = true;
     if (merged.snapShapes === undefined) merged.snapShapes = true;
     if (!Array.isArray(merged.bottomSlots) || merged.bottomSlots.length !== 8) {
@@ -5638,12 +5640,33 @@ async function applyWakeLock() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') applyWakeLock(); });
 applyWakeLock();
 
+function applyTheme() {
+  const theme = presentation.theme || 'dark';
+  let effective = theme;
+  if (theme === 'auto') {
+    effective = (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  }
+  document.documentElement.dataset.theme = effective;
+  document.body.dataset.theme = effective;
+}
+if (typeof window !== 'undefined' && window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (presentation.theme === 'auto') applyTheme();
+  });
+}
+applyTheme();
+
 function settingsTab(name) {
   $$('#setup .settings-tabs .tab').forEach((b) => b.classList.toggle('is-on', b.dataset.settingsTab === name));
   $$('#setup [data-settings-panel]').forEach((p) => { p.hidden = p.dataset.settingsPanel !== name; });
 }
 $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () => settingsTab(b.dataset.settingsTab)));
 
+$('#pref-theme')?.addEventListener('change', (ev) => {
+  presentation.theme = ev.target.value;
+  savePresentation();
+  applyTheme();
+});
 $('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
 $('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
 $('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(); applyWakeLock(); });
@@ -5735,6 +5758,8 @@ function showSetup() {
   $('#app').hidden = true;
   $('#setup-close').hidden = !isConfigured(cfg);
   settingsTab('connection');
+  const prefTheme = $('#pref-theme');
+  if (prefTheme) prefTheme.value = presentation.theme || 'dark';
   $('#pref-poll-url').checked = presentation.showPollUrl;
   $('#pref-blank-on-connect').checked = presentation.blankOnConnect;
   $('#pref-keep-awake').checked = presentation.keepAwake;

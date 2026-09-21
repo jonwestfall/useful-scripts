@@ -945,6 +945,12 @@ await pad.uncheck('#pref-poll-url');
 ok('a preference is saved the moment it changes, with no Save button of its own',
   await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).showPollUrl === false));
 
+ok('theme defaults to dark', await pad.evaluate(() => (document.documentElement.dataset.theme || 'dark') === 'dark'));
+await pad.selectOption('#pref-theme', 'light');
+ok('picking light theme applies data-theme="light" immediately and persists',
+  await pad.evaluate(() => document.documentElement.dataset.theme === 'light' && JSON.parse(localStorage.getItem('podium.presentation.v1')).theme === 'light'));
+await pad.selectOption('#pref-theme', 'dark');
+
 await pad.click('#setup-close');
 await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
 await pad.waitForSelector('.tile', { timeout: 15000 });

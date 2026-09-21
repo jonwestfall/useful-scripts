@@ -15,6 +15,14 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>
+try {
+  const p = JSON.parse(localStorage.getItem('podium.presentation.v1') || '{}');
+  const t = p.theme || 'dark';
+  const eff = t === 'auto' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : t;
+  if (eff === 'light') document.documentElement.dataset.theme = 'light';
+} catch {}
+</script>
 </head>
 <body class="control">
 
@@ -845,6 +853,18 @@
         Defaults for how <b>this device</b> presents — saved here only, nothing shared
         with other controllers or written into the room.
       </p>
+
+      <div class="field" style="margin-top:12px;">
+        <label for="pref-theme">Controller theme</label>
+        <select id="pref-theme" class="grow">
+          <option value="dark">Dark (default)</option>
+          <option value="light">Light / High contrast</option>
+          <option value="auto">Auto (match system)</option>
+        </select>
+        <p class="hint">
+          Light theme uses a clean, high-contrast palette for bright classrooms, outdoor lectures, or rooms with window glare.
+        </p>
+      </div>
 
       <label class="check"><input id="pref-poll-url" type="checkbox"> Show the voting URL below the QR code</label>
       <p class="hint">
