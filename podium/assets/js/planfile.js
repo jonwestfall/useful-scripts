@@ -56,13 +56,23 @@ export const PLAN_TYPES = {
     label: 'Text sign', icon: 'T',
     blurb: 'Big words on the screen: a title card, "Back in 5", an instruction to a group.',
     fields: [
-      { key: 'body', label: 'What it says', kind: 'textarea', placeholder: '**Group work**\nCompare your two coding schemes',
-        hint: '**bold**, *italic*, `code`. Line breaks are kept.' },
+      { key: 'body', label: 'What it says', kind: 'textarea', placeholder: '# Group work\nCompare your two coding schemes\n\n- Step one\n- Step two',
+        hint: '# Heading, ## Subheading, **bold**, *italic*, `code`, - bullet (or *), 1. numbered. Line breaks are kept.' },
       { key: 'size', label: 'Size', kind: 'select', def: 'l',
         options: [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Huge']] },
       { key: 'align', label: 'Align', kind: 'select', def: 'center',
         options: [['center', 'Centred'], ['left', 'Left']] },
+      // Issue #103. Five system-font stacks rather than a webfont download -
+      // every other page in Podium runs offline-first, and this one is no
+      // exception.
+      { key: 'font', label: 'Font', kind: 'select', def: 'sans',
+        options: [['sans', 'Sans'], ['serif', 'Serif'], ['mono', 'Monospace'], ['rounded', 'Rounded'], ['display', 'Bold display']] },
       { key: 'bg', label: 'Background', kind: 'color', def: '' },
+      // Same field, same key ('src'), same kind ('image') the 'image' type
+      // above already uses - imageField() already supports an upload or a
+      // typed server path either way, so this needs nothing new there.
+      { key: 'src', label: 'Picture (optional)', kind: 'image', asset: true },
+      { key: 'caption', label: 'Caption', kind: 'text', placeholder: 'Figure 1: …' },
     ],
   },
   timer: {

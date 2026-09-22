@@ -99,13 +99,20 @@ chk('every loaded item has an id, so the editor can address it',
   messy.plan.items.every((i) => typeof i.id === 'string' && i.id.length > 0));
 
 // Fields belonging to some other type must not ride along: the display would
-// take `playing` or `fit` on a text sign at face value.
+// take `playing` or `fit` on a text sign at face value. `src` is different
+// now that Issue #103 gave a text sign its own optional picture: it is a
+// declared field, so it survives - but still through the same safeSrc()
+// check every other type's src already goes through (see below), which is
+// what turns this specific javascript: value into '' rather than dropping
+// the field outright.
 const smuggled = readPlan(JSON.stringify({
   podium: 'plan', v: 1,
   items: [{ type: 'text', body: 'hi', fit: 'cover', src: 'javascript:alert(1)', playing: true }],
 }));
 chk('fields that do not belong to the type are not carried through',
-  !('fit' in smuggled.plan.items[0]) && !('src' in smuggled.plan.items[0]) && !('playing' in smuggled.plan.items[0]));
+  !('fit' in smuggled.plan.items[0]) && !('playing' in smuggled.plan.items[0]));
+chk('but src DOES belong to a text sign now, sanitized the same as any other type\'s',
+  'src' in smuggled.plan.items[0] && smuggled.plan.items[0].src === '');
 
 // A plan is a file that came from somewhere else, and its src values end up in
 // an <img> or an <iframe> on a screen nobody is standing in front of.

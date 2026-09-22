@@ -217,6 +217,20 @@ async function pollUntil(page, fn, arg, { timeout = 15000, interval = 300 } = {}
   }
 }
 
+// A browser normalizes a hex colour assigned to .style.background into its
+// own serialization (rgb(...)) before it is readable back off the element, so
+// compare against what THIS browser does with the same hex rather than
+// guessing its format.
+const bgMatches = (page, selector, hex) => page.evaluate(({ selector, hex }) => {
+  const probe = document.createElement('div');
+  probe.style.background = hex;
+  document.body.append(probe);
+  const want = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  const got = getComputedStyle(document.querySelector(selector)).backgroundColor;
+  return got === want;
+}, { selector, hex });
+
 // Iterating on one section without sitting through the other thirty:
 //
 //   node podium/test/e2e.mjs --only ink        every section with "ink" in its name
@@ -941,8 +955,9 @@ await setupPad.goto(`${BASE}/control.html`);
 await setupPad.waitForSelector('.tile');
 await setupPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
 await setupPad.click('.tab[data-tab="say"]');
-await setupPad.fill('#text-body', 'Before the presenter arrives');
-await setupPad.click('#text-form button[type=submit]');
+await setupPad.click('#text-open-editor');
+await setupPad.fill('#msg-body', 'Before the presenter arrives');
+await setupPad.click('#message-editor-show');
 await screen.waitForSelector('.layer[data-role="program"] .r-text', { timeout: 5000 });
 await setupPad.close();
 
@@ -1236,8 +1251,9 @@ ok('and never spills into the pillarbox margin outside it', !paintedInMargin);
 
 // Switching to unrelated content shows a blank surface, not the deck's ink.
 await pad.click('.tab[data-tab="say"]');
-await pad.fill('#text-body', 'Back in 5');
-await pad.click('#text-form button[type=submit]');
+await pad.click('#text-open-editor');
+await pad.fill('#msg-body', 'Back in 5');
+await pad.click('#message-editor-show');
 await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-text'), null, { timeout: 5000 });
 await screen.waitForTimeout(400);
 ok('switching to a text message clears the ink layer visually', !(await screen.evaluate(() => document.querySelector('#ink').classList.contains('has-ink'))));
@@ -2928,8 +2944,9 @@ await pad.click('#freeze');
 await pad.click('.panel-btn:text-is("C")');
 await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'C', null, { timeout: 3000 });
 await pad.click('.tab[data-tab="say"]');
-await pad.fill('#text-body', 'Discuss in your groups');
-await pad.$eval('#text-form', (f) => f.requestSubmit());
+await pad.click('#text-open-editor');
+await pad.fill('#msg-body', 'Discuss in your groups');
+await pad.$eval('#message-editor-form', (f) => f.requestSubmit());
 await screen.waitForFunction(() => document.querySelector('[data-panel="c"] .r-text'), null, { timeout: 5000 });
 ok('freeze does not gate a focused B/C/D panel either - nothing to protect, it was never cued', true);
 await pad.click('#freeze');
@@ -3404,6 +3421,29 @@ await desk.fill('#item-fields textarea', 'Welcome');
 await desk.fill('#item-fields input[type=text]', 'Title card');
 const previewText = await desk.textContent('#item-preview');
 ok(`the preview is the projector's own renderer, not a mock-up ("${previewText.trim()}")`, /Welcome/.test(previewText));
+
+// Issue #103: headings, lists, a font choice, a background colour and an
+// inline picture with caption, all editable from a declarative field list
+// (see PLAN_TYPES.text in planfile.js) with no new editor code of its own.
+await desk.fill('#item-fields textarea', '# Group work\nCompare your two coding schemes\n\n- Step one\n- Step two');
+let richPreview = await desk.innerHTML('#item-preview');
+ok('a heading in the body renders as a real heading, not a plain line', /<h1>Group work<\/h1>/.test(richPreview));
+ok('and a bullet list renders as a real list, not <br>-joined text',
+  /<ul class="mini-md-list"><li>Step one<\/li><li>Step two<\/li><\/ul>/.test(richPreview));
+
+await desk.locator('#item-fields select').nth(2).selectOption('mono'); // size, align, font
+ok('the chosen font reaches the preview', (await desk.getAttribute('#item-preview .r-text', 'data-font')) === 'mono');
+
+await desk.fill('#item-fields input[type=color]', '#224466');
+ok('a background colour reaches the preview, the same renderer style the display will use',
+  await bgMatches(desk, '#item-preview .r-text', '#224466'));
+
+await desk.setInputFiles('#item-fields input[type=file]', photoFile);
+await desk.waitForFunction(() => /after resizing/.test(document.body.textContent), null, { timeout: 20000 });
+await desk.locator('#item-fields input[type=text]').last().fill('Figure 1: the setup');
+await desk.waitForFunction(() => !!document.querySelector('#item-preview .r-text-image')?.getAttribute('src'), null, { timeout: 10000 });
+ok('the uploaded picture shows in the preview, not just a filename', !!(await desk.getAttribute('#item-preview .r-text-image', 'src')));
+ok('and its caption underneath', (await desk.textContent('#item-preview .r-text-caption')).includes('Figure 1: the setup'));
 
 await desk.click('#type-picker .type-btn:has-text("Photo")');
 await desk.setInputFiles('#item-fields input[type=file]', photoFile);
@@ -6603,6 +6643,109 @@ await small.waitForSelector('#setup:not([hidden])');
 ok('and stays hidden on a screen wide enough not to need it', await small.isHidden('.setup-top-actions'));
 
 await smallCtx.close();
+}
+
+if (want('full-screen message editor')) {
+console.log('\n-- full-screen message editor (Issue #103) --');
+// The Say tab's old plain textarea+size form is now a "Compose a
+// message..." button that opens a real editor - headings, bulleted or
+// numbered lists, a font, a background colour and an inline picture with
+// caption - previewed live with the projector's own renderer before any
+// of it reaches the display.
+const msgCtx = await browser.newContext();
+await msgCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'message-editor-room', passphrase: 'compose it first' }));
+
+const msgScreen = await msgCtx.newPage();
+trap(msgScreen, 'message editor display');
+await msgScreen.goto(`${BASE}/display.html`);
+await msgScreen.click('#arm-button');
+await msgScreen.waitForSelector('#hud[data-status="online"]');
+
+const msgPad = await msgCtx.newPage();
+trap(msgPad, 'message editor pad');
+await msgPad.goto(`${BASE}/control.html`);
+await msgPad.waitForSelector('.tile');
+await msgPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await msgPad.click('.tab[data-tab="say"]');
+
+ok('the Say tab offers a Compose button rather than a bare textarea', await msgPad.isVisible('#text-open-editor'));
+await msgPad.click('#text-open-editor');
+await msgPad.waitForSelector('#message-editor:not([hidden])');
+ok('opening it shows the editor sheet', await msgPad.isVisible('#message-editor .card'));
+
+const msgImage = writeImageFixture();
+await msgPad.fill('#msg-body', '# Group work\nCompare your two coding schemes\n\n1. Read the prompt\n2. Discuss in pairs');
+await msgPad.selectOption('#msg-size', 's');
+await msgPad.selectOption('#msg-align', 'left');
+await msgPad.selectOption('#msg-font', 'display');
+await msgPad.click('#msg-bg-swatches .bg-swatch[title="Navy"]');
+await msgPad.setInputFiles('#msg-image', msgImage);
+await msgPad.waitForFunction(() => /attached/.test(document.querySelector('#msg-image-note')?.textContent || ''), null, { timeout: 10000 });
+await msgPad.fill('#msg-caption', 'Figure 1: the setup');
+
+const liveHtml = await msgPad.innerHTML('#message-preview-box');
+ok('the live preview is the projector\'s own renderer, updated as you type - heading', /<h1>Group work<\/h1>/.test(liveHtml));
+ok('...a numbered list', /<ol class="mini-md-list"><li>Read the prompt<\/li><li>Discuss in pairs<\/li><\/ol>/.test(liveHtml));
+ok('...the chosen font', (await msgPad.getAttribute('#message-preview-box .r-text', 'data-font')) === 'display');
+ok('...the chosen size', (await msgPad.getAttribute('#message-preview-box .r-text', 'data-size')) === 's');
+ok('...the chosen background', await bgMatches(msgPad, '#message-preview-box .r-text', '#0b1e3d'));
+ok('...the picture', !!(await msgPad.getAttribute('#message-preview-box .r-text-image', 'src')));
+ok('...and its caption', (await msgPad.textContent('#message-preview-box .r-text-caption')).includes('Figure 1: the setup'));
+ok('picking a preset swatch marks it selected, not the custom picker',
+  (await msgPad.evaluate(() => document.querySelector('.bg-swatch[title="Navy"]').classList.contains('is-on')))
+  && !(await msgPad.evaluate(() => document.querySelector('#msg-bg-custom-label').classList.contains('is-on'))));
+
+// The custom colour picker is a real alternative to the presets, not a dead end.
+await msgPad.evaluate(() => {
+  const input = document.querySelector('#msg-bg-custom');
+  input.value = '#552266';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+});
+ok('a custom colour deselects every preset swatch',
+  await msgPad.evaluate(() => ![...document.querySelectorAll('.bg-swatch')].some((b) => b.classList.contains('is-on'))));
+ok('and switches the custom picker on instead', await msgPad.evaluate(() => document.querySelector('#msg-bg-custom-label').classList.contains('is-on')));
+ok('the preview reflects the custom colour', await bgMatches(msgPad, '#message-preview-box .r-text', '#552266'));
+
+// Cancel closes without staging anything to the projector.
+await msgPad.click('#message-editor-cancel');
+ok('Cancel closes the editor', await msgPad.isHidden('#message-editor'));
+ok('and nothing was staged - the display still has no message', !(await msgScreen.evaluate(() => !!document.querySelector('.layer[data-role="program"] .r-text'))));
+
+// Escape does the same.
+await msgPad.click('#text-open-editor');
+await msgPad.waitForSelector('#message-editor:not([hidden])');
+await msgPad.keyboard.press('Escape');
+ok('Escape closes the editor too', await msgPad.isHidden('#message-editor'));
+ok('still nothing staged', !(await msgScreen.evaluate(() => !!document.querySelector('.layer[data-role="program"] .r-text'))));
+
+// Clicking the backdrop, outside the card, does the same.
+await msgPad.click('#text-open-editor');
+await msgPad.waitForSelector('#message-editor:not([hidden])');
+await msgPad.click('#message-editor', { position: { x: 4, y: 4 } });
+ok('clicking outside the card closes it without staging',
+  (await msgPad.isHidden('#message-editor')) && !(await msgScreen.evaluate(() => !!document.querySelector('.layer[data-role="program"] .r-text'))));
+
+// Show actually stages it, and what lands on the projector is exactly what
+// the preview promised - same renderer, same fields, all the way from the
+// editor's form fields to normalizeItem's 'text' branch to the display.
+await msgPad.click('#text-open-editor');
+await msgPad.waitForSelector('#message-editor:not([hidden])');
+await msgPad.click('#message-editor-show');
+ok('Show closes the editor', await msgPad.isHidden('#message-editor'));
+await msgScreen.waitForSelector('.layer[data-role="program"] .r-text', { timeout: 5000 });
+const onScreen = await msgScreen.innerHTML('.layer[data-role="program"] .r-text');
+ok('the heading reaches the projector', /<h1>Group work<\/h1>/.test(onScreen));
+ok('the numbered list reaches the projector', /<ol class="mini-md-list"><li>Read the prompt<\/li><li>Discuss in pairs<\/li><\/ol>/.test(onScreen));
+ok('the picture and caption reach the projector',
+  !!(await msgScreen.getAttribute('.layer[data-role="program"] .r-text-image', 'src'))
+  && (await msgScreen.textContent('.layer[data-role="program"] .r-text-caption')).includes('Figure 1: the setup'));
+ok('the font/size/background reach the projector, the same values chosen in the editor',
+  (await msgScreen.getAttribute('.layer[data-role="program"] .r-text', 'data-font')) === 'display'
+  && (await msgScreen.getAttribute('.layer[data-role="program"] .r-text', 'data-size')) === 's'
+  && await bgMatches(msgScreen, '.layer[data-role="program"] .r-text', '#552266'));
+
+await msgCtx.close();
 }
 
 if (want('back to the landing page')) {

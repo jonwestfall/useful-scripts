@@ -409,18 +409,15 @@ try {
 
         <!-- Say: big text, lower third, QR -->
         <section class="panel" data-panel="say" hidden>
-          <form id="text-form" class="stack">
-            <label for="text-body">Full-screen message</label>
-            <textarea id="text-body" placeholder="Back in 5 minutes"></textarea>
-            <div class="inline">
-              <select id="text-size" class="grow">
-                <option value="m">Medium</option>
-                <option value="l" selected>Large</option>
-                <option value="xl">Huge</option>
-              </select>
-              <button type="submit">Show</button>
-            </div>
-          </form>
+          <div class="stack">
+            <label>Full-screen message</label>
+            <p class="hint">
+              A title card, "Back in 5 minutes", instructions for a group - with headings,
+              lists, a background colour, a font, and an optional picture if you want them
+              (Issue #103).
+            </p>
+            <button id="text-open-editor" type="button" class="big-button">Compose a message…</button>
+          </div>
           <form id="overlay-form" class="stack">
             <label for="overlay-text">Caption along the bottom (stays over anything)</label>
             <div class="inline">
@@ -1192,6 +1189,83 @@ try {
     </p>
 
     <button type="button" id="setup-close" hidden>Close</button>
+  </div>
+</div>
+
+<!-- Modal: Compose full-screen message (Issue #103) -->
+<div id="message-editor" class="sheet" hidden>
+  <div class="card">
+    <h1>Full-screen message</h1>
+    <form id="message-editor-form">
+      <div class="field">
+        <label for="msg-body">What it says</label>
+        <textarea id="msg-body" rows="6" placeholder="# Group work&#10;Compare your two coding schemes&#10;&#10;- Step one&#10;- Step two"></textarea>
+        <p class="hint">
+          <code># Heading</code>, <code>## Subheading</code>, <code>**bold**</code>, <code>*italic*</code>,
+          <code>`code`</code>, <code>- bullet</code> (or <code>*</code>), <code>1. numbered</code>. Line breaks are kept.
+        </p>
+      </div>
+      <div class="inline">
+        <div class="field grow">
+          <label for="msg-size">Size</label>
+          <select id="msg-size">
+            <option value="s">Small</option>
+            <option value="m">Medium</option>
+            <option value="l" selected>Large</option>
+            <option value="xl">Huge</option>
+          </select>
+        </div>
+        <div class="field grow">
+          <label for="msg-align">Align</label>
+          <select id="msg-align">
+            <option value="center" selected>Centred</option>
+            <option value="left">Left</option>
+          </select>
+        </div>
+        <div class="field grow">
+          <label for="msg-font">Font</label>
+          <select id="msg-font">
+            <option value="sans" selected>Sans</option>
+            <option value="serif">Serif</option>
+            <option value="mono">Monospace</option>
+            <option value="rounded">Rounded</option>
+            <option value="display">Bold display</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Background</label>
+        <div class="inline" id="msg-bg-swatches" role="group" aria-label="Background colour">
+          <button type="button" class="bg-swatch is-on" data-bg="" style="background:#0a0d12" title="Default"></button>
+          <button type="button" class="bg-swatch" data-bg="#0b1e3d" style="background:#0b1e3d" title="Navy"></button>
+          <button type="button" class="bg-swatch" data-bg="#132a1c" style="background:#132a1c" title="Forest"></button>
+          <button type="button" class="bg-swatch" data-bg="#3a0f1c" style="background:#3a0f1c" title="Maroon"></button>
+          <button type="button" class="bg-swatch" data-bg="#2a1436" style="background:#2a1436" title="Plum"></button>
+          <label id="msg-bg-custom-label" class="bg-swatch-picker" title="Custom">
+            <span class="bg-swatch-picker-inner"></span>
+            <input id="msg-bg-custom" type="color" value="#0a0d12">
+          </label>
+        </div>
+      </div>
+      <div class="field">
+        <label>Picture (optional)</label>
+        <div class="inline">
+          <label class="filebtn grow" for="msg-image">Upload a picture…</label>
+          <input id="msg-image" type="file" accept="image/*" hidden>
+          <button id="msg-image-clear" type="button" hidden>Remove picture</button>
+        </div>
+        <input id="msg-caption" type="text" placeholder="Caption (optional)" style="margin-top:8px" hidden>
+        <p class="hint" id="msg-image-note"></p>
+      </div>
+      <div class="field">
+        <label>Preview</label>
+        <div id="message-preview-box"></div>
+      </div>
+      <div class="row" style="margin-top:18px">
+        <button id="message-editor-show" type="submit" class="is-on">Show</button>
+        <button id="message-editor-cancel" type="button">Cancel</button>
+      </div>
+    </form>
   </div>
 </div>
 
