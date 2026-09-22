@@ -750,7 +750,15 @@ const rooms = new Map();
 // connection under a NEW room name every time, faster than sockets can be
 // reaped. In memory, keyed by IP, bounded and self-forgetting on restart -
 // the same shape as accounts.js's login throttle, for the same reasons.
-const MAX_UPGRADES_PER_IP = Number(process.env.MAX_UPGRADES_PER_IP || 30);
+//
+// High enough that it is never the legitimate case: behind a building-wide
+// NAT or campus proxy, many classrooms' controllers and displays can share
+// one apparent IP, and a network blip has all of them reconnecting inside
+// the same minute - the full e2e suite itself does exactly this against one
+// shared relay and needed raising this once already. A scripted flood still
+// hits this ceiling within a second or two; a room full of reconnecting
+// devices never gets near it.
+const MAX_UPGRADES_PER_IP = Number(process.env.MAX_UPGRADES_PER_IP || 300);
 const UPGRADE_WINDOW_MS = Number(process.env.UPGRADE_WINDOW_MS || 60 * 1000);
 const MAX_TRACKED_IPS = 5000;
 const upgradeAttempts = new Map();
