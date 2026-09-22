@@ -226,7 +226,12 @@ own `integrity_check` and foreign keys, free disk, whether the data directory is
 still `0700`, media files with no row and rows with no file, whether anybody is
 left who can administer this from a browser, what storage is being used against
 the retention setting, **whether a backup has ever actually run and how stale
-the newest one is**, certificate expiry, and whether the service answers.
+the newest one is**, certificate expiry, whether the service answers over
+plain HTTP, and **whether the WebSocket relay itself actually relays** - two
+real sockets round-trip a message through a throwaway room, which `/healthz`
+alone cannot prove (a broken reverse-proxy Upgrade header, or a firewall rule
+scoped to one protocol, can leave HTTP green while every room is silently cut
+off).
 
 And one that is easy to miss and costs an afternoon: **the build the running
 process is serving versus the release that is deployed.** `current` is a symlink,
