@@ -6844,6 +6844,52 @@ ok('the font/size/background reach the projector, the same values chosen in the 
 await msgCtx.close();
 }
 
+if (want('display assetStore evicts old entries, not the one on screen')) {
+console.log('\n-- Issue #120: display.js prunes its assetStore instead of growing forever --');
+// The cap is overridden small (see MAX_ASSET_ENTRIES in display.js) so this
+// proves real eviction with a handful of pictures rather than the 40+ a
+// production-sized run would need.
+const evictCtx = await browser.newContext();
+await evictCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'asset-evict-room', passphrase: 'oldest first out' }));
+await evictCtx.addInitScript(() => { window.__PODIUM_TEST_MAX_ASSET_ENTRIES__ = 3; });
+
+const evictScreen = await evictCtx.newPage();
+trap(evictScreen, 'asset-evict display');
+await evictScreen.goto(`${BASE}/display.html`);
+await evictScreen.click('#arm-button');
+await evictScreen.waitForSelector('#hud[data-status="online"]');
+
+const evictPad = await evictCtx.newPage();
+trap(evictPad, 'asset-evict pad');
+await evictPad.goto(`${BASE}/control.html`);
+await evictPad.waitForSelector('.tile');
+await evictPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const evictImage = writeImageFixture();
+// One picture staged five times over, each its own fresh asset id (uid()
+// mints a new one per upload even for identical bytes) - well past the cap
+// of 3, so eviction has to actually run, more than once, for this to pass.
+for (let i = 1; i <= 5; i++) {
+  await evictPad.click('.tab[data-tab="say"]');
+  await evictPad.click('#text-open-editor');
+  await evictPad.fill('#msg-body', `Picture ${i}`);
+  await evictPad.setInputFiles('#msg-image', evictImage);
+  await evictPad.waitForFunction(() => /attached/.test(document.querySelector('#msg-image-note')?.textContent || ''), null, { timeout: 10000 });
+  await evictPad.click('#message-editor-show');
+  await evictScreen.waitForFunction((n) => document.querySelector('.layer[data-role="program"] .r-text-body')?.textContent === `Picture ${n}`, i, { timeout: 5000 });
+}
+
+const finalSize = await evictScreen.evaluate(() => window.__podiumAssetStoreSize());
+ok(`five distinct pictures staged over a cap of 3 leaves the store at the cap, not five (${finalSize})`, finalSize <= 3);
+ok('the picture actually on screen right now was never evicted to get there',
+  !!(await evictScreen.getAttribute('.layer[data-role="program"] .r-text-image', 'src')));
+ok('and it is real image data, not the blank-pixel placeholder a miss would show',
+  (await evictScreen.getAttribute('.layer[data-role="program"] .r-text-image', 'src')).startsWith('data:image/jpeg'));
+
+await evictCtx.close();
+}
+
 if (want('back to the landing page')) {
 console.log('\n-- back to the landing page --');
 const ctx = await browser.newContext();

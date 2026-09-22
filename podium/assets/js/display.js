@@ -103,6 +103,55 @@ function resolveAssets(item) {
   return { ...item, src: BLANK_PIXEL };
 }
 
+// Issue #120: unlike control.js's own assetStore (pruned on photo-drop and on
+// leaving a plan - see forgetPlanAssets/addPhoto there), this one only ever
+// grew - every photo, camera still and watermark shown over a session that is
+// meant to stay open for hours accumulated here with no way out.
+//
+// A count cap rather than a byte budget, matching the same choice control.js
+// already made for its own photo strip (MAX_PHOTOS): simpler, and a data URL
+// downscaled for the relay is already capped small (see MAX_ASSET_CHARS in
+// planfile.js) so a count cap bounds total memory closely enough.
+//
+// Never evicts anything actually referenced right now - the current/cued
+// item on every panel, or the watermark - even if that pushes the store
+// briefly over the cap; only what nothing on screen needs any more. Losing
+// something NOT currently shown is harmless either way: resolveAssets() and
+// the 'asset'/'asset-need' exchange above already treat a cache miss as
+// normal and just ask again, the same tolerance that makes a controller
+// reloading mid-lecture work at all.
+// Overridable so an e2e test can prove eviction without staging 40+ photos
+// to reach it - unset in production, where this is always exactly 40.
+const MAX_ASSET_ENTRIES = Number(window.__PODIUM_TEST_MAX_ASSET_ENTRIES__) || 40;
+
+function referencedAssetIds() {
+  const ids = new Set();
+  const note = (item) => {
+    if (item?.src?.startsWith?.('asset:')) ids.add(item.src.slice(6));
+  };
+  note(state.program);
+  note(state.preview);
+  for (const panel of state.panels) note(panel);
+  if (state.watermark?.image?.startsWith('asset:')) ids.add(state.watermark.image.slice(6));
+  return ids;
+}
+
+function pruneAssetStore() {
+  if (assetStore.size <= MAX_ASSET_ENTRIES) return;
+  const keep = referencedAssetIds();
+  // Map iterates oldest-inserted first, same "oldest first out" rule
+  // control.js's own photo strip already uses.
+  for (const id of assetStore.keys()) {
+    if (assetStore.size <= MAX_ASSET_ENTRIES) break;
+    if (keep.has(id)) continue;
+    assetStore.delete(id);
+  }
+}
+// A Map's size is not sensitive - this is here purely so an e2e test can
+// observe eviction actually happening, the same reason the cap above is
+// overridable.
+window.__podiumAssetStoreSize = () => assetStore.size;
+
 // A controller can be mid-reload when we ask, so keep asking for a while.
 setInterval(() => {
   for (const id of deckWanted) {
@@ -113,6 +162,7 @@ setInterval(() => {
     if (assetStore.has(id)) { assetWanted.delete(id); continue; }
     bus?.send({ t: 'asset-need', id });
   }
+  pruneAssetStore();
 }, 3000);
 
 // --- content layers, split across up to four panels ------------------------
@@ -1923,6 +1973,7 @@ async function connect() {
         if (!msg.id || typeof msg.data !== 'string') return;
         assetStore.set(msg.id, msg.data);
         assetWanted.delete(msg.id);
+        pruneAssetStore();
         syncLayers();
         // Same reason a deck redraws ink when it finishes mounting: until the
         // photo arrived, contentAspect() was answering for a 1x1 placeholder,
@@ -1991,6 +2042,7 @@ async function connect() {
             // and ask the room to send the 160 KB it produced itself straight
             // back to it.
             assetStore.set(id, shot.dataUrl);
+            pruneAssetStore();
             bus.send({ t: 'shot', id, target: msg.target, title: shot.title, data: shot.dataUrl, tooBig: !!shot.tooBig });
           })
           .catch((err) => bus.send({ t: 'shot-failed', to: msg.from, target: msg.target, reason: err?.message || String(err) }));
