@@ -469,8 +469,31 @@ ok(`a course member can open a shared plan but not rewrite it (${refusedPlan.sli
   /only the person who wrote this plan/.test(refusedPlan));
 ok('not even a course owner, if they did not write it',
   plans.mayWrite(db, { ...owner, id: ta.id, isAdmin: false }, shared) === false);
-ok('its author can', plans.updatePlan(db, owner, shared.id, { title: 'Day 6, revised' }).title === 'Day 6, revised');
+const revised = plans.updatePlan(db, owner, shared.id, { title: 'Day 6, revised' });
+ok('its author can', revised.title === 'Day 6, revised');
 ok('and an admin can', plans.mayWrite(db, admin, shared) === true);
+
+// Issue #117: two devices (or two tabs) editing the same plan is not a
+// locking error, it is instructors actually doing this - the one that saves
+// second must be told, not silently win and erase the first one's changes.
+//
+// Forced ahead by a raw UPDATE, rather than relying on a second real
+// updatePlan() call to land in a later millisecond than revised.updatedAt -
+// two Date.now() calls back to back can tie, which would make the "stale"
+// case below flaky rather than reliably stale.
+const nudgedUpdatedAt = revised.updatedAt + 5000;
+db.prepare('UPDATE plans SET updated_at = ? WHERE id = ?').run(nudgedUpdatedAt, shared.id);
+ok('a save staged against the current updatedAt goes through',
+  plans.updatePlan(db, owner, shared.id, { title: 'Day 6, still current', baseUpdatedAt: nudgedUpdatedAt }).title === 'Day 6, still current');
+refusedPlan = '';
+try { plans.updatePlan(db, owner, shared.id, { title: 'From a stale tab', baseUpdatedAt: revised.updatedAt }); }
+catch (err) { refusedPlan = err.message; }
+ok(`a save staged against an updatedAt someone else already moved past is refused, not silently applied (${refusedPlan})`,
+  /changed on the server/.test(refusedPlan));
+ok('and the conflicting save never actually landed',
+  plans.getPlan(db, owner, shared.id).title === 'Day 6, still current');
+ok('a save with no base at all (an older client, or a script) is not checked, the same as before this existed',
+  plans.updatePlan(db, owner, shared.id, { title: 'Day 6, once more' }).title === 'Day 6, once more');
 
 refusedPlan = '';
 try { plans.savePlan(db, outsider, { title: 'Sneaking in', courseCode: 'psy415', doc: {} }); }

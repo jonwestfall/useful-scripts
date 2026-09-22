@@ -334,6 +334,14 @@ const TEMPLATE_WRITE_FORBIDDEN = /403 \(Forbidden\).*\/api\/templates\/[^/]+$/;
 // for the one narrow window that test creates, same safety net as those.
 let expectingPollLost = false;
 
+// An eighth: PUT /api/plans/<id> answering 409 once its updatedAt has moved
+// past what this device staged its save against (Issue #117's e2e section,
+// which deliberately saves the same plan out from under itself to prove the
+// warning). Same text-only match as the poll-lost case above and for the
+// same reason: a fetch()-triggered console message here carries no location
+// URL to anchor on the way a resource-tag load does.
+let expectingPlanConflict = false;
+
 const trap = (page, tag) => {
   // The console message for a failed fetch and the network response that
   // caused it are two different CDP domains, and PR #86's own CI run showed
@@ -379,6 +387,7 @@ const trap = (page, tag) => {
     if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     if (expectingRecoveryConflict && RECOVERY_CONFLICT.test(where)) return;
     if (expectingTemplateWriteForbidden && TEMPLATE_WRITE_FORBIDDEN.test(where)) return;
+    if (expectingPlanConflict && /responded with a status of 409/.test(text)) return;
     // Killing and restarting a relay process (Issue #115's e2e section) is
     // its own brief burst of expected noise: a connection-refused while the
     // old process is down and the new one is not up yet, then a 404 once it
@@ -5744,6 +5753,64 @@ ok('Update button hides itself once the plan it pointed at is gone',
   await planner.isHidden('#plan-push-update'));
 ok('and the button re-arms for the next lecture rather than staying locked',
   await planner.isEnabled('#plan-pull-delete') && await planner.textContent('#plan-pull-delete') === 'Delete from server');
+
+// -- Issue #117: warn before one save silently erases another -------------
+//
+// A second device (or tab) saving the same plan in between is simulated by
+// calling the API directly, exactly what actually happens when someone else
+// is the one who does it - this page's own Update button has no way to tell
+// the difference, which is the point.
+await planner.click('#plan-new');
+await planner.waitForFunction(() => document.querySelector('#plan-course').value === '', null, { timeout: 5000 });
+await planner.fill('#plan-title', 'Two tabs, one lecture');
+await planner.fill('#plan-course', 'psy415');
+await planner.click('#plan-push');
+await planner.waitForFunction(() => /Sent/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+const conflictPlanId = await planner.evaluate(async () => {
+  const res = await fetch('/api/plans', { credentials: 'same-origin' });
+  const { plans: rows } = await res.json();
+  return rows.find((p) => p.title === 'Two tabs, one lecture').id;
+});
+await planner.evaluate(async (id) => {
+  await fetch(`/api/plans/${id}`, {
+    method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Two tabs, one lecture (saved from the other tab)' }),
+  });
+}, conflictPlanId);
+
+await planner.fill('#plan-title', 'Two tabs, one lecture (this one)');
+// Both clicks below stage their PUT against the same now-stale
+// updatedAt (declining does not update it, so the retry after accepting
+// hits the same 409 before its own force-retry gets past it) - two
+// deliberate conflicts, not one.
+expectingPlanConflict = true;
+planner.once('dialog', (d) => d.dismiss());
+await planner.click('#plan-push-update');
+await planner.waitForFunction(() => /Not sent/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+ok('declining the overwrite prompt leaves the server copy alone, not silently applied anyway', true);
+const stillTheOtherTabs = await planner.evaluate(async (id) => {
+  const res = await fetch(`/api/plans/${id}`, { credentials: 'same-origin' });
+  return (await res.json()).plan.title;
+}, conflictPlanId);
+ok('the server still has what the "other tab" saved, not this one\'s title',
+  stillTheOtherTabs === 'Two tabs, one lecture (saved from the other tab)');
+
+planner.once('dialog', (d) => d.accept());
+await planner.click('#plan-push-update');
+await planner.waitForFunction(() => /Updated/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+expectingPlanConflict = false;
+const afterForce = await planner.evaluate(async (id) => {
+  const res = await fetch(`/api/plans/${id}`, { credentials: 'same-origin' });
+  return (await res.json()).plan.title;
+}, conflictPlanId);
+ok('agreeing to overwrite it forces the save through, this device\'s title now on the server',
+  afterForce === 'Two tabs, one lecture (this one)');
+
+await planner.selectOption('#plan-pull-pick', String(conflictPlanId));
+await planner.click('#plan-pull-delete');
+await planner.waitForFunction(() => /Tap again to delete/.test(document.querySelector('#plan-pull-delete')?.textContent || ''), null, { timeout: 3000 });
+await planner.click('#plan-pull-delete');
+await planner.waitForFunction(() => /Removed/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
 
 // -- Issue #80: a course's plan template ----------------------------------
 await planner.fill('#plan-course', 'psy415');

@@ -1044,9 +1044,14 @@ $('#plan-import-file').addEventListener('change', async (ev) => {
 // the only thing that works on GitHub Pages, from a folder, or on a train.
 
 let serverCourses = [];
+// What #plan-push-update stages its save against (Issue #117) - the update
+// this device last saw, not "now", so the server can tell a save that has
+// not drifted from one that has.
+let currentServerPlanUpdatedAt = null;
 
-function setCurrentServerPlanId(id) {
+function setCurrentServerPlanId(id, updatedAt = null) {
   currentServerPlanId = id;
+  currentServerPlanUpdatedAt = updatedAt;
   const btn = $('#plan-push-update');
   if (btn) btn.hidden = !id;
 }
@@ -1097,7 +1102,7 @@ $('#plan-push').addEventListener('click', async () => {
       : `Sent — on the iPad now, and yours alone${wanted ? ` (there is no course "${wanted}" here to file it under)` : ''}.`;
     // This copy IS the one just created - a follow-up edit can now update it
     // in place instead of sending yet another new row.
-    setCurrentServerPlanId(body.plan.id);
+    setCurrentServerPlanId(body.plan.id, body.plan.updatedAt);
     await refreshServerPlans();
   } catch (err) {
     note.textContent = err.message;
@@ -1106,8 +1111,14 @@ $('#plan-push').addEventListener('click', async () => {
 
 // Only ever visible once currentServerPlanId is known - see setCurrentServerPlanId
 // and #plan-server's markup, which starts this button [hidden].
-$('#plan-push-update').addEventListener('click', async () => {
-  await commit();
+//
+// Staged against currentServerPlanUpdatedAt (Issue #117): if someone else -
+// another device, another tab, a co-instructor with the same course - saved
+// this plan since it was last opened or pushed here, the server refuses with
+// 409 rather than one save silently erasing the other. `force` retries with
+// no base at all, which the server takes as "skip the check" - the explicit,
+// deliberate way to say "overwrite it anyway" once a person has agreed to that.
+async function pushPlanUpdate({ force = false } = {}) {
   const note = $('#plan-push-note');
   if (!currentServerPlanId) return;
   const wanted = String(plan.course || '').trim().toLowerCase();
@@ -1117,15 +1128,32 @@ $('#plan-push-update').addEventListener('click', async () => {
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: plan.title, course: matched?.code || '', doc: planToJson(plan) }),
+      body: JSON.stringify({
+        title: plan.title, course: matched?.code || '', doc: planToJson(plan),
+        ...(force ? {} : { baseUpdatedAt: currentServerPlanUpdatedAt }),
+      }),
     });
+    if (res.status === 409) {
+      if (confirm('This lecture changed on the server since it was opened here - probably from another device or tab. '
+        + 'Overwrite the server\'s copy with what is on this one?')) {
+        await pushPlanUpdate({ force: true });
+      } else {
+        note.textContent = 'Not sent. Pull the server\'s copy first to see what changed, or push again once you are sure.';
+      }
+      return;
+    }
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'that did not work');
+    currentServerPlanUpdatedAt = body.plan.updatedAt;
     note.textContent = `Updated — the copy already on the server now matches this${matched ? `, shared with ${matched.code}` : ''}.`;
     await refreshServerPlans();
   } catch (err) {
     note.textContent = err.message;
   }
+}
+$('#plan-push-update').addEventListener('click', async () => {
+  await commit();
+  await pushPlanUpdate();
 });
 
 $('#plan-pull').addEventListener('click', async () => {
@@ -1140,7 +1168,7 @@ $('#plan-pull').addEventListener('click', async () => {
     // newPlan() resets this (it resets for every OTHER caller too - a new
     // blank lecture, a local one, an import), so it is set back only here,
     // once the pulled plan is actually the one on screen.
-    setCurrentServerPlanId(id);
+    setCurrentServerPlanId(id, body.plan.updatedAt);
     warn(warnings.length ? `Opened with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}` : '');
   } catch (err) {
     warn(`That lecture did not open: ${err.message}`);

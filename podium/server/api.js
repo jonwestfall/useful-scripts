@@ -392,6 +392,7 @@ async function handleApi(req, res, url, ctx) {
           title: body.title,
           courseCode: 'course' in body ? body.course : undefined,
           doc: body.doc,
+          baseUpdatedAt: body.baseUpdatedAt,
         }),
       });
       return true;

@@ -119,11 +119,21 @@ function savePlan(db, user, { title, courseCode, doc }) {
   return getPlan(db, user, lastInsertRowid);
 }
 
-function updatePlan(db, user, id, { title, courseCode, doc }) {
+// baseUpdatedAt is the updatedAt this write was staged against - undefined
+// (an older client, or a script that never asked) skips the check entirely,
+// same as before this existed. When it is given, it has to still match: two
+// devices (or two tabs) editing the same plan is not a locking error, it is
+// instructors actually doing this, and the one that saves second silently
+// winning is exactly how the first one's changes go missing with no message
+// at all.
+function updatePlan(db, user, id, { title, courseCode, doc, baseUpdatedAt }) {
   const plan = getPlan(db, user, id);
   if (!plan) throw Object.assign(new Error('no such plan'), { status: 404 });
   if (!mayWrite(db, user, plan)) {
     throw Object.assign(new Error('only the person who wrote this plan can change it'), { status: 403 });
+  }
+  if (baseUpdatedAt !== undefined && Number(baseUpdatedAt) !== plan.updatedAt) {
+    throw Object.assign(new Error('this plan changed on the server since it was opened here'), { status: 409 });
   }
   const sets = [];
   const values = [];
