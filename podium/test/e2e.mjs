@@ -176,7 +176,7 @@ const freePort = () => new Promise((resolve, reject) => {
   });
 });
 
-const { chromium } = await loadPlaywright();
+const { chromium, devices } = await loadPlaywright();
 writeFixture();
 writeShortFixture();
 
@@ -6462,6 +6462,147 @@ ok('a browser with no SpeechRecognition at all says so rather than failing silen
   /no speech recognition/i.test(await noCapControl.textContent('#caption-status')));
 ok('and the button never claims to have started', (await noCapControl.textContent('#caption-toggle')) === 'Start live captions');
 await noCapCtx.close();
+}
+
+if (want('long presenter notes do not hijack the Slides tab scroll')) {
+console.log('\n-- long presenter notes do not hijack the Slides tab scroll --');
+// Issue #95: on an iPhone, a slide with a lot of presenter text pushed the
+// "jump to a slide" thumbnail grid (and its section chips) far down the
+// panel. Both auto-scroll-to-active-item to keep them in view, but neither
+// used to remember having already done so - every re-render (a heartbeat,
+// a build step within the same slide) fired scrollIntoView again, undoing
+// a presenter's own manual scroll back up to read notes or reach Prev/
+// Next a moment later. Reproduced on an actual iPhone-sized viewport,
+// against the shape of deck that triggers it: three slides each with their
+// own heading (so there is more than one section chip to jump between),
+// the middle one with several build fragments and presenter notes long
+// enough to force real scrolling.
+const notesParagraph = 'This is the kind of long presenter note a real lecture slide carries - a full talking-track paragraph, not a one-line reminder, repeated here just to force the notes box tall enough to actually need scrolling. ';
+const longNotes = notesParagraph.repeat(10);
+const notesFixture = path.join(HERE, 'fixtures', 'long-presenter-notes.md');
+fs.writeFileSync(notesFixture, [
+  '---', 'marp: true', 'paginate: true', '---', '',
+  '# Opening', '', 'Welcome to class.', '',
+  '---', '<!-- _class: build -->',
+  '# The Main Point', '',
+  '- First idea', '- Second idea', '- Third idea', '',
+  '<!--', longNotes, '-->', '',
+  '---',
+  '# Wrap Up', '', 'Thanks for coming.', '',
+].join('\n'));
+
+const notesCtx = await browser.newContext({ ...devices['iPhone 13'] });
+await notesCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'notes-scroll-room', passphrase: 'read the room, not the scrollbar' }));
+
+const notesDisplay = await notesCtx.newPage();
+trap(notesDisplay, 'notes-scroll display');
+await notesDisplay.goto(`${BASE}/display.html`);
+await notesDisplay.click('#arm-button');
+await notesDisplay.waitForSelector('#hud[data-status="online"]');
+
+const notesControl = await notesCtx.newPage();
+trap(notesControl, 'notes-scroll controller (iPhone)');
+await notesControl.goto(`${BASE}/control.html`);
+await notesControl.waitForSelector('#app:not([hidden])');
+await notesControl.waitForFunction(
+  () => !document.querySelector('#display-state')?.textContent.includes('No display connected'),
+  null, { timeout: 10000 });
+
+await notesControl.setInputFiles('#deck-file', notesFixture);
+await notesControl.waitForFunction(() => document.querySelector('#deck-file-note')?.textContent.includes('3 slides'), null, { timeout: 15000 });
+await notesControl.click('.tab[data-tab="slides"]');
+await notesControl.click('#deck-next');
+await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.textContent.startsWith('Slide 2'), null, { timeout: 10000 });
+await notesControl.waitForFunction(() => (document.querySelector('#deck-notes')?.textContent.length || 0) > 500, null, { timeout: 10000 });
+
+const panelsOverflow = await notesControl.evaluate(() => {
+  const p = document.querySelector('.panels');
+  return p.scrollHeight - p.clientHeight;
+});
+ok(`the long notes actually overflow the panel on this device (${panelsOverflow}px)`, panelsOverflow > 100);
+
+// A real click auto-scrolls its own target into view as part of Playwright's
+// actionability checks - that would contaminate exactly the measurement
+// this test is making, so #deck-next is clicked in-page instead, the same
+// way a real tap does not scroll anything on its own.
+const clickDeckNext = () => notesControl.evaluate(() => document.querySelector('#deck-next').click());
+
+await clickDeckNext(); // onto slide 2's own build fragments
+await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.textContent.includes('build 1'), null, { timeout: 10000 });
+
+// The presenter scrolls back up to read notes / reach Prev-Next, exactly
+// the recovery the bug report describes ("pulling down from the gutter
+// allows you to scroll back up temporarily").
+await notesControl.evaluate(() => { document.querySelector('.panels').scrollTop = 0; });
+ok('scrolled back to the top manually', (await notesControl.evaluate(() => document.querySelector('.panels').scrollTop)) === 0);
+
+// Advance through the rest of this slide's build fragments (three bullets,
+// so 1/3 -> 2/3 -> 3/3) - same slide, same section, nothing that should
+// re-arm either auto-scroll.
+for (let i = 0; i < 2; i++) await clickDeckNext();
+await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.textContent.includes('build 3'), null, { timeout: 10000 });
+ok('advancing through the rest of the slide\'s own builds does not creep the scroll back down',
+  (await notesControl.evaluate(() => document.querySelector('.panels').scrollTop)) === 0);
+
+// A genuine slide change (a new section) is still allowed to follow once -
+// this is a guard against repeating, not a ban on the feature.
+await clickDeckNext(); // onto slide 3, a new section
+await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.textContent.startsWith('Slide 3'), null, { timeout: 10000 });
+await notesControl.waitForTimeout(500); // the scrollIntoView above is smooth, not instant
+ok('a genuine slide/section change is still followed once, unlike the repeated re-fire this fixes',
+  (await notesControl.evaluate(() => document.querySelector('.panels').scrollTop)) > 0);
+
+await notesCtx.close();
+}
+
+if (want('Settings Save/Close reachable on a phone')) {
+console.log('\n-- Settings Save/Close reachable on a phone --');
+// Issue #96: the Settings sheet is long enough that on a phone, reaching
+// Save or Close means scrolling past all of it. A copy near the top,
+// shown only under the same max-width:640px breakpoint the rest of the
+// controller's own mobile layout already uses, calls the exact same
+// handlers rather than duplicating the save/close logic.
+const smallCtx = await browser.newContext({ ...devices['iPhone 13'] });
+await smallCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'settings-top-room', passphrase: 'reach it without scrolling' }));
+const small = await smallCtx.newPage();
+trap(small, 'settings top actions (iPhone)');
+await small.goto(`${BASE}/control.html`);
+await small.waitForSelector('#app:not([hidden])');
+
+await small.click('#open-settings');
+await small.waitForSelector('#setup:not([hidden])');
+ok('the top actions row is shown on a phone-width screen', await small.isVisible('.setup-top-actions'));
+ok('Save is visible by default (Connection is the starting tab)', await small.isVisible('#setup-save-top'));
+ok('Close is offered too, same as the one at the bottom, while this device is configured',
+  await small.isVisible('#setup-close-top') && await small.isVisible('#setup-close'));
+
+await small.click('.tab[data-settings-tab="presentation"]');
+ok('Save hides on the Presentation tab - there is nothing there to submit', await small.isHidden('#setup-save-top'));
+await small.click('.tab[data-settings-tab="connection"]');
+ok('and comes back on Connection', await small.isVisible('#setup-save-top'));
+
+// The top Save button reaches the SAME form validation as the real one -
+// not a silent no-op, and not a second copy of the check.
+await small.fill('#c-pass', '');
+await small.click('#setup-save-top');
+ok('the top Save button runs the real form validation, not a shortcut around it',
+  (await small.textContent('#setup-error')).includes('Fill in the fields'));
+ok('and does not navigate away on a rejected save', await small.isVisible('#setup:not([hidden])'));
+
+await Promise.all([small.waitForNavigation({ timeout: 15000 }), small.click('#setup-close-top')]);
+await small.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+ok('the top Close button reloads back to the app, same as the bottom one', true);
+
+// A normal (non-phone) viewport never shows this row at all - the real
+// Save/Close are already in easy reach down there.
+await small.setViewportSize({ width: 1280, height: 900 });
+await small.click('#open-settings');
+await small.waitForSelector('#setup:not([hidden])');
+ok('and stays hidden on a screen wide enough not to need it', await small.isHidden('.setup-top-actions'));
+
+await smallCtx.close();
 }
 
 if (want('back to the landing page')) {

@@ -640,6 +640,10 @@ body.guest {
 .settings-panel .check { margin: 16px 0 6px; }
 .settings-panel .check:first-of-type { margin-top: 4px; }
 .settings-panel .check input { transform: scale(1.15); }
+/* Hidden by default (desktop already has Save/Close in easy reach at the
+   bottom of this sheet) - shown on a phone by the media query below. */
+.setup-top-actions { display: none; gap: 10px; margin-bottom: 18px; }
+.setup-top-actions button { flex: 1; }
 .tab.is-on { background: var(--panel-2); border-color: var(--accent); color: var(--ink); }
 
 /* "More", for tabs hidden via Settings -> Presentation -> Controller tabs.
@@ -1191,6 +1195,11 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
   .bottombar .bar-slot.mobile-overflow { display: none !important; }
   .bottombar .vol { flex: 1; min-width: 76px; max-width: none; margin-left: 0; gap: 6px; }
   #mute, #bar-play, #bar-music, .bottombar .bar-slot { width: 44px; }
+  /* Issue #96: Settings is long enough on a phone that Save/Close at the
+     bottom take real scrolling to reach - a copy near the top costs one
+     row up here in exchange. Desktop keeps just the ones at the bottom,
+     which is already in easy reach on a screen that tall. */
+  .setup-top-actions { display: flex; }
 }
 
 @media (max-width: 900px) {

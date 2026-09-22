@@ -969,6 +969,7 @@ let gridBuildId = null;
 let gridBuildPromise = null;
 let activeSectionFilter = null;
 let lastScrolledSlideIndex = null;
+let lastScrolledSectionId = null;
 let selectedChipSection = null;
 
 function getSlideSectionIndex(sections, slideIndex) {
@@ -1059,12 +1060,23 @@ function updateActiveSectionChip(slideIndex) {
   const secIdx = getSlideSectionIndex(sections, slideIndex);
   const targetId = secIdx >= 0 ? String(secIdx) : 'all';
   container.querySelectorAll('.deck-chip').forEach((chip) => {
-    const isActive = chip.dataset.section === targetId;
-    chip.classList.toggle('is-active', isActive);
-    if (isActive) {
-      chip.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-    }
+    chip.classList.toggle('is-active', chip.dataset.section === targetId);
   });
+  // Follow the highlight into view only when the active SECTION actually
+  // moves (Issue #95) - this runs on every render highlightGrid does,
+  // including a build step within the same slide and every heartbeat while
+  // sitting on one, and with no guard here it used to re-scroll every
+  // single time regardless. On a slide with long presenter notes that
+  // scroll is a real distance (chip.scrollIntoView walks up through
+  // .panels, the same scrollable ancestor the notes and Prev/Next share),
+  // so this fired again the moment after a presenter scrolled back up to
+  // read notes or reach Prev/Next - the exact "jumps down once more" this
+  // issue describes, on every render rather than only a genuine change.
+  if (lastScrolledSectionId !== targetId) {
+    lastScrolledSectionId = targetId;
+    const activeChip = container.querySelector(`.deck-chip[data-section="${targetId}"]`);
+    activeChip?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }
 }
 
 function ensureGridShadow() {
@@ -1076,6 +1088,7 @@ function buildGrid(deck) {
   if (gridBuildId === deck.id) return gridBuildPromise;
   gridBuildId = deck.id;
   lastScrolledSlideIndex = null;
+  lastScrolledSectionId = null;
   activeSectionFilter = null;
   selectedChipSection = null;
   gridBuildPromise = buildGridNow(deck);
@@ -1230,7 +1243,7 @@ function highlightGrid(index, deckId = (deckView.id || (focusedItem(state)?.type
     const slidesPanel = $('[data-panel="slides"]');
     if (slidesPanel && !slidesPanel.hidden) {
       lastScrolledSlideIndex = index;
-      activeCell.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+      activeCell.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
     }
   }
 
@@ -1241,6 +1254,7 @@ async function ensureDeckView(item) {
   if (!item || item.type !== 'deck') {
     deckView = { id: null, deck: null };
     lastScrolledSlideIndex = null;
+    lastScrolledSectionId = null;
     activeSectionFilter = null;
     selectedChipSection = null;
     return;
@@ -4589,6 +4603,7 @@ function tab(name) {
   if (name === 'ink') { syncInkFromState(); applyInkPreferences(); sizePad(); }
   if (name === 'slides') {
     lastScrolledSlideIndex = null;
+    lastScrolledSectionId = null;
     renderSlides();
   }
 }
@@ -6213,6 +6228,11 @@ applyTheme();
 function settingsTab(name) {
   $$('#setup .settings-tabs .tab').forEach((b) => b.classList.toggle('is-on', b.dataset.settingsTab === name));
   $$('#setup [data-settings-panel]').forEach((p) => { p.hidden = p.dataset.settingsPanel !== name; });
+  // The top Save button (Issue #96) only means anything on Connection - it
+  // is the one tab with a form to submit; Presentation's own controls save
+  // themselves as you change them, the same reason there is no bottom Save
+  // button there either.
+  $('#setup-save-top').hidden = name !== 'connection';
 }
 $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () => settingsTab(b.dataset.settingsTab)));
 
@@ -6311,6 +6331,7 @@ function showSetup() {
   $('#setup').hidden = false;
   $('#app').hidden = true;
   $('#setup-close').hidden = !isConfigured(cfg);
+  $('#setup-close-top').hidden = !isConfigured(cfg);
   settingsTab('connection');
   const prefTheme = $('#pref-theme');
   if (prefTheme) prefTheme.value = presentation.theme || 'dark';
@@ -6400,6 +6421,11 @@ $('#open-settings').addEventListener('click', showSetup);
 // Reloading is the honest "cancel": it throws away half-finished edits and
 // puts the page back into whatever state the saved settings describe.
 $('#setup-close').addEventListener('click', reloadClean);
+$('#setup-close-top').addEventListener('click', reloadClean);
+// Not a second save path (Issue #96) - #setup-form is outside this button,
+// so requestSubmit is what reaches the exact same handler the bottom Save
+// button's own click already triggers as a normal form submission.
+$('#setup-save-top').addEventListener('click', () => $('#setup-form').requestSubmit());
 
 wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
   const removed = await resetDevice();
