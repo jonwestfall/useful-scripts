@@ -38,7 +38,7 @@ export const BUILD = 41;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.1';
-export const COMMIT = 'e37029e';
+export const COMMIT = '864a3f2';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -235,6 +235,25 @@ function normalizeItem(item) {
   if (copy.type === 'video' || copy.type === 'audio' || copy.type === 'youtube') {
     copy.playing = copy.playing ?? true;
     copy.startAt = Number(copy.startAt) || 0;
+  }
+  // Issue #113: every field PLAN_TYPES declares for these types used to pass
+  // through normalizeItem completely unvalidated - unlike text.body/caption
+  // above, an oversized or malformed value here reached every connected
+  // controller and the projector unfiltered. `image.src`/`text.src` are the
+  // one deliberate exception (see the comment on the 'text' branch above);
+  // everything else gets the same length caps and enum checks text's own
+  // fields already have.
+  if (copy.type === 'youtube') copy.videoId = String(copy.videoId || '').slice(0, 64);
+  if (copy.type === 'image') copy.fit = copy.fit === 'cover' ? 'cover' : 'contain';
+  if (copy.type === 'qr') {
+    copy.data = String(copy.data || '').slice(0, 2000);
+    copy.caption = String(copy.caption || '').slice(0, 200);
+  }
+  if (copy.type === 'web') copy.src = String(copy.src || '').slice(0, 2000);
+  if (copy.type === 'whiteboard') copy.bg = String(copy.bg || '').slice(0, 64);
+  if (copy.type === 'timer') {
+    copy.timerId = String(copy.timerId || '').slice(0, 64);
+    copy.label = String(copy.label || '').slice(0, 120);
   }
   if (copy.type === 'pdf') {
     copy.page = Math.max(1, Number(copy.page) || 1);

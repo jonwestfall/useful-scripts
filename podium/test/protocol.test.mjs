@@ -561,5 +561,49 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
   chk('src passes through unmodified, same as any other type\'s picture', t.program.src === 'content/img/whatever.png');
 }
 
+{
+  // Issue #113: normalizeItem() had a branch for 'text' but none at all for
+  // most of the other types PLAN_TYPES declares fields for - an oversized or
+  // out-of-range value in any of these used to reach every connected
+  // controller and the projector completely unfiltered.
+  const t = initialState();
+
+  applyCommand(t, { op:'stage', item:{ type:'youtube', videoId:'x'.repeat(200), startAt:5 } });
+  chk('an oversized youtube videoId is capped, not passed through unbounded', t.program.videoId.length === 64);
+
+  applyCommand(t, { op:'stage', item:{ type:'image', src:'asset:pic1', fit:'cover' } });
+  chk('a valid image fit is kept', t.program.fit === 'cover');
+  applyCommand(t, { op:'stage', item:{ type:'image', src:'asset:pic1', fit:'stretch-to-infinity' } });
+  chk('an out-of-range image fit is refused rather than reaching the projector', t.program.fit === 'contain');
+  applyCommand(t, { op:'stage', item:{ type:'image', src:'content/img/whatever.png' } });
+  chk('image src is deliberately untouched, same convention as text/qr', t.program.src === 'content/img/whatever.png');
+
+  applyCommand(t, { op:'stage', item:{ type:'qr', data:'x'.repeat(5000), caption:'y'.repeat(500) } });
+  chk('an oversized qr data/caption is capped, not passed through unbounded',
+    t.program.data.length === 2000 && t.program.caption.length === 200);
+
+  applyCommand(t, { op:'stage', item:{ type:'web', src:'https://example.edu/' + 'x'.repeat(5000) } });
+  chk('an oversized web src is capped, not passed through unbounded', t.program.src.length === 2000);
+
+  applyCommand(t, { op:'stage', item:{ type:'whiteboard', bg:'#fff' + 'x'.repeat(200) } });
+  chk('an oversized whiteboard bg is capped, not passed through unbounded', t.program.bg.length === 64);
+
+  applyCommand(t, { op:'stage', item:{ type:'timer', timerId:'t'.repeat(200), label:'l'.repeat(500) } });
+  chk('an oversized timer timerId/label is capped, not passed through unbounded',
+    t.program.timerId.length === 64 && t.program.label.length === 120);
+
+  // slides/camera/web/youtube themselves had no direct stage coverage at all
+  // before this issue, only whatever an e2e section happened to exercise.
+  applyCommand(t, { op:'stage', item:{ type:'slides', src:'content/slides/week1/index.html', slide:-3 } });
+  chk('a slides item stages with its src kept and slide clamped to 0 or above',
+    t.program.type === 'slides' && t.program.src === 'content/slides/week1/index.html' && t.program.slide === 0);
+
+  applyCommand(t, { op:'stage', item:{ type:'camera', title:'Phone camera' } });
+  chk('a camera item stages with no fields of its own to validate', t.program.type === 'camera');
+
+  applyCommand(t, { op:'stage', item:{ type:'web', src:'https://example.edu/demo' } });
+  chk('a web item stages with its src kept', t.program.type === 'web' && t.program.src === 'https://example.edu/demo');
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

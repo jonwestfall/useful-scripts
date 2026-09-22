@@ -17,6 +17,19 @@ podium/test/
 ├── store.test.mjs        # Server SQLite storage, multi-user accounts, courses, and retention
 ├── pacing.test.mjs       # Topbar persistent pacing clock & lecture duration calculations
 ├── bottombar.test.mjs    # Customizable bottom-bar quick-action slots and dispatchers
+├── content.test.mjs      # Admin content/Marp theme/manifest management, server-side (Issue #54)
+├── deck_nav.test.mjs     # Slide thumbnail badges, grid auto-scroll & section chips (Issue #34)
+├── haptics.test.mjs      # Tactile haptic feedback on navigation & lectern actions (Issue #32)
+├── ink.test.mjs          # Highlighter mode (#35) and stroke eraser (#36)
+├── mini-markdown.test.mjs # The "lite" markdown shared by messages, notes and captions (Issue #103)
+├── music.test.mjs        # Background music queueing, ducking and fade math
+├── pdf-writer.test.mjs   # Client-side canvas PDF export/rendering (Issue #43)
+├── poll-names.test.mjs   # Optional name recording on audience polls (Issue #72)
+├── relay.test.mjs        # WebSocket relay limits - room caps and per-IP throttling (Issue #112)
+├── snap.test.mjs         # Quick shape & straight-line snapping, hold-to-straighten (Issue #38)
+├── spotlight.test.mjs    # Spotlight / attention dimmer pointer mode (Issue #37)
+├── tabsettings.test.mjs  # Customizable/collapsible controller tab bar (Issue #76)
+├── templates.test.mjs    # Course-level plan templates, against a real SQLite file (Issue #80)
 └── e2e.mjs               # Full multi-browser end-to-end integration test suite
 ```
 
@@ -26,22 +39,16 @@ podium/test/
 
 The unit tests run directly in Node.js without requiring any build step, headless browser, or npm installation.
 
-Run all unit tests:
+Run every unit test (this is also exactly what CI's unit job and `deploy/update.sh`'s release
+gate run - see Issue #111: this used to be a hand-picked subset of three files, and the rest
+silently never ran anywhere automatically):
 ```bash
-node podium/test/protocol.test.mjs
-node podium/test/plan.test.mjs
-node podium/test/store.test.mjs
-node podium/test/pacing.test.mjs
-node podium/test/bottombar.test.mjs
+for f in podium/test/*.test.mjs; do node "$f"; done
 ```
 
-Or run them in a single command:
+Run one directly while iterating on it:
 ```bash
-node podium/test/protocol.test.mjs && \
-node podium/test/plan.test.mjs && \
-node podium/test/store.test.mjs && \
-node podium/test/pacing.test.mjs && \
-node podium/test/bottombar.test.mjs
+node podium/test/protocol.test.mjs
 ```
 
 ### What Each Unit Test Covers
@@ -68,6 +75,19 @@ node podium/test/bottombar.test.mjs
 - **`bottombar.test.mjs`**:
   - Customizable bottom-bar shortcut slots across all supported actions (Music, Media Play, Whiteboard, Laser, Countdown, Next, Prev, None).
   - Safe state resolution and DOM element contract verification.
+- **`content.test.mjs`**: admin content/Marp theme/manifest management, and path-traversal rejection.
+- **`deck_nav.test.mjs`**: thumbnail badges for ink, grid auto-scroll, and section chip navigation.
+- **`haptics.test.mjs`**: vibration triggers on navigation and lectern actions, and the Settings toggle.
+- **`ink.test.mjs`**: highlighter blending and the targeted stroke eraser.
+- **`mini-markdown.test.mjs`**: the shared "lite" markdown renderer (headings, lists, bold/italic/code/links, HTML escaping) used by full-screen messages, presenter notes, and captions.
+- **`music.test.mjs`**: background-music queue ordering, crossfade/ducking math, and loop behavior.
+- **`pdf-writer.test.mjs`**: the client-side canvas PDF export/render pipeline's byte output.
+- **`poll-names.test.mjs`**: the opt-in "record respondent name" setting on audience polls, server-side.
+- **`relay.test.mjs`**: spawns a real relay process and opens real sockets (no browser) to check `MAX_PER_ROOM`, the relay-wide `MAX_ROOMS` cap, and the per-IP upgrade throttle.
+- **`snap.test.mjs`**: hold-to-straighten shape/line snapping thresholds and geometry.
+- **`spotlight.test.mjs`**: the attention-dimmer pointer mode's keyboard shortcuts and geometry.
+- **`tabsettings.test.mjs`**: reordering, hiding, and restoring controller tabs.
+- **`templates.test.mjs`**: course-level plan template ownership and removal permissions.
 
 ---
 

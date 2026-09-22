@@ -15,7 +15,7 @@ on:
 
 jobs:
   unit:
-    name: Unit tests (protocol, plan, store)
+    name: Unit tests (all test/*.test.mjs)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -24,11 +24,24 @@ jobs:
         with:
           # 22 or newer: the server's storage uses the built-in node:sqlite.
           node-version: 22
-      - run: node test/protocol.test.mjs
-        working-directory: podium
-      - run: node test/plan.test.mjs
-        working-directory: podium
-      - run: node test/store.test.mjs
+      # relay.test.mjs spawns the real relay process, which needs its one
+      # dependency (ws) on disk - server/node_modules is gitignored, so a
+      # fresh checkout has nothing here until this runs.
+      - name: Install the relay's own dependency
+        run: npm ci
+        working-directory: podium/server
+      # Every fast Node-native suite in test/, not a hand-picked subset - a
+      # new *.test.mjs file is covered automatically, with no separate line
+      # to remember to add here (see Issue #111: this list used to be three
+      # files, and the other dozen silently never ran in CI).
+      - name: Run every unit test
+        run: |
+          set -e
+          for f in test/*.test.mjs; do
+            echo "::group::$f"
+            node "$f"
+            echo "::endgroup::"
+          done
         working-directory: podium
       # The scripts nobody runs until the day they are needed, which is the
       # worst day to find a typo in one.

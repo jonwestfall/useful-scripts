@@ -89,6 +89,16 @@ echo "==> systemd unit"
 sed -e "s#@PREFIX@#$PREFIX#g" -e "s#@USER@#$PODIUM_USER#g" \
     -e "s#@DATA_DIR@#$DATA_DIR#g" -e "s#@CONFIG_DIR@#$CONFIG_DIR#g" \
     "$here/deploy/podium.service.in" > /etc/systemd/system/podium.service
+
+# Installed alongside the relay's own unit, not left as a manual cron line to
+# remember: deploy/backup.sh and restore.sh are only as good as the first one
+# actually running, and doctor's own new backup check (see server/doctor.js)
+# exists specifically because nothing before this caught an install that
+# skipped that step. Enabling it is asked about below, once there is
+# something to back up.
+sed -e "s#@PREFIX@#$PREFIX#g" -e "s#@DATA_DIR@#$DATA_DIR#g" -e "s#@CONFIG_DIR@#$CONFIG_DIR#g" \
+    "$here/deploy/podium-backup.service.in" > /etc/systemd/system/podium-backup.service
+install -m 0644 "$here/deploy/podium-backup.timer" /etc/systemd/system/podium-backup.timer
 systemctl daemon-reload
 
 echo "==> first release"
@@ -140,6 +150,25 @@ else
 EOF
 fi
 
+echo "==> nightly backups"
+# Asked here, after the service has had its chance to create a database:
+# backup.sh refuses cleanly (its own die() message) if there is nothing yet
+# to back up. Interactive installs default to yes - the safe answer, with an
+# easy no - because a person is here to make that call; an unattended one
+# defaults to no and stays that way, the same reasoning the account step
+# above refuses to auto-start without a human present for.
+if [[ -t 0 ]]; then
+  read -rp "    Enable the nightly backup timer (podium-backup.timer, 03:15 daily)? [Y/n]: " enable_backup
+else
+  enable_backup=n
+fi
+if [[ -z "$enable_backup" || "$enable_backup" =~ ^[Yy] ]]; then
+  systemctl enable --now podium-backup.timer
+  backup_line="enabled - systemctl status podium-backup.timer"
+else
+  backup_line="NOT enabled - systemctl enable --now podium-backup.timer"
+fi
+
 cat <<EOF
 
 Podium is installed.
@@ -150,7 +179,7 @@ Podium is installed.
   data       $DATA_DIR
   accounts   sudo -u $PODIUM_USER DATA_DIR=$DATA_DIR node $PREFIX/current/server/podium-admin.js user list
   check      sudo -u $PODIUM_USER DATA_DIR=$DATA_DIR node $PREFIX/current/server/podium-admin.js doctor
-  backup     sudo $PREFIX/current/deploy/backup.sh
+  backup     sudo $PREFIX/current/deploy/backup.sh (nightly timer: $backup_line)
   update     $here/deploy/update.sh $here
 
 It is listening on 127.0.0.1:$PORT and expects a TLS terminator in front of it.
