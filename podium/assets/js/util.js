@@ -57,6 +57,13 @@ export function escapeHtml(str) {
   ));
 }
 
+// `#`/`##` headings and `1.` numbered lists, alongside the bullet lists this
+// already had - the three block-level constructs Issue #103's full-screen
+// message editor needs ("headings and body text, bulleted lists, numbered
+// lists"), on the same line-by-line pass bullets already used rather than a
+// second one. A line only ever starts one kind of block; switching from a
+// bullet line straight to a numbered one (or either to a heading) closes
+// whatever was open first, the same way a plain line always did.
 export function miniMarkdown(str) {
   let html = escapeHtml(str);
 
@@ -68,41 +75,45 @@ export function miniMarkdown(str) {
   html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 
   const lines = html.split('\n');
-  let inList = false;
+  let listTag = null; // 'ul' | 'ol' | null - which list (if any) is open
   const out = [];
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const match = line.match(/^(\s*)(?:[-*])\s+(.*)$/);
-    if (match) {
-      if (!inList) {
-        out.push('<ul class="mini-md-list">');
-        inList = true;
-      }
-      out.push(`<li>${match[2]}</li>`);
-    } else {
-      if (inList) {
-        out.push('</ul>');
-        inList = false;
-      }
-      out.push(line);
+
+  const closeList = () => {
+    if (listTag) { out.push(`</${listTag}>`); listTag = null; }
+  };
+
+  for (const line of lines) {
+    const heading = line.match(/^(#{1,2})\s+(.*)$/);
+    if (heading) {
+      closeList();
+      const level = heading[1].length;
+      out.push(`<h${level}>${heading[2]}</h${level}>`);
+      continue;
     }
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    if (bullet) {
+      if (listTag !== 'ul') { closeList(); out.push('<ul class="mini-md-list">'); listTag = 'ul'; }
+      out.push(`<li>${bullet[1]}</li>`);
+      continue;
+    }
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (numbered) {
+      if (listTag !== 'ol') { closeList(); out.push('<ol class="mini-md-list">'); listTag = 'ol'; }
+      out.push(`<li>${numbered[1]}</li>`);
+      continue;
+    }
+    closeList();
+    out.push(line);
   }
-  if (inList) {
-    out.push('</ul>');
-  }
-  
+  closeList();
+
+  const isBlockTag = (l) => /^<(?:ul|\/ul|ol|\/ol|li|h1|h2|\/h1|\/h2)/.test(l);
   let finalHtml = '';
   for (let i = 0; i < out.length; i++) {
     const l = out[i];
-    const isListTag = l.startsWith('<ul') || l.startsWith('</ul') || l.startsWith('<li');
     finalHtml += l;
-    
-    if (!isListTag && i < out.length - 1) {
-       const nextIsListTag = out[i+1].startsWith('<ul') || out[i+1].startsWith('</ul') || out[i+1].startsWith('<li');
-       if (!nextIsListTag) {
-         finalHtml += '<br>';
-       }
+    if (!isBlockTag(l) && i < out.length - 1 && !isBlockTag(out[i + 1])) {
+      finalHtml += '<br>';
     }
   }
   return finalHtml;

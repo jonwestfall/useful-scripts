@@ -528,5 +528,38 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
     c.overlay.live === false && c.overlay.text === '' && c.overlay.visible === false);
 }
 
+{
+  // Issue #103: a full-screen message's richer shape (font/bg/caption on
+  // top of the existing body/size/align), all validated by normalizeItem's
+  // 'text' branch the same way every other type already is.
+  const t = initialState();
+  applyCommand(t, { op:'stage', item:{
+    type:'text', body:'# Heading\nbody', size:'xl', align:'left', font:'serif',
+    bg:'#123456', src:'asset:pic1', caption:'A caption',
+  }});
+  chk('a fully-specified text item keeps every field', t.program.type === 'text'
+    && t.program.body === '# Heading\nbody' && t.program.size === 'xl' && t.program.align === 'left'
+    && t.program.font === 'serif' && t.program.bg === '#123456' && t.program.src === 'asset:pic1'
+    && t.program.caption === 'A caption');
+
+  applyCommand(t, { op:'stage', item:{ type:'text', body:'hi' } });
+  chk('missing fields fall back to sane defaults', t.program.size === 'l' && t.program.align === 'center'
+    && t.program.font === 'sans' && t.program.bg === '' && t.program.caption === '');
+
+  applyCommand(t, { op:'stage', item:{ type:'text', body:'hi', size:'huge', align:'middle', font:'wingdings' } });
+  chk('an out-of-range size/align/font is refused rather than reaching the projector',
+    t.program.size === 'l' && t.program.align === 'center' && t.program.font === 'sans');
+
+  applyCommand(t, { op:'stage', item:{ type:'text', body:'x'.repeat(5000), caption:'y'.repeat(500) } });
+  chk('body and caption are capped, not passed through unbounded',
+    t.program.body.length === 4000 && t.program.caption.length === 200);
+
+  // src is deliberately untouched by normalizeItem - it is '', a path, or an
+  // asset:<id> reference, the same convention 'image' items already use and
+  // already left alone here too.
+  applyCommand(t, { op:'stage', item:{ type:'text', body:'hi', src:'content/img/whatever.png' } });
+  chk('src passes through unmodified, same as any other type\'s picture', t.program.src === 'content/img/whatever.png');
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

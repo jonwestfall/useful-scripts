@@ -217,6 +217,21 @@ const nextKey = () => `k${Date.now().toString(36)}${(keySeq++).toString(36)}`;
 function normalizeItem(item) {
   if (!item || typeof item !== 'object' || !item.type) return null;
   const copy = { ...item, key: nextKey() };
+  if (copy.type === 'text') {
+    // Issue #103: headings/body, bulleted/numbered lists (miniMarkdown in
+    // util.js), a background colour, a font choice, and an optional inline
+    // picture with a caption. `src` is left alone - it is `''`, a path, or
+    // an `asset:<id>` reference, the exact convention every other item
+    // type's picture already uses, and it is what makes stage()'s own
+    // pushAssetIfHeld(clean.src) and resolveAssets() work for this picture
+    // with no changes to either.
+    copy.body = String(copy.body || '').slice(0, 4000);
+    copy.size = ['s', 'm', 'l', 'xl'].includes(copy.size) ? copy.size : 'l';
+    copy.align = copy.align === 'left' ? 'left' : 'center';
+    copy.bg = String(copy.bg || '').slice(0, 64);
+    copy.font = ['serif', 'mono', 'rounded', 'display'].includes(copy.font) ? copy.font : 'sans';
+    copy.caption = String(copy.caption || '').slice(0, 200);
+  }
   if (copy.type === 'video' || copy.type === 'audio' || copy.type === 'youtube') {
     copy.playing = copy.playing ?? true;
     copy.startAt = Number(copy.startAt) || 0;

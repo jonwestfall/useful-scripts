@@ -287,7 +287,7 @@ dl.keys dd { margin: 0; color: var(--dim); }
    preview thumbnail. vw/vh here would measure the whole screen and blow the
    content far outside a 300px preview. */
 
-.layer, #preview-stage, #item-preview { container-type: size; }
+.layer, #preview-stage, #item-preview, #message-preview-box { container-type: size; }
 .r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set, .r-poll { position: absolute; inset: 0; }
 .r-black { background: #000; }
 .r-image, .r-video { width: 100%; height: 100%; display: block; background: #000; }
@@ -321,10 +321,32 @@ dl.keys dd { margin: 0; color: var(--dim); }
 }
 .r-text[data-align='left'] { text-align: left; justify-items: start; }
 .r-text-body { font-weight: 650; line-height: 1.15; }
+/* 's' already existed as a valid size in PLAN_TYPES.text and protocol.js's
+   own enum before Issue #103's controller UI ever offered it - it just had
+   no clamp of its own, so it rendered unstyled. Given its own size now that
+   something actually selects it. */
+.r-text[data-size='s'] .r-text-body { font-size: clamp(9px, 3.2cqw, 48px); }
 .r-text[data-size='m'] .r-text-body { font-size: clamp(10px, 5cqw, 76px); }
 .r-text[data-size='l'] .r-text-body { font-size: clamp(12px, 8cqw, 132px); }
 .r-text[data-size='xl'] .r-text-body { font-size: clamp(14px, 13cqw, 220px); }
 .r-text code { font-family: ui-monospace, Menlo, monospace; background: #1b222c; padding: 0 .2em; border-radius: 6px; }
+
+/* Issue #103: headings/lists inside a message, a font choice, and an
+   optional picture with a caption underneath the text. */
+.r-text-body h1, .r-text-body h2 { margin: 0 0 .2em; font-weight: 800; line-height: 1.15; }
+.r-text-body h1 { font-size: 1.15em; }
+.r-text-body h2 { font-size: 1.05em; }
+/* Centred alignment still centres a list AS A BLOCK; the bullets/numbers
+   inside it read left-to-right regardless, the same as any real slide. */
+.r-text-body ul, .r-text-body ol { margin: .25em 0; padding-left: 1em; text-align: left; display: inline-block; }
+.r-text-body li { margin-bottom: .15em; }
+.r-text[data-font='serif'] { font-family: Georgia, 'Times New Roman', serif; }
+.r-text[data-font='mono'] { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+.r-text[data-font='rounded'] { font-family: 'Trebuchet MS', 'Comic Sans MS', sans-serif; }
+.r-text[data-font='display'] { font-family: 'Arial Black', 'Helvetica Neue', Impact, sans-serif; }
+.r-text-image-wrap { margin-top: 3cqh; display: grid; justify-items: center; gap: 1cqh; }
+.r-text-image { max-width: 60cqw; max-height: 35cqh; border-radius: 1.5cqh; display: block; object-fit: contain; }
+.r-text-caption { font-size: clamp(8px, 2.4cqw, 34px); color: var(--dim); font-weight: 500; }
 
 .r-qr { display: grid; place-items: center; gap: 3cqh; background: #fff; color: #111; align-content: center; }
 .r-qr-code svg { width: min(58cqh, 58cqw); height: auto; display: block; }
@@ -911,6 +933,30 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; }
 .swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
 
+/* Background colour swatches for the full-screen message editor (Issue #103) -
+   visually identical to .swatch/.swatch-picker above but a distinct class:
+   the ink tool's own swatch-selection code queries $$('.swatch:not(.swatch-
+   picker)') with no scoping, so reusing that class here would make clicking
+   one of these ALSO run the ink tool's colour-selection logic. */
+.bg-swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; border: 2px solid var(--line); }
+.bg-swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
+.bg-swatch-picker {
+  position: relative; width: 42px; height: 42px; min-height: 42px; padding: 0;
+  border-radius: 50%; display: inline-grid; place-items: center; cursor: pointer;
+  background: conic-gradient(#ff4d4f, #ffd166, #45d483, #6ea8fe, #a371f7, #ff4d4f);
+  border: 2px solid var(--line); box-sizing: border-box;
+}
+.bg-swatch-picker-inner {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--custom-bg-color, #0a0d12);
+  border: 1.5px solid rgba(0, 0, 0, .45); pointer-events: none;
+}
+.bg-swatch-picker input[type="color"] {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; border: none; padding: 0;
+}
+.bg-swatch-picker.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
+
 /* Custom color picker swatch (Issue #53) */
 .swatch-picker {
   position: relative; width: 42px; height: 42px; min-height: 42px; padding: 0;
@@ -1333,6 +1379,12 @@ body.plan .linkish:hover { text-decoration: underline; }
   background: #000; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
 }
 #item-preview { position: absolute; inset: 0; }
+/* Same "16:9 box, renderer fills it" shape as #item-preview-viewport above,
+   for the message editor modal's own live preview (Issue #103). */
+#message-preview-box {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; max-width: 100%;
+  background: #000; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+}
 .thumb {
   display: grid; place-items: center; margin-bottom: 8px;
   aspect-ratio: 16 / 9; background: #0e1216; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
