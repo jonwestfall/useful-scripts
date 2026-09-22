@@ -325,6 +325,15 @@ const RECOVERY_CONFLICT = /409 \(Conflict\).*\/api\/lectures\/\d+\/events$/;
 let expectingTemplateWriteForbidden = false;
 const TEMPLATE_WRITE_FORBIDDEN = /403 \(Forbidden\).*\/api\/templates\/[^/]+$/;
 
+// A seventh: the display's own poll-results fetch answering 404 once the
+// relay has forgotten a poll (Issue #115's e2e section, which kills and
+// restarts a relay process on purpose). A fetch()-triggered console error
+// carries no location URL at all here (the same reason the favicon case
+// below has to match on bare text), so this cannot be anchored on the poll
+// route the way the other deliberate cases above are - it is armed only
+// for the one narrow window that test creates, same safety net as those.
+let expectingPollLost = false;
+
 const trap = (page, tag) => {
   // The console message for a failed fetch and the network response that
   // caused it are two different CDP domains, and PR #86's own CI run showed
@@ -370,6 +379,13 @@ const trap = (page, tag) => {
     if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     if (expectingRecoveryConflict && RECOVERY_CONFLICT.test(where)) return;
     if (expectingTemplateWriteForbidden && TEMPLATE_WRITE_FORBIDDEN.test(where)) return;
+    // Killing and restarting a relay process (Issue #115's e2e section) is
+    // its own brief burst of expected noise: a connection-refused while the
+    // old process is down and the new one is not up yet, then a 404 once it
+    // is - text-only, since a fetch()-triggered console message here does
+    // not reliably carry a location URL to anchor on the way a resource-tag
+    // load does.
+    if (expectingPollLost && /ERR_CONNECTION_REFUSED|responded with a status of 404/.test(text)) return;
     if (!m.location()?.url && text === 'Failed to load resource: the server responded with a status of 404 (Not Found)') {
       trimFavicon404s();
       if (recentFavicon404s.length) { recentFavicon404s.shift(); return; }
@@ -4905,6 +4921,86 @@ const goneToo = await fetch(`${BASE}/poll/${code}/results`);
 ok('while the relay drops the code at the same time, not left dangling', goneToo.status === 404);
 
 await ctx.close();
+}
+
+if (want('poll votes are lost on relay restart, with no warning')) {
+console.log('\n-- Issue #115: poll votes are lost on relay restart, with no warning --');
+// A poll's votes and its code live only in the relay's memory (see the
+// comment over `const polls` in podium-server.js) - a real restart, on its
+// own port so nothing else in this suite feels it, is what actually
+// reproduces "the relay forgot every open poll" rather than faking a 404.
+const pollPort = await freePort();
+const pollBase = `http://127.0.0.1:${pollPort}`;
+let pollServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(pollPort), STATIC: '../' },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('relay did not start')), 10000);
+  pollServer.stdout.on('data', (d) => { if (String(d).includes('podium relay')) { clearTimeout(timer); resolve(); } });
+  pollServer.on('exit', (code) => reject(new Error(`relay exited with ${code}`)));
+});
+
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${pollPort}/podium`, room: 'poll-restart-room', passphrase: 'gone when the box reboots' }));
+const screen = await ctx.newPage();
+trap(screen, 'poll-restart display');
+await screen.goto(`${pollBase}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'poll-restart pad');
+await pad.goto(`${pollBase}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="polls"]');
+await pad.selectOption('#poll-kind', 'text');
+await pad.fill('#poll-question', 'Still with me?');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+await screen.waitForFunction(() => document.querySelector('.r-poll-question')?.textContent === 'Still with me?', null, { timeout: 5000 });
+await fetch(`${pollBase}/poll/${(await pad.textContent('#poll-running-code')).trim()}/vote`,
+  { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter: 's1', answer: 'here' }) });
+await screen.waitForFunction(() => document.querySelector('.r-poll-status')?.textContent.includes('1 response'), null, { timeout: 5000 });
+ok('a vote is in before the relay goes down', true);
+
+// A real restart: kill this dedicated process and bring up a fresh one on
+// the exact same port. The new process's `polls` Map starts empty - there
+// is nothing anywhere to reconnect to for the poll that was running.
+expectingPollLost = true;
+pollServer.kill();
+await new Promise((resolve) => pollServer.on('exit', resolve));
+pollServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(pollPort), STATIC: '../' },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('relay did not restart')), 10000);
+  pollServer.stdout.on('data', (d) => { if (String(d).includes('podium relay')) { clearTimeout(timer); resolve(); } });
+  pollServer.on('exit', (code) => reject(new Error(`relay exited with ${code}`)));
+});
+
+await screen.waitForFunction(() => /votes and join code are gone/.test(document.querySelector('.r-poll-hint')?.textContent || ''), null, { timeout: 5000 });
+ok('the display notices within one tick and says so plainly, not a blank retry loop', true);
+ok('and pulls the now-useless QR down rather than leaving it up to be scanned',
+  await screen.evaluate(() => !document.querySelector('.r-poll-qr svg')));
+
+await pad.waitForFunction(() => /votes and join code are gone/.test(document.querySelector('#poll-running-status')?.textContent || ''), null, { timeout: 5000 });
+ok('the presenter\'s own controller says the same thing, not just the projector', true);
+ok('and hides Close/Reopen voting and the join link - both would only fail against a poll that no longer exists',
+  await pad.evaluate(() => document.querySelector('#poll-toggle-open').hidden && document.querySelector('#poll-copy-link').hidden));
+// The console event for that 404 can reach here after this point returns
+// (see the favicon case above for the same CDP-ordering reason), so this
+// waits a beat before disarming rather than racing it.
+await pad.waitForTimeout(1500);
+expectingPollLost = false;
+
+await ctx.close();
+pollServer.kill();
 }
 
 if (want('Polls tab: live results before reveal, hiding an answer, and history')) {

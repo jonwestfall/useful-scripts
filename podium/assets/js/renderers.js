@@ -863,20 +863,34 @@ function renderPoll(item, opts) {
     question.textContent = it.question || '';
     code.textContent = it.pollId || '';
     joinCard.classList.toggle('is-archived', archived);
-    if (!it.pollId) {
+    node.classList.toggle('is-lost', !!it.lost);
+    if (it.lost) {
+      // Issue #115: the relay keeps poll state only in memory - a restart
+      // wipes it, code and all, so "reopen it" is not an option here. This
+      // has to say plainly that it is gone, not retry a request that will
+      // keep 404ing, and not sit there looking like a normal open poll.
+      qrHolder.replaceChildren();
+      urlText.textContent = '';
+      hint.textContent = 'Connection to this poll was lost. If the relay restarted, its votes and join code are gone — create a new poll to keep going.';
+      hint.style.color = '#ff9d9d';
+      currentClosesAt = null;
+    } else if (!it.pollId) {
       qrHolder.replaceChildren();
       urlText.textContent = '';
       hint.textContent = 'Not started yet.';
+      hint.style.color = '';
       currentClosesAt = null;
     } else if (archived) {
       qrHolder.replaceChildren();
       urlText.textContent = '';
       hint.textContent = 'This poll has ended — results only, no new votes.';
+      hint.style.color = '';
       currentClosesAt = null;
     } else {
       drawQr(joinUrl);
       urlText.textContent = it.showUrl !== false ? joinUrl : '';
       hint.textContent = 'Scan, or join and enter the code';
+      hint.style.color = '';
       currentClosesAt = it.open ? it.closesAt : null;
     }
     urlText.hidden = !urlText.textContent;

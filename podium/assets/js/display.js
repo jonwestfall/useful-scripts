@@ -1097,14 +1097,26 @@ async function tickPolls() {
   // A redisplayed poll from history carries a pollId (for a stable ink key)
   // but no token - it is a frozen snapshot of a question that finished, not a
   // live one, and has nothing on the relay left to fetch.
-  for (const item of pollItems().filter((it) => it.token)) {
+  // Issue #115: the relay keeps poll state only in memory (see the comment
+  // over `const polls` in podium-server.js) - a restart wipes every open
+  // poll, code and all. A 404 here is that, not a fluke, so it gets a flag
+  // and a stop, not silence and an endless retry of a request that can only
+  // ever 404 again until someone starts a brand new poll.
+  for (const item of pollItems().filter((it) => it.token && !it.lost)) {
     if (pollFetchInFlight.has(item.pollId)) continue;
     pollFetchInFlight.add(item.pollId);
     const key = item.key;
     fetch(`${base}poll/${encodeURIComponent(item.pollId)}/results`, {
       headers: { authorization: `Bearer ${item.token}` },
     })
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => {
+        if (res.ok) return res.json();
+        if (res.status === 404) {
+          const current = pollItems().find((it) => it.key === key);
+          if (current) { current.lost = true; commit(); }
+        }
+        return null;
+      })
       .then((tally) => {
         if (!tally) return;
         // The item this key names may have moved (TAKE, a fresh stage with
