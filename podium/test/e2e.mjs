@@ -6556,6 +6556,55 @@ ok('a genuine slide/section change is still followed once, unlike the repeated r
 await notesCtx.close();
 }
 
+if (want('Settings Save/Close reachable on a phone')) {
+console.log('\n-- Settings Save/Close reachable on a phone --');
+// Issue #96: the Settings sheet is long enough that on a phone, reaching
+// Save or Close means scrolling past all of it. A copy near the top,
+// shown only under the same max-width:640px breakpoint the rest of the
+// controller's own mobile layout already uses, calls the exact same
+// handlers rather than duplicating the save/close logic.
+const smallCtx = await browser.newContext({ ...devices['iPhone 13'] });
+await smallCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'settings-top-room', passphrase: 'reach it without scrolling' }));
+const small = await smallCtx.newPage();
+trap(small, 'settings top actions (iPhone)');
+await small.goto(`${BASE}/control.html`);
+await small.waitForSelector('#app:not([hidden])');
+
+await small.click('#open-settings');
+await small.waitForSelector('#setup:not([hidden])');
+ok('the top actions row is shown on a phone-width screen', await small.isVisible('.setup-top-actions'));
+ok('Save is visible by default (Connection is the starting tab)', await small.isVisible('#setup-save-top'));
+ok('Close is offered too, same as the one at the bottom, while this device is configured',
+  await small.isVisible('#setup-close-top') && await small.isVisible('#setup-close'));
+
+await small.click('.tab[data-settings-tab="presentation"]');
+ok('Save hides on the Presentation tab - there is nothing there to submit', await small.isHidden('#setup-save-top'));
+await small.click('.tab[data-settings-tab="connection"]');
+ok('and comes back on Connection', await small.isVisible('#setup-save-top'));
+
+// The top Save button reaches the SAME form validation as the real one -
+// not a silent no-op, and not a second copy of the check.
+await small.fill('#c-pass', '');
+await small.click('#setup-save-top');
+ok('the top Save button runs the real form validation, not a shortcut around it',
+  (await small.textContent('#setup-error')).includes('Fill in the fields'));
+ok('and does not navigate away on a rejected save', await small.isVisible('#setup:not([hidden])'));
+
+await Promise.all([small.waitForNavigation({ timeout: 15000 }), small.click('#setup-close-top')]);
+await small.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+ok('the top Close button reloads back to the app, same as the bottom one', true);
+
+// A normal (non-phone) viewport never shows this row at all - the real
+// Save/Close are already in easy reach down there.
+await small.setViewportSize({ width: 1280, height: 900 });
+await small.click('#open-settings');
+await small.waitForSelector('#setup:not([hidden])');
+ok('and stays hidden on a screen wide enough not to need it', await small.isHidden('.setup-top-actions'));
+
+await smallCtx.close();
+}
+
 if (want('back to the landing page')) {
 console.log('\n-- back to the landing page --');
 const ctx = await browser.newContext();

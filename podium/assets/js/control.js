@@ -6228,6 +6228,11 @@ applyTheme();
 function settingsTab(name) {
   $$('#setup .settings-tabs .tab').forEach((b) => b.classList.toggle('is-on', b.dataset.settingsTab === name));
   $$('#setup [data-settings-panel]').forEach((p) => { p.hidden = p.dataset.settingsPanel !== name; });
+  // The top Save button (Issue #96) only means anything on Connection - it
+  // is the one tab with a form to submit; Presentation's own controls save
+  // themselves as you change them, the same reason there is no bottom Save
+  // button there either.
+  $('#setup-save-top').hidden = name !== 'connection';
 }
 $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () => settingsTab(b.dataset.settingsTab)));
 
@@ -6326,6 +6331,7 @@ function showSetup() {
   $('#setup').hidden = false;
   $('#app').hidden = true;
   $('#setup-close').hidden = !isConfigured(cfg);
+  $('#setup-close-top').hidden = !isConfigured(cfg);
   settingsTab('connection');
   const prefTheme = $('#pref-theme');
   if (prefTheme) prefTheme.value = presentation.theme || 'dark';
@@ -6415,6 +6421,11 @@ $('#open-settings').addEventListener('click', showSetup);
 // Reloading is the honest "cancel": it throws away half-finished edits and
 // puts the page back into whatever state the saved settings describe.
 $('#setup-close').addEventListener('click', reloadClean);
+$('#setup-close-top').addEventListener('click', reloadClean);
+// Not a second save path (Issue #96) - #setup-form is outside this button,
+// so requestSubmit is what reaches the exact same handler the bottom Save
+// button's own click already triggers as a normal form submission.
+$('#setup-save-top').addEventListener('click', () => $('#setup-form').requestSubmit());
 
 wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
   const removed = await resetDevice();
