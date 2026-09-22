@@ -176,7 +176,7 @@ const freePort = () => new Promise((resolve, reject) => {
   });
 });
 
-const { chromium } = await loadPlaywright();
+const { chromium, devices } = await loadPlaywright();
 writeFixture();
 writeShortFixture();
 
@@ -303,15 +303,47 @@ const LECTURE_RENAME_FORBIDDEN = /403 \(Forbidden\).*\/api\/lectures\/\d+$/;
 let expectingRecoveryConflict = false;
 const RECOVERY_CONFLICT = /409 \(Conflict\).*\/api\/lectures\/\d+\/events$/;
 
+// A sixth: a plain member's PUT to /api/templates/<course> forced to answer
+// 403, to prove membership is not ownership (see Issue #80's e2e block).
+// Anchored the same way as the rename case above, for the same reason - a
+// bare status+path match would also swallow a genuine forbidden GET or
+// DELETE on this same route.
+let expectingTemplateWriteForbidden = false;
+const TEMPLATE_WRITE_FORBIDDEN = /403 \(Forbidden\).*\/api\/templates\/[^/]+$/;
+
 const trap = (page, tag) => {
+  // The console message for a failed fetch and the network response that
+  // caused it are two different CDP domains, and PR #86's own CI run showed
+  // they do not always reach Playwright's listeners in the browser's true
+  // internal order: the url-less console line for a favicon 404 can arrive
+  // BEFORE the 'response' event that names it as a favicon, not just after.
+  // The old version only ever looked backwards from the console side within
+  // a fixed window, so a swap like that flagged a real, expected favicon 404
+  // as an error with nothing here to un-flag it. This version matches in
+  // whichever order the two events land, within WINDOW_MS of each other.
+  const WINDOW_MS = 3000;
   const recentFavicon404s = [];
+  const pendingUrllessErrors = []; // { at, entry } - provisionally flagged, awaiting a response to clear them
   const trimFavicon404s = () => {
-    const cutoff = Date.now() - 2000;
+    const cutoff = Date.now() - WINDOW_MS;
     while (recentFavicon404s.length && recentFavicon404s[0] < cutoff) recentFavicon404s.shift();
+  };
+  const trimPendingUrlless = () => {
+    const cutoff = Date.now() - WINDOW_MS;
+    while (pendingUrllessErrors.length && pendingUrllessErrors[0].at < cutoff) pendingUrllessErrors.shift();
   };
   page.on('response', (r) => {
     if (r.status() !== 404) return;
     if (!/\/favicon\.ico(?:\?|$)/.test(r.url())) return;
+    trimPendingUrlless();
+    const pending = pendingUrllessErrors.shift();
+    if (pending) {
+      // The console message beat this response here - un-flag it rather
+      // than leaving it sitting in errors as a false positive.
+      const idx = errors.indexOf(pending.entry);
+      if (idx !== -1) errors.splice(idx, 1);
+      return;
+    }
     recentFavicon404s.push(Date.now());
     trimFavicon404s();
   });
@@ -321,14 +353,22 @@ const trap = (page, tag) => {
     const text = m.text();
     const where = `${text} ${m.location()?.url || ''}`;
     if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where)) return;
-    trimFavicon404s();
-    if (recentFavicon404s.length && !m.location()?.url
-      && text === 'Failed to load resource: the server responded with a status of 404 (Not Found)') {
-      recentFavicon404s.shift();
-      return;
-    }
     if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     if (expectingRecoveryConflict && RECOVERY_CONFLICT.test(where)) return;
+    if (expectingTemplateWriteForbidden && TEMPLATE_WRITE_FORBIDDEN.test(where)) return;
+    if (!m.location()?.url && text === 'Failed to load resource: the server responded with a status of 404 (Not Found)') {
+      trimFavicon404s();
+      if (recentFavicon404s.length) { recentFavicon404s.shift(); return; }
+      // No favicon 404 response seen yet - it may simply not have arrived
+      // here first. Flag it provisionally; the 'response' handler above
+      // clears it if a matching favicon 404 shows up within WINDOW_MS. An
+      // unrelated url-less 404 with no such response stays flagged, same
+      // as always.
+      const entry = `${tag} console: ${text}`;
+      errors.push(entry);
+      pendingUrllessErrors.push({ at: Date.now(), entry });
+      return;
+    }
     errors.push(`${tag} console: ${text}`);
   });
 };
@@ -952,6 +992,49 @@ ok('picking light theme applies data-theme="light" immediately and persists',
   await pad.evaluate(() => document.documentElement.dataset.theme === 'light' && JSON.parse(localStorage.getItem('podium.presentation.v1')).theme === 'light'));
 await pad.selectOption('#pref-theme', 'dark');
 
+// Controller tabs (Issue #76): hide one, reorder another, and check both the
+// main tab bar and the "More" menu actually reflect it - not just the saved
+// preference, which the unit tests in tabsettings.test.mjs already cover.
+// #app (the live tab bar) is hidden behind #setup while Settings is open
+// (see showSetup()), so the parts of this that click the live bar happen
+// after closing it, same as the poll-url re-check further down does.
+ok('the tab order settings list has one row per tab',
+  await pad.evaluate(() => document.querySelectorAll('#tab-order-list .tab-order-row').length === 12));
+
+await pad.uncheck('.tab-order-row:has-text("Camera") input[type=checkbox]');
+ok('hiding a tab persists to presentation preferences',
+  await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).hiddenTabs.includes('camera')));
+ok('and the Camera tab itself is marked hidden, reading its own attribute rather than what is visible right now',
+  await pad.evaluate(() => document.querySelector('.tab[data-tab="camera"]').hidden === true));
+
+const orderBefore = await pad.$$eval('.tabs .tab[data-tab]', (els) => els.map((e) => e.dataset.tab));
+await pad.click('.tab-order-row:has-text("Slides") .tab-order-move button:first-child');
+const orderAfter = await pad.$$eval('.tabs .tab[data-tab]', (els) => els.map((e) => e.dataset.tab));
+ok(`moving Slides up actually reorders the live tab bar (${orderBefore.join(',')} -> ${orderAfter.join(',')})`,
+  orderAfter[0] === 'slides' && orderAfter[1] === 'library' && orderAfter.length === orderBefore.length);
+
+await pad.click('#setup-close');
+await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+ok('"More" appears now that Camera is really out of the bar', await pad.isVisible('#tabs-more'));
+
+await pad.click('#tabs-more');
+ok('More lists the hidden tab by name', await pad.evaluate(() =>
+  Array.from(document.querySelectorAll('#tabs-more-menu button')).some((b) => b.textContent === 'Camera')));
+await pad.click('#tabs-more-menu button:has-text("Camera")');
+ok('picking it from the menu actually switches to it, same as tapping a visible tab would',
+  await pad.evaluate(() => !document.querySelector('[data-panel="camera"]').hidden));
+ok('and closes the menu behind it', await pad.isHidden('#tabs-more-menu'));
+
+// Undo both changes, the same courtesy the poll-url re-check below pays -
+// nothing later in this run should have to know a tab was ever hidden or moved.
+await pad.click('#open-settings');
+await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
+await pad.check('.tab-order-row:has-text("Camera") input[type=checkbox]');
+await pad.click('.tab-order-row:has-text("Slides") .tab-order-move button:nth-child(2)');
+ok('restored order and visibility match what the bar shipped with', await pad.evaluate(() => {
+  const p = JSON.parse(localStorage.getItem('podium.presentation.v1'));
+  return !p.hiddenTabs.includes('camera') && p.tabOrder[0] === 'library' && p.tabOrder[1] === 'slides';
+}));
 await pad.click('#setup-close');
 await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
 await pad.waitForSelector('.tile', { timeout: 15000 });
@@ -1167,7 +1250,7 @@ await screen.waitForFunction(() => document.querySelector('#ink').classList.cont
 ok('returning to that slide restores its own ink', true);
 
 await pad.click('.tab[data-tab="ink"]');
-await pad.waitForTimeout(200);
+await pad.waitForTimeout(700);
 await pad.click('#ink-clear');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 ok('Clear wipes only the surface currently on screen', true);
@@ -2032,9 +2115,16 @@ ok('a dot at the pad center lands at the stage center', await pixelAt(0.5, 0.5))
 await pad.click('#ink-undo');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 
+// Same button, reached from a physical keyboard rather than a tap - the one
+// modified key exempted from "a modified key is not ours" (see control.js).
+await dab(0.5, 0.5);
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+await pad.keyboard.press('Control+z');
+await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+
 await pad.click('#ink-zoom-in');
 await pad.click('#ink-zoom-in');
-await pad.waitForTimeout(200);
+await pad.waitForTimeout(700);
 const zoomedTransform = await pad.$eval('#pad-frame', (n) => n.style.transform);
 ok(`zooming in actually scales the pad (${zoomedTransform})`, /scale\(([2-9]|\d\d)/.test(zoomedTransform) || /scale\(2\.\d/.test(zoomedTransform));
 ok('pan buttons become available once zoomed', await pad.$eval('#pan-left', (b) => !b.disabled));
@@ -2047,7 +2137,7 @@ await screen.waitForFunction(() => document.querySelector('#ink').classList.cont
 ok('the same relative point still lands in the same place once zoomed', await pixelAt(0.5, 0.5));
 
 await pad.click('#ink-zoom-reset');
-await pad.waitForTimeout(200);
+await pad.waitForTimeout(700);
 ok('reset zoom returns to 1x and disables panning again', await pad.$eval('#pan-left', (b) => b.disabled));
 await ctx.close();
 }
@@ -4976,12 +5066,62 @@ await pad.click('.tile:has(.tile-title:text-is("Sample Handout"))');
 await screen.waitForSelector('.layer[data-role="program"] .r-pdf-canvas', { timeout: 10000 });
 await screen.waitForFunction(() => {
   const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
-  return canvas && canvas.width > 0 && canvas.height > 0;
+  // A bare <canvas> defaults to 300x150 in every browser - width/height > 0
+  // is true of that default too, so it proves nothing about whether pdf.js
+  // actually finished painting a page into it yet.
+  return canvas && canvas.width > 0 && canvas.height > 0 && canvas.width !== 300;
 }, null, { timeout: 10000 });
 ok('PDF renders to client-side <canvas> instead of iframe',
   await screen.evaluate(() => document.querySelector('.layer[data-role="program"] .r-pdf iframe') === null));
 
 ok('PDF panel is snapshotable for session exports and photos', true);
+
+// Issue #82: ink anchored to a PDF has to land at the same relative spot on
+// both ends, which needs both sides to agree on the page's own aspect ratio
+// - previously the display fell back to "no letterbox" (renderPdf had no
+// contentAspect()) and the controller separately fell back to the room's
+// stage shape (contentAspectFor had no 'pdf' case), two different wrong
+// answers that did not even agree with each other.
+const pageAspect = await screen.evaluate(() => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  return canvas.width / canvas.height;
+});
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(700);
+const padAspect = await pad.evaluate(() => {
+  const r = document.querySelector('#pad-frame').getBoundingClientRect();
+  return r.width / r.height;
+});
+ok(`the controller's ink pad is letterboxed to the PDF's actual page shape, not a guess (display ${pageAspect.toFixed(3)}, pad ${padAspect.toFixed(3)})`,
+  Math.abs(pageAspect - padAspect) < 0.05);
+
+// Zoom/pan navigation (Issue #82) - the display actually re-renders a
+// cropped, zoomed view, not just a state flag nobody draws.
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForSelector('#pdf-zoom:not([hidden])', { timeout: 5000 });
+ok('zoom starts at 1x with pan disabled', await pad.evaluate(() =>
+  document.querySelector('#pdf-zoom-level').textContent === '1×'
+  && document.querySelector('#pdf-pan-left').disabled === true));
+
+const pixelsAt1x = await screen.evaluate(() => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  return Array.from(canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data);
+});
+await pad.click('#pdf-zoom-in');
+await pad.waitForFunction(() => document.querySelector('#pdf-zoom-level').textContent === '1.6×', null, { timeout: 5000 });
+ok('zooming in updates the level shown on the controller', true);
+await screen.waitForFunction((before) => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  const now = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+  return now.length === before.length && !now.every((v, i) => v === before[i]);
+}, pixelsAt1x, { timeout: 8000 });
+ok('and the display actually re-renders a different (cropped, zoomed-in) image, not just a flag', true);
+ok('pan is enabled once zoomed in', await pad.evaluate(() => document.querySelector('#pdf-pan-left').disabled === false));
+
+await pad.click('#pdf-zoom-reset');
+await pad.waitForFunction(() => document.querySelector('#pdf-zoom-level').textContent === '1×', null, { timeout: 5000 });
+ok('reset zoom returns to 1x and disables pan again',
+  await pad.evaluate(() => document.querySelector('#pdf-pan-left').disabled === true));
 
 await ctx.close();
 }
@@ -5221,6 +5361,13 @@ ok('a student reaches the join page with no account and no prompt',
   await joiner.isVisible('#enter') && joiner.url().endsWith('/join.html'));
 await joiner.close();
 
+// A guest lecturer is the same exception, for the same reason (Issue #77) -
+// see AUTH_OPEN_PATHS in podium-server.js.
+ok('a guest pairing link is reachable with no account either',
+  (await fetch(`${acctBase}/guest.html`)).status === 200);
+ok('and so is the script it needs to actually join the room',
+  (await fetch(`${acctBase}/assets/js/guest.js`)).status === 200);
+
 // A visitor who has never signed in sees the showcase itself, and a way in -
 // not the surfaces, which would 401 the moment they were clicked.
 const visitor = await acctCtx.newPage();
@@ -5326,6 +5473,23 @@ await desk.waitForFunction(() => document.querySelector('#up-note')?.classList.c
 ok(`an html upload is refused with a reason ("${(await desk.textContent('#up-note')).trim()}")`,
   /does not take html/.test(await desk.textContent('#up-note')));
 
+// Issue #82: a PDF uploaded straight from the controller's Library tab -
+// unlike a deck or a photo it cannot be sent peer to peer, so this button
+// only exists here (server-backed) and goes through the same upload route
+// admin.html's own does.
+await pad.click('.tab[data-tab="library"]');
+await pad.waitForSelector('#pdf-upload-row:not([hidden])', { timeout: 5000 });
+await pad.setInputFiles('#pdf-upload', path.join(ROOT, 'content', 'sample.pdf'));
+await pad.waitForFunction(() => /Added/.test(document.querySelector('#pdf-upload-note')?.textContent || ''), null, { timeout: 8000 });
+ok(`uploading a PDF from the controller adds it to the library ("${(await pad.textContent('#pdf-upload-note')).trim()}")`,
+  /Added/.test(await pad.textContent('#pdf-upload-note')));
+const uploadedPdfInLibrary = await pad.evaluate(async () => {
+  const res = await fetch('/api/library', { credentials: 'same-origin' });
+  const { items } = await res.json();
+  return items.some((i) => i.type === 'pdf' && i.title === 'sample');
+});
+ok('and it is really on the server, filed as a pdf item', uploadedPdfInLibrary);
+
 // Now the controller, which has to merge it in beside the shipped manifest.
 await pad.reload();
 await pad.waitForSelector('#library .tile');
@@ -5401,6 +5565,106 @@ await pad.click('#plan-server-open');
 await pad.waitForFunction(() => /Loaded/.test(document.querySelector('#plan-note')?.textContent || ''), null, { timeout: 10000 });
 ok(`opening it in class needs no file at all ("${(await pad.textContent('#plan-note')).trim()}")`,
   /Day 6 — sent, not carried/.test(await pad.textContent('#plan-note')));
+
+// -- Issue #88: overwrite and delete a plan already on the server ------------
+//
+// planner's second push above (the "not-a-real-course" one) is the plan under
+// test here - a private one nothing else in this section reads from, so
+// updating and deleting it cannot disturb "Day 6 — sent, not carried" itself,
+// which the controller just opened and the rest of this section still needs.
+ok('pushing a second time left Update visible for what it just created',
+  await planner.isVisible('#plan-push-update'));
+
+await planner.fill('#plan-title', 'Day 6 — sent, not carried (revised)');
+await planner.click('#plan-push-update');
+await planner.waitForFunction(() => /Updated/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+
+const afterUpdate = await planner.evaluate(async () => {
+  const res = await fetch('/api/plans', { credentials: 'same-origin' });
+  return (await res.json()).plans;
+});
+ok('Update overwrote the same server row rather than creating another (still 2 of planner\'s own plans)',
+  afterUpdate.filter((p) => /sent, not carried/.test(p.title)).length === 2);
+ok('and the title on the server actually changed',
+  afterUpdate.some((p) => p.title === 'Day 6 — sent, not carried (revised)'));
+
+const revisedId = afterUpdate.find((p) => p.title === 'Day 6 — sent, not carried (revised)').id;
+await planner.selectOption('#plan-pull-pick', String(revisedId));
+await planner.click('#plan-pull-delete');
+await planner.waitForFunction(() => /Tap again to delete/.test(document.querySelector('#plan-pull-delete')?.textContent || ''), null, { timeout: 3000 });
+ok('deleting a server plan asks twice, like other destructive buttons here', true);
+await planner.click('#plan-pull-delete');
+await planner.waitForFunction(() => /Removed/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+
+const afterDelete = await planner.evaluate(async () => {
+  const res = await fetch('/api/plans', { credentials: 'same-origin' });
+  return (await res.json()).plans;
+});
+ok('the deleted plan is actually gone from the server, not just the picker',
+  !afterDelete.some((p) => p.id === revisedId));
+ok('and the OTHER plan this section still needs is untouched',
+  afterDelete.some((p) => p.title === 'Day 6 — sent, not carried'));
+ok('Update button hides itself once the plan it pointed at is gone',
+  await planner.isHidden('#plan-push-update'));
+ok('and the button re-arms for the next lecture rather than staying locked',
+  await planner.isEnabled('#plan-pull-delete') && await planner.textContent('#plan-pull-delete') === 'Delete from server');
+
+// -- Issue #80: a course's plan template ----------------------------------
+await planner.fill('#plan-course', 'psy415');
+ok('no template yet, so "New lecture from template" is not offered', await planner.isHidden('#plan-new-from-template'));
+ok('but the row itself is, once a course is named, so Save is reachable', await planner.isVisible('#plan-template-row'));
+
+await planner.fill('#plan-title', "This week's shape");
+await planner.click('#plan-save-template');
+await planner.waitForFunction(() => /can start from this/.test(document.querySelector('#plan-template-note')?.textContent || ''), null, { timeout: 8000 });
+ok('saving the current lecture as psy415\'s template works', true);
+ok('and "New lecture from template" now offers it', await planner.isVisible('#plan-new-from-template'));
+ok('and Remove appears alongside Save now that there is something to remove',
+  await planner.isVisible('#plan-remove-template'));
+
+await planner.click('#plan-new');
+// newPlan() is async (it autosaves the outgoing lecture first) and its click
+// handler is not awaited by the DOM, so the blank plan's own render can land
+// AFTER a fill immediately following the click - wait for the course field to
+// actually go blank (emptyPlan() gives it '', unlike title's 'Untitled
+// lecture' default) before touching it again.
+await planner.waitForFunction(() => document.querySelector('#plan-course').value === '', null, { timeout: 5000 });
+await planner.fill('#plan-course', 'psy415');
+await planner.click('#plan-new-from-template');
+await planner.waitForFunction(() => document.querySelector('#plan-title').value === "This week's shape", null, { timeout: 5000 });
+ok('starting a new lecture from the template loads its content, not a blank one', true);
+ok('and carries the course forward with it', await planner.inputValue('#plan-course') === 'psy415');
+
+// A plain member may use the template but not change it - same bar course
+// ownership already sets on the connection settings above. A context of its
+// own: acctCtx's cookie jar is shared by every other page still in play here
+// (desk, pad, acctScreen, planner), and signing in as a second account in it
+// would silently swap who THEY are authenticated as for the rest of the
+// section, the same reason freshCtx and twoCtx get their own below.
+const taCtx = await browser.newContext();
+const memberPlanner = await taCtx.newPage();
+trap(memberPlanner, 'acct plan (member)');
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'ta', '--name', 'A TA', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData }, input: 'a good long password too\n',
+});
+execFileSync(process.execPath, ['podium-admin.js', 'member', 'add', 'psy415', 'ta', '--role', 'member'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: acctData },
+});
+await memberPlanner.goto(`${acctBase}/login.html`);
+await memberPlanner.fill('#username', 'ta');
+await memberPlanner.fill('#password', 'a good long password too');
+await Promise.all([memberPlanner.waitForURL(/index\.html/), memberPlanner.click('#go')]);
+await memberPlanner.goto(`${acctBase}/plan.html`);
+await memberPlanner.fill('#plan-course', 'psy415');
+ok('a member sees the template is there to use',
+  await memberPlanner.waitForSelector('#plan-new-from-template:not([hidden])', { timeout: 5000 }).then(() => true, () => false));
+expectingTemplateWriteForbidden = true;
+await memberPlanner.click('#plan-save-template');
+await memberPlanner.waitForFunction(() => (document.querySelector('#plan-template-note')?.textContent || '').length > 0, null, { timeout: 8000 });
+expectingTemplateWriteForbidden = false;
+ok('but may not overwrite it - membership is not ownership',
+  /you can change/.test(await memberPlanner.textContent('#plan-template-note')));
+await taCtx.close();
 
 await planner.close();
 
@@ -5721,8 +5985,10 @@ await desk.fill(passField, before);
 await desk.click('#tab-storage');
 await desk.waitForSelector('#panel-storage:not([hidden])');
 
+// 2 files: the deck uploaded earlier in this section, plus the PDF uploaded
+// from the controller's own Library tab (Issue #82).
 ok(`the page says what the box is holding (${(await desk.textContent('#storage-note')).slice(0, 60)}…)`,
-  /Library: 1 file/.test(await desk.textContent('#storage-note'))
+  /Library: 2 files/.test(await desk.textContent('#storage-note'))
   && /database:/.test(await desk.textContent('#storage-note')));
 
 const backup = desk.waitForEvent('download', { timeout: 30000 });
@@ -5978,6 +6244,365 @@ await multiCtx.close();
 multiServer.kill();
 await new Promise((resolve) => multiServer.on('exit', resolve));
 fs.rmSync(multiData, { recursive: true, force: true });
+}
+
+if (want('guest pairing: Simple Mode')) {
+console.log('\n-- guest pairing: Simple Mode --');
+// Issue #77: a substitute's clicker. Its own room on the main server - no
+// accounts needed, guest.html works wherever the existing full pairing QR
+// already does (see the comment on AUTH_OPEN_PATHS in podium-server.js).
+const gCtx = await browser.newContext();
+await gCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'guest-room', passphrase: 'hand this to a substitute' }));
+
+const gDisplay = await gCtx.newPage();
+trap(gDisplay, 'guest display');
+await gDisplay.goto(`${BASE}/display.html`);
+await gDisplay.click('#arm-button');
+await gDisplay.waitForSelector('#hud[data-status="online"]');
+
+const gControl = await gCtx.newPage();
+trap(gControl, 'guest instructor controller');
+await gControl.goto(`${BASE}/control.html`);
+await gControl.waitForSelector('#app:not([hidden])');
+await gControl.waitForFunction(
+  () => !document.querySelector('#display-state')?.textContent.includes('No display connected'),
+  null, { timeout: 10000 });
+
+// --- the pairing sheet offers a guest link without touching this device's
+// own settings (see showPairing in display.js). Reached with the P key
+// rather than #pair-button/#standby-pair: both those buttons live on sheets
+// that hide once a controller is connected and live, which this display
+// already is - P works regardless (see display.js's keydown handler). -----
+await gDisplay.keyboard.press('p');
+await gDisplay.waitForSelector('#pair:not([hidden])');
+ok('the pairing sheet defaults to full control, same as it always has',
+  await gDisplay.evaluate(() => document.querySelector('#pair-mode-full').classList.contains('is-on')
+    && document.querySelector('#pair-url').textContent.includes('control.html')));
+await gDisplay.click('#pair-mode-guest');
+ok('switching to guest mode swaps the link to guest.html, not control.html',
+  (await gDisplay.textContent('#pair-url')).includes('guest.html'));
+ok('and says what a guest link can actually do', /advance slides, blank the screen/.test(await gDisplay.textContent('#pair-warn')));
+await gDisplay.click('#pair-close');
+
+// --- a real deck live, so Next/Previous has somewhere to go --------------
+const waitForGuestSlide = (i) => gDisplay.waitForFunction((want) => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const svgs = [...(host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || [])];
+  return svgs.findIndex((s) => s.classList.contains('podium-on')) === want;
+}, i, { timeout: 15000 });
+await gControl.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await waitForGuestSlide(0);
+
+// --- the guest device itself - reached exactly the way a scanned QR would
+// leave it: this context's localStorage already carries the room, so
+// opening the page is the whole of "pairing". ------------------------------
+const gGuest = await gCtx.newPage();
+trap(gGuest, 'guest clicker');
+await gGuest.goto(`${BASE}/guest.html`);
+await gGuest.waitForSelector('#app:not([hidden])');
+await gGuest.waitForFunction(() => document.querySelector('#status')?.dataset.status === 'online', null, { timeout: 10000 });
+await gGuest.waitForFunction(() => !document.querySelector('#display-state')?.textContent.includes('No display connected'),
+  null, { timeout: 10000 });
+// itemTitle prefers the deck's own frontmatter title over the library
+// manifest's entry title (see the deck's own front matter) - "Weighing the
+// Evidence" is what actually lands in state.program.title, not the manifest
+// name the tile was picked from.
+await gGuest.waitForFunction(() => document.querySelector('#guest-now')?.textContent.includes('Weighing the Evidence'), null, { timeout: 10000 });
+ok('the guest device sees the live deck with no setup of its own', true);
+ok('Next/Previous are live for a deck', !(await gGuest.isDisabled('#guest-next')) && !(await gGuest.isDisabled('#guest-prev')));
+
+await gGuest.click('#guest-next');
+await waitForGuestSlide(1);
+ok('Next goes straight to the projector - no cueing concept, no TAKE', true);
+
+// --- Blank -----------------------------------------------------------------
+await gGuest.click('#guest-blank');
+await gDisplay.waitForFunction(() => document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
+ok('Blank from the guest device cuts the room to black', true);
+await gGuest.click('#guest-blank');
+await gDisplay.waitForFunction(() => !document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
+ok('and toggles back', true);
+
+// --- Laser -------------------------------------------------------------
+await gGuest.click('#guest-laser');
+ok('Laser arms and offers colour swatches', await gGuest.isVisible('#guest-laser-colors'));
+await gGuest.locator('#guest-pad').scrollIntoViewIfNeeded();
+const padBox = await gGuest.$eval('#guest-pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await gGuest.mouse.move(padBox.x + padBox.w * 0.5, padBox.y + padBox.h * 0.5);
+await gGuest.mouse.down();
+await gDisplay.waitForFunction(() => document.querySelector('#laser').classList.contains('is-on'), null, { timeout: 5000 });
+ok('a laser dot reaches the projector from the guest device', true);
+await gGuest.mouse.up();
+await gDisplay.waitForFunction(() => !document.querySelector('#laser').classList.contains('is-on'), null, { timeout: 3000 });
+
+// --- graceful degradation: sharing the room with a frozen, mid-cue full
+// controller must not touch what it has staged (Issue #77's last bullet) --
+await gControl.click('#freeze');
+await gDisplay.waitForFunction(() => document.body.classList.contains('is-frozen'), null, { timeout: 5000 });
+await gControl.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await gControl.waitForFunction(() => document.querySelector('#preview-label')?.textContent === 'Cued', null, { timeout: 5000 });
+ok('the instructor cues the Whiteboard while frozen', await gControl.$eval('#preview-stage', (n) => n.innerHTML.includes('r-whiteboard')));
+
+await gGuest.click('#guest-next');
+await waitForGuestSlide(2);
+ok('the guest advancing the deck still goes straight to the projector, freeze or not', true);
+ok('and never touches what the instructor has cued',
+  await gControl.$eval('#preview-stage', (n) => n.innerHTML.includes('r-whiteboard'))
+  && (await gControl.textContent('#preview-label')) === 'Cued');
+
+await gControl.click('#take');
+await gDisplay.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-whiteboard'), null, { timeout: 5000 });
+ok('TAKE still works normally afterward - the guest device changed nothing about how freeze/cue behaves', true);
+
+await gCtx.close();
+}
+
+if (want('live captions')) {
+console.log('\n-- live captions --');
+// Issue #79. Real SpeechRecognition needs a working microphone and, in
+// Chromium, a real network round trip to Google's recognition service -
+// neither belongs in this suite (no audio content to recognize, and a
+// sandboxed test run should never depend on reaching a third party over
+// the network). A fake constructor with the same event-driven shape
+// (start/stop, onresult/onerror/onend) exercises every line control.js
+// actually owns - the throttle, the silence timer, the manual-caption
+// handoff, the stop path - deterministically, the same reason the camera
+// tests use --use-fake-device-for-media-stream rather than a real webcam.
+const capCtx = await browser.newContext();
+await capCtx.addInitScript(() => {
+  class FakeSpeechRecognition {
+    constructor() {
+      window.__fakeRecognizers = window.__fakeRecognizers || [];
+      window.__fakeRecognizers.push(this);
+    }
+    start() { this.started = true; }
+    stop() { this.started = false; if (this.onend) setTimeout(() => this.onend(), 0); }
+  }
+  window.SpeechRecognition = FakeSpeechRecognition;
+});
+await capCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'captions-room', passphrase: 'read the room' }));
+
+const capDisplay = await capCtx.newPage();
+trap(capDisplay, 'captions display');
+await capDisplay.goto(`${BASE}/display.html`);
+await capDisplay.click('#arm-button');
+await capDisplay.waitForSelector('#hud[data-status="online"]');
+
+const capControl = await capCtx.newPage();
+trap(capControl, 'captions controller');
+await capControl.goto(`${BASE}/control.html`);
+await capControl.waitForSelector('#app:not([hidden])');
+await capControl.waitForFunction(
+  () => !document.querySelector('#display-state')?.textContent.includes('No display connected'),
+  null, { timeout: 10000 });
+await capControl.click('.tab[data-tab="say"]');
+
+const lastFakeRecognizer = () => capControl.evaluate(() => window.__fakeRecognizers?.length || 0);
+ok('starts idle, nothing armed yet', (await lastFakeRecognizer()) === 0);
+
+await capControl.click('#caption-toggle');
+await capControl.waitForFunction(() => document.querySelector('#caption-toggle').textContent === 'Stop live captions', null, { timeout: 5000 });
+ok('Start arms recognition and flips the button', (await capControl.textContent('#caption-status')) === 'Listening…');
+ok('and it is a continuous, interim-results session in the room language',
+  await capControl.evaluate(() => {
+    const r = window.__fakeRecognizers.at(-1);
+    return r.continuous === true && r.interimResults === true && r.started === true;
+  }));
+
+const fireResult = (transcript) => capControl.evaluate((text) => {
+  window.__fakeRecognizers.at(-1).onresult({ results: [[{ transcript: text }]], resultIndex: 0 });
+}, transcript);
+
+await fireResult('the mitochondria is the powerhouse of the cell');
+await capDisplay.waitForFunction(() => document.querySelector('#overlay').classList.contains('is-on'), null, { timeout: 5000 });
+ok('a recognized phrase reaches the display over the relay',
+  (await capDisplay.textContent('#overlay')).includes('powerhouse of the cell'));
+
+await fireResult('and next slide please');
+await capDisplay.waitForFunction(() => document.querySelector('#overlay').textContent.includes('next slide please'), null, { timeout: 5000 });
+ok('a later phrase replaces it in place rather than appending to a growing transcript', true);
+
+// Silence: nothing recognized for the full timeout clears the bar on its
+// own - a live caption bar is not the manual "stays over anything" one.
+await capDisplay.waitForFunction(() => !document.querySelector('#overlay').classList.contains('is-on'), null, { timeout: 6000 });
+ok('and a lull clears the bar without anyone pressing Hide', true);
+
+// A manual caption typed mid-session takes over, and further recognized
+// speech is not allowed to silently overwrite it.
+await capControl.fill('#overlay-text', 'Office hours moved to Thursday');
+await capControl.click('#overlay-form button[type=submit]');
+await capDisplay.waitForFunction(() => document.querySelector('#overlay').textContent.includes('Office hours'), null, { timeout: 5000 });
+await fireResult('this should not appear');
+await capControl.waitForTimeout(500);
+ok('a manually typed caption is not overwritten by speech still technically running',
+  (await capDisplay.textContent('#overlay')).includes('Office hours')
+  && !(await capDisplay.textContent('#overlay')).includes('should not appear'));
+
+await capControl.click('#caption-toggle');
+await capControl.waitForFunction(() => document.querySelector('#caption-toggle').textContent === 'Start live captions', null, { timeout: 5000 });
+await capDisplay.waitForFunction(() => !document.querySelector('#overlay').classList.contains('is-on'), null, { timeout: 5000 });
+ok('Stop clears the bar and rearms the button for next time', (await capControl.textContent('#caption-status')) === '');
+
+await capCtx.close();
+
+// --- no speech recognition in this browser at all (Firefox, e.g.) --------
+const noCapCtx = await browser.newContext();
+await noCapCtx.addInitScript(() => { window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined; });
+await noCapCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'no-captions-room', passphrase: 'no dictation here' }));
+const noCapControl = await noCapCtx.newPage();
+trap(noCapControl, 'no-speech-recognition controller');
+await noCapControl.goto(`${BASE}/control.html`);
+await noCapControl.waitForSelector('#app:not([hidden])');
+await noCapControl.click('.tab[data-tab="say"]');
+await noCapControl.click('#caption-toggle');
+ok('a browser with no SpeechRecognition at all says so rather than failing silently',
+  /no speech recognition/i.test(await noCapControl.textContent('#caption-status')));
+ok('and the button never claims to have started', (await noCapControl.textContent('#caption-toggle')) === 'Start live captions');
+await noCapCtx.close();
+}
+
+if (want('long presenter notes do not hijack the Slides tab scroll')) {
+console.log('\n-- long presenter notes do not hijack the Slides tab scroll --');
+// Issue #95: on an iPhone, a slide with a lot of presenter text pushed the
+// "jump to a slide" thumbnail grid (and its section chips) far down the
+// panel. Both auto-scroll-to-active-item to keep them in view, but neither
+// used to remember having already done so - every re-render (a heartbeat,
+// a build step within the same slide) fired scrollIntoView again, undoing
+// a presenter's own manual scroll back up to read notes or reach Prev/
+// Next a moment later. Reproduced on an actual iPhone-sized viewport,
+// against the shape of deck that triggers it: three slides each with their
+// own heading (so there is more than one section chip to jump between),
+// the middle one with several build fragments and presenter notes long
+// enough to force real scrolling.
+const notesParagraph = 'This is the kind of long presenter note a real lecture slide carries - a full talking-track paragraph, not a one-line reminder, repeated here just to force the notes box tall enough to actually need scrolling. ';
+const longNotes = notesParagraph.repeat(10);
+const notesFixture = path.join(HERE, 'fixtures', 'long-presenter-notes.md');
+fs.writeFileSync(notesFixture, [
+  '---', 'marp: true', 'paginate: true', '---', '',
+  '# Opening', '', 'Welcome to class.', '',
+  '---', '<!-- _class: build -->',
+  '# The Main Point', '',
+  '- First idea', '- Second idea', '- Third idea', '',
+  '<!--', longNotes, '-->', '',
+  '---',
+  '# Wrap Up', '', 'Thanks for coming.', '',
+].join('\n'));
+
+const notesCtx = await browser.newContext({ ...devices['iPhone 13'] });
+await notesCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'notes-scroll-room', passphrase: 'read the room, not the scrollbar' }));
+
+const notesDisplay = await notesCtx.newPage();
+trap(notesDisplay, 'notes-scroll display');
+await notesDisplay.goto(`${BASE}/display.html`);
+await notesDisplay.click('#arm-button');
+await notesDisplay.waitForSelector('#hud[data-status="online"]');
+
+const notesControl = await notesCtx.newPage();
+trap(notesControl, 'notes-scroll controller (iPhone)');
+await notesControl.goto(`${BASE}/control.html`);
+await notesControl.waitForSelector('#app:not([hidden])');
+await notesControl.waitForFunction(
+  () => !document.querySelector('#display-state')?.textContent.includes('No display connected'),
+  null, { timeout: 10000 });
+
+await notesControl.setInputFiles('#deck-file', notesFixture);
+await notesControl.waitForFunction(() => document.querySelector('#deck-file-note')?.textContent.includes('3 slides'), null, { timeout: 15000 });
+await notesControl.click('.tab[data-tab="slides"]');
+await notesControl.click('#deck-next');
+await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.textContent.startsWith('Slide 2'), null, { timeout: 10000 });
+await notesControl.waitForFunction(() => (document.querySelector('#deck-notes')?.textContent.length || 0) > 500, null, { timeout: 10000 });
+
+const panelsOverflow = await notesControl.evaluate(() => {
+  const p = document.querySelector('.panels');
+  return p.scrollHeight - p.clientHeight;
+});
+ok(`the long notes actually overflow the panel on this device (${panelsOverflow}px)`, panelsOverflow > 100);
+
+// A real click auto-scrolls its own target into view as part of Playwright's
+// actionability checks - that would contaminate exactly the measurement
+// this test is making, so #deck-next is clicked in-page instead, the same
+// way a real tap does not scroll anything on its own.
+const clickDeckNext = () => notesControl.evaluate(() => document.querySelector('#deck-next').click());
+
+await clickDeckNext(); // onto slide 2's own build fragments
+await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.textContent.includes('build 1'), null, { timeout: 10000 });
+
+// The presenter scrolls back up to read notes / reach Prev-Next, exactly
+// the recovery the bug report describes ("pulling down from the gutter
+// allows you to scroll back up temporarily").
+await notesControl.evaluate(() => { document.querySelector('.panels').scrollTop = 0; });
+ok('scrolled back to the top manually', (await notesControl.evaluate(() => document.querySelector('.panels').scrollTop)) === 0);
+
+// Advance through the rest of this slide's build fragments (three bullets,
+// so 1/3 -> 2/3 -> 3/3) - same slide, same section, nothing that should
+// re-arm either auto-scroll.
+for (let i = 0; i < 2; i++) await clickDeckNext();
+await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.textContent.includes('build 3'), null, { timeout: 10000 });
+ok('advancing through the rest of the slide\'s own builds does not creep the scroll back down',
+  (await notesControl.evaluate(() => document.querySelector('.panels').scrollTop)) === 0);
+
+// A genuine slide change (a new section) is still allowed to follow once -
+// this is a guard against repeating, not a ban on the feature.
+await clickDeckNext(); // onto slide 3, a new section
+await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.textContent.startsWith('Slide 3'), null, { timeout: 10000 });
+await notesControl.waitForTimeout(500); // the scrollIntoView above is smooth, not instant
+ok('a genuine slide/section change is still followed once, unlike the repeated re-fire this fixes',
+  (await notesControl.evaluate(() => document.querySelector('.panels').scrollTop)) > 0);
+
+await notesCtx.close();
+}
+
+if (want('Settings Save/Close reachable on a phone')) {
+console.log('\n-- Settings Save/Close reachable on a phone --');
+// Issue #96: the Settings sheet is long enough that on a phone, reaching
+// Save or Close means scrolling past all of it. A copy near the top,
+// shown only under the same max-width:640px breakpoint the rest of the
+// controller's own mobile layout already uses, calls the exact same
+// handlers rather than duplicating the save/close logic.
+const smallCtx = await browser.newContext({ ...devices['iPhone 13'] });
+await smallCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'settings-top-room', passphrase: 'reach it without scrolling' }));
+const small = await smallCtx.newPage();
+trap(small, 'settings top actions (iPhone)');
+await small.goto(`${BASE}/control.html`);
+await small.waitForSelector('#app:not([hidden])');
+
+await small.click('#open-settings');
+await small.waitForSelector('#setup:not([hidden])');
+ok('the top actions row is shown on a phone-width screen', await small.isVisible('.setup-top-actions'));
+ok('Save is visible by default (Connection is the starting tab)', await small.isVisible('#setup-save-top'));
+ok('Close is offered too, same as the one at the bottom, while this device is configured',
+  await small.isVisible('#setup-close-top') && await small.isVisible('#setup-close'));
+
+await small.click('.tab[data-settings-tab="presentation"]');
+ok('Save hides on the Presentation tab - there is nothing there to submit', await small.isHidden('#setup-save-top'));
+await small.click('.tab[data-settings-tab="connection"]');
+ok('and comes back on Connection', await small.isVisible('#setup-save-top'));
+
+// The top Save button reaches the SAME form validation as the real one -
+// not a silent no-op, and not a second copy of the check.
+await small.fill('#c-pass', '');
+await small.click('#setup-save-top');
+ok('the top Save button runs the real form validation, not a shortcut around it',
+  (await small.textContent('#setup-error')).includes('Fill in the fields'));
+ok('and does not navigate away on a rejected save', await small.isVisible('#setup:not([hidden])'));
+
+await Promise.all([small.waitForNavigation({ timeout: 15000 }), small.click('#setup-close-top')]);
+await small.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+ok('the top Close button reloads back to the app, same as the bottom one', true);
+
+// A normal (non-phone) viewport never shows this row at all - the real
+// Save/Close are already in easy reach down there.
+await small.setViewportSize({ width: 1280, height: 900 });
+await small.click('#open-settings');
+await small.waitForSelector('#setup:not([hidden])');
+ok('and stays hidden on a screen wide enough not to need it', await small.isHidden('.setup-top-actions'));
+
+await smallCtx.close();
 }
 
 if (want('back to the landing page')) {

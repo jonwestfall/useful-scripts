@@ -63,6 +63,11 @@ Podium is built on a **Zero-Trust Relay** model. Because classroom computers and
 ### 3. Key Isolation & Room Boundaries
 - Controllers and displays verify message authenticity using AES-GCM authentication tags. Packets with invalid passphrases or tampering are rejected silently by the browser without touching application state.
 
+### 4. The Live Caption Exception
+- Live captions (Issue #79) use the browser's own `SpeechRecognition` API, running on whichever device starts it. In Chrome and Edge, that API sends the room's audio to Google's speech recognition service to be transcribed — **inside browser-native code Podium never touches**, before there is anything for this app's own encryption to cover. Safari recognizes on-device instead; Firefox has no implementation at all.
+- This is a genuine third exception to "the relay only ever sees ciphertext," and a categorically different one from the audience-poll exception above: it is not Podium's own server, is not self-hostable, and is not auditable by this codebase — it is entirely outside Podium's trust boundary, decided by the browser vendor rather than by Podium. It also means live captions do not work on a deployment that is intentionally offline or air-gapped, regardless of how Podium itself is hosted.
+- Recognized text travels from there exactly like any other controller-to-display state: encrypted over the relay, via `protocol.js`'s `caption` command. Off by default; the trade-off is stated plainly next to the Start button in `control.html`'s Say tab, not just here.
+
 ---
 
 ## State Machine Protocol (`protocol.js`)

@@ -465,8 +465,40 @@ body.control.is-frozen { background: #171006; }
 .topbar-pacing.is-overtime #topbar-pacing-bar { background: var(--live); width: 100% !important; }
 /* Who is signed in, on a server that has accounts. Empty and hidden on every
    other deployment, so it costs nothing in the bar it is not needed in. */
-/* The admin page. Same furniture as the planning page (body.plan), with a
-   column of cards rather than an editor - it is a page you read down. */
+
+/* ===================== GUEST (Simple Mode) =========================
+   Issue #77's substitute clicker: the same #app/.topbar furniture body.control
+   uses (both rules above are unscoped on purpose), a lot less inside it. */
+body.guest {
+  display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  overscroll-behavior: none;
+}
+.guest-main {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 18px 16px calc(24px + env(safe-area-inset-bottom));
+}
+#guest-now { font-size: 16px; text-align: center; margin: 0; }
+.guest-nav { display: flex; gap: 10px; }
+.guest-nav .big-button { flex: 1; width: auto; min-height: 96px; font-size: 22px; }
+#guest-blank { min-height: 60px; }
+.guest-laser-block { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.guest-laser-block .laser-picker { justify-content: center; }
+/* No live mirror to point at (see the comment in guest.html) - a plain,
+   fixed-aspect surface stands in for the screen, same fraction-of-a-box math
+   as control.js's own laserPoint. Capped by height rather than just width:
+   at full device width, 16:9 of it is taller than a phone or a landscape
+   tablet has room for underneath Next/Previous and Blank without scrolling
+   to reach it - which is exactly wrong for something meant to be immediate. */
+.guest-pad {
+  position: relative; height: min(38vh, 340px); width: auto; max-width: 100%;
+  aspect-ratio: 16 / 9; margin: 0 auto; border-radius: var(--radius);
+  border: 2px dashed var(--line); background: var(--panel-2);
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  cursor: crosshair; touch-action: none;
+}
+.guest-pad .hint { margin: 0; padding: 0 20px; }
 .admin-wrap { max-width: 56rem; margin: 18px auto; padding: 0 14px; display: grid; gap: 14px; }
 .admin-wrap .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
 .admin-wrap h2 { margin: 0 0 6px; font-size: 16px; }
@@ -608,7 +640,28 @@ body.control.is-frozen { background: #171006; }
 .settings-panel .check { margin: 16px 0 6px; }
 .settings-panel .check:first-of-type { margin-top: 4px; }
 .settings-panel .check input { transform: scale(1.15); }
+/* Hidden by default (desktop already has Save/Close in easy reach at the
+   bottom of this sheet) - shown on a phone by the media query below. */
+.setup-top-actions { display: none; gap: 10px; margin-bottom: 18px; }
+.setup-top-actions button { flex: 1; }
 .tab.is-on { background: var(--panel-2); border-color: var(--accent); color: var(--ink); }
+
+/* "More", for tabs hidden via Settings -> Presentation -> Controller tabs.
+   Positioned relative to the wrap (not .tabs, which scrolls) so the menu
+   stays anchored to the button instead of scrolling out from under it. */
+.tabs-more-wrap { position: relative; flex: none; }
+.tabs-more-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+  display: flex; flex-direction: column; min-width: 10rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+}
+.tabs-more-menu button {
+  text-align: left; border: 0; background: transparent; border-radius: 8px;
+  min-height: 38px; padding: 0 10px; font-size: 14px;
+}
+.tabs-more-menu button:hover { background: var(--panel-2); }
+
 .panels { flex: 1; min-height: 0; overflow: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
 .panel { display: flex; flex-direction: column; gap: 14px; }
 
@@ -1119,6 +1172,16 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 .bottom-slot-field label { font-size: 11px; color: var(--dim); font-weight: 600; }
 .bottom-slot-field select { width: 100%; }
 
+.tab-order-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.tab-order-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px;
+}
+.tab-order-move { display: flex; gap: 2px; }
+.tab-order-move button { min-height: 30px; min-width: 30px; padding: 0; font-size: 12px; }
+.tab-order-label { flex: 1; font-size: 14px; }
+.tab-order-show { margin: 0; }
+
 /* On a phone the bar has to fit one row: drop the identifiers you only need
    when something is wrong, and let the buttons shrink. */
 @media (max-width: 640px) {
@@ -1132,6 +1195,11 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
   .bottombar .bar-slot.mobile-overflow { display: none !important; }
   .bottombar .vol { flex: 1; min-width: 76px; max-width: none; margin-left: 0; gap: 6px; }
   #mute, #bar-play, #bar-music, .bottombar .bar-slot { width: 44px; }
+  /* Issue #96: Settings is long enough on a phone that Save/Close at the
+     bottom take real scrolling to reach - a copy near the top costs one
+     row up here in exchange. Desktop keeps just the ones at the bottom,
+     which is already in easy reach on a screen that tall. */
+  .setup-top-actions { display: flex; }
 }
 
 @media (max-width: 900px) {

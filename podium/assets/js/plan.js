@@ -29,6 +29,11 @@ let plan = null;
 let selectedId = null;
 let saveTimer = null;
 let preview = { renderer: null, key: null, slide: 0, step: 0, count: 0 };
+// The server row this in-memory plan maps to, if any - set after pulling one
+// from the server or pushing one there, cleared by anything that swaps the
+// plan out for a different one (a new lecture, a different local lecture, an
+// imported file, a duplicate). What "Update the copy already there" acts on.
+let currentServerPlanId = null;
 
 const selected = () => plan?.items.find((i) => i.id === selectedId) || null;
 const fmtBytes = (n) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
@@ -107,6 +112,7 @@ async function openPlan(id) {
   if (!found) return;
   plan = found;
   selectedId = plan.items[0]?.id || null;
+  setCurrentServerPlanId(null);
   warn('');
   renderAll();
 }
@@ -115,6 +121,7 @@ async function newPlan(seed = null) {
   await commit();
   plan = seed || emptyPlan();
   selectedId = plan.items[0]?.id || null;
+  setCurrentServerPlanId(null);
   try { await savePlan(plan); } catch (err) { warn(`This lecture could not be saved: ${err.message}`); }
   renderAll();
 }
@@ -678,6 +685,7 @@ $('#deck-next').addEventListener('click', () => {
 function renderHeader() {
   $('#plan-title').value = plan.title || '';
   $('#plan-course').value = plan.course || '';
+  renderTemplateControls();
   $('#plan-notes').value = plan.notes || '';
   const targetSelect = $('#plan-target-mins');
   if (targetSelect) targetSelect.value = String(plan.targetDuration || 50);
@@ -691,7 +699,7 @@ $('#plan-target-mins')?.addEventListener('change', (ev) => {
 });
 
 $('#plan-title').addEventListener('input', (ev) => { plan.title = ev.target.value; touch(); renderPlanList(); });
-$('#plan-course').addEventListener('input', (ev) => { plan.course = ev.target.value; touch(); });
+$('#plan-course').addEventListener('input', (ev) => { plan.course = ev.target.value; touch(); renderTemplateControls(); });
 $('#plan-notes').addEventListener('input', (ev) => { plan.notes = ev.target.value; touch(); });
 $('#plan-layout').addEventListener('click', (ev) => {
   const button = ev.target.closest('.layout-btn');
@@ -1037,6 +1045,12 @@ $('#plan-import-file').addEventListener('change', async (ev) => {
 
 let serverCourses = [];
 
+function setCurrentServerPlanId(id) {
+  currentServerPlanId = id;
+  const btn = $('#plan-push-update');
+  if (btn) btn.hidden = !id;
+}
+
 async function refreshServerPlans() {
   try {
     const res = await fetch('/api/plans', { credentials: 'same-origin' });
@@ -1051,6 +1065,13 @@ async function refreshServerPlans() {
       pick.append(el('option', { value: String(row.id) }, label));
     }
     if (!(data.plans || []).length) pick.append(el('option', { value: '' }, 'Nothing saved here yet'));
+    // The plan this page is showing may itself be the one just deleted from
+    // elsewhere (another tab, another device) - the picker's own list is the
+    // one place that would notice, so check it here rather than only after
+    // this page's own Delete button.
+    if (currentServerPlanId && !(data.plans || []).some((r) => String(r.id) === String(currentServerPlanId))) {
+      setCurrentServerPlanId(null);
+    }
   } catch { /* the file buttons above still work, which is the point */ }
 }
 
@@ -1074,6 +1095,33 @@ $('#plan-push').addEventListener('click', async () => {
     note.textContent = matched
       ? `Sent — on the iPad now, shared with ${matched.code}.`
       : `Sent — on the iPad now, and yours alone${wanted ? ` (there is no course "${wanted}" here to file it under)` : ''}.`;
+    // This copy IS the one just created - a follow-up edit can now update it
+    // in place instead of sending yet another new row.
+    setCurrentServerPlanId(body.plan.id);
+    await refreshServerPlans();
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
+// Only ever visible once currentServerPlanId is known - see setCurrentServerPlanId
+// and #plan-server's markup, which starts this button [hidden].
+$('#plan-push-update').addEventListener('click', async () => {
+  await commit();
+  const note = $('#plan-push-note');
+  if (!currentServerPlanId) return;
+  const wanted = String(plan.course || '').trim().toLowerCase();
+  const matched = serverCourses.find((c) => c.code === wanted);
+  try {
+    const res = await fetch(`/api/plans/${encodeURIComponent(currentServerPlanId)}`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: plan.title, course: matched?.code || '', doc: planToJson(plan) }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not work');
+    note.textContent = `Updated — the copy already on the server now matches this${matched ? `, shared with ${matched.code}` : ''}.`;
     await refreshServerPlans();
   } catch (err) {
     note.textContent = err.message;
@@ -1089,9 +1137,115 @@ $('#plan-pull').addEventListener('click', async () => {
     if (!res.ok) throw new Error(body.error || 'that did not open');
     const { plan: loaded, warnings } = readPlan(typeof body.plan.doc === 'string' ? body.plan.doc : JSON.stringify(body.plan.doc));
     await newPlan(loaded);
+    // newPlan() resets this (it resets for every OTHER caller too - a new
+    // blank lecture, a local one, an import), so it is set back only here,
+    // once the pulled plan is actually the one on screen.
+    setCurrentServerPlanId(id);
     warn(warnings.length ? `Opened with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}` : '');
   } catch (err) {
     warn(`That lecture did not open: ${err.message}`);
+  }
+});
+
+// wireDangerButton leaves the button disabled after the action, which is
+// wrong here for the same reason it is wrong for #plan-delete above: deleting
+// one server lecture must not lock the button against the next one picked.
+let deleteServerPlanButton;
+deleteServerPlanButton = wireDangerButton($('#plan-pull-delete'), 'Delete from server', async () => {
+  const id = $('#plan-pull-pick').value;
+  const note = $('#plan-push-note');
+  if (!id) { $('#plan-pull-delete').disabled = false; deleteServerPlanButton.disarm(); return; }
+  try {
+    const res = await fetch(`/api/plans/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not delete');
+    if (String(id) === String(currentServerPlanId)) setCurrentServerPlanId(null);
+    note.textContent = 'Removed from the server. The file on your own machine, if you saved one, is untouched.';
+    await refreshServerPlans();
+  } catch (err) {
+    note.textContent = err.message;
+  }
+  $('#plan-pull-delete').disabled = false;
+  deleteServerPlanButton.disarm();
+}, { armedLabel: 'Tap again to delete' });
+
+// --- course plan templates (Issue #80) ---------------------------------
+//
+// A template is a real plan's doc, filed under a course the same way a
+// pushed lecture is (see #plan-push above) - this page is the only one with
+// an editor to build one in, so "manage a template" here means "save this
+// lecture as one" rather than a second, separate editor somewhere else.
+
+let courseTemplates = [];
+
+function templateForCourse(code) {
+  const wanted = String(code || '').trim().toLowerCase();
+  return wanted ? courseTemplates.find((row) => row.course === wanted) : null;
+}
+
+function renderTemplateControls() {
+  const wanted = String($('#plan-course').value || '').trim();
+  const existing = templateForCourse(wanted);
+  $('#plan-new-from-template').hidden = !existing;
+  if (existing) $('#plan-new-from-template').textContent = `New lecture from ${existing.course}'s template…`;
+  $('#plan-template-row').hidden = !wanted;
+  $('#plan-remove-template').hidden = !existing;
+}
+
+async function refreshTemplates() {
+  try {
+    const res = await fetch('/api/templates', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    courseTemplates = (await res.json()).templates || [];
+  } catch { /* the rest of the page still works, which is the point */ }
+  renderTemplateControls();
+}
+
+$('#plan-new-from-template').addEventListener('click', async () => {
+  const existing = templateForCourse($('#plan-course').value);
+  if (!existing?.doc) return;
+  try {
+    const { plan: loaded, warnings } = readPlan(typeof existing.doc === 'string' ? existing.doc : JSON.stringify(existing.doc));
+    await newPlan(loaded);
+    warn(warnings.length ? `Opened with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}` : '');
+  } catch (err) {
+    warn(`That template did not open: ${err.message}`);
+  }
+});
+
+$('#plan-save-template').addEventListener('click', async () => {
+  await commit();
+  const note = $('#plan-template-note');
+  const course = String($('#plan-course').value || '').trim();
+  if (!course) { note.textContent = "Type a course above first - a template belongs to one."; return; }
+  try {
+    const res = await fetch(`/api/templates/${encodeURIComponent(course)}`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ doc: planToJson(plan) }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not work');
+    note.textContent = `Saved — new lectures for ${body.saved.course} can start from this.`;
+    await refreshTemplates();
+  } catch (err) {
+    note.textContent = err.message;
+  }
+});
+
+$('#plan-remove-template').addEventListener('click', async () => {
+  const note = $('#plan-template-note');
+  const course = String($('#plan-course').value || '').trim();
+  if (!course) return;
+  try {
+    const res = await fetch(`/api/templates/${encodeURIComponent(course)}`, { method: 'DELETE', credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not work');
+    note.textContent = `Removed — new lectures for ${course} start blank again.`;
+    await refreshTemplates();
+  } catch (err) {
+    note.textContent = err.message;
   }
 });
 
@@ -1099,6 +1253,7 @@ serverInfo().then((info) => {
   if (!info.features.includes('plans')) return;
   $('#plan-server').hidden = false;
   refreshServerPlans();
+  if (info.features.includes('templates')) refreshTemplates();
 });
 
 $('#plan-new').addEventListener('click', () => newPlan());

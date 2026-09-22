@@ -347,6 +347,34 @@ try {
     chk('admin GET /api/content/files lists uploaded deck', out.status === 200 && out.body.files.some((f) => f.filename === 'api-deck.md'));
   }
 
+  // 4b. The pdfs category (Issue #82) works the same way as any other
+  {
+    const { req, res, url, result } = mockReqRes('POST', '/api/content/files/pdfs?filename=api-handout.pdf', {
+      token: admLogin.token,
+      body: '%PDF-1.4 not a real pdf, just bytes for the upload path',
+      headers: { 'content-type': 'application/pdf' },
+    });
+    await api.handleApi(req, res, url, apiCtx);
+    const out = result();
+    chk('admin POST /api/content/files/pdfs uploads a PDF', out.status === 200 && out.body.saved.filename === 'api-handout.pdf');
+  }
+  {
+    const { req, res, url, result } = mockReqRes('POST', '/api/content/files/pdfs?filename=api-handout.exe', {
+      token: admLogin.token,
+      body: 'not a pdf',
+      headers: { 'content-type': 'application/octet-stream' },
+    });
+    await api.handleApi(req, res, url, apiCtx);
+    const out = result();
+    chk('and refuses an extension the category does not allow', out.status === 400);
+  }
+  {
+    const { req, res, url, result } = mockReqRes('GET', '/api/content/files?category=pdfs', { token: admLogin.token });
+    await api.handleApi(req, res, url, apiCtx);
+    const out = result();
+    chk('admin GET /api/content/files lists the uploaded PDF', out.status === 200 && out.body.files.some((f) => f.filename === 'api-handout.pdf'));
+  }
+
   // 5. Admin path traversal attempt over API rejected
   {
     const { req, res, url, result } = mockReqRes('GET', '/api/content/files/decks/..%2F..%2Fetc%2Fpasswd', { token: admLogin.token });

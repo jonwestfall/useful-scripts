@@ -933,6 +933,25 @@ function renderCourseBody(course) {
 
   body.append(el('h3', { class: 'hint', style: 'margin:14px 0 0' }, 'What a device that signs in gets'));
   body.append(renderCourseSettings(course, courseSettings[course.code] || {}));
+
+  body.append(el('h3', { class: 'hint', style: 'margin:14px 0 0' }, 'Plan template'));
+  const template = courseTemplates[course.code];
+  if (template) {
+    body.append(el('div', { class: 'admin-actions' },
+      el('span', { class: 'hint' }, `Saved ${new Date(template.updatedAt).toLocaleString()}. New lectures for this course can start from it.`),
+      el('button', {
+        class: 'admin-del', type: 'button',
+        onclick: () => withCourse(async () => {
+          const res = await fetch(`/api/templates/${encodeURIComponent(course.code)}`, { method: 'DELETE', credentials: 'same-origin' });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(body.error || 'that did not work');
+          delete courseTemplates[course.code];
+        }),
+      }, 'Remove')));
+  } else {
+    body.append(el('p', { class: 'hint' },
+      'No template yet - open a lecture that has the shape this course reuses every week in the planning page and use "Save as this course\'s template" there.'));
+  }
   return body;
 }
 
@@ -1001,9 +1020,10 @@ async function addCourse() {
 }
 
 let courseSettings = {};
+let courseTemplates = {};
 
 async function refreshCourses() {
-  const [list, settings] = await Promise.all([
+  const [list, settings, templates] = await Promise.all([
     fetch('/api/courses', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : { courses: [] })),
     // ?archived=1 so an admin managing an archived course's row sees its real
     // stored settings instead of a blank form - the server only honours this
@@ -1011,9 +1031,11 @@ async function refreshCourses() {
     // room/transport/passphrase the read never showed (see forUser's own
     // comment in settings.js).
     fetch('/api/settings?archived=1', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : { courses: [] })),
+    fetch('/api/templates', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : { templates: [] })),
   ]);
   serverCourses = list.courses || [];
   courseSettings = Object.fromEntries((settings.courses || []).map((row) => [row.course, row.settings]));
+  courseTemplates = Object.fromEntries((templates.templates || []).map((row) => [row.course, row]));
   renderCourses();
 }
 
@@ -1995,8 +2017,15 @@ if (!info.features.includes('library')) {
     await refreshContentManagement();
   }
 
-  // Select first available tab
-  const firstVisibleTab = document.querySelector('.admin-tabs .tab:not([hidden])');
-  if (firstVisibleTab) firstVisibleTab.click();
+  // Select a first tab - but only if nothing has been picked yet. Tabs are
+  // unhidden piecemeal as the awaits above resolve (Library first, People
+  // and Courses only once the accounts/courses block runs), so a click
+  // during that window - a person's, or a test's - would otherwise be
+  // silently overridden the moment a tab earlier in the DOM than the one
+  // they picked finally appears.
+  if (!document.querySelector('.admin-tabs .tab.is-on')) {
+    const firstVisibleTab = document.querySelector('.admin-tabs .tab:not([hidden])');
+    if (firstVisibleTab) firstVisibleTab.click();
+  }
 }
 

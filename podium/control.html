@@ -146,6 +146,13 @@ try {
         <button class="tab" data-tab="mixer" type="button">Mixer</button>
         <button class="tab" data-tab="sets" type="button">Sets</button>
         <button class="tab" data-tab="polls" type="button">Polls</button>
+        <!-- Hidden tabs (Settings -> Presentation -> Controller tabs) are never
+             removed from the DOM, only [hidden] - reordering and this menu both
+             work on the same 12 buttons the panels already key off of. -->
+        <div class="tabs-more-wrap">
+          <button id="tabs-more" class="tab" type="button" hidden>More &#9662;</button>
+          <div id="tabs-more-menu" class="tabs-more-menu" hidden></div>
+        </div>
         <button id="dual-pane-toggle" class="tab" type="button" title="Toggle Split View" style="margin-left: auto; padding: 0 10px;" hidden>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -186,6 +193,15 @@ try {
             <label class="filebtn" for="deck-file">Open a Marp deck…</label>
             <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
             <span id="deck-file-note" class="hint"></span>
+          </div>
+          <!-- Server-backed only: unlike a deck or a photo, a PDF cannot be
+               shrunk to fit one relay message, so this uploads straight to
+               the library instead of trying to send it peer to peer. Hidden
+               entirely on every other way of running Podium. -->
+          <div class="inline" id="pdf-upload-row" hidden>
+            <label class="filebtn" for="pdf-upload">Upload/Load a PDF…</label>
+            <input id="pdf-upload" type="file" accept=".pdf,application/pdf" hidden>
+            <span id="pdf-upload-note" class="hint"></span>
           </div>
           <!-- A lecture plan built in plan.html. It belongs here rather than in
                Settings: it is content, not configuration, and Settings' Close
@@ -305,6 +321,21 @@ try {
             <span id="page-label"></span>
             <button id="next-page" type="button">Next ▶</button>
           </div>
+          <!-- Zooms the actual projector image (Issue #82) - not the Ink
+               tab's own pad zoom above, which only changes what you see
+               while drawing and never leaves this device. -->
+          <div id="pdf-zoom" class="inline" hidden>
+            <button id="pdf-zoom-out" type="button" title="Zoom out">−</button>
+            <span id="pdf-zoom-level" class="mono">1×</span>
+            <button id="pdf-zoom-in" type="button" title="Zoom in">+</button>
+            <button id="pdf-zoom-reset" type="button">Reset zoom</button>
+          </div>
+          <div id="pdf-pan" class="inline" hidden>
+            <button id="pdf-pan-left" class="pan-btn" type="button" disabled title="Pan left">◀</button>
+            <button id="pdf-pan-up" class="pan-btn" type="button" disabled title="Pan up">▲</button>
+            <button id="pdf-pan-down" class="pan-btn" type="button" disabled title="Pan down">▼</button>
+            <button id="pdf-pan-right" class="pan-btn" type="button" disabled title="Pan right">▶</button>
+          </div>
           <div class="inline">
             <button id="preview-mode" type="button">Always cue first</button>
           </div>
@@ -398,6 +429,24 @@ try {
               <button id="overlay-hide" type="button">Hide</button>
             </div>
           </form>
+          <!-- Live captions (Issue #79): speech recognized on THIS device
+               drives the same bottom bar above, through the 'caption' op -
+               see wireCaptions in control.js. No accessible-name label like
+               the forms above it: #caption-status already says what this
+               is and what state it is in, in the sentence itself. -->
+          <div class="stack" id="caption-block">
+            <div class="inline">
+              <button id="caption-toggle" type="button">Start live captions</button>
+              <span class="hint" id="caption-status"></span>
+            </div>
+            <p class="hint">
+              Live captions use this device's microphone and its browser's own speech
+              recognition. In Chrome and Edge that means the room's audio is sent to
+              Google's servers to be recognized - outside Podium's own encryption
+              entirely, the same as any other page's use of your browser's dictation.
+              Safari recognizes on-device instead. Not available in Firefox.
+            </p>
+          </div>
           <form id="qr-form" class="stack">
             <label for="qr-data">QR code for the class</label>
             <div class="inline">
@@ -798,6 +847,18 @@ try {
       <button class="tab" data-settings-tab="presentation" type="button">Presentation</button>
     </nav>
 
+    <!-- Small screens only (Issue #96): this sheet is long enough that
+         reaching Save or Close means scrolling past all of it first. These
+         call the exact same handlers as the ones at the bottom - not a
+         second copy of the save/close logic, just closer to hand on a
+         phone. Save only means anything on the Connection tab, which is
+         the one form here with something to submit; Close applies to the
+         whole sheet either way, same as the one at the bottom. -->
+    <div class="setup-top-actions">
+      <button type="button" id="setup-save-top">Save</button>
+      <button type="button" id="setup-close-top" hidden>Close</button>
+    </div>
+
     <section class="settings-panel" data-settings-panel="connection">
       <p>Easiest path: open the display on the classroom PC, press <b>Pair a device</b> there, and scan the code. Otherwise fill this in by hand — the values must match the display exactly.</p>
       <!-- Filled in only when this account belongs to more than one course
@@ -956,6 +1017,15 @@ try {
       <p class="hint">
         Pausing briefly (450ms) at the end of a stroke snaps freehand lines, arrows, rectangles, and circles into clean shapes.
       </p>
+
+      <div class="field" style="margin-top:16px;">
+        <label>Controller tabs</label>
+        <p class="hint" style="margin-bottom:10px;">
+          Hide tabs you never reach for and reorder the rest — a hidden tab
+          is never removed, just tucked under the tab bar's "More" button.
+        </p>
+        <div id="tab-order-list" class="tab-order-list"></div>
+      </div>
 
       <div class="field" style="margin-top:16px;">
         <label>Bottom bar dock shortcuts</label>

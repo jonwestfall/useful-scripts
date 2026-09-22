@@ -8,7 +8,7 @@ import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
   inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, COMMIT, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
-import { createRenderer, itemTitle, TYPES } from './renderers.js';
+import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
 import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
 import { createZip } from './zip.js';
@@ -969,6 +969,7 @@ let gridBuildId = null;
 let gridBuildPromise = null;
 let activeSectionFilter = null;
 let lastScrolledSlideIndex = null;
+let lastScrolledSectionId = null;
 let selectedChipSection = null;
 
 function getSlideSectionIndex(sections, slideIndex) {
@@ -1059,12 +1060,23 @@ function updateActiveSectionChip(slideIndex) {
   const secIdx = getSlideSectionIndex(sections, slideIndex);
   const targetId = secIdx >= 0 ? String(secIdx) : 'all';
   container.querySelectorAll('.deck-chip').forEach((chip) => {
-    const isActive = chip.dataset.section === targetId;
-    chip.classList.toggle('is-active', isActive);
-    if (isActive) {
-      chip.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-    }
+    chip.classList.toggle('is-active', chip.dataset.section === targetId);
   });
+  // Follow the highlight into view only when the active SECTION actually
+  // moves (Issue #95) - this runs on every render highlightGrid does,
+  // including a build step within the same slide and every heartbeat while
+  // sitting on one, and with no guard here it used to re-scroll every
+  // single time regardless. On a slide with long presenter notes that
+  // scroll is a real distance (chip.scrollIntoView walks up through
+  // .panels, the same scrollable ancestor the notes and Prev/Next share),
+  // so this fired again the moment after a presenter scrolled back up to
+  // read notes or reach Prev/Next - the exact "jumps down once more" this
+  // issue describes, on every render rather than only a genuine change.
+  if (lastScrolledSectionId !== targetId) {
+    lastScrolledSectionId = targetId;
+    const activeChip = container.querySelector(`.deck-chip[data-section="${targetId}"]`);
+    activeChip?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }
 }
 
 function ensureGridShadow() {
@@ -1076,6 +1088,7 @@ function buildGrid(deck) {
   if (gridBuildId === deck.id) return gridBuildPromise;
   gridBuildId = deck.id;
   lastScrolledSlideIndex = null;
+  lastScrolledSectionId = null;
   activeSectionFilter = null;
   selectedChipSection = null;
   gridBuildPromise = buildGridNow(deck);
@@ -1230,7 +1243,7 @@ function highlightGrid(index, deckId = (deckView.id || (focusedItem(state)?.type
     const slidesPanel = $('[data-panel="slides"]');
     if (slidesPanel && !slidesPanel.hidden) {
       lastScrolledSlideIndex = index;
-      activeCell.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+      activeCell.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
     }
   }
 
@@ -1241,6 +1254,7 @@ async function ensureDeckView(item) {
   if (!item || item.type !== 'deck') {
     deckView = { id: null, deck: null };
     lastScrolledSlideIndex = null;
+    lastScrolledSectionId = null;
     activeSectionFilter = null;
     selectedChipSection = null;
     return;
@@ -1955,6 +1969,16 @@ function renderNow() {
     ? `Page ${item.page || 1}`
     : (type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}` : 'Slide');
 
+  $('#pdf-zoom').hidden = type !== 'pdf';
+  $('#pdf-pan').hidden = type !== 'pdf';
+  if (type === 'pdf') {
+    const pdfZoom = item.zoom || 1;
+    $('#pdf-zoom-level').textContent = `${pdfZoom.toFixed(pdfZoom % 1 ? 1 : 0)}×`;
+    $('#pdf-zoom-out').disabled = pdfZoom <= 1;
+    $('#pdf-zoom-reset').disabled = pdfZoom <= 1;
+    $$('.pan-btn', $('#pdf-pan')).forEach((b) => { b.disabled = pdfZoom <= 1; });
+  }
+
   if (isMedia) {
     const t = currentTime();
     const d = telemetry.duration || 0;
@@ -2202,6 +2226,10 @@ serverInfo().then((info) => {
   allowPollNames = !!info.allowPollNames;
   renderKeepPhotos();
   renderPollsPanel();
+  // Unlike a deck or a photo, a PDF cannot be shrunk to fit one relay
+  // message - so this button only exists where there is a library to upload
+  // it to, straight through the same endpoint admin.html's own upload does.
+  $('#pdf-upload-row').hidden = !info.features.includes('library');
 });
 
 const recordingNow = () => serverKeepsSessions && !!state.lectureId;
@@ -2906,6 +2934,13 @@ function contentAspectFor(item) {
     const idx = Math.min(deckView.deck.aspects.length - 1, Math.max(0, item.slide || 0));
     return deckView.deck.aspects[idx] || 16 / 9;
   }
+  // Keyed by src rather than read off whichever renderer is mounted right
+  // now (see pdfAspectFor's own comment) - correct even when the focused
+  // panel is not the one the Now mirror is showing.
+  if (item?.type === 'pdf' && item.src) {
+    const aspect = pdfAspectFor(item.src);
+    if (aspect) return aspect;
+  }
   return state.stageAspect || 16 / 9;
 }
 
@@ -3052,6 +3087,7 @@ function pan(dx, dy) {
 // box; zoom is purely a visual transform on top and never touches this, so
 // the fraction-based drawing math in redrawPad()/padPoint() is the same at
 // any zoom level.
+let pendingPdfAspectRetry = null;
 function sizePad() {
   fitFrame();
   clampPan();
@@ -3062,6 +3098,20 @@ function sizePad() {
   padCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
   redrawPad();
   updatePadMirror();
+  // A PDF's real aspect ratio (pdfAspectFor) is not known until pdf.js
+  // finishes loading the page, which is well after the first sizePad() a
+  // freshly-staged PDF gets - fitFrame() above used the room's stage shape
+  // as a placeholder (see contentAspectFor). One retry, once it has almost
+  // certainly resolved, corrects the pad to the page's actual shape instead
+  // of leaving it letterboxed wrong until some unrelated redraw happens to
+  // call sizePad() again.
+  const item = focusedItem(state);
+  if (item?.type === 'pdf' && item.src && !pdfAspectFor(item.src) && !pendingPdfAspectRetry) {
+    pendingPdfAspectRetry = setTimeout(() => {
+      pendingPdfAspectRetry = null;
+      if (!$('[data-panel="ink"]')?.hidden) sizePad();
+    }, 400);
+  }
 }
 
 // A read-only mirror of whatever ink is currently drawing on top of, filling
@@ -4502,9 +4552,20 @@ async function connect() {
 
 // --- wiring -----------------------------------------------------------------
 
+// The 12 tabs, in the order they ship in control.html - used to sanitize a
+// saved order (see loadPresentation) and to label the ones tucked under
+// "More". Adding a 13th tab here later needs nothing else done to it: an
+// unknown id in a saved order is dropped and a new one not yet saved is
+// appended, the same defensive merge bottomSlots already does above.
+const TAB_IDS = ['library', 'slides', 'now', 'ink', 'say', 'timer', 'camera', 'photos', 'music', 'mixer', 'sets', 'polls'];
+const TAB_LABELS = {
+  library: 'Library', slides: 'Slides', now: 'Now', ink: 'Ink', say: 'Say', timer: 'Timer',
+  camera: 'Camera', photos: 'Photos', music: 'Music', mixer: 'Mixer', sets: 'Sets', polls: 'Polls',
+};
+
 function tab(name) {
   const dualPane = document.body.classList.contains('dual-pane');
-  $$('.tab:not(#dual-pane-toggle)').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
+  $$('.tab:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
   $$('.panel').forEach((p) => {
     if (dualPane && p.dataset.panel === 'slides') {
       p.hidden = false;
@@ -4542,11 +4603,12 @@ function tab(name) {
   if (name === 'ink') { syncInkFromState(); applyInkPreferences(); sizePad(); }
   if (name === 'slides') {
     lastScrolledSlideIndex = null;
+    lastScrolledSectionId = null;
     renderSlides();
   }
 }
 
-$$('.tab:not(#dual-pane-toggle)').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
+$$('.tab:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
 
 const savedDual = localStorage.getItem('podium.ui.dualPane') === '1';
 if (savedDual) {
@@ -4874,8 +4936,66 @@ $('#deck-file').addEventListener('change', async (ev) => {
   }
 });
 
+// Straight to the library, the same endpoint admin.html's own upload uses -
+// see #pdf-upload-row in control.html for why this one does not try to send
+// the file itself peer to peer the way a deck or a photo does.
+$('#pdf-upload').addEventListener('change', async (ev) => {
+  const file = ev.target.files?.[0];
+  ev.target.value = '';
+  if (!file) return;
+  const note = $('#pdf-upload-note');
+  note.textContent = `Uploading ${file.name}…`;
+  try {
+    const params = new URLSearchParams({ filename: file.name, title: file.name.replace(/\.pdf$/i, ''), course: '', group: '' });
+    const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not work');
+    note.textContent = `Added “${body.item.title}” to the library.`;
+    await loadLibrary();
+    stage(body.item);
+  } catch (err) {
+    note.textContent = `That did not upload: ${err.message}`;
+  }
+});
+
 $('#prev-page').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
 $('#next-page').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
+
+// Zooming into a PDF page on the projector (Issue #82) - distinct from the
+// Ink tab's own pad zoom, which only changes what you see while drawing and
+// never touches the projector. This does: the display renders the cropped,
+// zoomed region itself (see renderPdf's transform in renderers.js).
+// protocol.js's own 'zoom' case does the actual clamping (both of zoom to
+// [1,4] and pan to "still on the page"), so a press here can send whatever
+// the arithmetic works out to without duplicating that logic.
+const PDF_ZOOM_STEP = 1.6;
+function pdfZoomStep(dir) {
+  const item = focusedItem(state);
+  if (item?.type !== 'pdf') return;
+  const zoom = dir > 0 ? (item.zoom || 1) * PDF_ZOOM_STEP : (item.zoom || 1) / PDF_ZOOM_STEP;
+  send({ op: 'zoom', action: 'set', zoom, panX: item.panX ?? 0.5, panY: item.panY ?? 0.5 });
+}
+$('#pdf-zoom-in').addEventListener('click', () => pdfZoomStep(1));
+$('#pdf-zoom-out').addEventListener('click', () => pdfZoomStep(-1));
+$('#pdf-zoom-reset').addEventListener('click', () => send({ op: 'zoom', action: 'reset' }));
+
+function pdfPan(dx, dy) {
+  const item = focusedItem(state);
+  if (item?.type !== 'pdf' || (item.zoom || 1) <= 1) return;
+  // Half the visible window's share of the page at this zoom, so a press
+  // moves a consistent fraction of "what you can currently see" rather than
+  // a fixed amount that would feel huge zoomed in and tiny zoomed out.
+  const step = 0.6 / (item.zoom || 1);
+  send({
+    op: 'zoom', action: 'set', zoom: item.zoom,
+    panX: (item.panX ?? 0.5) + dx * step,
+    panY: (item.panY ?? 0.5) + dy * step,
+  });
+}
+$('#pdf-pan-left').addEventListener('click', () => pdfPan(-1, 0));
+$('#pdf-pan-right').addEventListener('click', () => pdfPan(1, 0));
+$('#pdf-pan-up').addEventListener('click', () => pdfPan(0, -1));
+$('#pdf-pan-down').addEventListener('click', () => pdfPan(0, 1));
 
 $('#lib-filter').addEventListener('input', renderLibrary);
 $('#url-form').addEventListener('submit', (ev) => {
@@ -4932,6 +5052,105 @@ $('#overlay-form').addEventListener('submit', (ev) => {
   send({ op: 'overlay', text: $('#overlay-text').value, visible: true });
 });
 $('#overlay-hide').addEventListener('click', () => send({ op: 'overlay', visible: false }));
+
+// --- live captions (Issue #79) ------------------------------------------
+//
+// Speech recognition runs on WHICHEVER device starts it here - normally
+// this controller, since it is the one near the instructor's voice - using
+// the browser's own SpeechRecognition. Recognized text rides the same
+// bottom bar the manual caption above uses, through the 'caption' op (see
+// protocol.js) rather than driving 'overlay' directly, so turning captions
+// off does not depend on remembering whatever text happened to be there.
+//
+// The privacy trade-off (see the hint beside the button in control.html) is
+// real and is not Podium's to fix: recognition happens inside the browser's
+// own code, which this app never touches - in Chrome/Edge that means the
+// room's audio leaves for Google's recognition service, exactly like any
+// other page's use of dictation. There is nothing here for Podium's own
+// encryption to cover, because there is nothing Podium ever receives.
+//
+// This device closing or losing its tab with captions still running leaves
+// the bar showing whatever was last said, the same as any other state this
+// controller alone was driving - there is no reliable send-on-unload here,
+// and nothing else in this file pretends there is one for a mid-freeze cue
+// either. Tap Stop, or Hide on the manual caption above, to clear it.
+const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+// A lull is not held speech - the bar clears itself rather than sitting on
+// the last thing said for the rest of class.
+const CAPTION_SILENCE_MS = 3000;
+// Interim results can fire many times a second while a phrase is being
+// refined; captions are read text; not a pointer that needs to feel
+// physically responsive, so this is throttled far softer than ink or laser.
+const sendCaptionText = throttle((text) => send({ op: 'caption', text }), 300);
+
+let recognizer = null;
+let captionSilenceTimer = null;
+
+function stopCaptions() {
+  clearTimeout(captionSilenceTimer);
+  if (recognizer) {
+    recognizer.onend = null;   // this stop is deliberate, not a timeout to restart from
+    recognizer.onerror = null;
+    try { recognizer.stop(); } catch { /* already stopped */ }
+    recognizer = null;
+  }
+  send({ op: 'caption', on: false });
+  $('#caption-toggle').textContent = 'Start live captions';
+  $('#caption-toggle').classList.remove('is-on');
+  $('#caption-status').textContent = '';
+}
+
+function startCaptions() {
+  if (!SpeechRecognitionCtor) {
+    $('#caption-status').textContent = 'This browser has no speech recognition — try Chrome, Edge, or Safari.';
+    return;
+  }
+  recognizer = new SpeechRecognitionCtor();
+  recognizer.continuous = true;
+  recognizer.interimResults = true;
+  recognizer.lang = navigator.language || 'en-US';
+
+  recognizer.onresult = (ev) => {
+    // Only the most recent phrase - continuous mode keeps every phrase said
+    // all lecture in ev.results, and a caption bar showing all of it rather
+    // than what is being said right now is not a caption bar any more.
+    const text = (ev.results[ev.results.length - 1]?.[0]?.transcript || '').trim();
+    if (!text) return;
+    sendCaptionText(text);
+    clearTimeout(captionSilenceTimer);
+    captionSilenceTimer = setTimeout(() => sendCaptionText(''), CAPTION_SILENCE_MS);
+  };
+  recognizer.onerror = (ev) => {
+    // 'no-speech' and 'aborted' are routine - a quiet room, a deliberate
+    // stop - not a failure worth interrupting class over.
+    if (ev.error === 'no-speech' || ev.error === 'aborted') return;
+    $('#caption-status').textContent = `Captions stopped: ${ev.error}`;
+    stopCaptions();
+  };
+  recognizer.onend = () => {
+    // Chrome ends a recognition session on its own after a pause even with
+    // continuous:true - restart it seamlessly. stopCaptions() clears this
+    // handler first for a deliberate stop, so a null recognizer here always
+    // means a timeout, never a choice.
+    if (!recognizer) return;
+    try { recognizer.start(); } catch { /* already restarting */ }
+  };
+
+  send({ op: 'caption', on: true });
+  try {
+    recognizer.start();
+  } catch (err) {
+    $('#caption-status').textContent = `Could not start: ${err.message}`;
+    recognizer = null;
+    send({ op: 'caption', on: false });
+    return;
+  }
+  $('#caption-toggle').textContent = 'Stop live captions';
+  $('#caption-toggle').classList.add('is-on');
+  $('#caption-status').textContent = 'Listening…';
+}
+
+$('#caption-toggle').addEventListener('click', () => { if (recognizer) stopCaptions(); else startCaptions(); });
 
 // --- watermark ---------------------------------------------------------------
 //
@@ -5376,6 +5595,17 @@ $('#cam-flip').addEventListener('click', async () => {
 // A Magic Keyboard or a clicker paired to the iPad should just work.
 document.addEventListener('keydown', (ev) => {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target.tagName)) return;
+  // Cmd/Ctrl+Z is the one modified key every keyboard user already expects
+  // to work without being told, so it is the one exception to "a modified
+  // key is not ours" below - and only on the Ink tab, the same guard the
+  // digit/letter tool shortcuts already use, so it does not steal undo from
+  // a text field the INPUT/TEXTAREA/SELECT check above missed.
+  if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && !ev.shiftKey
+    && (ev.key === 'z' || ev.key === 'Z') && !$('[data-panel="ink"]')?.hidden) {
+    ev.preventDefault();
+    $('#ink-undo').click();
+    return;
+  }
   // Cmd/Ctrl+P is print and Cmd/Ctrl+F is find. Taking a photo of the
   // projector when someone asked the browser to print is worse than doing
   // nothing, so a modified key is not ours.
@@ -5479,6 +5709,8 @@ const PRESENTATION_DEFAULTS = {
   inkScrollGutter: false,
   inkControlsTop: false,
   snapShapes: true,
+  tabOrder: [...TAB_IDS],
+  hiddenTabs: [],
 };
 function loadPresentation() {
   try {
@@ -5487,6 +5719,17 @@ function loadPresentation() {
     if (!['dark', 'light', 'auto'].includes(merged.theme)) merged.theme = 'dark';
     if (merged.haptics === undefined) merged.haptics = true;
     if (merged.snapShapes === undefined) merged.snapShapes = true;
+    // A saved order is a permutation of whatever TAB_IDS was when it was
+    // saved - drop ids this build no longer has and append ones it grew,
+    // rather than reject the whole thing and silently reset someone's
+    // careful reordering over an unrelated code change.
+    if (!Array.isArray(merged.tabOrder)) merged.tabOrder = [...TAB_IDS];
+    merged.tabOrder = merged.tabOrder.filter((id) => TAB_IDS.includes(id));
+    for (const id of TAB_IDS) if (!merged.tabOrder.includes(id)) merged.tabOrder.push(id);
+    if (!Array.isArray(merged.hiddenTabs)) merged.hiddenTabs = [];
+    merged.hiddenTabs = merged.hiddenTabs.filter((id) => TAB_IDS.includes(id));
+    // At least one tab must stay reachable without opening Settings.
+    if (merged.hiddenTabs.length >= TAB_IDS.length) merged.hiddenTabs = [];
     if (!Array.isArray(merged.bottomSlots) || merged.bottomSlots.length !== 8) {
       merged.bottomSlots = [
         merged.bottomSlot1 || 'music',
@@ -5522,6 +5765,98 @@ function getBottomSlots() {
     'none',
   ];
 }
+
+/**
+ * Lay the 12 tab buttons out in presentation.tabOrder, hide the ones in
+ * presentation.hiddenTabs, and keep #tabs-more in sync. The buttons
+ * themselves are never rebuilt - appendChild on an existing node just moves
+ * it, so the click listener wired once at startup (see below) keeps working
+ * on every one of them, hidden or not, in whatever order they end up in.
+ */
+function renderTabBar() {
+  const nav = $('.tabs');
+  const moreWrap = $('.tabs-more-wrap');
+  if (!nav || !moreWrap) return;
+  for (const id of presentation.tabOrder) {
+    const btn = nav.querySelector(`.tab[data-tab="${id}"]`);
+    if (btn) nav.insertBefore(btn, moreWrap);
+  }
+  for (const id of TAB_IDS) {
+    const btn = nav.querySelector(`.tab[data-tab="${id}"]`);
+    if (btn) btn.hidden = presentation.hiddenTabs.includes(id);
+  }
+  renderTabsMoreMenu();
+}
+
+function renderTabsMoreMenu() {
+  const hiddenIds = presentation.tabOrder.filter((id) => presentation.hiddenTabs.includes(id));
+  const moreBtn = $('#tabs-more');
+  const menu = $('#tabs-more-menu');
+  if (!moreBtn || !menu) return;
+  moreBtn.hidden = hiddenIds.length === 0;
+  menu.replaceChildren(...hiddenIds.map((id) => el('button', {
+    type: 'button',
+    onclick: () => { menu.hidden = true; tab(id); },
+  }, TAB_LABELS[id] || id)));
+  if (hiddenIds.length === 0) menu.hidden = true;
+}
+
+/** Swap tab `id` with its neighbor in the saved order; `dir` is -1 or 1. */
+function moveTab(id, dir) {
+  const order = presentation.tabOrder.slice();
+  const i = order.indexOf(id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  presentation.tabOrder = order;
+  savePresentation();
+  renderTabBar();
+  renderTabOrderSettings();
+}
+
+function toggleTabHidden(id, hide) {
+  const hiddenTabs = presentation.hiddenTabs.filter((t) => t !== id);
+  if (hide) hiddenTabs.push(id);
+  // Hiding every tab would leave nothing to tap without opening Settings
+  // first - the one rule the reorder/hide UI enforces on itself.
+  if (hiddenTabs.length >= TAB_IDS.length) return;
+  presentation.hiddenTabs = hiddenTabs;
+  savePresentation();
+  renderTabBar();
+  renderTabOrderSettings();
+}
+
+function renderTabOrderSettings() {
+  const list = $('#tab-order-list');
+  if (!list) return;
+  list.replaceChildren(...presentation.tabOrder.map((id, i) => {
+    const isHidden = presentation.hiddenTabs.includes(id);
+    return el('div', { class: 'tab-order-row' },
+      el('div', { class: 'tab-order-move' },
+        el('button', { type: 'button', disabled: i === 0, title: 'Move earlier', onclick: () => moveTab(id, -1) }, '▲'),
+        el('button', { type: 'button', disabled: i === presentation.tabOrder.length - 1, title: 'Move later', onclick: () => moveTab(id, 1) }, '▼')),
+      el('span', { class: 'tab-order-label' }, TAB_LABELS[id] || id),
+      el('label', { class: 'check tab-order-show' },
+        el('input', {
+          type: 'checkbox',
+          checked: !isHidden,
+          onchange: (ev) => toggleTabHidden(id, !ev.target.checked),
+        }),
+        'Show'));
+  }));
+}
+renderTabBar();
+
+$('#tabs-more')?.addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  $('#tabs-more-menu').hidden = !$('#tabs-more-menu').hidden;
+});
+// Same dismissal a modal card gets elsewhere: tapping anything outside the
+// open menu closes it, so it never sits open over a tab you meant to press.
+document.addEventListener('click', (ev) => {
+  const menu = $('#tabs-more-menu');
+  if (menu && !menu.hidden && !ev.target.closest('.tabs-more-wrap')) menu.hidden = true;
+});
 
 function applyInkPreferences() {
   const inkPanel = $('[data-panel="ink"]');
@@ -5893,6 +6228,11 @@ applyTheme();
 function settingsTab(name) {
   $$('#setup .settings-tabs .tab').forEach((b) => b.classList.toggle('is-on', b.dataset.settingsTab === name));
   $$('#setup [data-settings-panel]').forEach((p) => { p.hidden = p.dataset.settingsPanel !== name; });
+  // The top Save button (Issue #96) only means anything on Connection - it
+  // is the one tab with a form to submit; Presentation's own controls save
+  // themselves as you change them, the same reason there is no bottom Save
+  // button there either.
+  $('#setup-save-top').hidden = name !== 'connection';
 }
 $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () => settingsTab(b.dataset.settingsTab)));
 
@@ -5991,6 +6331,7 @@ function showSetup() {
   $('#setup').hidden = false;
   $('#app').hidden = true;
   $('#setup-close').hidden = !isConfigured(cfg);
+  $('#setup-close-top').hidden = !isConfigured(cfg);
   settingsTab('connection');
   const prefTheme = $('#pref-theme');
   if (prefTheme) prefTheme.value = presentation.theme || 'dark';
@@ -6026,6 +6367,7 @@ function showSetup() {
   if (prefTop) prefTop.checked = !!presentation.inkControlsTop;
   const prefSnap = $('#pref-snap-shapes');
   if (prefSnap) prefSnap.checked = presentation.snapShapes !== false;
+  renderTabOrderSettings();
   renderKeepPhotos();
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {
@@ -6079,6 +6421,11 @@ $('#open-settings').addEventListener('click', showSetup);
 // Reloading is the honest "cancel": it throws away half-finished edits and
 // puts the page back into whatever state the saved settings describe.
 $('#setup-close').addEventListener('click', reloadClean);
+$('#setup-close-top').addEventListener('click', reloadClean);
+// Not a second save path (Issue #96) - #setup-form is outside this button,
+// so requestSubmit is what reaches the exact same handler the bottom Save
+// button's own click already triggers as a normal form submission.
+$('#setup-save-top').addEventListener('click', () => $('#setup-form').requestSubmit());
 
 wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
   const removed = await resetDevice();

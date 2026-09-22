@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 30;
+export const BUILD = 38;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -38,7 +38,7 @@ export const BUILD = 30;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.1';
-export const COMMIT = 'b5ac8cc';
+export const COMMIT = '31f2a5b';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -140,7 +140,13 @@ export function initialState() {
     volume: 0.8,
     contentVolume: 1,
     muted: false,
-    overlay: { text: '', visible: false },
+    // `live` is true while a device's speech recognition is actively
+    // feeding this bar (Issue #79) - see the 'caption' op below. It rides
+    // along with text/visible rather than living apart from them so a
+    // display reload restores it (see restoreState in display.js) and
+    // caption updates keep being honored afterward, exactly like the rest
+    // of what that restore preserves.
+    overlay: { text: '', visible: false, live: false },
     // More than one countdown, because a class often has more than one clock
     // running: eight minutes of group work inside a ninety-minute session, a
     // five-minute break with its own end. Each is independent, and a `timer`
@@ -215,7 +221,12 @@ function normalizeItem(item) {
     copy.playing = copy.playing ?? true;
     copy.startAt = Number(copy.startAt) || 0;
   }
-  if (copy.type === 'pdf') copy.page = Math.max(1, Number(copy.page) || 1);
+  if (copy.type === 'pdf') {
+    copy.page = Math.max(1, Number(copy.page) || 1);
+    copy.zoom = Math.min(4, Math.max(1, Number(copy.zoom) || 1));
+    copy.panX = Number.isFinite(copy.panX) ? copy.panX : 0.5;
+    copy.panY = Number.isFinite(copy.panY) ? copy.panY : 0.5;
+  }
   if (copy.type === 'slides') copy.slide = Math.max(0, Number(copy.slide) || 0);
   if (copy.type === 'deck') {
     copy.slide = Math.max(0, Number(copy.slide) || 0);
@@ -966,6 +977,34 @@ export function applyCommand(state, cmd) {
       return true;
     }
 
+    // Zooming into a PDF page (Issue #82). panX/panY are fractions (0..1) of
+    // the page marking the point held at the center of the view - clamped so
+    // the visible window never pans past the page's own edge, the same
+    // "never show dead space" rule fit/contain already gives every other
+    // panel here.
+    case 'zoom': {
+      const item = state.focus === 0 ? state[resolveVisualTarget(state, cmd)] : state.panels[state.focus - 1];
+      if (!item || item.type !== 'pdf') return false;
+      if (cmd.action === 'reset') {
+        item.zoom = 1;
+        item.panX = 0.5;
+        item.panY = 0.5;
+        return true;
+      }
+      if (cmd.action !== 'set') return false;
+      const zoom = Math.min(4, Math.max(1, Number(cmd.zoom) || 1));
+      // Half the visible window's fraction of the page shrinks as zoom grows
+      // (a window 1/zoom as wide can only center within the middle 1-1/zoom
+      // of the page), which is what keeps a pan clamped to "still on the
+      // page" at every zoom level rather than just at zoom 1.
+      const half = 1 / (2 * zoom);
+      const clamp01 = (v) => Math.min(1 - half, Math.max(half, Number.isFinite(v) ? v : 0.5));
+      item.zoom = zoom;
+      item.panX = zoom === 1 ? 0.5 : clamp01(cmd.panX ?? item.panX ?? 0.5);
+      item.panY = zoom === 1 ? 0.5 : clamp01(cmd.panY ?? item.panY ?? 0.5);
+      return true;
+    }
+
     // A running set's own clock is "what is actually showing", the same
     // category as media's play/pause/seek above rather than a visual reveal
     // - so, like media, it is deliberately not frozen-aware for anything a
@@ -1011,7 +1050,36 @@ export function applyCommand(state, cmd) {
     case 'overlay':
       if (cmd.text !== undefined) state.overlay.text = String(cmd.text).slice(0, 500);
       state.overlay.visible = cmd.visible ?? !!state.overlay.text;
+      // A manually TYPED caption ends live mode - otherwise the next
+      // recognized phrase would silently overwrite what was just typed. A
+      // bare Hide (#overlay-hide sends no text at all) does not: it is
+      // "clear the bar right now" for either kind of caption, and for a
+      // live one, staying in live mode is what lets the very next thing
+      // said bring the bar back on its own, with no separate Stop/Start.
+      if (cmd.text) state.overlay.live = false;
       return true;
+
+    // Live captions (Issue #79): speech recognized on whichever device
+    // started it (normally the controller, since it is the one near the
+    // instructor's voice) rides this SAME bottom bar rather than a second
+    // one competing for the same strip of screen - see the 'overlay' case
+    // above and overlayEl in display.js. A distinct op rather than driving
+    // 'overlay' directly: turning captions off has to know THIS is what is
+    // holding the bar, not blindly clear a caption the presenter typed by
+    // hand a moment ago.
+    case 'caption': {
+      if (cmd.on !== undefined) {
+        state.overlay.live = !!cmd.on;
+        if (!cmd.on) { state.overlay.text = ''; state.overlay.visible = false; }
+        return true;
+      }
+      // A stale update from a device that had captions running before
+      // someone else turned them off, or typed a manual caption over them.
+      if (!state.overlay.live) return false;
+      state.overlay.text = String(cmd.text || '').slice(0, 500);
+      state.overlay.visible = !!state.overlay.text;
+      return true;
+    }
 
     // A corner watermark, set field by field like overlay above: whichever
     // of text/image/position/enabled the caller names changes, the rest is
