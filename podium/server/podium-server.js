@@ -63,6 +63,12 @@ const ORIGINS = process.env.ORIGIN ? process.env.ORIGIN.split(',').map((s) => s.
 
 const MAX_MESSAGE = 256 * 1024;   // ink batches and SDP are the biggest things
 const MAX_PER_ROOM = 12;
+// Generous for what this runs at - one department or building, not a campus
+// - and still a real ceiling: a room name is not secret (only the
+// passphrase is), so nothing before this stopped an attacker who knows or
+// guesses one from opening connection after connection under distinct room
+// names and growing `rooms` without bound. See Issue #112.
+const MAX_ROOMS = Number(process.env.MAX_ROOMS || 200);
 
 // --- authentication (self-hosted pages only) ---------------------------------
 //
@@ -739,6 +745,37 @@ function serve(req, res, file, size, overrides = {}) {
 const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE });
 const rooms = new Map();
 
+// A second, cheap line of defense alongside MAX_ROOMS: capping the number of
+// rooms does nothing about one IP opening (and abandoning) connection after
+// connection under a NEW room name every time, faster than sockets can be
+// reaped. In memory, keyed by IP, bounded and self-forgetting on restart -
+// the same shape as accounts.js's login throttle, for the same reasons.
+const MAX_UPGRADES_PER_IP = Number(process.env.MAX_UPGRADES_PER_IP || 30);
+const UPGRADE_WINDOW_MS = Number(process.env.UPGRADE_WINDOW_MS || 60 * 1000);
+const MAX_TRACKED_IPS = 5000;
+const upgradeAttempts = new Map();
+
+function upgradeThrottled(ip, now = Date.now()) {
+  const entry = upgradeAttempts.get(ip);
+  if (!entry || entry.windowStart + UPGRADE_WINDOW_MS <= now) {
+    upgradeAttempts.set(ip, { windowStart: now, count: 1 });
+    if (upgradeAttempts.size > MAX_TRACKED_IPS) {
+      for (const [k, v] of upgradeAttempts) {
+        if (v.windowStart + UPGRADE_WINDOW_MS <= now) upgradeAttempts.delete(k);
+      }
+      // Still over the cap means every tracked IP is within its window, so
+      // expiry alone cannot help - drop the oldest-inserted first, same
+      // tradeoff accounts.js's throttle makes for the same reason.
+      while (upgradeAttempts.size > MAX_TRACKED_IPS) {
+        upgradeAttempts.delete(upgradeAttempts.keys().next().value);
+      }
+    }
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > MAX_UPGRADES_PER_IP;
+}
+
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, 'http://x');
   const room = (url.searchParams.get('room') || '').slice(0, 64);
@@ -746,6 +783,7 @@ server.on('upgrade', (req, socket, head) => {
 
   if (!room) { socket.destroy(); return; }
   if (ORIGINS && origin && !ORIGINS.includes(origin)) { socket.destroy(); return; }
+  if (upgradeThrottled(api.clientIp(req))) { socket.destroy(); return; }
   // The one thing HTTP Basic Auth could never cover. A browser will not let
   // page script set an Authorization header on a handshake, but it attaches
   // cookies to a same-origin one without being asked - so once this instance
@@ -771,6 +809,10 @@ server.on('upgrade', (req, socket, head) => {
   }
 
   wss.handleUpgrade(req, socket, head, (ws) => {
+    // Joining a room already open never counts against the ceiling - only
+    // opening a new one does, so MAX_ROOMS protects against growth, not
+    // against the real controller/display of a room that already exists.
+    if (!rooms.has(room) && rooms.size >= MAX_ROOMS) { ws.close(1013, 'relay full'); return; }
     const peers = rooms.get(room) || new Set();
     if (peers.size >= MAX_PER_ROOM) { ws.close(1013, 'room full'); return; }
     peers.add(ws);

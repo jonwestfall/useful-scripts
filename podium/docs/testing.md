@@ -25,6 +25,7 @@ podium/test/
 ├── music.test.mjs        # Background music queueing, ducking and fade math
 ├── pdf-writer.test.mjs   # Client-side canvas PDF export/rendering (Issue #43)
 ├── poll-names.test.mjs   # Optional name recording on audience polls (Issue #72)
+├── relay.test.mjs        # WebSocket relay limits - room caps and per-IP throttling (Issue #112)
 ├── snap.test.mjs         # Quick shape & straight-line snapping, hold-to-straighten (Issue #38)
 ├── spotlight.test.mjs    # Spotlight / attention dimmer pointer mode (Issue #37)
 ├── tabsettings.test.mjs  # Customizable/collapsible controller tab bar (Issue #76)
@@ -82,6 +83,7 @@ node podium/test/protocol.test.mjs
 - **`music.test.mjs`**: background-music queue ordering, crossfade/ducking math, and loop behavior.
 - **`pdf-writer.test.mjs`**: the client-side canvas PDF export/render pipeline's byte output.
 - **`poll-names.test.mjs`**: the opt-in "record respondent name" setting on audience polls, server-side.
+- **`relay.test.mjs`**: spawns a real relay process and opens real sockets (no browser) to check `MAX_PER_ROOM`, the relay-wide `MAX_ROOMS` cap, and the per-IP upgrade throttle.
 - **`snap.test.mjs`**: hold-to-straighten shape/line snapping thresholds and geometry.
 - **`spotlight.test.mjs`**: the attention-dimmer pointer mode's keyboard shortcuts and geometry.
 - **`tabsettings.test.mjs`**: reordering, hiding, and restoring controller tabs.
