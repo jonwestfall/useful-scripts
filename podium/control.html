@@ -847,6 +847,18 @@ try {
       <button class="tab" data-settings-tab="presentation" type="button">Presentation</button>
     </nav>
 
+    <!-- Small screens only (Issue #96): this sheet is long enough that
+         reaching Save or Close means scrolling past all of it first. These
+         call the exact same handlers as the ones at the bottom - not a
+         second copy of the save/close logic, just closer to hand on a
+         phone. Save only means anything on the Connection tab, which is
+         the one form here with something to submit; Close applies to the
+         whole sheet either way, same as the one at the bottom. -->
+    <div class="setup-top-actions">
+      <button type="button" id="setup-save-top">Save</button>
+      <button type="button" id="setup-close-top" hidden>Close</button>
+    </div>
+
     <section class="settings-panel" data-settings-panel="connection">
       <p>Easiest path: open the display on the classroom PC, press <b>Pair a device</b> there, and scan the code. Otherwise fill this in by hand — the values must match the display exactly.</p>
       <!-- Filled in only when this account belongs to more than one course
