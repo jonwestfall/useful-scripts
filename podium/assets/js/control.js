@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown } from './util.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
@@ -18,6 +18,17 @@ import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downs
 import { mountSessionBadge, serverInfo } from './server.js';
 
 const LIB_KEY = 'podium.library.v1';
+
+// One-time warning that this browser stopped saving something (Issue #116):
+// quota, private browsing, or a locked-down profile. Registered before
+// anything else runs, since loadConfig() and the rest of setup below can
+// themselves be the first write to fail - a listener added later would miss
+// that report entirely (reportStorageFailure only ever fires once per page).
+window.addEventListener('podium:storage-failed', (ev) => {
+  $('#storage-warning-detail').textContent =
+    `Preferences, the library, poll history and drafts may not survive a reload or crash. (${ev.detail.key})`;
+  $('#storage-warning').hidden = false;
+});
 
 let cfg = await loadConfig();
 let bus = null;
@@ -302,14 +313,12 @@ function loadCustom() {
 }
 
 function saveCustom(items) {
-  try {
-    const withBytes = items.map((item) => {
-      if (typeof item.src !== 'string' || !item.src.startsWith('asset:')) return item;
-      const data = assetStore.get(item.src.slice(6));
-      return data ? { ...item, _assetData: data } : item;
-    });
-    localStorage.setItem(LIB_KEY, JSON.stringify(withBytes));
-  } catch { /* private mode, or enough saved photos to run into the quota */ }
+  const withBytes = items.map((item) => {
+    if (typeof item.src !== 'string' || !item.src.startsWith('asset:')) return item;
+    const data = assetStore.get(item.src.slice(6));
+    return data ? { ...item, _assetData: data } : item;
+  });
+  safeStorageSet(localStorage, LIB_KEY, JSON.stringify(withBytes));
 }
 
 // The running order, as library items. Numbered, because the whole point of a
@@ -521,7 +530,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
 
   currentPlan = plan;
   if (persist) {
-    try { await saveCurrentPlan(plan); } catch { /* private browsing: it just will not survive a reload */ }
+    try { await saveCurrentPlan(plan); } catch (err) { reportStorageFailure('current plan', err); }
   }
   renderPlanBar();
   renderTimerPresets();
@@ -2196,7 +2205,7 @@ function loadPollHistory() {
   } catch { return []; }
 }
 function savePollHistory() {
-  try { localStorage.setItem(POLL_HISTORY_KEY, JSON.stringify(pollHistory.slice(0, MAX_POLL_HISTORY))); } catch { /* private mode, or quota */ }
+  safeStorageSet(localStorage, POLL_HISTORY_KEY, JSON.stringify(pollHistory.slice(0, MAX_POLL_HISTORY)));
 }
 let pollHistory = loadPollHistory();
 
@@ -4112,7 +4121,7 @@ function loadSavedSets() {
   try { return JSON.parse(localStorage.getItem(SET_KEY) || '[]'); } catch { return []; }
 }
 function saveSavedSets(list) {
-  try { localStorage.setItem(SET_KEY, JSON.stringify(list)); } catch { /* private mode */ }
+  safeStorageSet(localStorage, SET_KEY, JSON.stringify(list));
 }
 let savedSets = loadSavedSets();
 // The set being built or edited right now, or null. Editing works on a copy
@@ -4652,7 +4661,7 @@ if (savedDual) {
 $('#dual-pane-toggle').addEventListener('click', () => {
   const isDual = document.body.classList.toggle('dual-pane');
   $('#dual-pane-toggle').classList.toggle('is-on', isDual);
-  localStorage.setItem('podium.ui.dualPane', isDual ? '1' : '0');
+  safeStorageSet(localStorage, 'podium.ui.dualPane', isDual ? '1' : '0');
   const activeTab = document.querySelector('.tab.is-on:not(#dual-pane-toggle)');
   if (activeTab) tab(activeTab.dataset.tab);
   window.dispatchEvent(new Event('resize'));
@@ -4700,7 +4709,7 @@ function applyPreviewVisibility() {
 applyPreviewVisibility();
 $('#preview-toggle').addEventListener('click', () => {
   previewHidden = !previewHidden;
-  try { localStorage.setItem(PREVIEW_HIDDEN_KEY, previewHidden ? '1' : '0'); } catch { /* nothing to do */ }
+  safeStorageSet(localStorage, PREVIEW_HIDDEN_KEY, previewHidden ? '1' : '0');
   applyPreviewVisibility();
 });
 
@@ -4830,7 +4839,7 @@ function applyConfidenceSplit() {
 applyConfidenceSplit();
 $('#confidence-split').addEventListener('click', () => {
   confidenceSplit = SPLIT_ORDER[(SPLIT_ORDER.indexOf(confidenceSplit) + 1) % SPLIT_ORDER.length];
-  try { localStorage.setItem(SPLIT_KEY, confidenceSplit); } catch { /* nothing to do */ }
+  safeStorageSet(localStorage, SPLIT_KEY, confidenceSplit);
   applyConfidenceSplit();
 });
 
@@ -4852,7 +4861,7 @@ $('#deck-now-preview').append(laserDot, spotlightPreview);
 
 function setLaserColor(color) {
   laserColor = LASER_COLORS.includes(color) ? color : 'red';
-  try { localStorage.setItem(LASER_KEY, laserColor); } catch { /* nothing to do */ }
+  safeStorageSet(localStorage, LASER_KEY, laserColor);
   laserDot.dataset.color = laserColor;
   padLaserDot.dataset.color = laserColor;
   // The button wears the colour too, so you can tell at a glance what the
@@ -5483,7 +5492,7 @@ if (inkColorPicker && inkPickerLabel) {
     inkPickerLabel.style.setProperty('--custom-color', color);
     $$('.swatch:not(.swatch-picker)').forEach((s) => s.classList.remove('is-on'));
     inkPickerLabel.classList.add('is-on');
-    try { localStorage.setItem(INK_CUSTOM_COLOR_KEY, color); } catch { /* quota / private */ }
+    safeStorageSet(localStorage, INK_CUSTOM_COLOR_KEY, color);
     if (ink.tool === 'eraser' || ink.tool === 'laser' || ink.tool === 'spotlight') setInkTool('pen');
   };
 
@@ -5596,9 +5605,7 @@ function getCountdownText() {
 
 function setCountdownText(val) {
   const text = (val || '').trim() || DEFAULT_COUNTDOWN_TEXT;
-  try {
-    localStorage.setItem(COUNTDOWN_TEXT_KEY, text);
-  } catch {}
+  safeStorageSet(localStorage, COUNTDOWN_TEXT_KEY, text);
   updateCountdownButton();
   return text;
 }
@@ -5659,9 +5666,7 @@ function isCountdownQueue() {
 }
 
 function setCountdownQueue(val) {
-  try {
-    localStorage.setItem(COUNTDOWN_QUEUE_KEY, val ? 'true' : 'false');
-  } catch {}
+  safeStorageSet(localStorage, COUNTDOWN_QUEUE_KEY, val ? 'true' : 'false');
 }
 
 const countdownQueueBox = $('#music-countdown-queue');
@@ -5882,7 +5887,7 @@ function loadPresentation() {
   } catch { return { ...PRESENTATION_DEFAULTS }; }
 }
 function savePresentation() {
-  try { localStorage.setItem(PRESENTATION_KEY, JSON.stringify(presentation)); } catch { /* private mode, or quota */ }
+  safeStorageSet(localStorage, PRESENTATION_KEY, JSON.stringify(presentation));
 }
 let presentation = loadPresentation();
 
@@ -6016,13 +6021,11 @@ function loadPacingState() {
   return { startedAt: null };
 }
 function savePacingState(pacing) {
-  try {
-    if (pacing && pacing.startedAt) {
-      localStorage.setItem(PACING_KEY, JSON.stringify(pacing));
-    } else {
-      localStorage.removeItem(PACING_KEY);
-    }
-  } catch { /* private mode */ }
+  if (pacing && pacing.startedAt) {
+    safeStorageSet(localStorage, PACING_KEY, JSON.stringify(pacing));
+  } else {
+    try { localStorage.removeItem(PACING_KEY); } catch { /* private mode */ }
+  }
 }
 let pacingState = loadPacingState();
 

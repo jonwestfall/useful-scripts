@@ -21,6 +21,40 @@ export function el(tag, attrs = {}, ...kids) {
   return node;
 }
 
+// Issue #116: a quota/private-mode write failure used to be caught (or, at
+// several call sites, not even that - an uncaught throw) and left with
+// nothing telling anyone. An instructor's library filling localStorage over
+// a term meant new saves - preferences, saved sets, and on the display, the
+// crash-recovery snapshot - silently stopped persisting, discovered only the
+// day a crash actually needed that snapshot and it was not there.
+//
+// One dispatch, the first time only (module-scoped, so once per page load -
+// each page that imports this gets its own fresh copy, which is exactly
+// "once per session" here): the page that imported this listens for
+// 'podium:storage-failed' and shows it however fits that page, since util.js
+// has no UI of its own to assume. reportStorageFailure is exported on its
+// own for the one write that is not through the plain Storage interface -
+// the planner's IndexedDB save (see store.js) - so that failure reaches the
+// same warning rather than needing a second mechanism.
+let storageWarned = false;
+export function reportStorageFailure(key, err) {
+  if (storageWarned) return;
+  storageWarned = true;
+  window.dispatchEvent(new CustomEvent('podium:storage-failed', { detail: { key, message: err?.message || String(err) } }));
+}
+
+// Wraps setItem specifically - a failed READ just falls back to a default,
+// not data loss, so it is not what this warns about.
+export function safeStorageSet(storage, key, value) {
+  try {
+    storage.setItem(key, value);
+    return true;
+  } catch (err) {
+    reportStorageFailure(key, err);
+    return false;
+  }
+}
+
 export function uid(n = 8) {
   const bytes = new Uint8Array(n);
   crypto.getRandomValues(bytes);

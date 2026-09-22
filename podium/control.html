@@ -94,6 +94,16 @@ try {
     <button id="update-reload" type="button">Reload now</button>
   </div>
 
+  <!-- Shown once per page load if a save to localStorage throws - quota,
+       private browsing, or a locked-down profile. Detection is generic
+       (see safeStorageSet in util.js); this is the one place that tells
+       anyone that preferences, the library, poll history or drafts are
+       not actually being kept (Issue #116). -->
+  <div id="storage-warning" hidden>
+    <b>This browser would not save something just now.</b>
+    <span id="storage-warning-detail"></span>
+  </div>
+
   <div id="relay-help" hidden>
     <b>The relay is not answering.</b>
     <span id="relay-help-why"></span>

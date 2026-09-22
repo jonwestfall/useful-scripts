@@ -6963,6 +6963,52 @@ ok(`and the canvas is actually clear, not just flagged (${paintedAfter} px)`, pa
 await eraseCtx.close();
 }
 
+if (want('a local-storage write failure shows a warning on both control and display')) {
+console.log('\n-- Issue #116: a failed local save is surfaced, not silent --');
+// Storage.prototype.setItem is patched to throw for every page in this
+// context - the same shape of failure quota or private browsing produces -
+// so this proves the actual banner, not just that safeStorageSet caught
+// something somewhere.
+const failCtx = await browser.newContext();
+await failCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'storage-fail-room', passphrase: 'nothing is actually being kept' }));
+await failCtx.addInitScript(() => {
+  Storage.prototype.setItem = () => { throw new DOMException('quota', 'QuotaExceededError'); };
+});
+
+const failScreen = await failCtx.newPage();
+trap(failScreen, 'storage-fail display');
+await failScreen.goto(`${BASE}/display.html`);
+await failScreen.click('#arm-button');
+await failScreen.waitForSelector('#hud[data-status="online"]');
+ok('the display banner is not shown before anything has actually failed to save',
+  await failScreen.evaluate(() => document.querySelector('#storage-warn').hidden));
+
+const failPad = await failCtx.newPage();
+trap(failPad, 'storage-fail pad');
+await failPad.goto(`${BASE}/control.html`);
+await failPad.waitForSelector('.tile');
+await failPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Nothing is live yet, so picking a tile puts it straight on screen -
+// changing display's state, which schedules its debounced crash-recovery
+// snapshot (saveStateSoon -> saveStateNow, 1200ms).
+await failPad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await failScreen.waitForSelector('.r-whiteboard');
+await failScreen.waitForFunction(() => !document.querySelector('#storage-warn').hidden, null, { timeout: 5000 });
+ok('the display shows its own banner once its crash-recovery save actually fails', true);
+
+// A plain write on the controller (preview-toggle persists whether the cue
+// bar is shown) exercises the same safeStorageSet() path there, independently.
+await failPad.click('#preview-toggle');
+await failPad.waitForFunction(() => !document.querySelector('#storage-warning').hidden, null, { timeout: 5000 });
+ok('the controller shows its own banner too, not borrowed from the display', true);
+ok('with a real, specific detail line, not just "something is wrong"',
+  /reload or crash/.test(await failPad.textContent('#storage-warning-detail')));
+
+await failCtx.close();
+}
+
 if (want('back to the landing page')) {
 console.log('\n-- back to the landing page --');
 const ctx = await browser.newContext();

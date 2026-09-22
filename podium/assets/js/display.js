@@ -11,6 +11,7 @@
 import {
   $, $$, el, uid, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell,
   enterFullscreen, exitFullscreen, toggleFullscreen, isFullscreen, onFullscreenChange,
+  safeStorageSet, reportStorageFailure,
 } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl } from './config.js';
 import { createBus } from './bus.js';
@@ -26,6 +27,16 @@ import { serverInfo } from './server.js';
 
 const HEARTBEAT_MS = 2000;
 const TELEMETRY_MS = 400;
+
+// One-time warning that this browser stopped saving something (Issue #116) -
+// most of all saveStateNow()'s crash-recovery snapshot, which is what makes a
+// reload or a crash mid-lecture recoverable at all. Registered before
+// anything else runs, since setup below can itself be the first write to
+// fail - a listener added later would miss that report entirely
+// (reportStorageFailure only ever fires once per page). It never fades like
+// #hud does: there is nothing to reconnect to, the risk lasts until the tab
+// closes.
+window.addEventListener('podium:storage-failed', () => { $('#storage-warn').hidden = false; });
 
 const stage = $('#stage');
 const inkCanvas = $('#ink');
@@ -1747,16 +1758,14 @@ function inkStorageKey() {
 function saveInkNow() {
   clearTimeout(inkSaveTimer);
   {
-    try {
-      // Without `cleared`: what a Clear stashed is undoable for as long as the
-      // surface is on screen, not something to carry to next term, and keeping
-      // it would double what the ink of a wiped board costs on disk.
-      const saved = {};
-      for (const [key, surface] of Object.entries(state.ink.bySurface)) {
-        saved[key] = { strokes: surface.strokes, touched: surface.touched };
-      }
-      localStorage.setItem(inkStorageKey(), JSON.stringify(saved));
-    } catch { /* quota or private mode */ }
+    // Without `cleared`: what a Clear stashed is undoable for as long as the
+    // surface is on screen, not something to carry to next term, and keeping
+    // it would double what the ink of a wiped board costs on disk.
+    const saved = {};
+    for (const [key, surface] of Object.entries(state.ink.bySurface)) {
+      saved[key] = { strokes: surface.strokes, touched: surface.touched };
+    }
+    safeStorageSet(localStorage, inkStorageKey(), JSON.stringify(saved));
   }
 }
 
@@ -1793,7 +1802,7 @@ function stateStorageKey() {
 
 function saveStateNow() {
   clearTimeout(stateSaveTimer);
-  try {
+  {
     const { program, panels, layout, focus, timers, overlay, volume, contentVolume, muted, music, watermark } = state;
     // Everywhere else, only the `asset:<id>` reference goes into state and
     // the bytes are fetched fresh from whoever still holds them (see
@@ -1805,14 +1814,17 @@ function saveStateNow() {
     // answer it - the one controller that uploaded it may be long gone by
     // the time this screen asks again.
     const watermarkImageData = watermark.image?.startsWith('asset:') ? assetStore.get(watermark.image.slice(6)) : undefined;
-    localStorage.setItem(stateStorageKey(), JSON.stringify({
+    // This is the crash-recovery net (Issue #116) - if it silently stops
+    // persisting, a lecture just will not come back after a reload, and
+    // nothing said so until the day it mattered.
+    safeStorageSet(localStorage, stateStorageKey(), JSON.stringify({
       savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, contentVolume, muted, watermark, watermarkImageData,
       // The queue, not the playing: a reload lands on the arming screen, and
       // music that started itself the moment someone clicked Go live would be
       // a surprise in a room that had gone quiet.
       music: { ...music, playing: false },
     }));
-  } catch { /* quota or private mode - the lecture just will not come back */ }
+  }
 }
 
 function saveStateSoon() {
