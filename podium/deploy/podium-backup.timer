@@ -1,0 +1,13 @@
+# Installed as-is by deploy/install.sh - no substitution needed, since a
+# timer only ever names the service it fires, never a path.
+[Unit]
+Description=Podium nightly backup timer
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+# A box that was off (or the unit not yet enabled) at 03:15 gets its backup
+# the moment it is next up, rather than silently waiting for tomorrow night.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

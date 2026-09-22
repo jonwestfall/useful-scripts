@@ -160,11 +160,26 @@ passphrase, and possibly `AUTH_PASSWORD`. It keeps the last `KEEP_BACKUPS`
 (default 14) and reads the archive back before pruning, because a backup nobody
 has ever opened is a hope rather than a backup.
 
-Nightly, once you are happy with it:
+`install.sh` installs `podium-backup.timer` (03:15 daily, `Persistent=true` so
+a box that was off at that hour catches up the moment it is next up) and, on
+an interactive install, offers to enable it right there. If you said no then,
+or ran the install unattended, turn it on whenever you are ready:
+
+```bash
+sudo systemctl enable --now podium-backup.timer
+sudo systemctl status podium-backup.timer      # confirm it is actually scheduled
+```
+
+Prefer a plain cron line instead? That still works exactly as before:
 
 ```
 15 3 * * *  root  /opt/podium/current/deploy/backup.sh >/var/log/podium-backup.log 2>&1
 ```
+
+Either way, **turning it on is not optional** - `podium-admin doctor` has its
+own check for this (see "Checking up on it" below) precisely because a box
+that has never backed up anything looks completely healthy right up until the
+disk it is on is not there anymore.
 
 A backup on the same disk as the thing it is backing up protects you from a
 mistake, not from the disk. Copy the archives off the box.
@@ -210,7 +225,8 @@ last term" stops being true: Node and `node:sqlite`, the schema version, SQLite'
 own `integrity_check` and foreign keys, free disk, whether the data directory is
 still `0700`, media files with no row and rows with no file, whether anybody is
 left who can administer this from a browser, what storage is being used against
-the retention setting, certificate expiry, and whether the service answers.
+the retention setting, **whether a backup has ever actually run and how stale
+the newest one is**, certificate expiry, and whether the service answers.
 
 And one that is easy to miss and costs an afternoon: **the build the running
 process is serving versus the release that is deployed.** `current` is a symlink,

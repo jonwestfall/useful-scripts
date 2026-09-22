@@ -1398,6 +1398,39 @@ ok('and with it set, storage says for how long',
 ok('a negative retention value is treated the same as none set, not reported as valid',
   /everything kept/.test(doctor.checkStorage(db, { LECTURE_RETENTION_DAYS: '-1' }).detail));
 
+// checkBackup (Issue #114): a box can look completely healthy right up until
+// the disk it is on is gone, if nobody ever wired up the nightly job. Only
+// the filename's own timestamp is trusted for age - never mtime, which a
+// restore or `cp -p` can carry over from the original.
+console.log('\n-- doctor: has a backup ever actually run --');
+const missingBackupDir = path.join(root, 'no-such-backup-dir');
+ok('a BACKUP_DIR that does not exist yet is a warning, not a crash',
+  doctor.checkBackup({ BACKUP_DIR: missingBackupDir }).level === 'warn'
+  && /no backup has ever run/.test(doctor.checkBackup({ BACKUP_DIR: missingBackupDir }).detail));
+
+const backupDir = mkdtempSync(path.join(tmpdir(), 'podium-backup-'));
+ok('an existing but empty backup directory is the same warning',
+  doctor.checkBackup({ BACKUP_DIR: backupDir }).level === 'warn'
+  && /no backup has ever run/.test(doctor.checkBackup({ BACKUP_DIR: backupDir }).detail));
+
+const stampFor = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '');
+writeFileSync(path.join(backupDir, `podium-${stampFor(new Date())}.tar.gz`), 'x');
+ok('a fresh archive from just now is a clean bill of health',
+  doctor.checkBackup({ BACKUP_DIR: backupDir }).level === 'ok');
+
+const staleDir = mkdtempSync(path.join(tmpdir(), 'podium-backup-stale-'));
+const staleWhen = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+writeFileSync(path.join(staleDir, `podium-${stampFor(staleWhen)}.tar.gz`), 'x');
+ok(`an archive whose own name says it is days old is flagged, not silently accepted (${doctor.checkBackup({ BACKUP_DIR: staleDir }).detail})`,
+  doctor.checkBackup({ BACKUP_DIR: staleDir }).level === 'warn' && /day\(s\) old/.test(doctor.checkBackup({ BACKUP_DIR: staleDir }).detail));
+
+writeFileSync(path.join(staleDir, `podium-${stampFor(new Date())}.tar.gz`), 'x');
+ok('a newer archive landing later brings it back to ok, without needing the stale one removed',
+  doctor.checkBackup({ BACKUP_DIR: staleDir }).level === 'ok');
+
+rmSync(backupDir, { recursive: true, force: true });
+rmSync(staleDir, { recursive: true, force: true });
+
 console.log('\n-- doctor, from the command line --');
 
 // The CLI itself: does `podium-admin.js doctor` actually load podium.env for

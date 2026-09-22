@@ -102,6 +102,45 @@ function checkDisk(dataDir) {
   return say('ok', 'disk', line);
 }
 
+/**
+ * Whether a backup has ever actually run, not whether backup.sh exists.
+ * deploy/backup.sh and restore.sh are solid on their own, but nothing short
+ * of a person remembering to wire up podium-backup.timer (or their own cron
+ * line) ever runs the first one - so the box that never got that step looks
+ * completely healthy right up until the disk it is on is gone (Issue #114).
+ */
+function checkBackup(env = process.env) {
+  const dir = env.BACKUP_DIR || '/var/backups/podium';
+  const fix = 'Enable it: systemctl enable --now podium-backup.timer (or your own cron line - see deploy/README.md#backups).';
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (err) {
+    if (err.code === 'ENOENT') return say('warn', 'backup', `no backup has ever run - ${dir} does not exist`, fix);
+    return say('warn', 'backup', `could not check ${dir} (${err.code})`);
+  }
+  const archives = names.filter((n) => /^podium-\d{8}T\d{6}\.tar\.gz$/.test(n));
+  if (!archives.length) return say('warn', 'backup', `no backup has ever run - ${dir} holds none yet`, fix);
+
+  // The filename's own timestamp, not the file's mtime: a restore or a
+  // `cp -p` can carry an old mtime along with it, and this only ever needs
+  // to answer "when was this one taken", which the name already says.
+  archives.sort();
+  const newest = archives[archives.length - 1];
+  const stamp = newest.slice('podium-'.length, -'.tar.gz'.length);
+  const takenAt = Date.parse(`${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}T${stamp.slice(9, 11)}:${stamp.slice(11, 13)}:${stamp.slice(13, 15)}Z`);
+  const ageDays = Number.isFinite(takenAt) ? (Date.now() - takenAt) / DAY : NaN;
+  const line = `${archives.length} archive(s) in ${dir}, newest ${newest}`;
+  // A nightly job that has missed two nights in a row is worth a look, not
+  // a page - the same "warn, do not wake anyone up" level checkStorage uses
+  // for the same kind of slow-building risk.
+  if (!Number.isFinite(ageDays) || ageDays > 2) {
+    return say('warn', 'backup', `${line}, ${Number.isFinite(ageDays) ? `${ageDays.toFixed(1)} day(s) old` : 'age unreadable'}`,
+      'Check the nightly job is actually running - a stopped timer looks identical to a healthy box until this is checked.');
+  }
+  return say('ok', 'backup', line);
+}
+
 function checkPermissions(dataDir) {
   let mode;
   try { mode = fs.statSync(dataDir).mode & 0o777; } catch (err) {
@@ -369,6 +408,7 @@ async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, en
   }
   await attempt(() => checkPermissions(dataDir));
   await attempt(() => checkDisk(dataDir));
+  await attempt(() => checkBackup(env));
   await attempt(() => checkBuild(releaseDir, healthUrl));
   await attempt(() => checkCertificate(certPath));
   await attempt(() => checkService(healthUrl));
@@ -399,6 +439,7 @@ module.exports = {
   checkSchema,
   checkIntegrity,
   checkDisk,
+  checkBackup,
   checkPermissions,
   checkMedia,
   checkAccounts,
