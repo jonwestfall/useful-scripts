@@ -38,9 +38,14 @@ export function fmtTime(seconds) {
   return (h ? `${h}:` : '') + `${mm}:${String(s).padStart(2, '0')}`;
 }
 
+// The returned function also carries .flush(): run a still-pending trailing
+// call right now instead of waiting out its window. Needed wherever a caller
+// clears state a pending call depends on reading (Issue #119's eraser throttle
+// reads ink.lastErasePoint, which a stroke ending resets) - without it, that
+// state would already be gone by the time the deferred call finally ran.
 export function throttle(fn, ms) {
   let last = 0, pending = null, timer = null;
-  return (...args) => {
+  const wrapped = (...args) => {
     const now = Date.now();
     if (now - last >= ms) { last = now; fn(...args); return; }
     pending = args;
@@ -49,6 +54,11 @@ export function throttle(fn, ms) {
       if (pending) { fn(...pending); pending = null; }
     }, ms - (now - last));
   };
+  wrapped.flush = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (pending) { last = Date.now(); fn(...pending); pending = null; }
+  };
+  return wrapped;
 }
 
 export function escapeHtml(str) {

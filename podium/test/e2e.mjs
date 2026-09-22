@@ -6890,6 +6890,79 @@ ok('and it is real image data, not the blank-pixel placeholder a miss would show
 await evictCtx.close();
 }
 
+if (want('eraser hit-testing keeps up with a fast throttled swipe')) {
+console.log('\n-- Issue #119: erase hit-testing is throttled without losing coverage --');
+// A generous viewport, not the default: the default leaves the ink panel
+// taller than the visible window, so #pad sits partly scrolled out of view
+// and mouse coordinates computed from its (partly off-screen) bounding box
+// land nowhere near where they are meant to.
+const eraseCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await eraseCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'erase-throttle-room', passphrase: 'a fast swipe still gets both' }));
+const eraseScreen = await eraseCtx.newPage();
+trap(eraseScreen, 'erase-throttle display');
+await eraseScreen.goto(`${BASE}/display.html`);
+await eraseScreen.click('#arm-button');
+await eraseScreen.waitForSelector('#hud[data-status="online"]');
+const erasePad = await eraseCtx.newPage();
+trap(erasePad, 'erase-throttle pad');
+await erasePad.goto(`${BASE}/control.html`);
+await erasePad.waitForSelector('.tile');
+await erasePad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await erasePad.click('.tab[data-tab="ink"]');
+await erasePad.waitForSelector('#pad');
+// Measured fresh right before each use, not once up front and reused - the
+// tab switch above can still be settling its own scroll position, and #pad
+// moving between "drawn on" and "erased on" would silently aim every mouse
+// coordinate below at the wrong place on the page.
+const padBox = () => erasePad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+
+// Two strokes, well apart - "both gone" after one swipe only happens if the
+// throttled hit-test still covers the whole path, not just wherever the
+// swipe happened to be when a throttle window landed.
+let box = await padBox();
+await erasePad.mouse.move(box.x + box.w * 0.1, box.y + box.h * 0.15);
+await erasePad.mouse.down();
+for (let i = 1; i <= 8; i++) await erasePad.mouse.move(box.x + box.w * (0.1 + i * 0.02), box.y + box.h * 0.15);
+await erasePad.mouse.up();
+await erasePad.mouse.move(box.x + box.w * 0.1, box.y + box.h * 0.85);
+await erasePad.mouse.down();
+for (let i = 1; i <= 8; i++) await erasePad.mouse.move(box.x + box.w * (0.1 + i * 0.02), box.y + box.h * 0.85);
+await erasePad.mouse.up();
+
+await eraseScreen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+const paintedBefore = await eraseScreen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+ok(`two strokes, well apart, painted before erasing (${paintedBefore} px)`, paintedBefore > 200);
+
+await erasePad.click('#ink-tool-eraser');
+box = await padBox();
+// One continuous, fast swipe - many small moves with no pauses - straight
+// down the left edge, crossing BOTH strokes in a single pointer gesture:
+// exactly the shape of input that now sits behind the throttle.
+await erasePad.mouse.move(box.x + box.w * 0.12, box.y + box.h * 0.1);
+await erasePad.mouse.down();
+for (let i = 1; i <= 40; i++) await erasePad.mouse.move(box.x + box.w * 0.12, box.y + box.h * (0.1 + i * 0.02));
+await erasePad.mouse.up();
+
+await eraseScreen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+ok('a single fast swipe erases both strokes, not just the one nearer where it happened to slow down', true);
+const paintedAfter = await eraseScreen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+ok(`and the canvas is actually clear, not just flagged (${paintedAfter} px)`, paintedAfter === 0);
+
+await eraseCtx.close();
+}
+
 if (want('back to the landing page')) {
 console.log('\n-- back to the landing page --');
 const ctx = await browser.newContext();

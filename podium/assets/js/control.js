@@ -3311,6 +3311,25 @@ function eraseAt(ev) {
   }
 }
 
+// Issue #119: eraseAt rescans every stroke's every point (strokeHitTest, in
+// protocol.js, does a bbox pass and a segment pass unless bbox-culled), and
+// the pointermove handler below used to run it once per coalesced sub-event
+// with no throttle at all - on a heavily-annotated slide that is real, felt
+// lag while erasing. Throttling here loses no coverage: eraseAt's own
+// lastErasePoint interpolation already bridges however far the pointer moved
+// between two calls, so a throttled call just interpolates a longer gap in
+// one pass instead of several short ones in quick succession - the same
+// trade flushInk already makes for ink point batches, just for hit-testing
+// instead of network sends.
+//
+// Takes plain {clientX, clientY} points, not the original PointerEvents -
+// throttle() can defer this past the synchronous handler that read them via
+// getCoalescedEvents(), and some browsers do not guarantee a pointer event
+// (or what it coalesced) stays readable once its own dispatch has returned.
+const throttledEraseSweep = throttle((points) => {
+  for (const p of points) eraseAt(p);
+}, 32);
+
 // --- hold-to-straighten shape snapping (#38) ---------------------------------
 const HOLD_TO_SNAP_MS = 450;
 const HOLD_JITTER_RADIUS = 14;
@@ -3433,7 +3452,7 @@ pad.addEventListener('pointermove', (ev) => {
   if (ink.erasing) {
     ev.preventDefault();
     const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
-    for (const e of events) eraseAt(e);
+    throttledEraseSweep(events.map((e) => ({ clientX: e.clientX, clientY: e.clientY })));
     return;
   }
   if (!ink.drawing) return;
@@ -3510,6 +3529,11 @@ const endStroke = (ev) => {
     return;
   }
   if (ink.erasing) {
+    // Run any still-pending throttled sweep now, while ink.lastErasePoint is
+    // still whatever it needs to interpolate from - clearing it first would
+    // leave a deferred call with no anchor, collapsing what should be a swept
+    // line into a single point that may not land on anything.
+    throttledEraseSweep.flush();
     ink.erasing = false;
     ink.lastErasePoint = null;
     try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
