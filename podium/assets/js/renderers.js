@@ -594,11 +594,23 @@ function renderPdf(item, opts) {
 
 function renderText(item) {
   const body = el('div', { class: 'r-text-body', html: miniMarkdown(item.body || '') });
-  const node = el('div', { class: 'r-text' }, body);
+  // Optional (Issue #103): a picture under the text, its own caption under
+  // that. `src` is resolved to real bytes by the caller before this ever
+  // runs (see resolveAssets in control.js/display.js) - the same convention
+  // renderImage already relies on, so there is nothing asset-specific here.
+  const image = el('img', { class: 'r-text-image', alt: '' });
+  const caption = el('div', { class: 'r-text-caption' });
+  const imageWrap = el('div', { class: 'r-text-image-wrap' }, image, caption);
+  const node = el('div', { class: 'r-text' }, body, imageWrap);
   const apply = (it) => {
     node.dataset.size = it.size || 'l';
     node.dataset.align = it.align || 'center';
+    node.dataset.font = it.font || 'sans';
     node.style.background = it.bg || '';
+    imageWrap.hidden = !it.src;
+    if (it.src) image.src = it.src;
+    caption.textContent = it.caption || '';
+    caption.hidden = !it.caption;
   };
   apply(item);
   return {
