@@ -2686,14 +2686,23 @@ let pollRunningDrawn = '';
 // own Reveal tap to find out what the room said.
 function renderRunningPoll(item) {
   const archived = !item.token;
+  // Issue #115: the relay keeps poll state only in memory, so a restart
+  // loses it, code and all - display.js sets this once its own results
+  // fetch starts 404ing. Reveal/hide-answer still work (pure relay-state
+  // commands), but anything that would hit the now-dead HTTP poll endpoint
+  // - closing/reopening voting, the join link/QR, the closesAt countdown -
+  // is hidden rather than left to fail silently or confusingly.
+  const lost = !!item.lost;
   $('#poll-running-question').textContent = item.question;
   $('#poll-running-code').textContent = item.pollId;
-  const link = archived ? null : pollJoinUrl(cfg, item.pollId);
+  const link = (archived || lost) ? null : pollJoinUrl(cfg, item.pollId);
   $('#poll-copy-link').disabled = !link;
-  $('#poll-copy-link').hidden = archived;
-  $('#poll-toggle-open').hidden = archived;
-  $('#poll-timer-btns').hidden = archived || item.open === false;
-  $('#poll-running-status').textContent = archived
+  $('#poll-copy-link').hidden = archived || lost;
+  $('#poll-toggle-open').hidden = archived || lost;
+  $('#poll-timer-btns').hidden = archived || lost || item.open === false;
+  $('#poll-running-status').textContent = lost
+    ? 'Connection to this poll was lost — if the relay restarted, its votes and join code are gone. Start a new poll to keep going.'
+    : archived
     ? `Redisplayed from history — ${item.voters} response${item.voters === 1 ? '' : 's'}, not accepting new votes`
     : `${item.voters} response${item.voters === 1 ? '' : 's'}${item.open === false ? ' · voting closed' : ' · voting open'}`
       + (item.revealed ? ' · shown to the room' : ' · visible to you only');

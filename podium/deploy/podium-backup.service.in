@@ -1,0 +1,17 @@
+# Template. deploy/install.sh substitutes the @NAMES@ and writes the result to
+# /etc/systemd/system/podium-backup.service, run by podium-backup.timer.
+#
+# Root, deliberately, unlike podium.service - backup.sh has to read a data
+# directory owned by the service account and write an archive nobody but
+# root should be able to read either (see backup.sh's own comment on why the
+# archive holds AUTH_PASSWORD and every room's passphrase).
+[Unit]
+Description=Podium backup
+After=podium.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=@CONFIG_DIR@/podium.env
+Environment=CONFIG_DIR=@CONFIG_DIR@
+Environment=PREFIX=@PREFIX@
+ExecStart=@PREFIX@/current/deploy/backup.sh

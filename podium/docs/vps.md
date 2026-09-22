@@ -108,7 +108,7 @@ places, which is what makes the release/rollback pattern safe.
 /opt/podium/current                            symlink to the live release
 /var/lib/podium/podium.db                      SQLite: everything structured
 /var/lib/podium/media/<aa>/<sha256>            uploaded files, content-addressed
-/var/lib/podium/backups/                       where the backup script lands
+/var/backups/podium/                           where the backup script lands (BACKUP_DIR)
 /etc/podium/podium.env                         secrets, systemd EnvironmentFile
 ```
 
