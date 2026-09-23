@@ -89,6 +89,10 @@ export const MUSIC_DUCK_MS = 600;
 export const MAX_SET_ENTRIES = 50;
 export const SET_TICK_MS = 500;
 
+// A picture deck's slide count cap (Issue #106): generous for a real lecture,
+// and a bound on how much every state broadcast has to carry.
+export const MAX_IMAGEDECK_SLIDES = 500;
+
 let timerSeq = 1;
 
 export function newTimer(id, label = '', seconds = 0) {
@@ -278,6 +282,19 @@ function normalizeItem(item) {
     copy.panY = Number.isFinite(copy.panY) ? copy.panY : 0.5;
   }
   if (copy.type === 'slides') copy.slide = Math.max(0, Number(copy.slide) || 0);
+  if (copy.type === 'imagedeck') {
+    // Issue #106: a folder of per-slide images played as one deck. Accepts
+    // the plan file's one-per-line text as well as an array. Only relative
+    // paths and http(s) - the same rule plan files apply to src - because
+    // every entry ends up in an <img> on the projector.
+    const list = Array.isArray(copy.images) ? copy.images : String(copy.images || '').split('\n');
+    copy.images = list
+      .map((s) => String(s || '').trim().slice(0, 2000))
+      .filter((s) => s && (!/^[a-z][a-z0-9+.-]*:/i.test(s) || /^https?:/i.test(s)))
+      .slice(0, MAX_IMAGEDECK_SLIDES);
+    copy.slide = Math.min(Math.max(0, Math.round(Number(copy.slide)) || 0), Math.max(0, copy.images.length - 1));
+    copy.fit = copy.fit === 'cover' ? 'cover' : 'contain';
+  }
   if (copy.type === 'deck') {
     copy.slide = Math.max(0, Number(copy.slide) || 0);
     copy.slideCount = Math.max(1, Number(copy.slideCount) || 1);
@@ -430,6 +447,9 @@ export function inkSurfaceKey(item) {
     case 'web': return `web:${item.src}`;
     case 'whiteboard': return `whiteboard:${item.bg || 'default'}`;
     case 'image': return `image:${item.src}`;
+    // Keyed by the slide's own image, like a plain image: each slide keeps
+    // its own ink, and flipping back finds it again.
+    case 'imagedeck': return `image:${item.images?.[item.slide || 0] || ''}`;
     // Two panels can hold two different countdowns; drawing on one must not
     // put the same marks on the other.
     case 'timer': return `timer:${item.timerId || ''}`;
@@ -1010,6 +1030,10 @@ export function applyCommand(state, cmd) {
             item.step = fragsFor(target);
           }
         }
+      } else if (item.type === 'imagedeck') {
+        const last = Math.max(0, (item.images?.length || 1) - 1);
+        const target = cmd.dir === 'goto' ? Number(cmd.value) || 0 : (item.slide || 0) + step;
+        item.slide = Math.min(last, Math.max(0, Math.round(target)));
       } else if (item.type === 'pdf') {
         item.page = cmd.dir === 'goto' ? Math.max(1, Number(cmd.value) || 1) : Math.max(1, (item.page || 1) + step);
       } else if (item.type === 'slides' || item.type === 'web') {

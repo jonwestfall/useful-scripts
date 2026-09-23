@@ -26,6 +26,7 @@ export const TYPES = {
   web:        { label: 'Web page',   icon: '\u{1F310}' },
   slides:     { label: 'Slides',     icon: '\u{1F4D1}' },
   deck:       { label: 'Marp deck',  icon: '\u{1F4D6}' },
+  imagedeck:  { label: 'Picture deck', icon: '\u{1F39E}' },
   pdf:        { label: 'PDF',        icon: '\u{1F4C4}' },
   text:       { label: 'Big text',   icon: 'T' },
   qr:         { label: 'QR code',    icon: '⌗' },
@@ -148,6 +149,49 @@ function renderImage(item) {
       return drawFitted(ctx, rect, img, img.naturalWidth, img.naturalHeight, objectFitOf(img));
     },
     destroy() { node.remove(); },
+  };
+}
+
+// A picture deck (Issue #106): one image per slide - PowerPoint's own "export
+// as images" - shown one at a time. It is renderImage with a slide index, so
+// fit, ink letterboxing and photographing all behave exactly as for a photo;
+// the next slide is fetched ahead so advancing never waits on the network.
+function renderImageDeck(item) {
+  const img = el('img', { class: 'r-image', alt: item.title || '', decoding: 'async' });
+  const node = el('div', { class: 'r-fill' }, img);
+  let current = item;
+  let ahead = null;
+  const srcOf = (it) => it.images?.[it.slide || 0] || '';
+  const apply = (it) => {
+    current = it;
+    const src = srcOf(it);
+    if (src !== img.getAttribute('src')) {
+      if (src) img.src = src;
+      else img.removeAttribute('src');
+    }
+    img.style.objectFit = it.fit === 'cover' ? 'cover' : 'contain';
+    const next = it.images?.[(it.slide || 0) + 1];
+    if (next && ahead?.getAttribute('src') !== next) {
+      ahead = new Image();
+      ahead.decoding = 'async';
+      ahead.src = next;
+    }
+  };
+  apply(item);
+  return {
+    el: node,
+    update: apply,
+    reconcile() {},
+    telemetry: noTelemetry,
+    contentAspect() {
+      if (current.fit === 'cover') return null;
+      return img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : null;
+    },
+    snapshot(ctx, rect) {
+      paintBackdrop(ctx, rect, node);
+      return drawFitted(ctx, rect, img, img.naturalWidth, img.naturalHeight, objectFitOf(img));
+    },
+    destroy() { ahead = null; node.remove(); },
   };
 }
 
@@ -1287,6 +1331,7 @@ const FACTORIES = {
   web: renderWeb,
   slides: renderWeb,
   deck: renderDeck,
+  imagedeck: renderImageDeck,
   pdf: renderPdf,
   text: renderText,
   qr: renderQr,

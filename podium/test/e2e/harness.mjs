@@ -103,6 +103,19 @@ function writeAlphaImageFixture() {
   return file;
 }
 
+// Three slides exported as images, each a different solid colour, so a test
+// can tell from the projector's pixels which slide is up. Paths are relative
+// to the podium root, which is what the relay serves.
+const SLIDE_COLOURS = [[220, 40, 40], [40, 180, 60], [40, 70, 220]];
+function writeSlideFixtures() {
+  return SLIDE_COLOURS.map((rgb, i) => {
+    const rel = `test/fixtures/pictures/Slide${i + 1}.png`;
+    const file = path.join(ROOT, rel);
+    if (!fs.existsSync(file)) writePng(file, 320, 180, 3, () => rgb);
+    return rel;
+  });
+}
+
 // A 1.2-second tone: short enough to actually reach its own end inside a test
 // timeout, for exercising what happens once a clip runs out rather than
 // what happens while it is playing.
@@ -429,7 +442,7 @@ function exitWithResult() {
 
 export {
   HERE, ROOT, fs, path, os, http, spawn, execFileSync,
-  writeImageFixture, writeAlphaImageFixture, freePort,
+  writeImageFixture, writeAlphaImageFixture, writeSlideFixtures, SLIDE_COLOURS, freePort,
   devices, PORT, BASE, CFG, browser, ok, errors, want, trap, expecting,
   pollUntil, bgMatches, reportErrors, teardown, exitWithResult,
 };

@@ -6,7 +6,12 @@
 // node podium/test/e2e.mjs runs every group.
 
 import {
+  HERE,
+  fs,
+  path,
   writeImageFixture,
+  writeSlideFixtures,
+  SLIDE_COLOURS,
   PORT,
   BASE,
   browser,
@@ -17,6 +22,7 @@ import {
   teardown,
   exitWithResult
 } from './harness.mjs';
+import { PLAN_VERSION } from '../../assets/js/planfile.js';
 
 try {
 if (want('the phone-camera tile in the library actually starts the camera')) {
@@ -1143,6 +1149,77 @@ ok('a browser with no SpeechRecognition at all says so rather than failing silen
   /no speech recognition/i.test(await noCapControl.textContent('#caption-status')));
 ok('and the button never claims to have started', (await noCapControl.textContent('#caption-toggle')) === 'Start live captions');
 await noCapCtx.close();
+}
+
+if (want('picture decks: slides exported as images, stepped through like a deck')) {
+console.log('\n-- picture decks: slides exported as images, stepped through like a deck --');
+// Issue #106: PowerPoint's own "export as images" output - one picture per
+// slide - played as one item, with the same next/previous every deck has.
+const slides = writeSlideFixtures();
+const planFile = path.join(HERE, 'fixtures', 'picture-deck-plan.json');
+fs.writeFileSync(planFile, JSON.stringify({
+  podium: 'plan', v: PLAN_VERSION, title: 'Picture deck day',
+  items: [{ id: 'pics', type: 'imagedeck', title: 'Week 3 pictures', images: slides.join('\n') }],
+}));
+const cfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'picture-deck-room', passphrase: 'one picture per slide' });
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((c) => localStorage.setItem('podium.config.v2', c), cfg);
+const screen = await ctx.newPage();
+trap(screen, 'picture deck display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'picture deck pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await pad.setInputFiles('#plan-file', planFile);
+await pad.waitForSelector('.tile:has(.tile-title:text-is("Week 3 pictures"))', { timeout: 10000 });
+
+// Which slide the projector shows, read off its pixels rather than its src:
+// a src can change before the picture behind it has actually arrived.
+const shownColour = () => screen.evaluate(() => {
+  const img = document.querySelector('.layer[data-role="program"] .r-image');
+  if (!img || !img.complete || !img.naturalWidth) return null;
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0);
+  return [...g.getImageData(c.width >> 1, c.height >> 1, 1, 1).data.slice(0, 3)];
+});
+const showing = (n) => screen.waitForFunction((rgb) => {
+  const img = document.querySelector('.layer[data-role="program"] .r-image');
+  if (!img || !img.complete || !img.naturalWidth) return false;
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0);
+  const px = g.getImageData(c.width >> 1, c.height >> 1, 1, 1).data;
+  return Math.abs(px[0] - rgb[0]) < 12 && Math.abs(px[1] - rgb[1]) < 12 && Math.abs(px[2] - rgb[2]) < 12;
+}, SLIDE_COLOURS[n - 1], { timeout: 8000 }).then(() => true, () => false);
+
+await pad.click('.tile:has(.tile-title:text-is("Week 3 pictures"))');
+const firstUp = await showing(1);
+ok(`picking a picture deck puts its first slide up (centre pixel ${JSON.stringify(await shownColour())})`, firstUp);
+
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForSelector('#paging:not([hidden])', { timeout: 5000 });
+ok(`the Now tab offers paging for it, and says where you are ("${await pad.textContent('#page-label')}")`,
+  (await pad.textContent('#page-label')) === 'Slide 1 / 3');
+
+await pad.click('#next-page');
+ok('next shows the second slide', await showing(2));
+await pad.waitForFunction(() => document.querySelector('#page-label').textContent === 'Slide 2 / 3', null, { timeout: 5000 });
+await pad.click('#next-page');
+ok('and the third', await showing(3));
+await pad.click('#next-page');
+await pad.waitForTimeout(600);
+ok('next on the last slide stays there rather than going blank', await showing(3)
+  && (await pad.textContent('#page-label')) === 'Slide 3 / 3');
+await pad.click('#prev-page');
+ok('previous goes back a slide', await showing(2));
+await ctx.close();
 }
 
 reportErrors();
