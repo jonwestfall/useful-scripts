@@ -4779,10 +4779,14 @@ await pipPad.click('.layout-btn[data-layout="4"]');
 // pip-inset waits below are about.
 await pipPad.waitForSelector('.panel-btn:text-is("B")');
 await pipPad.click('.tile:has(.tile-title:text-is("Whiteboard"))'); // A: light bg
+// A tile or message goes to whichever panel this pad's state says is focused,
+// so each focus change has to come back from the relay before staging into it.
 await pipPad.click('.panel-btn:text-is("B")');
+await pipPad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'B', null, { timeout: 3000 });
 await pipPad.click('.tile:has(.tile-title:text-is("Chalkboard"))'); // B: dark bg
 await pipScreen.waitForFunction(() => document.querySelectorAll('.r-whiteboard').length === 2, null, { timeout: 8000 });
 await pipPad.click('.panel-btn:text-is("C")');
+await pipPad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'C', null, { timeout: 3000 });
 await pipPad.click('.tab[data-tab="say"]');
 await pipPad.click('#text-open-editor');
 await pipPad.fill('#msg-body', 'Pane C');
