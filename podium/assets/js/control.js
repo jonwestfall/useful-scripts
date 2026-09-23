@@ -693,12 +693,13 @@ function itemIdentity(item) {
   // for a reason nothing else needed: "back to" a specific run of a set,
   // mid-rotation, is not the same as starting that same saved set over.
   if (item.type === 'set') return `set:${item.key}`;
-  return `${item.type}:${item.deckId || item.src || item.timerId || item.body || item.data || ''}`;
+  return `${item.type}:${item.deckId || item.src || item.images?.[0] || item.timerId || item.body || item.data || ''}`;
 }
 
 function recentWhere(item) {
   if (item.type === 'set') return `${(item.index || 0) + 1} of ${item.entries?.length || 0}`;
   if (item.type === 'deck') return `slide ${(item.slide || 0) + 1}${item.slideCount ? ` of ${item.slideCount}` : ''}`;
+  if (item.type === 'imagedeck') return `slide ${(item.slide || 0) + 1} of ${item.images?.length || 0}`;
   if (item.type === 'pdf') return `page ${item.page || 1}`;
   if (item.type === 'slides') return `slide ${(item.slide || 0) + 1}`;
   if (item.startAt) return fmtTime(item.startAt);
@@ -1946,7 +1947,7 @@ function renderNow() {
   const item = focusedItem(state);
   const type = item?.type;
   const isMedia = ['video', 'audio', 'youtube'].includes(type);
-  const isPaged = ['pdf', 'slides', 'web', 'deck'].includes(type);
+  const isPaged = ['pdf', 'slides', 'web', 'deck', 'imagedeck'].includes(type);
 
   $('#now-title').textContent = itemTitle(item);
   $('#now-type').textContent = TYPES[type]?.label || type || '';
@@ -1954,7 +1955,8 @@ function renderNow() {
   $('#paging').hidden = !isPaged;
   $('#page-label').textContent = type === 'pdf'
     ? `Page ${item.page || 1}`
-    : (type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}` : 'Slide');
+    : type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}`
+      : type === 'imagedeck' ? `Slide ${(item.slide || 0) + 1} / ${item.images?.length || 0}` : 'Slide';
 
   $('#pdf-zoom').hidden = type !== 'pdf';
   $('#pdf-pan').hidden = type !== 'pdf';

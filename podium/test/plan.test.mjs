@@ -293,5 +293,30 @@ chk('invalid autoLaunch fields are sanitized and warned', (() => {
     && parsedInvalid.warnings.length > 0;
 })());
 
+// --- picture decks (Issue #106) ------------------------------------------------
+{
+  const slides = Array.from({ length: 80 }, (_, i) => `/media/${'a'.repeat(64)}/Slide${i + 1}.png`);
+  const doc = JSON.stringify({
+    podium: 'plan', v: PLAN_VERSION, title: 'Pictures',
+    items: [
+      { id: 'pd1', type: 'imagedeck', title: 'Week 3', images: slides.join('\n'), fit: 'cover' },
+      { id: 'pd2', type: 'imagedeck', images: 'ok.png\njavascript:alert(1)\ndata:image/png;base64,xx\nasset:abc\nhttps://example.edu/b.png' },
+    ],
+  });
+  const { plan: read, warnings } = readPlan(doc);
+  const [deck, risky] = read.items;
+  chk('a picture deck survives a plan file, every slide in order (80 lines, well past a textarea\'s usual 4000 characters)',
+    deck.images.split('\n').length === 80 && deck.images.split('\n')[79].endsWith('Slide80.png') && deck.fit === 'cover');
+  chk('only relative paths and http(s) survive; javascript:, data: and plan assets are dropped',
+    risky.images === 'ok.png\nhttps://example.edu/b.png');
+  chk('and the drop is said out loud', warnings.some((w) => /3 slides/.test(w)));
+  const staged = itemForStage(deck);
+  chk('staging turns the one-per-line text into the list the projector steps through',
+    Array.isArray(staged.images) && staged.images.length === 80 && staged.images[0].endsWith('Slide1.png'));
+  chk('an untitled picture deck is labelled by its slide count', itemLabel(risky) === 'Picture deck (2 slides)');
+  const again = readPlan(planToJson(read)).plan.items[0];
+  chk('and it round-trips', again.images === deck.images && again.title === 'Week 3');
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

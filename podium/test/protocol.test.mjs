@@ -662,5 +662,40 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
     p.layout === 'pip' && p.focus === 0);
 }
 
+{
+  // Issue #106: a picture deck - one image per slide - steps like a deck.
+  console.log('\n-- picture decks --');
+  const d = initialState();
+  applyCommand(d, { op:'stage', item:{ type:'imagedeck', images:['s/1.png', 's/2.png', 's/3.png'], slide: 1 } });
+  chk('a picture deck stages at the slide it was given', d.program.type === 'imagedeck' && d.program.slide === 1);
+  applyCommand(d, { op:'nav', dir:'next' });
+  chk('next steps forward', d.program.slide === 2);
+  applyCommand(d, { op:'nav', dir:'next' });
+  chk('and stops at the last slide rather than running off the end', d.program.slide === 2);
+  applyCommand(d, { op:'nav', dir:'goto', value: 0 });
+  applyCommand(d, { op:'nav', dir:'prev' });
+  chk('prev stops at the first slide', d.program.slide === 0);
+  applyCommand(d, { op:'nav', dir:'goto', value: 99 });
+  chk('goto past the end lands on the last slide', d.program.slide === 2);
+
+  applyCommand(d, { op:'nav', dir:'goto', value: 0 });
+  const firstKey = inkSurfaceKey(d.program);
+  applyCommand(d, { op:'nav', dir:'next' });
+  chk('each slide is its own ink surface', inkSurfaceKey(d.program) !== firstKey && firstKey === 'image:s/1.png');
+
+  applyCommand(d, { op:'stage', item:{ type:'imagedeck', images:'a.png\n\n  b.png  \njavascript:alert(1)\ndata:image/png;base64,xx\nhttps://example.edu/c.png', slide: 50 } });
+  chk('one-per-line text becomes the list, blank lines and padding gone',
+    d.program.images.join('|') === 'a.png|b.png|https://example.edu/c.png');
+  chk('javascript: and data: entries never reach the projector', !d.program.images.some((s) => /^(javascript|data):/.test(s)));
+  chk('an out-of-range starting slide is clamped to the deck', d.program.slide === 2);
+  applyCommand(d, { op:'fit', value:'cover' });
+  chk('fit applies to a picture deck like a photo', d.program.fit === 'cover');
+
+  applyCommand(d, { op:'stage', item:{ type:'imagedeck', images: Array.from({ length: 900 }, (_, i) => `s/${i}.png`) } });
+  chk('a picture deck is capped at 500 slides', d.program.images.length === 500);
+  applyCommand(d, { op:'stage', item:{ type:'imagedeck', images: [] } });
+  chk('an empty picture deck is harmless: slide 0, nothing to show', d.program.slide === 0 && d.program.images.length === 0);
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);
