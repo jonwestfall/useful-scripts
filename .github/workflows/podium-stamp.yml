@@ -4,9 +4,23 @@ name: Podium build stamp
 # into protocol.js and join.html whenever code lands on main or podium-beta.
 #
 # The stamp commit uses [skip ci] so it never re-triggers this workflow (or
-# the test workflow). The GITHUB_TOKEN default is fine here: pushes made with
-# it deliberately do not fire further workflow runs, which is belt-and-
-# suspenders with [skip ci].
+# the test workflow) into doing real work; the `if:` condition below is what
+# actually enforces that, not the push itself.
+#
+# main is protected by a ruleset requiring changes through a pull request,
+# and GITHUB_TOKEN (the github-actions[bot] identity) cannot be added to a
+# ruleset's bypass list - it isn't a selectable App, team, or role there, on
+# this repo or any other. STAMP_PUSH_TOKEN is a PAT belonging to a real
+# repository admin, whose "Repository admin" role IS on that bypass list, so
+# authenticating with it is what lets this push land directly. See
+# https://github.com/jonwestfall/useful-scripts/actions/runs/35671931986 for
+# what it looks like when this token is missing or expired: the stamp commit
+# itself succeeds locally, only the push is rejected.
+#
+# A PAT push does re-trigger this workflow (unlike GITHUB_TOKEN's push,
+# which deliberately does not) - harmless, since the run it triggers sees
+# [skip ci] in the very commit it would otherwise re-stamp and exits via the
+# `if:` condition below without doing anything.
 
 on:
   push:
@@ -33,9 +47,11 @@ jobs:
         with:
           # Fetch the full ref so we can push back to it.
           ref: ${{ github.ref }}
-          # The default GITHUB_TOKEN works and, crucially, pushes made with it
-          # do not trigger further workflow runs.
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # A repo-admin PAT, not the default GITHUB_TOKEN - see the header
+          # comment above for why main's ruleset needs this. Falls back to
+          # GITHUB_TOKEN if the secret is ever unset, so podium-beta (which
+          # has no such ruleset) keeps working even without it configured.
+          token: ${{ secrets.STAMP_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:

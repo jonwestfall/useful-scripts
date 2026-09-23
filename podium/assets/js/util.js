@@ -21,6 +21,40 @@ export function el(tag, attrs = {}, ...kids) {
   return node;
 }
 
+// Issue #116: a quota/private-mode write failure used to be caught (or, at
+// several call sites, not even that - an uncaught throw) and left with
+// nothing telling anyone. An instructor's library filling localStorage over
+// a term meant new saves - preferences, saved sets, and on the display, the
+// crash-recovery snapshot - silently stopped persisting, discovered only the
+// day a crash actually needed that snapshot and it was not there.
+//
+// One dispatch, the first time only (module-scoped, so once per page load -
+// each page that imports this gets its own fresh copy, which is exactly
+// "once per session" here): the page that imported this listens for
+// 'podium:storage-failed' and shows it however fits that page, since util.js
+// has no UI of its own to assume. reportStorageFailure is exported on its
+// own for the one write that is not through the plain Storage interface -
+// the planner's IndexedDB save (see store.js) - so that failure reaches the
+// same warning rather than needing a second mechanism.
+let storageWarned = false;
+export function reportStorageFailure(key, err) {
+  if (storageWarned) return;
+  storageWarned = true;
+  window.dispatchEvent(new CustomEvent('podium:storage-failed', { detail: { key, message: err?.message || String(err) } }));
+}
+
+// Wraps setItem specifically - a failed READ just falls back to a default,
+// not data loss, so it is not what this warns about.
+export function safeStorageSet(storage, key, value) {
+  try {
+    storage.setItem(key, value);
+    return true;
+  } catch (err) {
+    reportStorageFailure(key, err);
+    return false;
+  }
+}
+
 export function uid(n = 8) {
   const bytes = new Uint8Array(n);
   crypto.getRandomValues(bytes);
@@ -38,9 +72,14 @@ export function fmtTime(seconds) {
   return (h ? `${h}:` : '') + `${mm}:${String(s).padStart(2, '0')}`;
 }
 
+// The returned function also carries .flush(): run a still-pending trailing
+// call right now instead of waiting out its window. Needed wherever a caller
+// clears state a pending call depends on reading (Issue #119's eraser throttle
+// reads ink.lastErasePoint, which a stroke ending resets) - without it, that
+// state would already be gone by the time the deferred call finally ran.
 export function throttle(fn, ms) {
   let last = 0, pending = null, timer = null;
-  return (...args) => {
+  const wrapped = (...args) => {
     const now = Date.now();
     if (now - last >= ms) { last = now; fn(...args); return; }
     pending = args;
@@ -49,6 +88,11 @@ export function throttle(fn, ms) {
       if (pending) { fn(...pending); pending = null; }
     }, ms - (now - last));
   };
+  wrapped.flush = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (pending) { last = Date.now(); fn(...pending); pending = null; }
+  };
+  return wrapped;
 }
 
 export function escapeHtml(str) {
@@ -57,6 +101,13 @@ export function escapeHtml(str) {
   ));
 }
 
+// `#`/`##` headings and `1.` numbered lists, alongside the bullet lists this
+// already had - the three block-level constructs Issue #103's full-screen
+// message editor needs ("headings and body text, bulleted lists, numbered
+// lists"), on the same line-by-line pass bullets already used rather than a
+// second one. A line only ever starts one kind of block; switching from a
+// bullet line straight to a numbered one (or either to a heading) closes
+// whatever was open first, the same way a plain line always did.
 export function miniMarkdown(str) {
   let html = escapeHtml(str);
 
@@ -68,41 +119,45 @@ export function miniMarkdown(str) {
   html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 
   const lines = html.split('\n');
-  let inList = false;
+  let listTag = null; // 'ul' | 'ol' | null - which list (if any) is open
   const out = [];
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const match = line.match(/^(\s*)(?:[-*])\s+(.*)$/);
-    if (match) {
-      if (!inList) {
-        out.push('<ul class="mini-md-list">');
-        inList = true;
-      }
-      out.push(`<li>${match[2]}</li>`);
-    } else {
-      if (inList) {
-        out.push('</ul>');
-        inList = false;
-      }
-      out.push(line);
+
+  const closeList = () => {
+    if (listTag) { out.push(`</${listTag}>`); listTag = null; }
+  };
+
+  for (const line of lines) {
+    const heading = line.match(/^(#{1,2})\s+(.*)$/);
+    if (heading) {
+      closeList();
+      const level = heading[1].length;
+      out.push(`<h${level}>${heading[2]}</h${level}>`);
+      continue;
     }
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    if (bullet) {
+      if (listTag !== 'ul') { closeList(); out.push('<ul class="mini-md-list">'); listTag = 'ul'; }
+      out.push(`<li>${bullet[1]}</li>`);
+      continue;
+    }
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (numbered) {
+      if (listTag !== 'ol') { closeList(); out.push('<ol class="mini-md-list">'); listTag = 'ol'; }
+      out.push(`<li>${numbered[1]}</li>`);
+      continue;
+    }
+    closeList();
+    out.push(line);
   }
-  if (inList) {
-    out.push('</ul>');
-  }
-  
+  closeList();
+
+  const isBlockTag = (l) => /^<(?:ul|\/ul|ol|\/ol|li|h1|h2|\/h1|\/h2)/.test(l);
   let finalHtml = '';
   for (let i = 0; i < out.length; i++) {
     const l = out[i];
-    const isListTag = l.startsWith('<ul') || l.startsWith('</ul') || l.startsWith('<li');
     finalHtml += l;
-    
-    if (!isListTag && i < out.length - 1) {
-       const nextIsListTag = out[i+1].startsWith('<ul') || out[i+1].startsWith('</ul') || out[i+1].startsWith('<li');
-       if (!nextIsListTag) {
-         finalHtml += '<br>';
-       }
+    if (!isBlockTag(l) && i < out.length - 1 && !isBlockTag(out[i + 1])) {
+      finalHtml += '<br>';
     }
   }
   return finalHtml;

@@ -42,6 +42,17 @@ export const PLAN_TYPES = {
       { key: 'src', label: 'or a path on the server', kind: 'text', placeholder: 'content/decks/week3.md' },
     ],
   },
+  imagedeck: {
+    label: 'Picture deck', icon: '\u{1F39E}',
+    blurb: 'Slides exported as images (PowerPoint: File > Export > PNG), one picture per slide, stepped through like a deck.',
+    fields: [
+      { key: 'images', label: 'Slide images, in order', kind: 'textarea', max: 100000,
+        placeholder: 'content/photos/week3/Slide1.png\ncontent/photos/week3/Slide2.png',
+        hint: 'One path or http(s) address per line.' },
+      { key: 'fit', label: 'Fit', kind: 'select', def: 'contain',
+        options: [['contain', 'Fit inside (letterbox)'], ['cover', 'Fill the screen (crop)']] },
+    ],
+  },
   image: {
     label: 'Photo', icon: '\u{1F5BC}',
     blurb: 'A picture on the projector. Uploads are resized to fit through the relay, or choose one on your server.',
@@ -56,13 +67,23 @@ export const PLAN_TYPES = {
     label: 'Text sign', icon: 'T',
     blurb: 'Big words on the screen: a title card, "Back in 5", an instruction to a group.',
     fields: [
-      { key: 'body', label: 'What it says', kind: 'textarea', placeholder: '**Group work**\nCompare your two coding schemes',
-        hint: '**bold**, *italic*, `code`. Line breaks are kept.' },
+      { key: 'body', label: 'What it says', kind: 'textarea', placeholder: '# Group work\nCompare your two coding schemes\n\n- Step one\n- Step two',
+        hint: '# Heading, ## Subheading, **bold**, *italic*, `code`, - bullet (or *), 1. numbered. Line breaks are kept.' },
       { key: 'size', label: 'Size', kind: 'select', def: 'l',
         options: [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Huge']] },
       { key: 'align', label: 'Align', kind: 'select', def: 'center',
         options: [['center', 'Centred'], ['left', 'Left']] },
+      // Issue #103. Five system-font stacks rather than a webfont download -
+      // every other page in Podium runs offline-first, and this one is no
+      // exception.
+      { key: 'font', label: 'Font', kind: 'select', def: 'sans',
+        options: [['sans', 'Sans'], ['serif', 'Serif'], ['mono', 'Monospace'], ['rounded', 'Rounded'], ['display', 'Bold display']] },
       { key: 'bg', label: 'Background', kind: 'color', def: '' },
+      // Same field, same key ('src'), same kind ('image') the 'image' type
+      // above already uses - imageField() already supports an upload or a
+      // typed server path either way, so this needs nothing new there.
+      { key: 'src', label: 'Picture (optional)', kind: 'image', asset: true },
+      { key: 'caption', label: 'Caption', kind: 'text', placeholder: 'Figure 1: …' },
     ],
   },
   timer: {
@@ -95,22 +116,36 @@ export const PLAN_TYPES = {
   },
   pdf: {
     label: 'PDF', icon: '\u{1F4C4}',
-    blurb: 'A handout or a figure, by path on your server.',
+    blurb: 'A handout or a figure, by path on your server - or upload one straight in (Issue #108).',
     fields: [
-      { key: 'src', label: 'Path or URL', kind: 'text', placeholder: 'content/handouts/ch4.pdf' },
+      // Issue #108: uploads a real file to this server's library (the same
+      // endpoint admin.html and the controller's own PDF upload use), not a
+      // plan-embedded asset - a handout can be far bigger than the ~160KB a
+      // plan asset has to survive traveling over the relay in one message.
+      // Only shown when this Podium actually has a server with a library;
+      // see serverUploadField in plan.js.
+      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.pdf,application/pdf',
+        hint: 'Stored on the server - works from any signed-in device, nothing to carry.' },
+      { key: 'src', label: 'or a path or URL', kind: 'text', placeholder: 'content/handouts/ch4.pdf' },
       { key: 'page', label: 'Open at page', kind: 'number', def: 1, min: 1, max: 9999 },
     ],
   },
   video: {
     label: 'Video', icon: '▶',
-    blurb: 'A clip on your server. Too big to carry inside a plan, so this one is a path.',
-    fields: [{ key: 'src', label: 'Path or URL', kind: 'text', placeholder: 'content/video/reaction.mp4' }],
+    blurb: 'A clip on your server, too big to carry inside a plan - or upload one straight in (Issue #108).',
+    fields: [
+      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.mp4,.webm,video/mp4,video/webm',
+        hint: 'Stored on the server - works from any signed-in device, nothing to carry.' },
+      { key: 'src', label: 'or a path or URL', kind: 'text', placeholder: 'content/video/reaction.mp4' },
+    ],
   },
   audio: {
     label: 'Audio', icon: '♪',
-    blurb: 'Waiting music, or a clip to play with the screen black.',
+    blurb: 'Waiting music, or a clip to play with the screen black - or upload one straight in (Issue #108).',
     fields: [
-      { key: 'src', label: 'Path or URL', kind: 'text', placeholder: 'content/audio/waiting-music.wav' },
+      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.mp3,.m4a,.ogg,.wav,audio/*',
+        hint: 'Stored on the server - works from any signed-in device, nothing to carry.' },
+      { key: 'src', label: 'or a path or URL', kind: 'text', placeholder: 'content/audio/waiting-music.wav' },
       { key: 'artist', label: 'Credit', kind: 'text', placeholder: 'Who made it' },
       { key: 'loop', label: 'Loop', kind: 'check', def: false },
     ],
@@ -159,6 +194,12 @@ export function emptyAutoLaunch() {
     enabled: false,
     initialState: 'live',
     panes: { A: null, B: null, C: null, D: null },
+    // Which pane the controller's panel picker focuses once auto-launch has
+    // staged everything (Issue #109) - purely a controller-UI convenience,
+    // not what shows on the projector, so an invalid or no-longer-relevant
+    // value (the layout shrank since this was set) just falls back to A
+    // rather than needing its own warning.
+    activePane: 'A',
     music: { playlist: '', autoplay: true, volume: 0.5 },
     timer: { timerId: '' },
   };
@@ -205,6 +246,10 @@ export function itemForStage(item) {
   if (rest.type === 'image' && !rest.src && rest.path) {
     rest.src = rest.path;
   }
+  // Stored one per line so the editor is a plain textarea; staged as a list.
+  if (rest.type === 'imagedeck' && !Array.isArray(rest.images)) {
+    rest.images = String(rest.images || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  }
   return rest;
 }
 
@@ -223,6 +268,10 @@ export function itemLabel(item, plan = null) {
   if (item.type === 'qr' && item.caption) return item.caption;
   if (item.type === 'poll' && item.question) return item.question.split('\n')[0].slice(0, 60);
   if (item.type === 'image' && item.path && !item.src) return item.path.split('/').pop();
+  if (item.type === 'imagedeck') {
+    const count = String(item.images || '').split('\n').filter((l) => l.trim()).length;
+    return `${spec.label} (${count} slide${count === 1 ? '' : 's'})`;
+  }
   if (typeof item.src === 'string' && item.src && !isAssetRef(item.src)) return item.src.split('/').pop();
   return spec?.label || item.type;
 }
@@ -343,7 +392,7 @@ export function readPlan(raw) {
       if (field.kind === 'number') item[field.key] = num(value, field.def ?? 0, field.min ?? 0, field.max ?? 1e9);
       else if (field.kind === 'check') item[field.key] = !!value;
       else if (field.kind === 'select') item[field.key] = field.options.some(([v]) => v === value) ? value : field.def;
-      else if (field.kind === 'textarea') item[field.key] = str(value, 4000);
+      else if (field.kind === 'textarea') item[field.key] = str(value, field.max ?? 4000);
       else if (field.kind === 'timer-pick') item[field.key] = str(value, 40);
       else item[field.key] = str(value, 100000);
     }
@@ -357,6 +406,17 @@ export function readPlan(raw) {
     if (typeof item.src === 'string' && !safeSrc(item.src)) {
       warnings.push(`"${itemLabel(item)}" pointed at ${item.src.split(':')[0]}: — only http, https and paths on your own server are allowed.`);
       item.src = '';
+    }
+    // A picture deck's images are each a src in all but name, so each gets
+    // the same check. Plan assets are not an option here: a deck of slides
+    // would never fit through the relay inside one plan.
+    if (item.type === 'imagedeck') {
+      const lines = item.images.split('\n').map((l) => l.trim()).filter(Boolean);
+      const kept = lines.filter((l) => safeSrc(l) && !isAssetRef(l));
+      if (kept.length < lines.length) {
+        warnings.push(`"${itemLabel(item)}" had ${lines.length - kept.length} slide${lines.length - kept.length === 1 ? '' : 's'} pointing somewhere other than http, https or a path on your own server; ${lines.length - kept.length === 1 ? 'it was' : 'they were'} dropped.`);
+      }
+      item.images = kept.join('\n');
     }
     // An item pointing at an asset the file does not contain would fail
     // silently on the projector, which is the worst place to find out.
@@ -377,6 +437,7 @@ export function readPlan(raw) {
   if (rawAuto) {
     autoLaunch.enabled = !!rawAuto.enabled;
     autoLaunch.initialState = ['live', 'freeze', 'blank'].includes(rawAuto.initialState) ? rawAuto.initialState : 'live';
+    autoLaunch.activePane = ['A', 'B', 'C', 'D'].includes(rawAuto.activePane) ? rawAuto.activePane : 'A';
 
     const rawPanes = (rawAuto.panes && typeof rawAuto.panes === 'object') ? rawAuto.panes : {};
     for (const key of ['A', 'B', 'C', 'D']) {

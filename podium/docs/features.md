@@ -11,6 +11,7 @@ Podium is designed for real classroom lectures. It gives you total control over 
 - [The Presenter View (Now, Next & Notes)](#the-presenter-view-now-next--notes)
 - [Live Ink Annotations](#live-ink-annotations)
 - [Laser Pointer](#laser-pointer)
+- [Full-Screen Messages](#full-screen-messages)
 - [Live Captions](#live-captions)
 - [Media Playback & Background Music](#media-playback--background-music)
 - [Screen Layouts & Split Screen](#screen-layouts--split-screen)
@@ -83,6 +84,18 @@ Turn your iPad screen into a virtual laser pointer:
 - Drag your finger across the Now preview box. A bright, focused laser dot follows your finger on the classroom projector.
 - Available in red, green (for dark slides/photos), or blue (for bright slides).
 - Automatically disappears the moment you lift your finger.
+
+---
+
+## Full-Screen Messages
+
+Put words on the projector without touching your slides — "Back in 5", a discussion prompt for group work, a title card while people file in:
+- Tap **Compose a message…** in the Say tab. A dedicated editor opens with a live preview, rendered by the same code that draws the projector, so what you see is what the room gets.
+- Write with a light markdown: `# Heading` / `## Subheading`, `**bold**`, `*italic*`, `` `code` ``, `- bullet` (or `*`) lists, and `1. numbered` lists. Line breaks are kept as written.
+- Choose a size (Small–Huge), left or centred alignment, and one of five fonts (Sans, Serif, Monospace, Rounded, Bold display).
+- Pick a background from five presets or a custom colour picker.
+- Optionally attach a picture with a caption underneath the text — the same resizing pipeline as any other photo in Podium, so it survives the trip over the relay.
+- Tap **Show** to stage it; **Cancel** or Escape closes the editor without changing what's on screen.
 
 ---
 

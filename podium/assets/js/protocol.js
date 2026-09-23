@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 38;
+export const BUILD = 46;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -38,7 +38,7 @@ export const BUILD = 38;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.1';
-export const COMMIT = '31f2a5b';
+export const COMMIT = 'ae3d74a';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -54,6 +54,15 @@ export const LAYOUTS = {
   '2v': 2,   // top and bottom
   3: 3,      // A large on one side, B/C stacked on the other
   4: 4,      // A/B/C/D tiled 2x2
+  // Picture-in-picture (Issue #110): one pane full screen, another as a
+  // small bordered inset over a corner of it - which two, out of the same
+  // up-to-four independently staged panes every other layout already
+  // offers, is state.pip's own choice (see initialState), not fixed by
+  // position the way B/C/D are under every other layout. 4, not 2: a pane
+  // not currently chosen as main or inset stays staged and reachable
+  // (still addressable by focus, still ready the instant PiP picks it),
+  // the same as an unfocused tab rather than emptied out.
+  pip: 4,
 };
 
 export const MAX_TIMERS = 4;
@@ -79,6 +88,10 @@ export const MUSIC_DUCK_MS = 600;
 // handful of things you do to a running one (jump, pause, resume), are new.
 export const MAX_SET_ENTRIES = 50;
 export const SET_TICK_MS = 500;
+
+// A picture deck's slide count cap (Issue #106): generous for a real lecture,
+// and a bound on how much every state broadcast has to carry.
+export const MAX_IMAGEDECK_SLIDES = 500;
 
 let timerSeq = 1;
 
@@ -186,6 +199,13 @@ export function initialState() {
     // next time you change what is on screen. So it lives beside program and
     // panels rather than inside any of them, the same reason music does.
     watermark: { enabled: false, text: '', image: '', position: 'br' },
+    // Picture-in-picture's own configuration (Issue #110) - independent of
+    // `layout` the same way watermark is independent of what is on screen,
+    // so switching away from the 'pip' layout and back does not lose the
+    // choice. `main`/`inset` are 'A'-'D', always two DIFFERENT panes (see
+    // the 'pip' case below); `corner` is where the inset sits; `size` is
+    // its side length as a percentage of the stage, in each dimension.
+    pip: { main: 'A', inset: 'B', corner: 'tr', size: 20 },
   };
 }
 
@@ -217,9 +237,43 @@ const nextKey = () => `k${Date.now().toString(36)}${(keySeq++).toString(36)}`;
 function normalizeItem(item) {
   if (!item || typeof item !== 'object' || !item.type) return null;
   const copy = { ...item, key: nextKey() };
+  if (copy.type === 'text') {
+    // Issue #103: headings/body, bulleted/numbered lists (miniMarkdown in
+    // util.js), a background colour, a font choice, and an optional inline
+    // picture with a caption. `src` is left alone - it is `''`, a path, or
+    // an `asset:<id>` reference, the exact convention every other item
+    // type's picture already uses, and it is what makes stage()'s own
+    // pushAssetIfHeld(clean.src) and resolveAssets() work for this picture
+    // with no changes to either.
+    copy.body = String(copy.body || '').slice(0, 4000);
+    copy.size = ['s', 'm', 'l', 'xl'].includes(copy.size) ? copy.size : 'l';
+    copy.align = copy.align === 'left' ? 'left' : 'center';
+    copy.bg = String(copy.bg || '').slice(0, 64);
+    copy.font = ['serif', 'mono', 'rounded', 'display'].includes(copy.font) ? copy.font : 'sans';
+    copy.caption = String(copy.caption || '').slice(0, 200);
+  }
   if (copy.type === 'video' || copy.type === 'audio' || copy.type === 'youtube') {
     copy.playing = copy.playing ?? true;
     copy.startAt = Number(copy.startAt) || 0;
+  }
+  // Issue #113: every field PLAN_TYPES declares for these types used to pass
+  // through normalizeItem completely unvalidated - unlike text.body/caption
+  // above, an oversized or malformed value here reached every connected
+  // controller and the projector unfiltered. `image.src`/`text.src` are the
+  // one deliberate exception (see the comment on the 'text' branch above);
+  // everything else gets the same length caps and enum checks text's own
+  // fields already have.
+  if (copy.type === 'youtube') copy.videoId = String(copy.videoId || '').slice(0, 64);
+  if (copy.type === 'image') copy.fit = copy.fit === 'cover' ? 'cover' : 'contain';
+  if (copy.type === 'qr') {
+    copy.data = String(copy.data || '').slice(0, 2000);
+    copy.caption = String(copy.caption || '').slice(0, 200);
+  }
+  if (copy.type === 'web') copy.src = String(copy.src || '').slice(0, 2000);
+  if (copy.type === 'whiteboard') copy.bg = String(copy.bg || '').slice(0, 64);
+  if (copy.type === 'timer') {
+    copy.timerId = String(copy.timerId || '').slice(0, 64);
+    copy.label = String(copy.label || '').slice(0, 120);
   }
   if (copy.type === 'pdf') {
     copy.page = Math.max(1, Number(copy.page) || 1);
@@ -228,6 +282,19 @@ function normalizeItem(item) {
     copy.panY = Number.isFinite(copy.panY) ? copy.panY : 0.5;
   }
   if (copy.type === 'slides') copy.slide = Math.max(0, Number(copy.slide) || 0);
+  if (copy.type === 'imagedeck') {
+    // Issue #106: a folder of per-slide images played as one deck. Accepts
+    // the plan file's one-per-line text as well as an array. Only relative
+    // paths and http(s) - the same rule plan files apply to src - because
+    // every entry ends up in an <img> on the projector.
+    const list = Array.isArray(copy.images) ? copy.images : String(copy.images || '').split('\n');
+    copy.images = list
+      .map((s) => String(s || '').trim().slice(0, 2000))
+      .filter((s) => s && (!/^[a-z][a-z0-9+.-]*:/i.test(s) || /^https?:/i.test(s)))
+      .slice(0, MAX_IMAGEDECK_SLIDES);
+    copy.slide = Math.min(Math.max(0, Math.round(Number(copy.slide)) || 0), Math.max(0, copy.images.length - 1));
+    copy.fit = copy.fit === 'cover' ? 'cover' : 'contain';
+  }
   if (copy.type === 'deck') {
     copy.slide = Math.max(0, Number(copy.slide) || 0);
     copy.slideCount = Math.max(1, Number(copy.slideCount) || 1);
@@ -380,6 +447,9 @@ export function inkSurfaceKey(item) {
     case 'web': return `web:${item.src}`;
     case 'whiteboard': return `whiteboard:${item.bg || 'default'}`;
     case 'image': return `image:${item.src}`;
+    // Keyed by the slide's own image, like a plain image: each slide keeps
+    // its own ink, and flipping back finds it again.
+    case 'imagedeck': return `image:${item.images?.[item.slide || 0] || ''}`;
     // Two panels can hold two different countdowns; drawing on one must not
     // put the same marks on the other.
     case 'timer': return `timer:${item.timerId || ''}`;
@@ -960,6 +1030,10 @@ export function applyCommand(state, cmd) {
             item.step = fragsFor(target);
           }
         }
+      } else if (item.type === 'imagedeck') {
+        const last = Math.max(0, (item.images?.length || 1) - 1);
+        const target = cmd.dir === 'goto' ? Number(cmd.value) || 0 : (item.slide || 0) + step;
+        item.slide = Math.min(last, Math.max(0, Math.round(target)));
       } else if (item.type === 'pdf') {
         item.page = cmd.dir === 'goto' ? Math.max(1, Number(cmd.value) || 1) : Math.max(1, (item.page || 1) + step);
       } else if (item.type === 'slides' || item.type === 'web') {
@@ -1091,6 +1165,34 @@ export function applyCommand(state, cmd) {
       if (cmd.position !== undefined) state.watermark.position = cmd.position === 'tl' ? 'tl' : 'br';
       if (cmd.enabled !== undefined) state.watermark.enabled = !!cmd.enabled;
       return true;
+
+    case 'pip': {
+      const letters = ['A', 'B', 'C', 'D'];
+      // Picking the pane already on the OTHER side swaps the two, rather
+      // than being refused as "a pane cannot be its own inset" - it is the
+      // likely reason to pick it at all, and the only way this ever comes
+      // up (readPlan/initialState never produce main === inset to begin
+      // with). Resolved here, against whatever state.pip actually holds
+      // right now, rather than by the caller pre-computing both fields
+      // itself - a client-side cache of "what it used to be" is exactly
+      // the kind of thing a second, half-landed command leaves stale.
+      if (cmd.main !== undefined && letters.includes(cmd.main) && cmd.main !== state.pip.main) {
+        if (cmd.main === state.pip.inset) state.pip.inset = state.pip.main;
+        state.pip.main = cmd.main;
+      }
+      if (cmd.inset !== undefined && letters.includes(cmd.inset) && cmd.inset !== state.pip.inset) {
+        if (cmd.inset === state.pip.main) state.pip.main = state.pip.inset;
+        state.pip.inset = cmd.inset;
+      }
+      if (cmd.corner !== undefined) {
+        state.pip.corner = ['tl', 'tr', 'bl', 'br'].includes(cmd.corner) ? cmd.corner : state.pip.corner;
+      }
+      if (cmd.size !== undefined) {
+        const n = Number(cmd.size);
+        if (Number.isFinite(n)) state.pip.size = Math.min(50, Math.max(10, Math.round(n)));
+      }
+      return true;
+    }
 
     case 'timer': {
       // Set-level actions first: they are about which timers exist, not about

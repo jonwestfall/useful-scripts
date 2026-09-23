@@ -135,7 +135,7 @@ try {
   triggerCommandHaptic({ op: 'nav', dir: 'next' });
   triggerCommandHaptic({ op: 'freeze' });
   chk('safely no-ops when navigator.vibrate is undefined', true);
-} catch (e) {
+} catch {
   chk('safely no-ops when navigator.vibrate is undefined', false);
 }
 
@@ -145,7 +145,7 @@ mockVibrateThrows = true;
 try {
   triggerCommandHaptic({ op: 'nav', dir: 'next' });
   chk('safely catches when navigator.vibrate throws', true);
-} catch (e) {
+} catch {
   chk('safely catches when navigator.vibrate throws', false);
 }
 

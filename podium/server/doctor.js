@@ -102,6 +102,45 @@ function checkDisk(dataDir) {
   return say('ok', 'disk', line);
 }
 
+/**
+ * Whether a backup has ever actually run, not whether backup.sh exists.
+ * deploy/backup.sh and restore.sh are solid on their own, but nothing short
+ * of a person remembering to wire up podium-backup.timer (or their own cron
+ * line) ever runs the first one - so the box that never got that step looks
+ * completely healthy right up until the disk it is on is gone (Issue #114).
+ */
+function checkBackup(env = process.env) {
+  const dir = env.BACKUP_DIR || '/var/backups/podium';
+  const fix = 'Enable it: systemctl enable --now podium-backup.timer (or your own cron line - see deploy/README.md#backups).';
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (err) {
+    if (err.code === 'ENOENT') return say('warn', 'backup', `no backup has ever run - ${dir} does not exist`, fix);
+    return say('warn', 'backup', `could not check ${dir} (${err.code})`);
+  }
+  const archives = names.filter((n) => /^podium-\d{8}T\d{6}\.tar\.gz$/.test(n));
+  if (!archives.length) return say('warn', 'backup', `no backup has ever run - ${dir} holds none yet`, fix);
+
+  // The filename's own timestamp, not the file's mtime: a restore or a
+  // `cp -p` can carry an old mtime along with it, and this only ever needs
+  // to answer "when was this one taken", which the name already says.
+  archives.sort();
+  const newest = archives[archives.length - 1];
+  const stamp = newest.slice('podium-'.length, -'.tar.gz'.length);
+  const takenAt = Date.parse(`${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}T${stamp.slice(9, 11)}:${stamp.slice(11, 13)}:${stamp.slice(13, 15)}Z`);
+  const ageDays = Number.isFinite(takenAt) ? (Date.now() - takenAt) / DAY : NaN;
+  const line = `${archives.length} archive(s) in ${dir}, newest ${newest}`;
+  // A nightly job that has missed two nights in a row is worth a look, not
+  // a page - the same "warn, do not wake anyone up" level checkStorage uses
+  // for the same kind of slow-building risk.
+  if (!Number.isFinite(ageDays) || ageDays > 2) {
+    return say('warn', 'backup', `${line}, ${Number.isFinite(ageDays) ? `${ageDays.toFixed(1)} day(s) old` : 'age unreadable'}`,
+      'Check the nightly job is actually running - a stopped timer looks identical to a healthy box until this is checked.');
+  }
+  return say('ok', 'backup', line);
+}
+
 function checkPermissions(dataDir) {
   let mode;
   try { mode = fs.statSync(dataDir).mode & 0o777; } catch (err) {
@@ -332,6 +371,73 @@ async function checkService(healthUrl) {
   }
 }
 
+/**
+ * Plain HTTP answering (checkService, above) does not prove the relay
+ * actually relays. A reverse-proxy change that drops the Upgrade/Connection
+ * headers WebSocket needs, or a firewall rule scoped to one port's protocol,
+ * can leave /healthz answering 200 while every controller and display in the
+ * building sits on "Reconnecting…" - exactly the failure this command exists
+ * to catch, and exactly the one a plain fetch() cannot (Issue #118).
+ *
+ * Two real sockets in one throwaway room, not one: a single connection
+ * proves only that the handshake completes, and the relay never echoes a
+ * sender's own message back to it (see podium-server.js's message handler) -
+ * so this needs a second peer actually receiving what the first sent to
+ * prove the room's own message-forwarding path, not just the upgrade.
+ */
+async function checkRelay(healthUrl) {
+  if (!healthUrl) return say('warn', 'relay', 'no health URL to try (pass --health-url)');
+  let wsUrl;
+  try {
+    const u = new URL(healthUrl);
+    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    u.pathname = '/podium';
+    u.search = `?room=doctor-${crypto.randomBytes(6).toString('hex')}`;
+    wsUrl = u.toString();
+  } catch (err) {
+    return say('warn', 'relay', `could not derive a relay URL from ${healthUrl} (${err.message})`);
+  }
+
+  const WebSocket = require('ws');
+  return new Promise((resolve) => {
+    let a, b, settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { a?.terminate(); } catch { /* already closing */ }
+      try { b?.terminate(); } catch { /* already closing */ }
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish(say('bad', 'relay',
+      `no message round-tripped through ${wsUrl.replace(/\?.*$/, '')} within 4s`,
+      'HTTP answers but the WebSocket path may not - check a reverse proxy is forwarding Upgrade/Connection headers, and that nothing blocks WS specifically.')),
+      4000);
+
+    try {
+      a = new WebSocket(wsUrl);
+      b = new WebSocket(wsUrl);
+    } catch (err) {
+      finish(say('bad', 'relay', `could not open a socket to ${wsUrl.replace(/\?.*$/, '')} (${err.message})`,
+        'systemctl status podium.service, and check for a reverse proxy in front of it.'));
+      return;
+    }
+    let aOpen = false, bOpen = false;
+    const pingIfBothOpen = () => { if (aOpen && bOpen) a.send('doctor-ping'); };
+    a.on('open', () => { aOpen = true; pingIfBothOpen(); });
+    b.on('open', () => { bOpen = true; pingIfBothOpen(); });
+    b.on('message', (data) => {
+      if (data.toString() === 'doctor-ping') {
+        finish(say('ok', 'relay', `${wsUrl.replace(/\?.*$/, '')} round-trips a message between two peers`));
+      }
+    });
+    a.on('error', (err) => finish(say('bad', 'relay', `socket could not connect to ${wsUrl.replace(/\?.*$/, '')} (${err.message})`,
+      'HTTP answers but the WebSocket path may not - check a reverse proxy is forwarding Upgrade/Connection headers.')));
+    b.on('error', (err) => finish(say('bad', 'relay', `socket could not connect to ${wsUrl.replace(/\?.*$/, '')} (${err.message})`,
+      'HTTP answers but the WebSocket path may not - check a reverse proxy is forwarding Upgrade/Connection headers.')));
+  });
+}
+
 // --- running them -------------------------------------------------------------
 
 /**
@@ -369,9 +475,11 @@ async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, en
   }
   await attempt(() => checkPermissions(dataDir));
   await attempt(() => checkDisk(dataDir));
+  await attempt(() => checkBackup(env));
   await attempt(() => checkBuild(releaseDir, healthUrl));
   await attempt(() => checkCertificate(certPath));
   await attempt(() => checkService(healthUrl));
+  await attempt(() => checkRelay(healthUrl));
   return found;
 }
 
@@ -399,6 +507,7 @@ module.exports = {
   checkSchema,
   checkIntegrity,
   checkDisk,
+  checkBackup,
   checkPermissions,
   checkMedia,
   checkAccounts,
@@ -406,4 +515,5 @@ module.exports = {
   checkBuild,
   checkCertificate,
   checkService,
+  checkRelay,
 };

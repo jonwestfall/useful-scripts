@@ -67,12 +67,12 @@ fi
 echo "==> checking and building"
 node --check "$release_dir/server/podium-server.js"
 npm ci --omit=dev --ignore-scripts --prefix "$release_dir/server"
-# The browser suite needs Playwright and twelve minutes; these three need
-# neither, and between them they cover the state machine, the plan file and
-# the server's own storage. A release that fails them never goes live.
-node "$release_dir/test/protocol.test.mjs" >/dev/null
-node "$release_dir/test/plan.test.mjs" >/dev/null
-node "$release_dir/test/store.test.mjs" >/dev/null
+# The browser suite needs Playwright and twelve minutes; every test/*.test.mjs
+# file needs neither - all fast, Node-native, no external services. A release
+# that fails any of them never goes live.
+for f in "$release_dir"/test/*.test.mjs; do
+  node "$f" >/dev/null
+done
 
 chown -R root:root "$release_dir"
 find "$release_dir" -type d -exec chmod 0755 {} +

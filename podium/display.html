@@ -30,6 +30,11 @@
 <div id="spotlight"></div>
 <div id="laser"></div>
 <div id="hud" data-status="connecting">Not connected</div>
+<!-- Shown once per page load if a save to localStorage throws - most of
+     all the crash-recovery snapshot saveStateNow() writes every few
+     seconds. Unlike #hud this never fades: the risk is a reload losing
+     the lecture, not a transient connection blip (Issue #116). -->
+<div id="storage-warn" hidden>Local save is not working — a reload may lose this lecture</div>
 
 <!-- Standby: shown when nothing is on screen and no controller is connected -->
 <div id="standby" class="sheet">

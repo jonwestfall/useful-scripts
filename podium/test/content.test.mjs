@@ -4,13 +4,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { Readable } from 'node:stream';
 
 const require = createRequire(import.meta.url);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const store = require('../server/store.js');
 const accounts = require('../server/accounts.js');
@@ -18,7 +15,6 @@ const api = require('../server/api.js');
 
 import {
   CATEGORIES,
-  resolveRoots,
   safePath,
   listThemes,
   getTheme,
@@ -34,7 +30,7 @@ import {
   saveMusic,
 } from '../server/content.js';
 
-import { itemForStage, itemLabel, newItem, PLAN_TYPES } from '../assets/js/planfile.js';
+import { itemForStage, itemLabel, PLAN_TYPES } from '../assets/js/planfile.js';
 
 let ok = true;
 const chk = (label, cond) => {
@@ -71,7 +67,7 @@ try {
   })());
 
   chk('reject directory path traversal', (() => {
-    try { safePath(themesDir, 'subdir/foo.css'); return false; } catch (e) { return true; }
+    try { safePath(themesDir, 'subdir/foo.css'); return false; } catch { return true; }
   })());
 
   console.log('-- marp themes management --');
@@ -392,7 +388,7 @@ try {
   }
 
 } finally {
-  try { apiDb?.close(); } catch {}
+  try { apiDb?.close(); } catch { /* already closed, or never opened */ }
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 

@@ -26,6 +26,7 @@ export const TYPES = {
   web:        { label: 'Web page',   icon: '\u{1F310}' },
   slides:     { label: 'Slides',     icon: '\u{1F4D1}' },
   deck:       { label: 'Marp deck',  icon: '\u{1F4D6}' },
+  imagedeck:  { label: 'Picture deck', icon: '\u{1F39E}' },
   pdf:        { label: 'PDF',        icon: '\u{1F4C4}' },
   text:       { label: 'Big text',   icon: 'T' },
   qr:         { label: 'QR code',    icon: '⌗' },
@@ -148,6 +149,49 @@ function renderImage(item) {
       return drawFitted(ctx, rect, img, img.naturalWidth, img.naturalHeight, objectFitOf(img));
     },
     destroy() { node.remove(); },
+  };
+}
+
+// A picture deck (Issue #106): one image per slide - PowerPoint's own "export
+// as images" - shown one at a time. It is renderImage with a slide index, so
+// fit, ink letterboxing and photographing all behave exactly as for a photo;
+// the next slide is fetched ahead so advancing never waits on the network.
+function renderImageDeck(item) {
+  const img = el('img', { class: 'r-image', alt: item.title || '', decoding: 'async' });
+  const node = el('div', { class: 'r-fill' }, img);
+  let current = item;
+  let ahead = null;
+  const srcOf = (it) => it.images?.[it.slide || 0] || '';
+  const apply = (it) => {
+    current = it;
+    const src = srcOf(it);
+    if (src !== img.getAttribute('src')) {
+      if (src) img.src = src;
+      else img.removeAttribute('src');
+    }
+    img.style.objectFit = it.fit === 'cover' ? 'cover' : 'contain';
+    const next = it.images?.[(it.slide || 0) + 1];
+    if (next && ahead?.getAttribute('src') !== next) {
+      ahead = new Image();
+      ahead.decoding = 'async';
+      ahead.src = next;
+    }
+  };
+  apply(item);
+  return {
+    el: node,
+    update: apply,
+    reconcile() {},
+    telemetry: noTelemetry,
+    contentAspect() {
+      if (current.fit === 'cover') return null;
+      return img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : null;
+    },
+    snapshot(ctx, rect) {
+      paintBackdrop(ctx, rect, node);
+      return drawFitted(ctx, rect, img, img.naturalWidth, img.naturalHeight, objectFitOf(img));
+    },
+    destroy() { ahead = null; node.remove(); },
   };
 }
 
@@ -407,7 +451,7 @@ function renderWeb(item, opts) {
   const navigate = (dir) => {
     const win = frame.contentWindow;
     if (!win) return;
-    let sameOrigin = false;
+    let sameOrigin;
     try { sameOrigin = !!win.document; } catch { sameOrigin = false; }
     if (sameOrigin) {
       const reveal = win.Reveal;
@@ -445,7 +489,7 @@ function renderWeb(item, opts) {
 const pdfAspectCache = new Map();
 export function pdfAspectFor(src) { return pdfAspectCache.get(src) || null; }
 
-function renderPdf(item, opts) {
+function renderPdf(item) {
   const node = el('div', { class: 'r-fill r-pdf' });
   const canvas = el('canvas', { class: 'r-pdf-canvas' });
   let pageNumber = item.page || 1;
@@ -469,7 +513,11 @@ function renderPdf(item, opts) {
   node.appendChild(canvas);
 
   const render = async () => {
-    if (!window.pdfjsLib || !src) {
+    // Nothing picked yet (a freshly added item, before an upload or a typed
+    // path lands) - render nothing rather than an iframe whose src is the
+    // literal string "undefined", which the browser dutifully fetches.
+    if (!src) { node.replaceChildren(); return; }
+    if (!window.pdfjsLib) {
       node.replaceChildren(el('iframe', {
         class: 'r-frame',
         src: `${src}#page=${pageNumber}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,
@@ -495,7 +543,7 @@ function renderPdf(item, opts) {
       if (isDestroyed) return;
 
       if (currentRenderTask) {
-        try { currentRenderTask.cancel(); } catch {}
+        try { currentRenderTask.cancel(); } catch { /* already finished or already cancelled */ }
         currentRenderTask = null;
       }
 
@@ -583,7 +631,7 @@ function renderPdf(item, opts) {
     destroy() {
       isDestroyed = true;
       if (currentRenderTask) {
-        try { currentRenderTask.cancel(); } catch {}
+        try { currentRenderTask.cancel(); } catch { /* already finished or already cancelled */ }
         currentRenderTask = null;
       }
       currentDoc = null;
@@ -594,11 +642,23 @@ function renderPdf(item, opts) {
 
 function renderText(item) {
   const body = el('div', { class: 'r-text-body', html: miniMarkdown(item.body || '') });
-  const node = el('div', { class: 'r-text' }, body);
+  // Optional (Issue #103): a picture under the text, its own caption under
+  // that. `src` is resolved to real bytes by the caller before this ever
+  // runs (see resolveAssets in control.js/display.js) - the same convention
+  // renderImage already relies on, so there is nothing asset-specific here.
+  const image = el('img', { class: 'r-text-image', alt: '' });
+  const caption = el('div', { class: 'r-text-caption' });
+  const imageWrap = el('div', { class: 'r-text-image-wrap' }, image, caption);
+  const node = el('div', { class: 'r-text' }, body, imageWrap);
   const apply = (it) => {
     node.dataset.size = it.size || 'l';
     node.dataset.align = it.align || 'center';
+    node.dataset.font = it.font || 'sans';
     node.style.background = it.bg || '';
+    imageWrap.hidden = !it.src;
+    if (it.src) image.src = it.src;
+    caption.textContent = it.caption || '';
+    caption.hidden = !it.caption;
   };
   apply(item);
   return {
@@ -851,20 +911,34 @@ function renderPoll(item, opts) {
     question.textContent = it.question || '';
     code.textContent = it.pollId || '';
     joinCard.classList.toggle('is-archived', archived);
-    if (!it.pollId) {
+    node.classList.toggle('is-lost', !!it.lost);
+    if (it.lost) {
+      // Issue #115: the relay keeps poll state only in memory - a restart
+      // wipes it, code and all, so "reopen it" is not an option here. This
+      // has to say plainly that it is gone, not retry a request that will
+      // keep 404ing, and not sit there looking like a normal open poll.
+      qrHolder.replaceChildren();
+      urlText.textContent = '';
+      hint.textContent = 'Connection to this poll was lost. If the relay restarted, its votes and join code are gone — create a new poll to keep going.';
+      hint.style.color = '#ff9d9d';
+      currentClosesAt = null;
+    } else if (!it.pollId) {
       qrHolder.replaceChildren();
       urlText.textContent = '';
       hint.textContent = 'Not started yet.';
+      hint.style.color = '';
       currentClosesAt = null;
     } else if (archived) {
       qrHolder.replaceChildren();
       urlText.textContent = '';
       hint.textContent = 'This poll has ended — results only, no new votes.';
+      hint.style.color = '';
       currentClosesAt = null;
     } else {
       drawQr(joinUrl);
       urlText.textContent = it.showUrl !== false ? joinUrl : '';
       hint.textContent = 'Scan, or join and enter the code';
+      hint.style.color = '';
       currentClosesAt = it.open ? it.closesAt : null;
     }
     urlText.hidden = !urlText.textContent;
@@ -1257,6 +1331,7 @@ const FACTORIES = {
   web: renderWeb,
   slides: renderWeb,
   deck: renderDeck,
+  imagedeck: renderImageDeck,
   pdf: renderPdf,
   text: renderText,
   qr: renderQr,

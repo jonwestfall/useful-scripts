@@ -101,6 +101,27 @@ body.display #stage { position: fixed; inset: 0; background: #000; display: grid
 /* A split's seams, so two adjacent panels don't visually run together. */
 #stage:not(.layout-single) .panel-slot { outline: 1px solid #000; }
 
+/* Picture-in-picture (Issue #110): unlike every layout above, which panes
+   go where is a fixed rule per letter - here it is state.pip's own choice
+   (main/inset can be any two of A-D), so positioning is driven by JS-set
+   role classes rather than [data-panel='x'] selectors. A single grid cell
+   is what makes "main fills the stage" need no rule of its own: it is just
+   an ordinary panel-slot with nothing pulling it out of flow, the same as
+   .layout-single's lone panel. */
+#stage.layout-pip { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+#stage.layout-pip .panel-slot { grid-column: 1; grid-row: 1; }
+#stage.layout-pip .panel-slot.is-pip-main { z-index: 1; }
+#stage.layout-pip .panel-slot.is-pip-inset {
+  position: absolute; z-index: 5;
+  width: 20%; height: 20%;
+  border: 3px solid #fff; border-radius: 6px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, .55);
+}
+#stage.layout-pip .panel-slot.is-pip-inset.corner-tl { top: 5%; left: 5%; }
+#stage.layout-pip .panel-slot.is-pip-inset.corner-tr { top: 5%; right: 5%; }
+#stage.layout-pip .panel-slot.is-pip-inset.corner-bl { bottom: 5%; left: 5%; }
+#stage.layout-pip .panel-slot.is-pip-inset.corner-br { bottom: 5%; right: 5%; }
+
 .layer { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
 .layer[data-role='program'] { opacity: 1; z-index: 2; pointer-events: auto; }
 .layer[data-role='preview'] { opacity: 0; z-index: 1; }
@@ -209,6 +230,14 @@ body.display #hud.is-quiet { opacity: 0; }
 body.display #hud[data-status='error'], body.display #hud[data-status='mismatch'] { color: #ffb3b3; border-color: #6b2b2b; opacity: 1; }
 body.display #hud[data-status='offline'] { color: var(--cue); opacity: 1; }
 
+body.display #storage-warn {
+  position: fixed; left: 50%; top: 12px; z-index: 10; transform: translateX(-50%);
+  padding: 7px 14px; border-radius: 999px;
+  background: #2a1216; border: 1px solid #6b2b2b; color: #ffc4c4;
+  font-size: 13px; font-weight: 600;
+}
+body.display #storage-warn[hidden] { display: none; }
+
 body.display.is-frozen #stage::after {
   content: ''; position: absolute; inset: 0; z-index: 8; pointer-events: none;
   border: 3px solid var(--cue); opacity: .5;
@@ -287,7 +316,7 @@ dl.keys dd { margin: 0; color: var(--dim); }
    preview thumbnail. vw/vh here would measure the whole screen and blow the
    content far outside a 300px preview. */
 
-.layer, #preview-stage, #item-preview { container-type: size; }
+.layer, #preview-stage, #item-preview, #message-preview-box { container-type: size; }
 .r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set, .r-poll { position: absolute; inset: 0; }
 .r-black { background: #000; }
 .r-image, .r-video { width: 100%; height: 100%; display: block; background: #000; }
@@ -321,10 +350,32 @@ dl.keys dd { margin: 0; color: var(--dim); }
 }
 .r-text[data-align='left'] { text-align: left; justify-items: start; }
 .r-text-body { font-weight: 650; line-height: 1.15; }
+/* 's' already existed as a valid size in PLAN_TYPES.text and protocol.js's
+   own enum before Issue #103's controller UI ever offered it - it just had
+   no clamp of its own, so it rendered unstyled. Given its own size now that
+   something actually selects it. */
+.r-text[data-size='s'] .r-text-body { font-size: clamp(9px, 3.2cqw, 48px); }
 .r-text[data-size='m'] .r-text-body { font-size: clamp(10px, 5cqw, 76px); }
 .r-text[data-size='l'] .r-text-body { font-size: clamp(12px, 8cqw, 132px); }
 .r-text[data-size='xl'] .r-text-body { font-size: clamp(14px, 13cqw, 220px); }
 .r-text code { font-family: ui-monospace, Menlo, monospace; background: #1b222c; padding: 0 .2em; border-radius: 6px; }
+
+/* Issue #103: headings/lists inside a message, a font choice, and an
+   optional picture with a caption underneath the text. */
+.r-text-body h1, .r-text-body h2 { margin: 0 0 .2em; font-weight: 800; line-height: 1.15; }
+.r-text-body h1 { font-size: 1.15em; }
+.r-text-body h2 { font-size: 1.05em; }
+/* Centred alignment still centres a list AS A BLOCK; the bullets/numbers
+   inside it read left-to-right regardless, the same as any real slide. */
+.r-text-body ul, .r-text-body ol { margin: .25em 0; padding-left: 1em; text-align: left; display: inline-block; }
+.r-text-body li { margin-bottom: .15em; }
+.r-text[data-font='serif'] { font-family: Georgia, 'Times New Roman', serif; }
+.r-text[data-font='mono'] { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+.r-text[data-font='rounded'] { font-family: 'Trebuchet MS', 'Comic Sans MS', sans-serif; }
+.r-text[data-font='display'] { font-family: 'Arial Black', 'Helvetica Neue', Impact, sans-serif; }
+.r-text-image-wrap { margin-top: 3cqh; display: grid; justify-items: center; gap: 1cqh; }
+.r-text-image { max-width: 60cqw; max-height: 35cqh; border-radius: 1.5cqh; display: block; object-fit: contain; }
+.r-text-caption { font-size: clamp(8px, 2.4cqw, 34px); color: var(--dim); font-weight: 500; }
 
 .r-qr { display: grid; place-items: center; gap: 3cqh; background: #fff; color: #111; align-content: center; }
 .r-qr-code svg { width: min(58cqh, 58cqw); height: auto; display: block; }
@@ -428,6 +479,13 @@ body.control.is-frozen { background: #171006; }
 .topbar .brand { font-weight: 700; color: var(--ink); letter-spacing: .04em; text-decoration: none; }
 .topbar .brand:hover { text-decoration: underline; }
 .topbar .spacer { flex: 1; }
+/* A zero flex-basis and a fixed min-width mean the wrap point depends only on
+   a constant, never on what the status text currently says: the group grows
+   into leftover room and ellipsizes past it. */
+.topbar-status {
+  flex: 3 1 0; min-width: 200px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.topbar-status > * + * { margin-left: 10px; }
 .version-tag { font-size: 11px; color: var(--dim); opacity: 0.75; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .version-stamp { font-size: 11px; color: var(--dim); opacity: 0.7; text-align: center; margin: 20px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 #status::before { content: '●'; margin-right: 6px; color: var(--dim); }
@@ -555,6 +613,12 @@ body.guest {
 .layout-icon-3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; }
 .layout-icon-3 i:first-child { grid-row: 1 / 3; }
 .layout-icon-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+/* Picture-in-picture: one big square, one small one inset over a corner of
+   it - drawn with position, not the grid the other icons share, the same
+   reason #stage.layout-pip itself does not use a multi-cell grid either. */
+.layout-icon-pip { position: relative; display: block; }
+.layout-icon-pip i:first-child { position: absolute; inset: 0; }
+.layout-icon-pip i:last-child { position: absolute; width: 45%; height: 45%; top: 1px; right: 1px; border: 1px solid var(--panel); }
 
 .panel-picker { display: flex; gap: 4px; }
 .panel-btn {
@@ -587,6 +651,13 @@ body.guest {
 }
 #update-banner[hidden] { display: none; }
 #update-banner button { min-height: 32px; padding: 0 12px; }
+
+/* Data loss risk, not just an inconvenience - same red as relay-help. */
+#storage-warning {
+  background: #2a1216; border-bottom: 1px solid #6b2b2b; color: #ffc4c4;
+  padding: 10px 14px; font-size: 13px; line-height: 1.5;
+}
+#storage-warning[hidden] { display: none; }
 
 /* A relay that will not come up is a red problem, not an amber one: nothing
    works until it is fixed, unlike a display that has simply not joined yet. */
@@ -910,6 +981,30 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 #pad.is-eraser { cursor: crosshair; }
 .swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; }
 .swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
+
+/* Background colour swatches for the full-screen message editor (Issue #103) -
+   visually identical to .swatch/.swatch-picker above but a distinct class:
+   the ink tool's own swatch-selection code queries $$('.swatch:not(.swatch-
+   picker)') with no scoping, so reusing that class here would make clicking
+   one of these ALSO run the ink tool's colour-selection logic. */
+.bg-swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; border: 2px solid var(--line); }
+.bg-swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
+.bg-swatch-picker {
+  position: relative; width: 42px; height: 42px; min-height: 42px; padding: 0;
+  border-radius: 50%; display: inline-grid; place-items: center; cursor: pointer;
+  background: conic-gradient(#ff4d4f, #ffd166, #45d483, #6ea8fe, #a371f7, #ff4d4f);
+  border: 2px solid var(--line); box-sizing: border-box;
+}
+.bg-swatch-picker-inner {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--custom-bg-color, #0a0d12);
+  border: 1.5px solid rgba(0, 0, 0, .45); pointer-events: none;
+}
+.bg-swatch-picker input[type="color"] {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; border: none; padding: 0;
+}
+.bg-swatch-picker.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
 
 /* Custom color picker swatch (Issue #53) */
 .swatch-picker {
@@ -1333,6 +1428,12 @@ body.plan .linkish:hover { text-decoration: underline; }
   background: #000; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
 }
 #item-preview { position: absolute; inset: 0; }
+/* Same "16:9 box, renderer fills it" shape as #item-preview-viewport above,
+   for the message editor modal's own live preview (Issue #103). */
+#message-preview-box {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; max-width: 100%;
+  background: #000; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+}
 .thumb {
   display: grid; place-items: center; margin-bottom: 8px;
   aspect-ratio: 16 / 9; background: #0e1216; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;

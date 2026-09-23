@@ -1,7 +1,7 @@
 // Run with:  node podium/test/protocol.test.mjs
 // Pure state-machine tests - no DOM, no network.
 import { initialState, applyCommand, timerRemaining, timerById, inkSurfaceKey,
-  inkDigest, inkDigestsAgree, applyInkAction, distToSegmentSquared, strokeHitTest, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp } from '../assets/js/protocol.js';
+  inkDigest, inkDigestsAgree, applyInkAction, distToSegmentSquared, strokeHitTest, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp, LAYOUTS } from '../assets/js/protocol.js';
 const s = initialState();
 let ok = true;
 const chk = (label, cond) => { if (!cond) { ok = false; console.log('FAIL', label); } else console.log('ok  ', label); };
@@ -526,6 +526,175 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
   applyCommand(c, {op:'caption', on:false});
   chk('caption off clears the bar and ends live mode in one step',
     c.overlay.live === false && c.overlay.text === '' && c.overlay.visible === false);
+}
+
+{
+  // Issue #103: a full-screen message's richer shape (font/bg/caption on
+  // top of the existing body/size/align), all validated by normalizeItem's
+  // 'text' branch the same way every other type already is.
+  const t = initialState();
+  applyCommand(t, { op:'stage', item:{
+    type:'text', body:'# Heading\nbody', size:'xl', align:'left', font:'serif',
+    bg:'#123456', src:'asset:pic1', caption:'A caption',
+  }});
+  chk('a fully-specified text item keeps every field', t.program.type === 'text'
+    && t.program.body === '# Heading\nbody' && t.program.size === 'xl' && t.program.align === 'left'
+    && t.program.font === 'serif' && t.program.bg === '#123456' && t.program.src === 'asset:pic1'
+    && t.program.caption === 'A caption');
+
+  applyCommand(t, { op:'stage', item:{ type:'text', body:'hi' } });
+  chk('missing fields fall back to sane defaults', t.program.size === 'l' && t.program.align === 'center'
+    && t.program.font === 'sans' && t.program.bg === '' && t.program.caption === '');
+
+  applyCommand(t, { op:'stage', item:{ type:'text', body:'hi', size:'huge', align:'middle', font:'wingdings' } });
+  chk('an out-of-range size/align/font is refused rather than reaching the projector',
+    t.program.size === 'l' && t.program.align === 'center' && t.program.font === 'sans');
+
+  applyCommand(t, { op:'stage', item:{ type:'text', body:'x'.repeat(5000), caption:'y'.repeat(500) } });
+  chk('body and caption are capped, not passed through unbounded',
+    t.program.body.length === 4000 && t.program.caption.length === 200);
+
+  // src is deliberately untouched by normalizeItem - it is '', a path, or an
+  // asset:<id> reference, the same convention 'image' items already use and
+  // already left alone here too.
+  applyCommand(t, { op:'stage', item:{ type:'text', body:'hi', src:'content/img/whatever.png' } });
+  chk('src passes through unmodified, same as any other type\'s picture', t.program.src === 'content/img/whatever.png');
+}
+
+{
+  // Issue #113: normalizeItem() had a branch for 'text' but none at all for
+  // most of the other types PLAN_TYPES declares fields for - an oversized or
+  // out-of-range value in any of these used to reach every connected
+  // controller and the projector completely unfiltered.
+  const t = initialState();
+
+  applyCommand(t, { op:'stage', item:{ type:'youtube', videoId:'x'.repeat(200), startAt:5 } });
+  chk('an oversized youtube videoId is capped, not passed through unbounded', t.program.videoId.length === 64);
+
+  applyCommand(t, { op:'stage', item:{ type:'image', src:'asset:pic1', fit:'cover' } });
+  chk('a valid image fit is kept', t.program.fit === 'cover');
+  applyCommand(t, { op:'stage', item:{ type:'image', src:'asset:pic1', fit:'stretch-to-infinity' } });
+  chk('an out-of-range image fit is refused rather than reaching the projector', t.program.fit === 'contain');
+  applyCommand(t, { op:'stage', item:{ type:'image', src:'content/img/whatever.png' } });
+  chk('image src is deliberately untouched, same convention as text/qr', t.program.src === 'content/img/whatever.png');
+
+  applyCommand(t, { op:'stage', item:{ type:'qr', data:'x'.repeat(5000), caption:'y'.repeat(500) } });
+  chk('an oversized qr data/caption is capped, not passed through unbounded',
+    t.program.data.length === 2000 && t.program.caption.length === 200);
+
+  applyCommand(t, { op:'stage', item:{ type:'web', src:'https://example.edu/' + 'x'.repeat(5000) } });
+  chk('an oversized web src is capped, not passed through unbounded', t.program.src.length === 2000);
+
+  applyCommand(t, { op:'stage', item:{ type:'whiteboard', bg:'#fff' + 'x'.repeat(200) } });
+  chk('an oversized whiteboard bg is capped, not passed through unbounded', t.program.bg.length === 64);
+
+  applyCommand(t, { op:'stage', item:{ type:'timer', timerId:'t'.repeat(200), label:'l'.repeat(500) } });
+  chk('an oversized timer timerId/label is capped, not passed through unbounded',
+    t.program.timerId.length === 64 && t.program.label.length === 120);
+
+  // slides/camera/web/youtube themselves had no direct stage coverage at all
+  // before this issue, only whatever an e2e section happened to exercise.
+  applyCommand(t, { op:'stage', item:{ type:'slides', src:'content/slides/week1/index.html', slide:-3 } });
+  chk('a slides item stages with its src kept and slide clamped to 0 or above',
+    t.program.type === 'slides' && t.program.src === 'content/slides/week1/index.html' && t.program.slide === 0);
+
+  applyCommand(t, { op:'stage', item:{ type:'camera', title:'Phone camera' } });
+  chk('a camera item stages with no fields of its own to validate', t.program.type === 'camera');
+
+  applyCommand(t, { op:'stage', item:{ type:'web', src:'https://example.edu/demo' } });
+  chk('a web item stages with its src kept', t.program.type === 'web' && t.program.src === 'https://example.edu/demo');
+}
+
+{
+  // Picture-in-picture (Issue #110): one pane full screen, another as a
+  // bordered inset - state.pip carries which two, which corner, how big,
+  // independent of `layout` the same way watermark is independent of
+  // what is on screen.
+  const p = initialState();
+  chk('LAYOUTS reports 4 addressable panes for pip, same as the 4-tile layout',
+    LAYOUTS.pip === 4);
+  chk('a fresh lecture defaults to A full screen, B inset top right at 20%',
+    p.pip.main === 'A' && p.pip.inset === 'B' && p.pip.corner === 'tr' && p.pip.size === 20);
+
+  applyCommand(p, { op:'pip', main:'C' });
+  chk('picking a new main leaves inset alone when there is no collision',
+    p.pip.main === 'C' && p.pip.inset === 'B');
+
+  applyCommand(p, { op:'pip', inset:'D' });
+  chk('and inset can be changed on its own the same way', p.pip.inset === 'D');
+
+  // Picking the pane already on the other side swaps the two, resolved
+  // against whatever state.pip actually holds when the command lands -
+  // not refused, and not something the caller has to pre-compute itself
+  // (a client with a stale idea of "what it used to be" is exactly the
+  // failure mode this sidesteps).
+  applyCommand(p, { op:'pip', main:'D' });
+  chk('picking the pane already on the other side swaps the two, rather than being refused as a collision',
+    p.pip.main === 'D' && p.pip.inset === 'C');
+
+  applyCommand(p, { op:'pip', main:'C', inset:'D' });
+  chk('sending both fields explicitly swaps them back just the same',
+    p.pip.main === 'C' && p.pip.inset === 'D');
+
+  applyCommand(p, { op:'pip', corner:'bl' });
+  chk('corner takes any of the four', p.pip.corner === 'bl');
+  applyCommand(p, { op:'pip', corner:'sideways' });
+  chk('an invalid corner is ignored, not silently accepted', p.pip.corner === 'bl');
+
+  applyCommand(p, { op:'pip', size:35 });
+  chk('size takes a plain percentage', p.pip.size === 35);
+  applyCommand(p, { op:'pip', size:5 });
+  chk('too small is clamped up rather than making an unusable sliver', p.pip.size === 10);
+  applyCommand(p, { op:'pip', size:90 });
+  chk('too large is clamped down rather than covering the main pane', p.pip.size === 50);
+
+  applyCommand(p, { op:'pip', main:'E' });
+  chk('an unknown pane letter is ignored, leaving main untouched - the same lenient handling as corner/size',
+    p.pip.main === 'C');
+
+  chk('main and inset are never left pointing at the same pane, through anything above', p.pip.main !== p.pip.inset);
+
+  // Issue #109's auto-launch pane picker already slices ['A','B','C','D']
+  // by LAYOUTS[layout] to build its list of real panes - pip reporting 4
+  // means a plan built under pip offers all four there too, same as '4'.
+  applyCommand(p, { op:'layout', mode:'pip' });
+  chk('switching to the pip layout is otherwise an ordinary layout change',
+    p.layout === 'pip' && p.focus === 0);
+}
+
+{
+  // Issue #106: a picture deck - one image per slide - steps like a deck.
+  console.log('\n-- picture decks --');
+  const d = initialState();
+  applyCommand(d, { op:'stage', item:{ type:'imagedeck', images:['s/1.png', 's/2.png', 's/3.png'], slide: 1 } });
+  chk('a picture deck stages at the slide it was given', d.program.type === 'imagedeck' && d.program.slide === 1);
+  applyCommand(d, { op:'nav', dir:'next' });
+  chk('next steps forward', d.program.slide === 2);
+  applyCommand(d, { op:'nav', dir:'next' });
+  chk('and stops at the last slide rather than running off the end', d.program.slide === 2);
+  applyCommand(d, { op:'nav', dir:'goto', value: 0 });
+  applyCommand(d, { op:'nav', dir:'prev' });
+  chk('prev stops at the first slide', d.program.slide === 0);
+  applyCommand(d, { op:'nav', dir:'goto', value: 99 });
+  chk('goto past the end lands on the last slide', d.program.slide === 2);
+
+  applyCommand(d, { op:'nav', dir:'goto', value: 0 });
+  const firstKey = inkSurfaceKey(d.program);
+  applyCommand(d, { op:'nav', dir:'next' });
+  chk('each slide is its own ink surface', inkSurfaceKey(d.program) !== firstKey && firstKey === 'image:s/1.png');
+
+  applyCommand(d, { op:'stage', item:{ type:'imagedeck', images:'a.png\n\n  b.png  \njavascript:alert(1)\ndata:image/png;base64,xx\nhttps://example.edu/c.png', slide: 50 } });
+  chk('one-per-line text becomes the list, blank lines and padding gone',
+    d.program.images.join('|') === 'a.png|b.png|https://example.edu/c.png');
+  chk('javascript: and data: entries never reach the projector', !d.program.images.some((s) => /^(javascript|data):/.test(s)));
+  chk('an out-of-range starting slide is clamped to the deck', d.program.slide === 2);
+  applyCommand(d, { op:'fit', value:'cover' });
+  chk('fit applies to a picture deck like a photo', d.program.fit === 'cover');
+
+  applyCommand(d, { op:'stage', item:{ type:'imagedeck', images: Array.from({ length: 900 }, (_, i) => `s/${i}.png`) } });
+  chk('a picture deck is capped at 500 slides', d.program.images.length === 500);
+  applyCommand(d, { op:'stage', item:{ type:'imagedeck', images: [] } });
+  chk('an empty picture deck is harmless: slide 0, nothing to show', d.program.slide === 0 && d.program.images.length === 0);
 }
 
 console.log(ok ? '\nALL PASS' : '\nFAILURES');

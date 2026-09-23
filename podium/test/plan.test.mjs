@@ -99,13 +99,20 @@ chk('every loaded item has an id, so the editor can address it',
   messy.plan.items.every((i) => typeof i.id === 'string' && i.id.length > 0));
 
 // Fields belonging to some other type must not ride along: the display would
-// take `playing` or `fit` on a text sign at face value.
+// take `playing` or `fit` on a text sign at face value. `src` is different
+// now that Issue #103 gave a text sign its own optional picture: it is a
+// declared field, so it survives - but still through the same safeSrc()
+// check every other type's src already goes through (see below), which is
+// what turns this specific javascript: value into '' rather than dropping
+// the field outright.
 const smuggled = readPlan(JSON.stringify({
   podium: 'plan', v: 1,
   items: [{ type: 'text', body: 'hi', fit: 'cover', src: 'javascript:alert(1)', playing: true }],
 }));
 chk('fields that do not belong to the type are not carried through',
-  !('fit' in smuggled.plan.items[0]) && !('src' in smuggled.plan.items[0]) && !('playing' in smuggled.plan.items[0]));
+  !('fit' in smuggled.plan.items[0]) && !('playing' in smuggled.plan.items[0]));
+chk('but src DOES belong to a text sign now, sanitized the same as any other type\'s',
+  'src' in smuggled.plan.items[0] && smuggled.plan.items[0].src === '');
 
 // A plan is a file that came from somewhere else, and its src values end up in
 // an <img> or an <iframe> on a screen nobody is standing in front of.
@@ -188,7 +195,7 @@ chk('durationMins is parsed and clamped',
 // --- auto-launch on plan load (Issue #52) -----------------------------------
 chk('emptyAutoLaunch provides default structure', (() => {
   const al = emptyAutoLaunch();
-  return al.enabled === false && al.initialState === 'live'
+  return al.enabled === false && al.initialState === 'live' && al.activePane === 'A'
     && al.panes.A === null && al.panes.B === null && al.panes.C === null && al.panes.D === null
     && al.music.playlist === '' && al.music.autoplay === true && al.music.volume === 0.5
     && al.timer.timerId === '';
@@ -208,6 +215,7 @@ const fullPlanDoc = {
   autoLaunch: {
     enabled: true,
     initialState: 'freeze',
+    activePane: 'B',
     panes: {
       A: { type: 'item', itemId: 'i1' },
       B: {
@@ -236,6 +244,7 @@ chk('full autoLaunch configuration round-trips cleanly', (() => {
   const al = parsedFull.plan.autoLaunch;
   return al.enabled === true
     && al.initialState === 'freeze'
+    && al.activePane === 'B'
     && al.panes.A?.type === 'item' && al.panes.A?.itemId === 'i1'
     && al.panes.B?.type === 'set' && al.panes.B?.title === 'Auto set' && al.panes.B?.mode === 'random'
     && al.panes.B?.entries.length === 2 && al.panes.B?.entries[1].seconds === 40
@@ -253,6 +262,7 @@ const invalidAutoPlan = {
   autoLaunch: {
     enabled: 'yes',
     initialState: 'invalid-state',
+    activePane: 'Z',
     panes: {
       A: { type: 'item', itemId: 'missing-item' },
       B: {
@@ -275,12 +285,38 @@ chk('invalid autoLaunch fields are sanitized and warned', (() => {
   const al = parsedInvalid.plan.autoLaunch;
   return al.enabled === true
     && al.initialState === 'live'
+    && al.activePane === 'A'
     && al.panes.A === null
     && al.panes.B === null
     && al.music.volume === 0
     && al.timer.timerId === ''
     && parsedInvalid.warnings.length > 0;
 })());
+
+// --- picture decks (Issue #106) ------------------------------------------------
+{
+  const slides = Array.from({ length: 80 }, (_, i) => `/media/${'a'.repeat(64)}/Slide${i + 1}.png`);
+  const doc = JSON.stringify({
+    podium: 'plan', v: PLAN_VERSION, title: 'Pictures',
+    items: [
+      { id: 'pd1', type: 'imagedeck', title: 'Week 3', images: slides.join('\n'), fit: 'cover' },
+      { id: 'pd2', type: 'imagedeck', images: 'ok.png\njavascript:alert(1)\ndata:image/png;base64,xx\nasset:abc\nhttps://example.edu/b.png' },
+    ],
+  });
+  const { plan: read, warnings } = readPlan(doc);
+  const [deck, risky] = read.items;
+  chk('a picture deck survives a plan file, every slide in order (80 lines, well past a textarea\'s usual 4000 characters)',
+    deck.images.split('\n').length === 80 && deck.images.split('\n')[79].endsWith('Slide80.png') && deck.fit === 'cover');
+  chk('only relative paths and http(s) survive; javascript:, data: and plan assets are dropped',
+    risky.images === 'ok.png\nhttps://example.edu/b.png');
+  chk('and the drop is said out loud', warnings.some((w) => /3 slides/.test(w)));
+  const staged = itemForStage(deck);
+  chk('staging turns the one-per-line text into the list the projector steps through',
+    Array.isArray(staged.images) && staged.images.length === 80 && staged.images[0].endsWith('Slide1.png'));
+  chk('an untitled picture deck is labelled by its slide count', itemLabel(risky) === 'Picture deck (2 slides)');
+  const again = readPlan(planToJson(read)).plan.items[0];
+  chk('and it round-trips', again.images === deck.images && again.title === 'Week 3');
+}
 
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);
