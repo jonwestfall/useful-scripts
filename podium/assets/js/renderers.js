@@ -469,7 +469,11 @@ function renderPdf(item) {
   node.appendChild(canvas);
 
   const render = async () => {
-    if (!window.pdfjsLib || !src) {
+    // Nothing picked yet (a freshly added item, before an upload or a typed
+    // path lands) - render nothing rather than an iframe whose src is the
+    // literal string "undefined", which the browser dutifully fetches.
+    if (!src) { node.replaceChildren(); return; }
+    if (!window.pdfjsLib) {
       node.replaceChildren(el('iframe', {
         class: 'r-frame',
         src: `${src}#page=${pageNumber}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,

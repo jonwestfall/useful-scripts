@@ -27,6 +27,9 @@ mountSessionBadge($('#session-badge'));
 
 let plan = null;
 let selectedId = null;
+// Issue #108: whether serverUploadField() below has anything to upload to -
+// set once serverInfo() resolves.
+let serverLibraryUpload = false;
 let saveTimer = null;
 let preview = { renderer: null, key: null, slide: 0, step: 0, count: 0 };
 // The server row this in-memory plan maps to, if any - set after pulling one
@@ -476,6 +479,7 @@ function fieldFor(item, spec) {
       }, `${timer.label || `Timer ${i + 1}`} · ${timer.mins}m`))), spec.hint);
   }
   if (spec.kind === 'upload') return uploadField(item, spec);
+  if (spec.kind === 'server-upload') return serverUploadField(item, spec);
   if (spec.kind === 'image') return imageField(item, spec);
 
   // Plain text, with one special case: a pasted YouTube URL is unpacked into
@@ -525,6 +529,44 @@ function uploadField(item, spec) {
         renderEditor();
       } catch (err) {
         note.textContent = `Could not read that file: ${err.message}`;
+      }
+    },
+  });
+  return field(spec.label, el('div', {}, input, note));
+}
+
+// Issue #108: uploads a real file to this server's library - the same
+// endpoint admin.html and the controller's own PDF upload use - rather than
+// embedding it as a plan asset the way uploadField() does. A PDF handout or
+// a video clip can be far bigger than the ~160KB a plan asset has to survive
+// traveling over the relay in one message; this instead gets a served URL
+// (item.src becomes a plain path, same as typing one by hand) and needs no
+// budget at all. Only rendered once serverLibraryUpload confirms this Podium
+// actually has a server with a library to upload to.
+function serverUploadField(item, spec) {
+  if (!serverLibraryUpload) return '';
+  const note = el('p', { class: 'hint' }, spec.hint || '');
+  const input = el('input', {
+    type: 'file', accept: spec.accept || '',
+    onchange: async (ev) => {
+      const file = ev.target.files?.[0];
+      ev.target.value = '';
+      if (!file) return;
+      note.textContent = `Uploading ${file.name}…`;
+      try {
+        const params = new URLSearchParams({
+          filename: file.name, title: item.title || file.name.replace(/\.[^.]+$/, ''), course: '', group: '',
+        });
+        const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'that did not work');
+        item[spec.key] = body.item.src;
+        if (!item.title) item.title = body.item.title;
+        touch();
+        renderOrder();
+        renderEditor();
+      } catch (err) {
+        note.textContent = `That did not upload: ${err.message}`;
       }
     },
   });
@@ -1298,6 +1340,15 @@ $('#plan-remove-template').addEventListener('click', async () => {
 });
 
 serverInfo().then((info) => {
+  // Issue #108: whether serverUploadField() offers uploading a PDF/video/
+  // audio file straight to the server, rather than only a typed path.
+  // Checked async, so an item editor already open for one of those types
+  // when this resolves is re-rendered once, to pick the field up rather
+  // than needing a reselect.
+  if (info.features.includes('library')) {
+    serverLibraryUpload = true;
+    renderEditor();
+  }
   if (!info.features.includes('plans')) return;
   $('#plan-server').hidden = false;
   refreshServerPlans();

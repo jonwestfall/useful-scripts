@@ -5833,6 +5833,29 @@ await planner.goto(`${acctBase}/plan.html`);
 await planner.waitForSelector('#plan-server:not([hidden])');
 ok('the planning page offers the server when there is one', true);
 
+// Issue #108: a PDF/video/audio item can upload straight to this server's
+// library from the planner too, not just from the controller - the same
+// endpoint (Issue #82's #pdf-upload above), just reached from the desk.
+await planner.click('#type-picker .type-btn:has-text("PDF")');
+await planner.waitForSelector('#item-fields input[type=file]');
+await planner.setInputFiles('#item-fields input[type=file]', path.join(ROOT, 'content', 'sample.pdf'));
+// Two text inputs share this panel (Title, then the src path/URL field) -
+// index into the src one specifically, not whichever text input is first.
+await planner.waitForFunction(
+  () => (document.querySelectorAll('#item-fields input[type=text]')[1]?.value || '').startsWith('/media/'),
+  null, { timeout: 8000 },
+);
+ok('uploading a PDF from the planner fills the path field with a real server URL, not just a filename',
+  /^\/media\//.test(await planner.inputValue('#item-fields input[type=text] >> nth=1')));
+const plannerUploadedPdf = await planner.evaluate(async () => {
+  const res = await fetch('/api/library', { credentials: 'same-origin' });
+  const { items } = await res.json();
+  return items.some((i) => i.type === 'pdf' && i.title === 'sample');
+});
+ok('and it really landed in the library, the same place the controller\'s own upload does', plannerUploadedPdf);
+await planner.click('#plan-new');
+await planner.waitForFunction(() => document.querySelector('#plan-course').value === '', null, { timeout: 5000 });
+
 await planner.fill('#plan-title', 'Day 6 — sent, not carried');
 await planner.fill('#plan-course', 'psy415');
 await planner.click('#plan-push');
