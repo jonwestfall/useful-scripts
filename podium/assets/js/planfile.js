@@ -42,6 +42,17 @@ export const PLAN_TYPES = {
       { key: 'src', label: 'or a path on the server', kind: 'text', placeholder: 'content/decks/week3.md' },
     ],
   },
+  imagedeck: {
+    label: 'Picture deck', icon: '\u{1F39E}',
+    blurb: 'Slides exported as images (PowerPoint: File > Export > PNG), one picture per slide, stepped through like a deck.',
+    fields: [
+      { key: 'images', label: 'Slide images, in order', kind: 'textarea', max: 100000,
+        placeholder: 'content/photos/week3/Slide1.png\ncontent/photos/week3/Slide2.png',
+        hint: 'One path or http(s) address per line.' },
+      { key: 'fit', label: 'Fit', kind: 'select', def: 'contain',
+        options: [['contain', 'Fit inside (letterbox)'], ['cover', 'Fill the screen (crop)']] },
+    ],
+  },
   image: {
     label: 'Photo', icon: '\u{1F5BC}',
     blurb: 'A picture on the projector. Uploads are resized to fit through the relay, or choose one on your server.',
@@ -235,6 +246,10 @@ export function itemForStage(item) {
   if (rest.type === 'image' && !rest.src && rest.path) {
     rest.src = rest.path;
   }
+  // Stored one per line so the editor is a plain textarea; staged as a list.
+  if (rest.type === 'imagedeck' && !Array.isArray(rest.images)) {
+    rest.images = String(rest.images || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  }
   return rest;
 }
 
@@ -253,6 +268,10 @@ export function itemLabel(item, plan = null) {
   if (item.type === 'qr' && item.caption) return item.caption;
   if (item.type === 'poll' && item.question) return item.question.split('\n')[0].slice(0, 60);
   if (item.type === 'image' && item.path && !item.src) return item.path.split('/').pop();
+  if (item.type === 'imagedeck') {
+    const count = String(item.images || '').split('\n').filter((l) => l.trim()).length;
+    return `${spec.label} (${count} slide${count === 1 ? '' : 's'})`;
+  }
   if (typeof item.src === 'string' && item.src && !isAssetRef(item.src)) return item.src.split('/').pop();
   return spec?.label || item.type;
 }
@@ -373,7 +392,7 @@ export function readPlan(raw) {
       if (field.kind === 'number') item[field.key] = num(value, field.def ?? 0, field.min ?? 0, field.max ?? 1e9);
       else if (field.kind === 'check') item[field.key] = !!value;
       else if (field.kind === 'select') item[field.key] = field.options.some(([v]) => v === value) ? value : field.def;
-      else if (field.kind === 'textarea') item[field.key] = str(value, 4000);
+      else if (field.kind === 'textarea') item[field.key] = str(value, field.max ?? 4000);
       else if (field.kind === 'timer-pick') item[field.key] = str(value, 40);
       else item[field.key] = str(value, 100000);
     }
@@ -387,6 +406,17 @@ export function readPlan(raw) {
     if (typeof item.src === 'string' && !safeSrc(item.src)) {
       warnings.push(`"${itemLabel(item)}" pointed at ${item.src.split(':')[0]}: — only http, https and paths on your own server are allowed.`);
       item.src = '';
+    }
+    // A picture deck's images are each a src in all but name, so each gets
+    // the same check. Plan assets are not an option here: a deck of slides
+    // would never fit through the relay inside one plan.
+    if (item.type === 'imagedeck') {
+      const lines = item.images.split('\n').map((l) => l.trim()).filter(Boolean);
+      const kept = lines.filter((l) => safeSrc(l) && !isAssetRef(l));
+      if (kept.length < lines.length) {
+        warnings.push(`"${itemLabel(item)}" had ${lines.length - kept.length} slide${lines.length - kept.length === 1 ? '' : 's'} pointing somewhere other than http, https or a path on your own server; ${lines.length - kept.length === 1 ? 'it was' : 'they were'} dropped.`);
+      }
+      item.images = kept.join('\n');
     }
     // An item pointing at an asset the file does not contain would fail
     // silently on the projector, which is the worst place to find out.

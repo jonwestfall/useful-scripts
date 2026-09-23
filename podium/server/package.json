@@ -8,6 +8,7 @@
     "start": "node podium-server.js"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "yauzl": "^3.4.0"
   }
 }

@@ -30,6 +30,7 @@ const settings = require('./settings.js');
 const templates = require('./templates.js');
 const content = require('./content.js');
 const store = require('./store.js');
+const zipImport = require('./zip-import.js');
 
 const COOKIE = 'podium_session';
 const API_VERSION = 1;
@@ -590,20 +591,34 @@ async function handleApi(req, res, url, ctx) {
 
     // --- system settings (Issue #72) --------------------------------------
     if (head === 'system' && rest[0] === 'settings') {
+      const current = () => ({
+        allowPollNames: ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false,
+        // Issue #106: the largest ZIP an import accepts, in MB.
+        maxZipUploadMb: zipImport.uploadMbSetting(ctx.db, store),
+      });
       if (rest.length === 1 && req.method === 'GET') {
-        const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
-        json(res, 200, { allowPollNames });
+        json(res, 200, current());
         return true;
       }
       if (rest.length === 1 && req.method === 'PUT') {
         if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can change system settings' }); return true; }
         const body = await readJson(req, 8 * 1024);
+        const changed = {};
+        if (body.maxZipUploadMb !== undefined) {
+          const mb = Number(body.maxZipUploadMb);
+          if (!Number.isInteger(mb) || mb < 1 || mb > zipImport.MAX_UPLOAD_MB) {
+            json(res, 400, { error: `the ZIP upload limit must be a whole number of MB from 1 to ${zipImport.MAX_UPLOAD_MB}` });
+            return true;
+          }
+          store.setSystemSetting(ctx.db, 'max_zip_upload_mb', String(mb));
+          changed.maxZipUploadMb = mb;
+        }
         if (body.allowPollNames !== undefined) {
           store.setSystemSetting(ctx.db, 'allow_poll_names', body.allowPollNames ? '1' : '0');
+          changed.allowPollNames = !!body.allowPollNames;
         }
-        auditLog(ctx, req, user, 'system_settings_updated', { allowPollNames: !!body.allowPollNames });
-        const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
-        json(res, 200, { allowPollNames });
+        auditLog(ctx, req, user, 'system_settings_updated', changed);
+        json(res, 200, current());
         return true;
       }
     }

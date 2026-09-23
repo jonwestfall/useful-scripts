@@ -34,14 +34,17 @@ const SHELL = /\.(?:html|css|js|mjs|webmanifest|json|woff2?)$/;
 // included - a deck that cannot render is the difference between a lecture and
 // no lecture.
 const WARM = [
-  './', 'index.html', 'display.html', 'control.html', 'plan.html', 'admin.html',
+  './', 'index.html', 'display.html', 'control.html', 'plan.html', 'admin.html', 'config.json',
   'manifest-control.webmanifest', 'manifest-display.webmanifest',
   'assets/css/podium.css',
-  'assets/vendor/qrcode.js', 'assets/vendor/marp.esm.js',
+  'assets/vendor/qrcode.js', 'assets/vendor/marp.esm.js', 'assets/vendor/pdf.min.js',
   'assets/icons/icon-192.png', 'assets/icons/apple-touch-icon.png',
+  // Kept complete by test/offline-shell.test.mjs: a module control.js or
+  // display.js imports that is missing here fails the whole page offline.
   ...[
-    'admin', 'bus', 'config', 'control', 'crypto', 'deck', 'display', 'plan',
-    'planfile', 'protocol', 'renderers', 'rtc', 'server', 'store', 'util', 'zip',
+    'admin', 'assets', 'bus', 'config', 'control', 'crypto', 'deck', 'display',
+    'index', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'renderers',
+    'rtc', 'server', 'store', 'util', 'watermark', 'zip',
   ].map((name) => `assets/js/${name}.js`),
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),
 ];

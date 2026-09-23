@@ -30,7 +30,14 @@ podium/test/
 ├── spotlight.test.mjs    # Spotlight / attention dimmer pointer mode (Issue #37)
 ├── tabsettings.test.mjs  # Customizable/collapsible controller tab bar (Issue #76)
 ├── templates.test.mjs    # Course-level plan templates, against a real SQLite file (Issue #80)
-└── e2e.mjs               # Full multi-browser end-to-end integration test suite
+├── offline-shell.test.mjs # The offline shell warms everything the pages load at startup (Issue #130)
+├── e2e.mjs               # Runs every end-to-end group below
+└── e2e/
+    ├── harness.mjs       # Shared setup: fixtures, relay, browser, ok()/trap()/--only
+    ├── core.mjs          # Switching, connection, settings, offline, the display basics
+    ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen
+    ├── media.mjs         # Camera, music, audio, clocks, captions, PDFs
+    └── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
 ```
 
 ---
@@ -124,11 +131,14 @@ The doctor check verifies:
 
 ## 3. End-to-End (E2E) Browser Integration Tests
 
-The E2E suite (`podium/test/e2e.mjs`) is an exhaustive integration test. It:
-1. Generates its own self-contained audio and media fixtures dynamically in memory (no external downloads needed).
-2. Spawns an internal relay server on an ephemeral port.
-3. Launches real headless Chromium browser pages representing the **Display** and two independent **Controllers** simultaneously.
-4. Executes over 540 rigorous checks simulating real-world classroom situations.
+The E2E suite is an exhaustive integration test, split into four feature groups under
+`podium/test/e2e/` (Issue #122). Each group:
+1. Generates its own self-contained audio and media fixtures (no external downloads needed).
+2. Spawns its own relay server on an ephemeral port.
+3. Launches its own headless Chromium, driving real **Display** and **Controller** pages.
+
+So a group runs on its own, and a failure in one never stops the others from reporting.
+Together they execute over 540 checks simulating real-world classroom situations.
 
 ### Prerequisites
 
@@ -140,10 +150,20 @@ npx playwright install chromium
 
 ### Running the E2E Test
 
-Run the complete test suite:
+Run every group, one after another, with a pass/fail summary per group at the end:
 ```bash
 node podium/test/e2e.mjs
 ```
+
+Run one group (or several, comma-separated) - either through the runner or directly:
+```bash
+node podium/test/e2e.mjs --group ink-layout
+node podium/test/e2e/ink-layout.mjs
+```
+
+CI runs the four groups side by side on separate runners, then reports a single
+`End-to-end (Playwright)` check that is green only when every group is. Locally the runner
+goes one group at a time, because some groups write the same fixture files.
 
 ### Running Targeted Sections
 
@@ -152,12 +172,12 @@ During development, you can run specific test sections using the `--only` filter
 ```bash
 node podium/test/e2e.mjs --only ink
 node podium/test/e2e.mjs --only photos,camera
-node podium/test/e2e.mjs --only polls
-node podium/test/e2e.mjs --only freeze
+node podium/test/e2e/polls-server.mjs --only polls
+node podium/test/e2e/core.mjs --only freeze
 ```
 
 > [!NOTE]
-> `--only` is for rapid iterative debugging. In the full test run, subsequent sections build on state created by earlier steps. Always run the full test suite before committing or pushing changes.
+> `--only` is for rapid iterative debugging. Within a group, later sections can build on state an earlier one left behind, so a filtered run is a convenience; the group's full run is the contract. Always run the full suite before committing or pushing changes.
 
 ### Key Scenarios Verified by E2E Tests
 

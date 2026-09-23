@@ -108,6 +108,16 @@
       <span class="hint">Allow presenters to collect participant names, email addresses, or IDs during polls and quizzes. When enabled, presenters can configure a name prompt in the controller and record participant identities in session exports.</span>
       <span class="hint" id="system-settings-status" role="status"></span>
     </div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 12px 0">
+    <div class="admin-head">
+      <h2>ZIP Imports</h2>
+    </div>
+    <div class="admin-actions" style="align-items: flex-start; flex-direction: column; gap: 8px;">
+      <label for="max-zip-upload-mb">Largest ZIP an import accepts (MB)</label>
+      <input id="max-zip-upload-mb" type="number" min="1" max="4096" step="1" inputmode="numeric" style="width: 120px;">
+      <span class="hint">Default 200. Each file inside still has to fit its own type's limit, and what a ZIP may unpack to grows with this.</span>
+      <span class="hint" id="zip-settings-status" role="status"></span>
+    </div>
   </section>
   </div>
 

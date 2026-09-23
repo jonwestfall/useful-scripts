@@ -126,6 +126,59 @@ test('system settings API access control and capabilities', async () => {
   });
 });
 
+test('the ZIP import upload limit is an admin system setting (Issue #106)', async () => {
+  await withTempDb(async (db) => {
+    await accounts.createUser(db, { username: 'prof', password: 'password123', isAdmin: true });
+    await accounts.createUser(db, { username: 'student', password: 'password123', isAdmin: false });
+    const admin = await accounts.login(db, 'prof', 'password123');
+    const student = await accounts.login(db, 'student', 'password123');
+    const ctx = { db, hasAccounts: () => true };
+
+    const call = async (method, token, body) => {
+      let code = 0;
+      let out = null;
+      const req = {
+        method,
+        headers: { 'content-type': 'application/json', cookie: `podium_session=${token}` },
+        on(evt, cb) {
+          if (evt === 'data' && body !== undefined) cb(Buffer.from(JSON.stringify(body)));
+          if (evt === 'end') cb();
+        },
+      };
+      const res = {
+        writeHead(c) { code = c; },
+        setHeader() {},
+        end(data) { try { out = JSON.parse(data); } catch { out = data; } },
+      };
+      await api.handleApi(req, res, new URL('http://x/api/system/settings'), ctx);
+      return { code, body: out };
+    };
+
+    let r = await call('GET', admin.token);
+    assert.equal(r.body.maxZipUploadMb, 200, 'defaults to 200 MB');
+
+    r = await call('PUT', student.token, { maxZipUploadMb: 500 });
+    assert.equal(r.code, 403, 'only an administrator can change it');
+
+    r = await call('PUT', admin.token, { maxZipUploadMb: 500 });
+    assert.equal(r.code, 200);
+    assert.equal(r.body.maxZipUploadMb, 500, 'an administrator can raise it');
+    assert.equal(r.body.allowPollNames, false, 'without touching the other setting');
+
+    for (const bad of [0, -5, 2.5, 'lots', 99999]) {
+      r = await call('PUT', admin.token, { maxZipUploadMb: bad });
+      assert.equal(r.code, 400, `refuses ${JSON.stringify(bad)}`);
+    }
+    r = await call('GET', student.token);
+    assert.equal(r.body.maxZipUploadMb, 500, 'a refused value leaves the saved one in place');
+
+    const logs = db.prepare('SELECT * FROM audit_logs WHERE action = ?').all('system_settings_updated');
+    assert.equal(logs.length, 1, 'the one real change is audit-logged');
+    assert.match(logs[0].details, /"maxZipUploadMb":500/);
+    assert.doesNotMatch(logs[0].details, /allowPollNames/, 'and the log names only what changed');
+  });
+});
+
 test('lecture poll recording stores responses with names', async () => {
   await withTempDb(async (db, dir) => {
     const user = await accounts.createUser(db, { username: 'lecturer', password: 'password123', isAdmin: false });
