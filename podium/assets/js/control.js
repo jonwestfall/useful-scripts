@@ -18,6 +18,7 @@ import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downs
 import { mountSessionBadge, serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
 import { createWatermarkPanel } from './watermark.js';
+import { createPipPanel } from './pip.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -2844,6 +2845,7 @@ function renderAll() {
   renderMusic();
   renderMixer();
   watermarkPanel.render(state);
+  pipPanel.render(state);
   renderSetsPanel();
   renderPollsPanel();
   renderPhotos();
@@ -5279,6 +5281,7 @@ $('#caption-toggle').addEventListener('click', () => { if (recognizer) stopCapti
 // the first slice of splitting this file along its own existing section
 // boundaries.
 const watermarkPanel = createWatermarkPanel({ $, uid, downscaleImage, MAX_ASSET_CHARS, assetRef, assetStore, send });
+const pipPanel = createPipPanel({ $, el, send });
 
 $('#timer-start').addEventListener('click', () => {
   const timer = currentTimer();

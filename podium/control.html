@@ -66,6 +66,9 @@ try {
       <button class="layout-btn" data-layout="4" type="button" title="Four panels">
         <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
       </button>
+      <button class="layout-btn" data-layout="pip" type="button" title="Picture in picture">
+        <span class="layout-icon layout-icon-pip"><i></i><i></i></span>
+      </button>
     </div>
     <div id="panel-picker" class="panel-picker" hidden></div>
     <!-- The fast way out of "I wanted C full screen and switching to single
@@ -482,6 +485,31 @@ try {
               <button id="watermark-image-clear" type="button" hidden>Remove image</button>
             </div>
             <div id="watermark-note" class="hint"></div>
+          </div>
+          <!-- Only shown once the layout picker's own PiP button is on - see
+               #layout-picker above and pipPanel.render in control.js. Which
+               two panes, out of the same up-to-four this device can already
+               stage into under the "4" layout, is picked here rather than
+               fixed by position the way every other layout's panes are. -->
+          <div class="stack" id="pip-settings" hidden>
+            <label for="pip-main">Picture-in-picture — one pane full screen, another as a small inset
+              over a corner of it</label>
+            <div class="inline">
+              <span class="hint">Full screen</span>
+              <select id="pip-main" aria-label="Main pane (full screen)"></select>
+              <span class="hint">Inset</span>
+              <select id="pip-inset" aria-label="Inset pane"></select>
+            </div>
+            <div class="inline">
+              <select id="pip-corner" aria-label="Inset corner">
+                <option value="tr">Top right</option>
+                <option value="tl">Top left</option>
+                <option value="br">Bottom right</option>
+                <option value="bl">Bottom left</option>
+              </select>
+              <input id="pip-size" type="range" min="10" max="50" step="5" aria-label="Inset size">
+              <span id="pip-size-label" class="hint"></span>
+            </div>
           </div>
         </section>
 

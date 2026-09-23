@@ -4752,6 +4752,122 @@ await screen.waitForFunction(() => {
 await ctx.close();
 }
 
+if (want('picture-in-picture: one pane full screen, another inset')) {
+console.log('\n-- picture-in-picture: one pane full screen, another inset --');
+const pipCtx = await browser.newContext();
+await pipCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'pip-room', passphrase: 'any two of four' }));
+const pipScreen = await pipCtx.newPage();
+trap(pipScreen, 'pip display');
+await pipScreen.goto(`${BASE}/display.html`);
+await pipScreen.click('#arm-button');
+await pipScreen.waitForSelector('#hud[data-status="online"]');
+const pipPad = await pipCtx.newPage();
+trap(pipPad, 'pip pad');
+await pipPad.goto(`${BASE}/control.html`);
+await pipPad.waitForSelector('.tile');
+await pipPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Stage three visually distinct things into A, B and C first - PiP is
+// choosing among panes already independently staged, the same as switching
+// into "4" and picking through A/B/C/D already works, not a new staging
+// path of its own.
+await pipPad.click('.layout-btn[data-layout="4"]');
+// The panel picker's B/C/D buttons only exist once this pad's own state
+// has caught up with the layout change it just sent - a separate round
+// trip from the display applying it, the same distinction the pip-main/
+// pip-inset waits below are about.
+await pipPad.waitForSelector('.panel-btn:text-is("B")');
+await pipPad.click('.tile:has(.tile-title:text-is("Whiteboard"))'); // A: light bg
+await pipPad.click('.panel-btn:text-is("B")');
+await pipPad.click('.tile:has(.tile-title:text-is("Chalkboard"))'); // B: dark bg
+await pipScreen.waitForFunction(() => document.querySelectorAll('.r-whiteboard').length === 2, null, { timeout: 8000 });
+await pipPad.click('.panel-btn:text-is("C")');
+await pipPad.click('.tab[data-tab="say"]');
+await pipPad.click('#text-open-editor');
+await pipPad.fill('#msg-body', 'Pane C');
+await pipPad.click('#message-editor-show');
+await pipScreen.waitForFunction(() => /Pane C/.test(document.querySelector('[data-panel="c"] .r-text-body')?.textContent || ''), null, { timeout: 8000 });
+ok('A, B and C each hold their own distinct content before PiP ever gets involved', true);
+
+await pipPad.click('.layout-btn[data-layout="pip"]');
+await pipScreen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-pip'), null, { timeout: 5000 });
+await pipPad.click('.tab[data-tab="say"]');
+await pipPad.waitForSelector('#pip-settings:not([hidden])', { timeout: 5000 });
+ok('the settings panel appears once PiP is the active layout', true);
+ok('defaulting to pane A full screen, pane B inset',
+  (await pipPad.inputValue('#pip-main')) === 'A' && (await pipPad.inputValue('#pip-inset')) === 'B');
+ok('the inset picker never offers the pane already chosen as main',
+  !(await pipPad.$$eval('#pip-inset option', (opts) => opts.map((o) => o.value))).includes('A'));
+
+const pipBox = (panel) => pipScreen.$eval(`[data-panel="${panel}"]`, (n) => {
+  const r = n.getBoundingClientRect();
+  return { x: r.x, y: r.y, w: r.width, h: r.height, visible: getComputedStyle(n).display !== 'none' };
+});
+const stageBox = () => pipScreen.$eval('#stage', (n) => { const r = n.getBoundingClientRect(); return { w: r.width, h: r.height }; });
+
+let [a, b, c, stage] = await Promise.all([pipBox('a'), pipBox('b'), pipBox('c'), stageBox()]);
+ok(`pane A fills the whole stage as the default main (${a.w}x${a.h} vs stage ${stage.w}x${stage.h})`,
+  Math.abs(a.w - stage.w) < 2 && Math.abs(a.h - stage.h) < 2);
+ok('pane B shows as a small inset, not full screen', b.visible && b.w < stage.w * 0.3 && b.h < stage.h * 0.3);
+ok('and pane C, staged but not chosen for PiP, is not shown at all', !c.visible);
+ok(`the inset sits in the top-right corner, ~5%% off each edge (left ${(b.x / stage.w * 100).toFixed(0)}%%, top ${(b.y / stage.h * 100).toFixed(0)}%%)`,
+  Math.abs(stage.w - (b.x + b.w)) / stage.w < 0.08 && b.y / stage.h < 0.08);
+ok(`and is close to the default 20%% of the frame (${(b.w / stage.w * 100).toFixed(0)}%%)`,
+  Math.abs(b.w / stage.w - 0.2) < 0.03);
+
+// Swap C in for B as the inset - proving a pane that was staged but never
+// shown comes up correctly the instant PiP actually picks it.
+await pipPad.selectOption('#pip-inset', 'C');
+await pipScreen.waitForFunction(() => getComputedStyle(document.querySelector('[data-panel="c"]')).display !== 'none', null, { timeout: 5000 });
+ok('choosing pane C as the inset shows it immediately, with no re-staging needed', true);
+[b, c] = await Promise.all([pipBox('b'), pipBox('c')]);
+ok('and pane B, no longer chosen, drops out of view', !b.visible);
+ok('with the content that was waiting there the whole time', /Pane C/.test(await pipScreen.textContent('[data-panel="c"] .r-text-body')));
+
+// Picking the pane already showing as main for the INSET side (not main
+// itself) is an ordinary, non-colliding change.
+await pipPad.selectOption('#pip-main', 'B');
+await pipScreen.waitForFunction(() => getComputedStyle(document.querySelector('[data-panel="b"]')).display !== 'none'
+  && getComputedStyle(document.querySelector('[data-panel="a"]')).display === 'none', null, { timeout: 5000 });
+ok('picking a new main (with no collision) swaps it straight in, dropping the old one', true);
+ok('leaving the inset (C) untouched', /Pane C/.test(await pipScreen.textContent('[data-panel="c"] .r-text-body')));
+
+// Now the genuine collision: main is B, inset is C - asking for C as main
+// too is read as "swap them", resolved by protocol.js against whatever
+// state.pip actually holds when the command lands, not refused and not
+// computed from anything this pad cached client-side.
+await pipPad.selectOption('#pip-main', 'C');
+await pipScreen.waitForFunction(() => getComputedStyle(document.querySelector('[data-panel="c"]')).display !== 'none'
+  && getComputedStyle(document.querySelector('[data-panel="b"]')).display !== 'none', null, { timeout: 5000 });
+ok('and picking the current inset as the new main swaps the two, rather than being rejected as a collision', true);
+await pipPad.waitForFunction(() => document.querySelector('#pip-main').value === 'C'
+  && document.querySelector('#pip-inset').value === 'B', null, { timeout: 5000 });
+ok('and this pad\'s own picker catches up to the swap too, not just the projector', true);
+
+// Corner and size.
+await pipPad.selectOption('#pip-corner', 'bl');
+// fill() refuses a range input outright - set it and fire the same 'input'
+// event a real drag would, which is what the size listener itself needs.
+await pipPad.evaluate(() => {
+  const input = document.querySelector('#pip-size');
+  input.value = '35';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+});
+await pipScreen.waitForFunction(() => {
+  const r = document.querySelector('[data-panel="b"]').getBoundingClientRect();
+  const s = document.querySelector('#stage').getBoundingClientRect();
+  return Math.abs(r.x - s.left) / s.width < 0.08 && Math.abs(s.bottom - r.bottom) / s.height < 0.08;
+}, null, { timeout: 5000 });
+ok('switching the corner moves the inset there, bottom-left this time', true);
+const resized = await pipBox('b');
+stage = await stageBox();
+ok(`and the size slider actually resizes it (~${(resized.w / stage.w * 100).toFixed(0)}%% now, vs ~20%% at the default)`,
+  resized.w / stage.w > 0.3);
+
+await pipCtx.close();
+}
+
 if (want('audience polls: a room full of phones answering')) {
 console.log('\n-- audience polls: a room full of phones answering --');
 // The relay is the only part of Podium that ever sees an answer in the clear,

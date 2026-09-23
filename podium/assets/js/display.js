@@ -310,11 +310,40 @@ function syncLayers() {
     }
   }
 
+  // Issue #110: picture-in-picture shows exactly two of the (up to four)
+  // independently staged panes - one full screen (main), one as a small
+  // bordered inset - decided by role rather than by panel count the way
+  // every other layout decides visibility. A pane that is neither stays
+  // mounted underneath regardless, same as an unfocused tab, ready the
+  // instant either role picks it - see LAYOUTS.pip's own comment for why
+  // it reports 4.
+  const isPip = state.layout === 'pip';
+  const CORNERS = ['tl', 'tr', 'bl', 'br'];
+  const applyPipRole = (slot, isMain, isInset) => {
+    slot.classList.toggle('is-pip-main', isMain);
+    slot.classList.toggle('is-pip-inset', isInset);
+    for (const corner of CORNERS) slot.classList.toggle(`corner-${corner}`, isInset && state.pip.corner === corner);
+    slot.style.width = isInset ? `${state.pip.size}%` : '';
+    slot.style.height = isInset ? `${state.pip.size}%` : '';
+  };
+
+  // Panel A is always mounted (it is where the arming/standby screen itself
+  // lives before anything is picked); only its visibility is new here.
+  const aIsMain = isPip && state.pip.main === 'A';
+  const aIsInset = isPip && state.pip.inset === 'A';
+  slotA.classList.toggle('is-on', !isPip || aIsMain || aIsInset);
+  applyPipRole(slotA, aIsMain, aIsInset);
+
   // B/C/D: only as many as the current layout actually shows.
   const panelCount = LAYOUTS[state.layout] || 1;
+  const PANEL_LETTERS = ['B', 'C', 'D'];
   extraLayers.forEach((layer, i) => {
     const item = i + 1 < panelCount ? state.panels[i] : null;
-    layer.slot.classList.toggle('is-on', !!item);
+    const letter = PANEL_LETTERS[i];
+    const isMain = isPip && state.pip.main === letter;
+    const isInset = isPip && state.pip.inset === letter;
+    layer.slot.classList.toggle('is-on', !!item && (!isPip || isMain || isInset));
+    applyPipRole(layer.slot, isMain, isInset);
     if (!item) { if (layer.key) freeLayer(layer); return; }
     if (layer.key !== item.key) mount(layer, item);
     else layer.renderer.update(resolveAssets(item));

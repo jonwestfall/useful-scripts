@@ -101,6 +101,27 @@ body.display #stage { position: fixed; inset: 0; background: #000; display: grid
 /* A split's seams, so two adjacent panels don't visually run together. */
 #stage:not(.layout-single) .panel-slot { outline: 1px solid #000; }
 
+/* Picture-in-picture (Issue #110): unlike every layout above, which panes
+   go where is a fixed rule per letter - here it is state.pip's own choice
+   (main/inset can be any two of A-D), so positioning is driven by JS-set
+   role classes rather than [data-panel='x'] selectors. A single grid cell
+   is what makes "main fills the stage" need no rule of its own: it is just
+   an ordinary panel-slot with nothing pulling it out of flow, the same as
+   .layout-single's lone panel. */
+#stage.layout-pip { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+#stage.layout-pip .panel-slot { grid-column: 1; grid-row: 1; }
+#stage.layout-pip .panel-slot.is-pip-main { z-index: 1; }
+#stage.layout-pip .panel-slot.is-pip-inset {
+  position: absolute; z-index: 5;
+  width: 20%; height: 20%;
+  border: 3px solid #fff; border-radius: 6px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, .55);
+}
+#stage.layout-pip .panel-slot.is-pip-inset.corner-tl { top: 5%; left: 5%; }
+#stage.layout-pip .panel-slot.is-pip-inset.corner-tr { top: 5%; right: 5%; }
+#stage.layout-pip .panel-slot.is-pip-inset.corner-bl { bottom: 5%; left: 5%; }
+#stage.layout-pip .panel-slot.is-pip-inset.corner-br { bottom: 5%; right: 5%; }
+
 .layer { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
 .layer[data-role='program'] { opacity: 1; z-index: 2; pointer-events: auto; }
 .layer[data-role='preview'] { opacity: 0; z-index: 1; }
@@ -585,6 +606,12 @@ body.guest {
 .layout-icon-3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; }
 .layout-icon-3 i:first-child { grid-row: 1 / 3; }
 .layout-icon-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+/* Picture-in-picture: one big square, one small one inset over a corner of
+   it - drawn with position, not the grid the other icons share, the same
+   reason #stage.layout-pip itself does not use a multi-cell grid either. */
+.layout-icon-pip { position: relative; display: block; }
+.layout-icon-pip i:first-child { position: absolute; inset: 0; }
+.layout-icon-pip i:last-child { position: absolute; width: 45%; height: 45%; top: 1px; right: 1px; border: 1px solid var(--panel); }
 
 .panel-picker { display: flex; gap: 4px; }
 .panel-btn {
