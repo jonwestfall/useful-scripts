@@ -11,7 +11,7 @@
 import { $, $$, el, uid, guessItemFromUrl, wireDangerButton, servedBuild } from './util.js';
 import {
   PLAN_TYPES, emptyPlan, newItem, readPlan, planToJson, planFileName, planBytes,
-  itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, pruneAssets, emptyAutoLaunch,
+  itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, pruneAssets, emptyAutoLaunch, emptyPip,
   MAX_ASSET_CHARS, MAX_PLAN_BYTES,
 } from './planfile.js';
 import {
@@ -732,7 +732,38 @@ function renderHeader() {
   const targetSelect = $('#plan-target-mins');
   if (targetSelect) targetSelect.value = String(plan.targetDuration || 50);
   $$('#plan-layout .layout-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.layout === plan.layout));
+  renderPlanPip();
 }
+
+// Issue #131: which two panes a picture-in-picture plan starts with, and where
+// the inset sits. A plan saved before this existed has no pip yet.
+function renderPlanPip() {
+  const box = $('#plan-pip');
+  box.hidden = plan.layout !== 'pip';
+  if (box.hidden) return;
+  if (!plan.pip) plan.pip = emptyPip();
+  const letters = ['A', 'B', 'C', 'D'];
+  $('#plan-pip-main').replaceChildren(...letters.map((l) => el('option', { value: l, selected: l === plan.pip.main }, `Pane ${l}`)));
+  $('#plan-pip-inset').replaceChildren(...letters.filter((l) => l !== plan.pip.main)
+    .map((l) => el('option', { value: l, selected: l === plan.pip.inset }, `Pane ${l}`)));
+  $('#plan-pip-corner').value = plan.pip.corner;
+  $('#plan-pip-size').value = String(plan.pip.size);
+  $('#plan-pip-size-label').textContent = `${plan.pip.size}%`;
+}
+
+const setPlanPip = (change) => {
+  if (!plan.pip) plan.pip = emptyPip();
+  // Picking the pane already on the other side swaps the two - the same rule
+  // the controller's own PiP panel follows.
+  if (change.main && change.main === plan.pip.inset) plan.pip.inset = plan.pip.main;
+  Object.assign(plan.pip, change);
+  touch();
+  renderPlanPip();
+};
+$('#plan-pip-main').addEventListener('change', (ev) => setPlanPip({ main: ev.target.value }));
+$('#plan-pip-inset').addEventListener('change', (ev) => setPlanPip({ inset: ev.target.value }));
+$('#plan-pip-corner').addEventListener('change', (ev) => setPlanPip({ corner: ev.target.value }));
+$('#plan-pip-size').addEventListener('input', (ev) => setPlanPip({ size: Number(ev.target.value) }));
 
 $('#plan-target-mins')?.addEventListener('change', (ev) => {
   plan.targetDuration = Number(ev.target.value) || 50;

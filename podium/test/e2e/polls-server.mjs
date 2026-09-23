@@ -316,6 +316,46 @@ await pad.waitForFunction(() => {
 }, null, { timeout: 5000 });
 ok('the plan chose panel B to focus on load, not the default A (Issue #109)', true);
 
+// Issue #131: a plan can start in picture-in-picture, naming which pane fills
+// the screen, which is the inset, and where the inset sits - here all four
+// deliberately away from the defaults (A main, B inset, top right, 20%).
+const pipPlanFile = path.join(HERE, 'fixtures', 'e2e-autolaunch-pip.podium.json');
+fs.writeFileSync(pipPlanFile, JSON.stringify({
+  podium: 'plan',
+  v: 1,
+  title: 'PiP auto-launch demo',
+  layout: 'pip',
+  pip: { main: 'B', inset: 'A', corner: 'bl', size: 30 },
+  items: [
+    { id: 'i-cam', type: 'text', title: 'Inset', body: 'Small corner pane' },
+    { id: 'i-main', type: 'text', title: 'Main', body: 'Full screen pane' },
+  ],
+  autoLaunch: {
+    enabled: true,
+    initialState: 'live',
+    panes: {
+      A: { type: 'item', itemId: 'i-cam' },
+      B: { type: 'item', itemId: 'i-main' },
+    },
+  },
+}));
+await pad.setInputFiles('#plan-file', pipPlanFile);
+await pad.waitForFunction(() => document.querySelector('#library h3.group')?.textContent === 'PiP auto-launch demo', null, { timeout: 20000 });
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-pip')
+  && /Full screen pane/.test(document.querySelector('[data-panel="b"] .r-text')?.textContent || '')
+  && /Small corner pane/.test(document.querySelector('.layer[data-role="program"] .r-text')?.textContent || ''), null, { timeout: 15000 });
+ok('a plan saved in picture-in-picture starts the display in it (Issue #131)', true);
+const pipGeom = await screen.evaluate(() => {
+  const box = (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; };
+  return { stage: box(document.querySelector('#stage')), a: box(document.querySelector('[data-panel="a"]')), b: box(document.querySelector('[data-panel="b"]')) };
+});
+ok(`with the plan's pane B full screen (${pipGeom.b.w}x${pipGeom.b.h} vs stage ${pipGeom.stage.w}x${pipGeom.stage.h})`,
+  Math.abs(pipGeom.b.w - pipGeom.stage.w) < 2 && Math.abs(pipGeom.b.h - pipGeom.stage.h) < 2);
+ok(`and pane A as a ~30% inset in the bottom-left corner (${(pipGeom.a.w / pipGeom.stage.w * 100).toFixed(0)}% wide)`,
+  Math.abs(pipGeom.a.w / pipGeom.stage.w - 0.3) < 0.03
+  && pipGeom.a.x / pipGeom.stage.w < 0.08
+  && (pipGeom.stage.h - (pipGeom.a.y + pipGeom.a.h)) / pipGeom.stage.h < 0.08);
+
 await tablet.close();
 await room.close();
 }
