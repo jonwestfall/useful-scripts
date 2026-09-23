@@ -218,7 +218,7 @@ ok('a header with no cookies at all is empty rather than broken',
 // decodeURIComponent throws on a malformed escape, and a Cookie header is
 // whatever a stranger sends. Thrown from the static gate, where nothing is
 // catching, one header would have been enough to take the process down.
-let cookieCrash = null;
+let cookieCrash;
 try { cookieCrash = api.parseCookies('podium_session=%').podium_session; }
 catch (err) { cookieCrash = `threw: ${err.message}`; }
 ok(`a malformed percent escape is survived rather than thrown (${cookieCrash})`,
@@ -1156,7 +1156,7 @@ ok('but the CLI path is not held to it - a shell is the credential, and "that ac
   (() => { accounts.setDisabled(db, 'root', true); const off = accounts.countEnabledAdmins(db) === 0;
     accounts.setDisabled(db, 'root', false); return off; })());
 
-const sidekick = await accounts.createUser(db, { username: 'sam', password: 'sams password here' });
+await accounts.createUser(db, { username: 'sam', password: 'sams password here' });
 accounts.setAdmin(db, 'sam', true);
 ok('with a second administrator the rail lets go', (() => {
   try { accounts.assertAnotherAdminRemains(db, 'root', 'disabling it'); return true; } catch { return false; }

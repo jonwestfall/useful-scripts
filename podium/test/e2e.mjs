@@ -3405,7 +3405,7 @@ const alive = (page) => page.$$eval('.layer[data-role="program"]', (n) => n.leng
           return;
         }
         await route.fulfill({ response: res });
-      } catch (e) { /* ignore disposed */ }
+      } catch { /* ignore disposed */ }
     }),
   );
   await page.waitForSelector('#hud[data-status="online"]', { timeout: 15000 }).catch(() => {});

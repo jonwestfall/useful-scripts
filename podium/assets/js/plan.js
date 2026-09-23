@@ -88,7 +88,7 @@ function renderSize() {
 
 async function renderPlanList() {
   const list = $('#plan-list');
-  let rows = [];
+  let rows;
   try { rows = await allPlans(); } catch (err) { warn(err.message); return; }
   list.replaceChildren(...rows.map((row) => {
     const button = el('button', {
@@ -140,7 +140,7 @@ function renderPacing() {
   const isOver = totalPlanned > target;
   const diff = Math.abs(totalPlanned - target);
 
-  let statusText = `<b>${totalPlanned} min</b> planned of ${target}m target`;
+  let statusText;
   if (totalPlanned === 0) {
     statusText = `<b>0 min</b> planned · target:`;
   } else if (isOver) {

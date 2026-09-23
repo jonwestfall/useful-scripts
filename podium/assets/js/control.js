@@ -6,7 +6,7 @@ import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, 
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
-  inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, COMMIT, versionStamp, MAX_SET_ENTRIES,
+  inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
 import { createCameraSender } from './rtc.js';
@@ -525,7 +525,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
       const deck = await renderDeckSource(source, id);
       row.slideCount = deck.count;
       row.fragments = deck.fragments;
-    } catch {}
+    } catch { /* best-effort - the item still works without a slide count */ }
   }
 
   currentPlan = plan;
@@ -584,7 +584,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
                   const deck = await renderDeckSource(deckStore.get(item.deckId), item.deckId);
                   deckGeneration++;
                   deckView = { id: item.deckId, deck };
-                } catch {}
+                } catch { /* best-effort prefetch - it renders again on demand either way */ }
               }
             }
             if (i === 0) {
@@ -628,7 +628,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
       if (plan.autoLaunch.music?.playlist) {
         const musicConfig = plan.autoLaunch.music;
         if (!playlists.length) {
-          try { await loadPlaylists(); } catch {}
+          try { await loadPlaylists(); } catch { /* matchedPlaylist below just stays null */ }
         }
         let targetName = musicConfig.playlist;
         let matchedPlaylist = null;
@@ -1237,7 +1237,7 @@ function highlightGrid(index, deckId = (deckView.id || (focusedItem(state)?.type
 
     if (deckId) {
       const surfaceKey = `deck:${deckId}:${i}`;
-      let hasStrokes = false;
+      let hasStrokes;
       if (inkSurface === surfaceKey) {
         hasStrokes = (ink.strokes?.length || 0) > 0;
       } else {
@@ -6684,6 +6684,6 @@ async function sendQnaAction(pollId, token, id, type, value) {
     });
   } catch (err) {
     pollActionError = err.message || 'Failed to update question.';
-    renderPolls();
+    renderPollsPanel();
   }
 }

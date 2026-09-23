@@ -475,7 +475,7 @@ export function loadImage(src) {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
-    img.onerror = (err) => reject(new Error('Failed to load image for PDF export'));
+    img.onerror = () => reject(new Error('Failed to load image for PDF export'));
     if (src instanceof Blob) {
       const url = URL.createObjectURL(src);
       img.onload = () => {

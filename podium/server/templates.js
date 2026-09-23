@@ -58,7 +58,7 @@ function forUser(db, user) {
           JOIN course_members cm ON cm.course_id = c.id AND cm.user_id = ?
          WHERE c.archived_at IS NULL ORDER BY c.code`).all(user.id);
   return rows.map((row) => {
-    let doc = null;
+    let doc;
     try { doc = JSON.parse(row.doc); } catch { doc = null; }
     return { course: row.code, title: row.title || row.code, doc, updatedAt: row.updated_at };
   });

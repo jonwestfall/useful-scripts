@@ -11,12 +11,12 @@
 import {
   $, $$, el, uid, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell,
   enterFullscreen, exitFullscreen, toggleFullscreen, isFullscreen, onFullscreenChange,
-  safeStorageSet, reportStorageFailure,
+  safeStorageSet,
 } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl } from './config.js';
 import { createBus } from './bus.js';
 import {
-  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION, COMMIT, versionStamp,
+  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION, versionStamp,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
@@ -907,10 +907,10 @@ function syncMusic() {
           musicEl.currentTime = targetTime;
         } else {
           musicEl.addEventListener('loadedmetadata', () => {
-            try { musicEl.currentTime = targetTime; } catch {}
+            try { musicEl.currentTime = targetTime; } catch { /* track changed again before it loaded */ }
           }, { once: true });
         }
-      } catch {}
+      } catch { /* track changed again before it loaded */ }
     }
     if (music.playing && musicFade && musicFadeTo <= 0.005) {
       clearInterval(musicFade);
@@ -1850,7 +1850,7 @@ installOfflineShell();
 // What was on screen, if this tab is coming back rather than starting fresh.
 // Returns the item's name for the arming screen to mention, or null.
 function restoreState() {
-  let saved = null;
+  let saved;
   try { saved = JSON.parse(localStorage.getItem(stateStorageKey()) || 'null'); } catch { return null; }
   if (!saved || typeof saved !== 'object') return null;
   if (!Number.isFinite(saved.savedAt) || Date.now() - saved.savedAt > STATE_MAX_AGE_MS) return null;
@@ -2345,8 +2345,8 @@ document.addEventListener('keydown', (ev) => {
   if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
 
   switch (ev.key) {
+    // Shift+/ on most layouts, but not all - accept the bare key too.
     case '?':
-      // Shift+/ on most layouts, but not all - accept the bare key too.
     case '/':
       ev.preventDefault();
       toggleShortcuts();

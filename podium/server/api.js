@@ -116,6 +116,9 @@ const cookieToken = (req) => parseCookies(req.headers.cookie)[COOKIE] || '';
 function safeNext(raw) {
   const next = String(raw || '');
   if (!next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return '';
+  // Deliberate: rejecting control characters (a CRLF hidden in a redirect
+  // target, say) is the point here.
+  // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f\x7f]/.test(next)) return '';
   return next;
 }

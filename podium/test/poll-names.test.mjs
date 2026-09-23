@@ -35,8 +35,8 @@ test('system_settings store and migrations', () => {
 
 test('system settings API access control and capabilities', async () => {
   await withTempDb(async (db) => {
-    const admin = await accounts.createUser(db, { username: 'prof', password: 'password123', isAdmin: true });
-    const student = await accounts.createUser(db, { username: 'student', password: 'password123', isAdmin: false });
+    await accounts.createUser(db, { username: 'prof', password: 'password123', isAdmin: true });
+    await accounts.createUser(db, { username: 'student', password: 'password123', isAdmin: false });
 
     const adminLogin = await accounts.login(db, 'prof', 'password123');
     const studentLogin = await accounts.login(db, 'student', 'password123');

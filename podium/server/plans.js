@@ -53,7 +53,7 @@ function planRow(row, { withDoc = false } = {}) {
   // The document itself is only sent when one plan was asked for. A list of
   // twenty lectures is a list of twenty names, not twenty lecture plans.
   if (!withDoc) return summary;
-  let doc = null;
+  let doc;
   try { doc = JSON.parse(row.doc); } catch { doc = null; }
   return { ...summary, doc };
 }
