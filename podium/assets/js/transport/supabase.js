@@ -22,7 +22,7 @@ export async function connect({ cfg, onMessage, onStatus }) {
   try {
     ({ createClient } = await import(/* @vite-ignore */ CDN));
   } catch (err) {
-    throw new Error(`Could not load the Supabase client from ${new URL(CDN).host} — this network is probably blocking it. Self-hosted WebSocket needs no CDN. (${err?.message || err})`);
+    throw new Error(`Could not load the Supabase client from ${new URL(CDN).host} — this network is probably blocking it. Self-hosted WebSocket needs no CDN. (${err?.message || err})`, { cause: err });
   }
   onStatus('connecting', `joining ${host}`);
   const client = createClient(cfg.supabaseUrl, cfg.supabaseKey, {

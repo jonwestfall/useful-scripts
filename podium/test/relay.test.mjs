@@ -14,6 +14,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const WebSocket = require('../server/node_modules/ws');
+const doctor = require('../server/doctor.js');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -119,6 +120,28 @@ function connect(port, room) {
   for (const p of allowed) p.ws.terminate();
   throttled.ws.terminate();
   proc.kill();
+}
+
+// --- checkRelay (Issue #118): plain HTTP answering does not prove the relay
+// actually relays - this is the check that catches a reverse-proxy or
+// firewall change that breaks WS specifically while /healthz stays green. ---
+{
+  const { port, proc } = await startRelay({});
+  const healthUrl = `http://127.0.0.1:${port}/healthz`;
+  const result = await doctor.checkRelay(healthUrl);
+  ok(`a real relay round-trips a message between two peers (${result.detail})`, result.level === 'ok');
+  proc.kill();
+}
+{
+  // Nothing listening on this port at all - the same shape of failure as a
+  // firewall rule or a proxy that never forwards the WS upgrade.
+  const deadPort = await freePort();
+  const result = await doctor.checkRelay(`http://127.0.0.1:${deadPort}/healthz`);
+  ok(`a relay that answers nothing is reported bad, not silently skipped (${result.detail})`, result.level === 'bad');
+}
+{
+  const result = await doctor.checkRelay('');
+  ok('no health URL at all is a warning, not a crash', result.level === 'warn');
 }
 
 console.log(fails.length ? `\n${fails.length} FAILED` : '\nALL PASS');

@@ -14,6 +14,28 @@ on:
       - '.github/workflows/podium-tests.yml'
 
 jobs:
+  lint:
+    name: Lint (ESLint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install ESLint
+        # Pinned rather than "latest", the same as the e2e job's Playwright
+        # install below: there is no lockfile for this ad-hoc install, and
+        # nothing here is committed to the repo (see eslint.config.mjs's own
+        # header comment) - an unpinned version drifts to whatever ships on
+        # the day a run happens to fire. Bump deliberately, not as a side
+        # effect of an unrelated change.
+        run: npm install eslint@10.11.0 @eslint/js@10.0.1 globals@17.12.0
+        working-directory: podium
+      - name: Run ESLint
+        run: npx eslint .
+        working-directory: podium
+
   unit:
     name: Unit tests (all test/*.test.mjs)
     runs-on: ubuntu-latest

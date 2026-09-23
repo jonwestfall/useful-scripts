@@ -371,7 +371,7 @@ function migrate(db) {
       db.exec('COMMIT');
     } catch (err) {
       try { db.exec('ROLLBACK'); } catch { /* already rolled back by the failure */ }
-      throw new Error(`migration to schema version ${version + 1} failed: ${err.message}`);
+      throw new Error(`migration to schema version ${version + 1} failed: ${err.message}`, { cause: err });
     }
   }
   return MIGRATIONS.length;
@@ -436,7 +436,7 @@ function open(dataDir, { create = true } = {}) {
     migrate(db);
     return db;
   } catch (err) {
-    throw new Error(`could not open the database in ${dataDir}: ${err.message}`);
+    throw new Error(`could not open the database in ${dataDir}: ${err.message}`, { cause: err });
   }
 }
 

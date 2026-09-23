@@ -1,7 +1,7 @@
 // Run with:  node podium/test/protocol.test.mjs
 // Pure state-machine tests - no DOM, no network.
 import { initialState, applyCommand, timerRemaining, timerById, inkSurfaceKey,
-  inkDigest, inkDigestsAgree, applyInkAction, distToSegmentSquared, strokeHitTest, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp } from '../assets/js/protocol.js';
+  inkDigest, inkDigestsAgree, applyInkAction, distToSegmentSquared, strokeHitTest, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp, LAYOUTS } from '../assets/js/protocol.js';
 const s = initialState();
 let ok = true;
 const chk = (label, cond) => { if (!cond) { ok = false; console.log('FAIL', label); } else console.log('ok  ', label); };
@@ -603,6 +603,63 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
 
   applyCommand(t, { op:'stage', item:{ type:'web', src:'https://example.edu/demo' } });
   chk('a web item stages with its src kept', t.program.type === 'web' && t.program.src === 'https://example.edu/demo');
+}
+
+{
+  // Picture-in-picture (Issue #110): one pane full screen, another as a
+  // bordered inset - state.pip carries which two, which corner, how big,
+  // independent of `layout` the same way watermark is independent of
+  // what is on screen.
+  const p = initialState();
+  chk('LAYOUTS reports 4 addressable panes for pip, same as the 4-tile layout',
+    LAYOUTS.pip === 4);
+  chk('a fresh lecture defaults to A full screen, B inset top right at 20%',
+    p.pip.main === 'A' && p.pip.inset === 'B' && p.pip.corner === 'tr' && p.pip.size === 20);
+
+  applyCommand(p, { op:'pip', main:'C' });
+  chk('picking a new main leaves inset alone when there is no collision',
+    p.pip.main === 'C' && p.pip.inset === 'B');
+
+  applyCommand(p, { op:'pip', inset:'D' });
+  chk('and inset can be changed on its own the same way', p.pip.inset === 'D');
+
+  // Picking the pane already on the other side swaps the two, resolved
+  // against whatever state.pip actually holds when the command lands -
+  // not refused, and not something the caller has to pre-compute itself
+  // (a client with a stale idea of "what it used to be" is exactly the
+  // failure mode this sidesteps).
+  applyCommand(p, { op:'pip', main:'D' });
+  chk('picking the pane already on the other side swaps the two, rather than being refused as a collision',
+    p.pip.main === 'D' && p.pip.inset === 'C');
+
+  applyCommand(p, { op:'pip', main:'C', inset:'D' });
+  chk('sending both fields explicitly swaps them back just the same',
+    p.pip.main === 'C' && p.pip.inset === 'D');
+
+  applyCommand(p, { op:'pip', corner:'bl' });
+  chk('corner takes any of the four', p.pip.corner === 'bl');
+  applyCommand(p, { op:'pip', corner:'sideways' });
+  chk('an invalid corner is ignored, not silently accepted', p.pip.corner === 'bl');
+
+  applyCommand(p, { op:'pip', size:35 });
+  chk('size takes a plain percentage', p.pip.size === 35);
+  applyCommand(p, { op:'pip', size:5 });
+  chk('too small is clamped up rather than making an unusable sliver', p.pip.size === 10);
+  applyCommand(p, { op:'pip', size:90 });
+  chk('too large is clamped down rather than covering the main pane', p.pip.size === 50);
+
+  applyCommand(p, { op:'pip', main:'E' });
+  chk('an unknown pane letter is ignored, leaving main untouched - the same lenient handling as corner/size',
+    p.pip.main === 'C');
+
+  chk('main and inset are never left pointing at the same pane, through anything above', p.pip.main !== p.pip.inset);
+
+  // Issue #109's auto-launch pane picker already slices ['A','B','C','D']
+  // by LAYOUTS[layout] to build its list of real panes - pip reporting 4
+  // means a plan built under pip offers all four there too, same as '4'.
+  applyCommand(p, { op:'layout', mode:'pip' });
+  chk('switching to the pip layout is otherwise an ordinary layout change',
+    p.layout === 'pip' && p.focus === 0);
 }
 
 console.log(ok ? '\nALL PASS' : '\nFAILURES');

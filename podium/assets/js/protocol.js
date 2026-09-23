@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 42;
+export const BUILD = 43;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -38,7 +38,7 @@ export const BUILD = 42;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.1';
-export const COMMIT = 'cb299b5';
+export const COMMIT = '9ec2c53';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -54,6 +54,15 @@ export const LAYOUTS = {
   '2v': 2,   // top and bottom
   3: 3,      // A large on one side, B/C stacked on the other
   4: 4,      // A/B/C/D tiled 2x2
+  // Picture-in-picture (Issue #110): one pane full screen, another as a
+  // small bordered inset over a corner of it - which two, out of the same
+  // up-to-four independently staged panes every other layout already
+  // offers, is state.pip's own choice (see initialState), not fixed by
+  // position the way B/C/D are under every other layout. 4, not 2: a pane
+  // not currently chosen as main or inset stays staged and reachable
+  // (still addressable by focus, still ready the instant PiP picks it),
+  // the same as an unfocused tab rather than emptied out.
+  pip: 4,
 };
 
 export const MAX_TIMERS = 4;
@@ -186,6 +195,13 @@ export function initialState() {
     // next time you change what is on screen. So it lives beside program and
     // panels rather than inside any of them, the same reason music does.
     watermark: { enabled: false, text: '', image: '', position: 'br' },
+    // Picture-in-picture's own configuration (Issue #110) - independent of
+    // `layout` the same way watermark is independent of what is on screen,
+    // so switching away from the 'pip' layout and back does not lose the
+    // choice. `main`/`inset` are 'A'-'D', always two DIFFERENT panes (see
+    // the 'pip' case below); `corner` is where the inset sits; `size` is
+    // its side length as a percentage of the stage, in each dimension.
+    pip: { main: 'A', inset: 'B', corner: 'tr', size: 20 },
   };
 }
 
@@ -1125,6 +1141,34 @@ export function applyCommand(state, cmd) {
       if (cmd.position !== undefined) state.watermark.position = cmd.position === 'tl' ? 'tl' : 'br';
       if (cmd.enabled !== undefined) state.watermark.enabled = !!cmd.enabled;
       return true;
+
+    case 'pip': {
+      const letters = ['A', 'B', 'C', 'D'];
+      // Picking the pane already on the OTHER side swaps the two, rather
+      // than being refused as "a pane cannot be its own inset" - it is the
+      // likely reason to pick it at all, and the only way this ever comes
+      // up (readPlan/initialState never produce main === inset to begin
+      // with). Resolved here, against whatever state.pip actually holds
+      // right now, rather than by the caller pre-computing both fields
+      // itself - a client-side cache of "what it used to be" is exactly
+      // the kind of thing a second, half-landed command leaves stale.
+      if (cmd.main !== undefined && letters.includes(cmd.main) && cmd.main !== state.pip.main) {
+        if (cmd.main === state.pip.inset) state.pip.inset = state.pip.main;
+        state.pip.main = cmd.main;
+      }
+      if (cmd.inset !== undefined && letters.includes(cmd.inset) && cmd.inset !== state.pip.inset) {
+        if (cmd.inset === state.pip.main) state.pip.main = state.pip.inset;
+        state.pip.inset = cmd.inset;
+      }
+      if (cmd.corner !== undefined) {
+        state.pip.corner = ['tl', 'tr', 'bl', 'br'].includes(cmd.corner) ? cmd.corner : state.pip.corner;
+      }
+      if (cmd.size !== undefined) {
+        const n = Number(cmd.size);
+        if (Number.isFinite(n)) state.pip.size = Math.min(50, Math.max(10, Math.round(n)));
+      }
+      return true;
+    }
 
     case 'timer': {
       // Set-level actions first: they are about which timers exist, not about

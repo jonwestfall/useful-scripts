@@ -2,11 +2,11 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown } from './util.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
-  inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, COMMIT, versionStamp, MAX_SET_ENTRIES,
+  inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
 import { createCameraSender } from './rtc.js';
@@ -16,8 +16,22 @@ import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
 import { mountSessionBadge, serverInfo } from './server.js';
+import { createAssetResolver } from './assets.js';
+import { createWatermarkPanel } from './watermark.js';
+import { createPipPanel } from './pip.js';
 
 const LIB_KEY = 'podium.library.v1';
+
+// One-time warning that this browser stopped saving something (Issue #116):
+// quota, private browsing, or a locked-down profile. Registered before
+// anything else runs, since loadConfig() and the rest of setup below can
+// themselves be the first write to fail - a listener added later would miss
+// that report entirely (reportStorageFailure only ever fires once per page).
+window.addEventListener('podium:storage-failed', (ev) => {
+  $('#storage-warning-detail').textContent =
+    `Preferences, the library, poll history and drafts may not survive a reload or crash. (${ev.detail.key})`;
+  $('#storage-warning').hidden = false;
+});
 
 let cfg = await loadConfig();
 let bus = null;
@@ -112,7 +126,12 @@ let pendingStage = null;
 // it carries are served to the projector on demand, exactly as an uploaded deck
 // is. Kept in IndexedDB rather than localStorage because a plan carries images.
 let currentPlan = null;
-const assetStore = new Map();
+// Items reach the display holding `asset:<id>`, not the bytes - the item is in
+// `state`, which is rebroadcast twice a second and is what ink surfaces are
+// keyed by. Only the local preview renderers resolve it, and only at the point
+// of handing an item to one, so every key stays identical on both ends. Shared
+// with display.js (Issue #124) - see assets.js.
+const { store: assetStore, wanted: assetWanted, resolveAssets } = createAssetResolver(() => bus);
 // Which of them this controller has already pushed to the room, so re-picking
 // a photo does not re-send it.
 const assetsSent = new Set();
@@ -125,43 +144,6 @@ let planAssetIds = new Set();
 function forgetPlanAssets() {
   for (const id of planAssetIds) { assetStore.delete(id); assetsSent.delete(id); }
   planAssetIds = new Set();
-}
-
-// Items reach the display holding `asset:<id>`, not the bytes - the item is in
-// `state`, which is rebroadcast twice a second and is what ink surfaces are
-// keyed by. Only the local preview renderers resolve it, and only at the point
-// of handing an item to one, so every key stays identical on both ends.
-// A 1x1 transparent GIF, for the moment between wanting a photo and holding
-// its bytes. Without it an unresolved `asset:<id>` reaches an <img> as a URL
-// with a scheme no browser knows, which is a broken image and a console error
-// rather than a blank.
-const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-// id -> when this device last asked for it. resolveAssets() runs on every
-// heartbeat, so without a note of that it would ask twice a second for as long
-// as the answer took; with one it asks, waits, and asks again only if the
-// display was not there to hear it.
-const assetWanted = new Map();
-const ASSET_ASK_MS = 3000;
-
-function wantAsset(id) {
-  const now = Date.now();
-  if (now - (assetWanted.get(id) || 0) < ASSET_ASK_MS) return;
-  assetWanted.set(id, now);
-  bus?.send({ t: 'asset-need', id });
-}
-
-function resolveAssets(item) {
-  if (!item) return item;
-  const id = assetIdOf(item.src);
-  if (id === null) return item;
-  const data = assetStore.get(id);
-  if (data) return { ...item, src: data };
-  // This controller does not have the bytes: it reloaded mid-lecture, or the
-  // photo was taken on the other device before this one joined. The display
-  // has them - it is the one screen that holds everything on screen - so ask,
-  // and show nothing rather than a broken image until it answers.
-  wantAsset(id);
-  return { ...item, src: BLANK_PIXEL };
 }
 
 // Requesting a deck's saved ink for export: the display holds the only full
@@ -302,14 +284,12 @@ function loadCustom() {
 }
 
 function saveCustom(items) {
-  try {
-    const withBytes = items.map((item) => {
-      if (typeof item.src !== 'string' || !item.src.startsWith('asset:')) return item;
-      const data = assetStore.get(item.src.slice(6));
-      return data ? { ...item, _assetData: data } : item;
-    });
-    localStorage.setItem(LIB_KEY, JSON.stringify(withBytes));
-  } catch { /* private mode, or enough saved photos to run into the quota */ }
+  const withBytes = items.map((item) => {
+    if (typeof item.src !== 'string' || !item.src.startsWith('asset:')) return item;
+    const data = assetStore.get(item.src.slice(6));
+    return data ? { ...item, _assetData: data } : item;
+  });
+  safeStorageSet(localStorage, LIB_KEY, JSON.stringify(withBytes));
 }
 
 // The running order, as library items. Numbered, because the whole point of a
@@ -516,12 +496,12 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
       const deck = await renderDeckSource(source, id);
       row.slideCount = deck.count;
       row.fragments = deck.fragments;
-    } catch {}
+    } catch { /* best-effort - the item still works without a slide count */ }
   }
 
   currentPlan = plan;
   if (persist) {
-    try { await saveCurrentPlan(plan); } catch { /* private browsing: it just will not survive a reload */ }
+    try { await saveCurrentPlan(plan); } catch (err) { reportStorageFailure('current plan', err); }
   }
   renderPlanBar();
   renderTimerPresets();
@@ -575,7 +555,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
                   const deck = await renderDeckSource(deckStore.get(item.deckId), item.deckId);
                   deckGeneration++;
                   deckView = { id: item.deckId, deck };
-                } catch {}
+                } catch { /* best-effort prefetch - it renders again on demand either way */ }
               }
             }
             if (i === 0) {
@@ -612,6 +592,13 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
         }
       }
 
+      // Which pane the panel picker focuses once everything above has
+      // landed (Issue #109). paneKeys is already sliced to this layout's
+      // real panes, so a stale activePane from a plan last edited under a
+      // bigger layout just falls back to A rather than being refused.
+      const activeIndex = paneKeys.indexOf(plan.autoLaunch.activePane || 'A');
+      send({ op: 'focus', index: activeIndex >= 0 ? activeIndex : 0 });
+
       if (isBlank) {
         send({ op: 'blank', on: true });
       }
@@ -619,7 +606,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
       if (plan.autoLaunch.music?.playlist) {
         const musicConfig = plan.autoLaunch.music;
         if (!playlists.length) {
-          try { await loadPlaylists(); } catch {}
+          try { await loadPlaylists(); } catch { /* matchedPlaylist below just stays null */ }
         }
         let targetName = musicConfig.playlist;
         let matchedPlaylist = null;
@@ -1228,7 +1215,7 @@ function highlightGrid(index, deckId = (deckView.id || (focusedItem(state)?.type
 
     if (deckId) {
       const surfaceKey = `deck:${deckId}:${i}`;
-      let hasStrokes = false;
+      let hasStrokes;
       if (inkSurface === surfaceKey) {
         hasStrokes = (ink.strokes?.length || 0) > 0;
       } else {
@@ -2196,7 +2183,7 @@ function loadPollHistory() {
   } catch { return []; }
 }
 function savePollHistory() {
-  try { localStorage.setItem(POLL_HISTORY_KEY, JSON.stringify(pollHistory.slice(0, MAX_POLL_HISTORY))); } catch { /* private mode, or quota */ }
+  safeStorageSet(localStorage, POLL_HISTORY_KEY, JSON.stringify(pollHistory.slice(0, MAX_POLL_HISTORY)));
 }
 let pollHistory = loadPollHistory();
 
@@ -2857,7 +2844,8 @@ function renderPollsPanel() {
 function renderAll() {
   renderMusic();
   renderMixer();
-  renderWatermarkPanel();
+  watermarkPanel.render(state);
+  pipPanel.render(state);
   renderSetsPanel();
   renderPollsPanel();
   renderPhotos();
@@ -3311,6 +3299,25 @@ function eraseAt(ev) {
   }
 }
 
+// Issue #119: eraseAt rescans every stroke's every point (strokeHitTest, in
+// protocol.js, does a bbox pass and a segment pass unless bbox-culled), and
+// the pointermove handler below used to run it once per coalesced sub-event
+// with no throttle at all - on a heavily-annotated slide that is real, felt
+// lag while erasing. Throttling here loses no coverage: eraseAt's own
+// lastErasePoint interpolation already bridges however far the pointer moved
+// between two calls, so a throttled call just interpolates a longer gap in
+// one pass instead of several short ones in quick succession - the same
+// trade flushInk already makes for ink point batches, just for hit-testing
+// instead of network sends.
+//
+// Takes plain {clientX, clientY} points, not the original PointerEvents -
+// throttle() can defer this past the synchronous handler that read them via
+// getCoalescedEvents(), and some browsers do not guarantee a pointer event
+// (or what it coalesced) stays readable once its own dispatch has returned.
+const throttledEraseSweep = throttle((points) => {
+  for (const p of points) eraseAt(p);
+}, 32);
+
 // --- hold-to-straighten shape snapping (#38) ---------------------------------
 const HOLD_TO_SNAP_MS = 450;
 const HOLD_JITTER_RADIUS = 14;
@@ -3433,7 +3440,7 @@ pad.addEventListener('pointermove', (ev) => {
   if (ink.erasing) {
     ev.preventDefault();
     const events = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
-    for (const e of events) eraseAt(e);
+    throttledEraseSweep(events.map((e) => ({ clientX: e.clientX, clientY: e.clientY })));
     return;
   }
   if (!ink.drawing) return;
@@ -3510,6 +3517,11 @@ const endStroke = (ev) => {
     return;
   }
   if (ink.erasing) {
+    // Run any still-pending throttled sweep now, while ink.lastErasePoint is
+    // still whatever it needs to interpolate from - clearing it first would
+    // leave a deferred call with no anchor, collapsing what should be a swept
+    // line into a single point that may not land on anything.
+    throttledEraseSweep.flush();
     ink.erasing = false;
     ink.lastErasePoint = null;
     try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
@@ -4088,7 +4100,7 @@ function loadSavedSets() {
   try { return JSON.parse(localStorage.getItem(SET_KEY) || '[]'); } catch { return []; }
 }
 function saveSavedSets(list) {
-  try { localStorage.setItem(SET_KEY, JSON.stringify(list)); } catch { /* private mode */ }
+  safeStorageSet(localStorage, SET_KEY, JSON.stringify(list));
 }
 let savedSets = loadSavedSets();
 // The set being built or edited right now, or null. Editing works on a copy
@@ -4442,6 +4454,7 @@ function renderConnection() {
   else label = `Display connected${display.rtt ? ` · ${display.rtt} ms` : ''} · build ${BUILD}`;
 
   $('#display-state').textContent = label;
+  $('.topbar-status').title = label;
   $('#display-state').classList.toggle('is-bad', !display || !!mismatch);
   $('#peer-count').textContent = others.length ? `+${others.length} other controller${others.length > 1 ? 's' : ''}` : '';
 
@@ -4628,7 +4641,7 @@ if (savedDual) {
 $('#dual-pane-toggle').addEventListener('click', () => {
   const isDual = document.body.classList.toggle('dual-pane');
   $('#dual-pane-toggle').classList.toggle('is-on', isDual);
-  localStorage.setItem('podium.ui.dualPane', isDual ? '1' : '0');
+  safeStorageSet(localStorage, 'podium.ui.dualPane', isDual ? '1' : '0');
   const activeTab = document.querySelector('.tab.is-on:not(#dual-pane-toggle)');
   if (activeTab) tab(activeTab.dataset.tab);
   window.dispatchEvent(new Event('resize'));
@@ -4676,7 +4689,7 @@ function applyPreviewVisibility() {
 applyPreviewVisibility();
 $('#preview-toggle').addEventListener('click', () => {
   previewHidden = !previewHidden;
-  try { localStorage.setItem(PREVIEW_HIDDEN_KEY, previewHidden ? '1' : '0'); } catch { /* nothing to do */ }
+  safeStorageSet(localStorage, PREVIEW_HIDDEN_KEY, previewHidden ? '1' : '0');
   applyPreviewVisibility();
 });
 
@@ -4806,7 +4819,7 @@ function applyConfidenceSplit() {
 applyConfidenceSplit();
 $('#confidence-split').addEventListener('click', () => {
   confidenceSplit = SPLIT_ORDER[(SPLIT_ORDER.indexOf(confidenceSplit) + 1) % SPLIT_ORDER.length];
-  try { localStorage.setItem(SPLIT_KEY, confidenceSplit); } catch { /* nothing to do */ }
+  safeStorageSet(localStorage, SPLIT_KEY, confidenceSplit);
   applyConfidenceSplit();
 });
 
@@ -4828,7 +4841,7 @@ $('#deck-now-preview').append(laserDot, spotlightPreview);
 
 function setLaserColor(color) {
   laserColor = LASER_COLORS.includes(color) ? color : 'red';
-  try { localStorage.setItem(LASER_KEY, laserColor); } catch { /* nothing to do */ }
+  safeStorageSet(localStorage, LASER_KEY, laserColor);
   laserDot.dataset.color = laserColor;
   padLaserDot.dataset.color = laserColor;
   // The button wears the colour too, so you can tell at a glance what the
@@ -5265,52 +5278,11 @@ function startCaptions() {
 $('#caption-toggle').addEventListener('click', () => { if (recognizer) stopCaptions(); else startCaptions(); });
 
 // --- watermark ---------------------------------------------------------------
-//
-// A name or logo pinned to one corner for the whole lecture, not content - so
-// it is set here once rather than picked and lost the next time the screen
-// changes. Text and image are independent fields: typing new text does not
-// erase an uploaded logo (Remove image is its own button), and the display
-// shows whichever one is actually set, image first.
-
-function renderWatermarkPanel() {
-  const wm = state.watermark || { enabled: false, text: '', image: '', position: 'br' };
-  if (document.activeElement !== $('#watermark-position')) $('#watermark-position').value = wm.position === 'tl' ? 'tl' : 'br';
-  $('#watermark-hide').disabled = !wm.enabled;
-  $('#watermark-image-clear').hidden = !wm.image;
-  const parts = [wm.enabled ? 'showing' : 'hidden'];
-  if (wm.image) parts.push('a logo');
-  else if (wm.text) parts.push(`“${wm.text}”`);
-  else parts.push('nothing set yet');
-  $('#watermark-note').textContent = parts.join(' · ');
-}
-
-$('#watermark-position').addEventListener('change', () => send({ op: 'watermark', position: $('#watermark-position').value }));
-$('#watermark-hide').addEventListener('click', () => send({ op: 'watermark', enabled: false }));
-$('#watermark-form').addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  const text = $('#watermark-text').value.trim();
-  if (!text) return;
-  send({ op: 'watermark', text, enabled: true });
-});
-$('#watermark-image').addEventListener('change', async (ev) => {
-  const file = ev.target.files?.[0];
-  ev.target.value = '';
-  if (!file) return;
-  $('#watermark-note').textContent = `Resizing ${file.name}…`;
-  try {
-    // PNG rather than the photo ladder's JPEG: a logo's transparent
-    // background needs an alpha channel, or it comes out as a black box in
-    // the corner. Small dimensions and a single-entry `qualities` (PNG
-    // ignores it) keep this from wastefully re-encoding four times over.
-    const shrunk = await downscaleImage(file, MAX_ASSET_CHARS, { widths: [480, 320, 200, 120], qualities: [1], mime: 'image/png' });
-    const id = uid(10);
-    assetStore.set(id, shrunk.dataUrl);
-    send({ op: 'watermark', image: assetRef(id), enabled: true });
-  } catch (err) {
-    $('#watermark-note').textContent = `That did not load: ${err.message}`;
-  }
-});
-$('#watermark-image-clear').addEventListener('click', () => send({ op: 'watermark', image: '' }));
+// Extracted to watermark.js (Issue #121) - a small, explicit interface, and
+// the first slice of splitting this file along its own existing section
+// boundaries.
+const watermarkPanel = createWatermarkPanel({ $, uid, downscaleImage, MAX_ASSET_CHARS, assetRef, assetStore, send });
+const pipPanel = createPipPanel({ $, el, send });
 
 $('#timer-start').addEventListener('click', () => {
   const timer = currentTimer();
@@ -5459,7 +5431,7 @@ if (inkColorPicker && inkPickerLabel) {
     inkPickerLabel.style.setProperty('--custom-color', color);
     $$('.swatch:not(.swatch-picker)').forEach((s) => s.classList.remove('is-on'));
     inkPickerLabel.classList.add('is-on');
-    try { localStorage.setItem(INK_CUSTOM_COLOR_KEY, color); } catch { /* quota / private */ }
+    safeStorageSet(localStorage, INK_CUSTOM_COLOR_KEY, color);
     if (ink.tool === 'eraser' || ink.tool === 'laser' || ink.tool === 'spotlight') setInkTool('pen');
   };
 
@@ -5572,9 +5544,7 @@ function getCountdownText() {
 
 function setCountdownText(val) {
   const text = (val || '').trim() || DEFAULT_COUNTDOWN_TEXT;
-  try {
-    localStorage.setItem(COUNTDOWN_TEXT_KEY, text);
-  } catch {}
+  safeStorageSet(localStorage, COUNTDOWN_TEXT_KEY, text);
   updateCountdownButton();
   return text;
 }
@@ -5635,9 +5605,7 @@ function isCountdownQueue() {
 }
 
 function setCountdownQueue(val) {
-  try {
-    localStorage.setItem(COUNTDOWN_QUEUE_KEY, val ? 'true' : 'false');
-  } catch {}
+  safeStorageSet(localStorage, COUNTDOWN_QUEUE_KEY, val ? 'true' : 'false');
 }
 
 const countdownQueueBox = $('#music-countdown-queue');
@@ -5858,7 +5826,7 @@ function loadPresentation() {
   } catch { return { ...PRESENTATION_DEFAULTS }; }
 }
 function savePresentation() {
-  try { localStorage.setItem(PRESENTATION_KEY, JSON.stringify(presentation)); } catch { /* private mode, or quota */ }
+  safeStorageSet(localStorage, PRESENTATION_KEY, JSON.stringify(presentation));
 }
 let presentation = loadPresentation();
 
@@ -5992,13 +5960,11 @@ function loadPacingState() {
   return { startedAt: null };
 }
 function savePacingState(pacing) {
-  try {
-    if (pacing && pacing.startedAt) {
-      localStorage.setItem(PACING_KEY, JSON.stringify(pacing));
-    } else {
-      localStorage.removeItem(PACING_KEY);
-    }
-  } catch { /* private mode */ }
+  if (pacing && pacing.startedAt) {
+    safeStorageSet(localStorage, PACING_KEY, JSON.stringify(pacing));
+  } else {
+    try { localStorage.removeItem(PACING_KEY); } catch { /* private mode */ }
+  }
 }
 let pacingState = loadPacingState();
 
@@ -6657,6 +6623,6 @@ async function sendQnaAction(pollId, token, id, type, value) {
     });
   } catch (err) {
     pollActionError = err.message || 'Failed to update question.';
-    renderPolls();
+    renderPollsPanel();
   }
 }

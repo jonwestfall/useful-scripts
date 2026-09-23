@@ -27,6 +27,9 @@ mountSessionBadge($('#session-badge'));
 
 let plan = null;
 let selectedId = null;
+// Issue #108: whether serverUploadField() below has anything to upload to -
+// set once serverInfo() resolves.
+let serverLibraryUpload = false;
 let saveTimer = null;
 let preview = { renderer: null, key: null, slide: 0, step: 0, count: 0 };
 // The server row this in-memory plan maps to, if any - set after pulling one
@@ -88,7 +91,7 @@ function renderSize() {
 
 async function renderPlanList() {
   const list = $('#plan-list');
-  let rows = [];
+  let rows;
   try { rows = await allPlans(); } catch (err) { warn(err.message); return; }
   list.replaceChildren(...rows.map((row) => {
     const button = el('button', {
@@ -140,7 +143,7 @@ function renderPacing() {
   const isOver = totalPlanned > target;
   const diff = Math.abs(totalPlanned - target);
 
-  let statusText = `<b>${totalPlanned} min</b> planned of ${target}m target`;
+  let statusText;
   if (totalPlanned === 0) {
     statusText = `<b>0 min</b> planned · target:`;
   } else if (isOver) {
@@ -476,6 +479,7 @@ function fieldFor(item, spec) {
       }, `${timer.label || `Timer ${i + 1}`} · ${timer.mins}m`))), spec.hint);
   }
   if (spec.kind === 'upload') return uploadField(item, spec);
+  if (spec.kind === 'server-upload') return serverUploadField(item, spec);
   if (spec.kind === 'image') return imageField(item, spec);
 
   // Plain text, with one special case: a pasted YouTube URL is unpacked into
@@ -525,6 +529,44 @@ function uploadField(item, spec) {
         renderEditor();
       } catch (err) {
         note.textContent = `Could not read that file: ${err.message}`;
+      }
+    },
+  });
+  return field(spec.label, el('div', {}, input, note));
+}
+
+// Issue #108: uploads a real file to this server's library - the same
+// endpoint admin.html and the controller's own PDF upload use - rather than
+// embedding it as a plan asset the way uploadField() does. A PDF handout or
+// a video clip can be far bigger than the ~160KB a plan asset has to survive
+// traveling over the relay in one message; this instead gets a served URL
+// (item.src becomes a plain path, same as typing one by hand) and needs no
+// budget at all. Only rendered once serverLibraryUpload confirms this Podium
+// actually has a server with a library to upload to.
+function serverUploadField(item, spec) {
+  if (!serverLibraryUpload) return '';
+  const note = el('p', { class: 'hint' }, spec.hint || '');
+  const input = el('input', {
+    type: 'file', accept: spec.accept || '',
+    onchange: async (ev) => {
+      const file = ev.target.files?.[0];
+      ev.target.value = '';
+      if (!file) return;
+      note.textContent = `Uploading ${file.name}…`;
+      try {
+        const params = new URLSearchParams({
+          filename: file.name, title: item.title || file.name.replace(/\.[^.]+$/, ''), course: '', group: '',
+        });
+        const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || 'that did not work');
+        item[spec.key] = body.item.src;
+        if (!item.title) item.title = body.item.title;
+        touch();
+        renderOrder();
+        renderEditor();
+      } catch (err) {
+        note.textContent = `That did not upload: ${err.message}`;
       }
     },
   });
@@ -847,9 +889,14 @@ function renderAutoLaunchPanes() {
   if (!container || !plan) return;
   if (!plan.autoLaunch) plan.autoLaunch = emptyAutoLaunch();
   if (!plan.autoLaunch.panes) plan.autoLaunch.panes = { A: null, B: null, C: null, D: null };
+  if (!plan.autoLaunch.activePane) plan.autoLaunch.activePane = 'A';
 
   const count = LAYOUTS[plan.layout || 'single'] || 1;
   const activeKeys = ['A', 'B', 'C', 'D'].slice(0, count);
+  // A stale pick from a plan last edited under a bigger layout (see the
+  // apply-side comment in control.js) - reset here too, so the picker shown
+  // to a person editing it agrees with what will actually happen on load.
+  if (!activeKeys.includes(plan.autoLaunch.activePane)) plan.autoLaunch.activePane = 'A';
 
   container.replaceChildren(...activeKeys.map((key) => {
     const p = plan.autoLaunch.panes[key];
@@ -881,8 +928,23 @@ function renderAutoLaunchPanes() {
       el('option', { value: 'set', selected: mode === 'set' }, 'Automated set (slideshow)'),
     );
 
+    // Which pane the controller's panel picker focuses once auto-launch has
+    // staged everything (Issue #109) - moot with only one pane, so the
+    // button only shows once there is an actual choice to make.
+    const activeBtn = count > 1 ? el('button', {
+      type: 'button',
+      class: `autolaunch-pane-active${plan.autoLaunch.activePane === key ? ' is-on' : ''}`,
+      title: 'Focus this pane on the controller once the plan loads',
+      onclick: () => {
+        plan.autoLaunch.activePane = key;
+        touch();
+        renderAutoLaunchPanes();
+      },
+    }, 'Active on load') : null;
+
     const header = el('div', { class: 'autolaunch-pane-header' },
       el('span', { class: 'pane-badge' }, `Pane ${key}${count === 1 ? ' (Full screen)' : ''}`),
+      ...(activeBtn ? [activeBtn] : []),
       modeSelect,
     );
 
@@ -1044,9 +1106,14 @@ $('#plan-import-file').addEventListener('change', async (ev) => {
 // the only thing that works on GitHub Pages, from a folder, or on a train.
 
 let serverCourses = [];
+// What #plan-push-update stages its save against (Issue #117) - the update
+// this device last saw, not "now", so the server can tell a save that has
+// not drifted from one that has.
+let currentServerPlanUpdatedAt = null;
 
-function setCurrentServerPlanId(id) {
+function setCurrentServerPlanId(id, updatedAt = null) {
   currentServerPlanId = id;
+  currentServerPlanUpdatedAt = updatedAt;
   const btn = $('#plan-push-update');
   if (btn) btn.hidden = !id;
 }
@@ -1097,7 +1164,7 @@ $('#plan-push').addEventListener('click', async () => {
       : `Sent — on the iPad now, and yours alone${wanted ? ` (there is no course "${wanted}" here to file it under)` : ''}.`;
     // This copy IS the one just created - a follow-up edit can now update it
     // in place instead of sending yet another new row.
-    setCurrentServerPlanId(body.plan.id);
+    setCurrentServerPlanId(body.plan.id, body.plan.updatedAt);
     await refreshServerPlans();
   } catch (err) {
     note.textContent = err.message;
@@ -1106,8 +1173,14 @@ $('#plan-push').addEventListener('click', async () => {
 
 // Only ever visible once currentServerPlanId is known - see setCurrentServerPlanId
 // and #plan-server's markup, which starts this button [hidden].
-$('#plan-push-update').addEventListener('click', async () => {
-  await commit();
+//
+// Staged against currentServerPlanUpdatedAt (Issue #117): if someone else -
+// another device, another tab, a co-instructor with the same course - saved
+// this plan since it was last opened or pushed here, the server refuses with
+// 409 rather than one save silently erasing the other. `force` retries with
+// no base at all, which the server takes as "skip the check" - the explicit,
+// deliberate way to say "overwrite it anyway" once a person has agreed to that.
+async function pushPlanUpdate({ force = false } = {}) {
   const note = $('#plan-push-note');
   if (!currentServerPlanId) return;
   const wanted = String(plan.course || '').trim().toLowerCase();
@@ -1117,15 +1190,32 @@ $('#plan-push-update').addEventListener('click', async () => {
       method: 'PUT',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: plan.title, course: matched?.code || '', doc: planToJson(plan) }),
+      body: JSON.stringify({
+        title: plan.title, course: matched?.code || '', doc: planToJson(plan),
+        ...(force ? {} : { baseUpdatedAt: currentServerPlanUpdatedAt }),
+      }),
     });
+    if (res.status === 409) {
+      if (confirm('This lecture changed on the server since it was opened here - probably from another device or tab. '
+        + 'Overwrite the server\'s copy with what is on this one?')) {
+        await pushPlanUpdate({ force: true });
+      } else {
+        note.textContent = 'Not sent. Pull the server\'s copy first to see what changed, or push again once you are sure.';
+      }
+      return;
+    }
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'that did not work');
+    currentServerPlanUpdatedAt = body.plan.updatedAt;
     note.textContent = `Updated — the copy already on the server now matches this${matched ? `, shared with ${matched.code}` : ''}.`;
     await refreshServerPlans();
   } catch (err) {
     note.textContent = err.message;
   }
+}
+$('#plan-push-update').addEventListener('click', async () => {
+  await commit();
+  await pushPlanUpdate();
 });
 
 $('#plan-pull').addEventListener('click', async () => {
@@ -1140,7 +1230,7 @@ $('#plan-pull').addEventListener('click', async () => {
     // newPlan() resets this (it resets for every OTHER caller too - a new
     // blank lecture, a local one, an import), so it is set back only here,
     // once the pulled plan is actually the one on screen.
-    setCurrentServerPlanId(id);
+    setCurrentServerPlanId(id, body.plan.updatedAt);
     warn(warnings.length ? `Opened with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}` : '');
   } catch (err) {
     warn(`That lecture did not open: ${err.message}`);
@@ -1227,8 +1317,8 @@ $('#plan-save-template').addEventListener('click', async () => {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'that did not work');
-    note.textContent = `Saved — new lectures for ${body.saved.course} can start from this.`;
     await refreshTemplates();
+    note.textContent = `Saved — new lectures for ${body.saved.course} can start from this.`;
   } catch (err) {
     note.textContent = err.message;
   }
@@ -1242,14 +1332,23 @@ $('#plan-remove-template').addEventListener('click', async () => {
     const res = await fetch(`/api/templates/${encodeURIComponent(course)}`, { method: 'DELETE', credentials: 'same-origin' });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'that did not work');
-    note.textContent = `Removed — new lectures for ${course} start blank again.`;
     await refreshTemplates();
+    note.textContent = `Removed — new lectures for ${course} start blank again.`;
   } catch (err) {
     note.textContent = err.message;
   }
 });
 
 serverInfo().then((info) => {
+  // Issue #108: whether serverUploadField() offers uploading a PDF/video/
+  // audio file straight to the server, rather than only a typed path.
+  // Checked async, so an item editor already open for one of those types
+  // when this resolves is re-rendered once, to pick the field up rather
+  // than needing a reselect.
+  if (info.features.includes('library')) {
+    serverLibraryUpload = true;
+    renderEditor();
+  }
   if (!info.features.includes('plans')) return;
   $('#plan-server').hidden = false;
   refreshServerPlans();
