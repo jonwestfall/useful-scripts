@@ -201,11 +201,11 @@ const fails = [];
 const errors = [];
 const ok = (label, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + label); if (!cond) fails.push(label); };
 
-// page.waitForFunction's own polling has come back resolved-but-wrong on a
-// background tab in a many-page context here - the direct fetch it drives
-// checks out fine called the same way through evaluate(), so this drives the
-// same check from here instead, on a plain timer. Prefer waitForFunction
-// everywhere it has proven reliable; reach for this only where it hasn't.
+// For any check that has to await something in the page (a fetch, a cache).
+// page.waitForFunction does NOT await a predicate that returns a Promise: the
+// Promise itself is truthy, so an async predicate "passes" on its first call
+// without its condition ever being checked. This awaits each attempt through
+// evaluate(), which does. Synchronous checks are fine with waitForFunction.
 async function pollUntil(page, fn, arg, { timeout = 15000, interval = 300 } = {}) {
   const deadline = Date.now() + timeout;
   for (;;) {

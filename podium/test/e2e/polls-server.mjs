@@ -1485,7 +1485,7 @@ await twoCtx.close();
 // else could have: the relay only ever sees ciphertext (see
 // server/lectures.js), so a lecture is only ever recorded by the one device
 // that holds the decrypted state.
-await desk.waitForFunction(async () => {
+await pollUntil(desk, async () => {
   const res = await fetch('/api/lectures', { credentials: 'same-origin' });
   if (!res.ok) return false;
   const { lectures } = await res.json();
@@ -1505,7 +1505,7 @@ ok('a server-backed controller offers the choice about keeping photos, and start
 await pad.check('#photo-keep');
 await pad.click('#photo-panel');
 await pad.waitForSelector('#photo-strip .shot', { timeout: 20000 });
-await desk.waitForFunction(async () => {
+await pollUntil(desk, async () => {
   const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
   const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' })
     .then((r) => r.json());
@@ -1518,7 +1518,7 @@ ok('a photo taken in the room is filed with the lecture as it is taken', true);
 const acctZip = pad.waitForEvent('download', { timeout: 60000 });
 await pad.click('#photo-export');
 await (await acctZip).saveAs(path.join(HERE, 'fixtures', 'acct-session.zip'));
-await desk.waitForFunction(async () => {
+await pollUntil(desk, async () => {
   const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
   const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' })
     .then((r) => r.json());
@@ -1566,7 +1566,7 @@ acctScreen.on('response', (r) => {
 // E is stand down - the way back out of a lecture without a "quit" key a
 // stray press could hit.
 await acctScreen.keyboard.press('e');
-await desk.waitForFunction(async (id) => {
+await pollUntil(desk, async (id) => {
   const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
   return lectures.find((l) => l.id === id)?.endedAt > 0;
 }, inkLectureId, { timeout: 15000 });
@@ -1636,7 +1636,7 @@ ok(`an export built after standing down still gets filed under the lecture that 
 // in control.js) - checking it above must not silently carry into the next one.
 await acctScreen.click('#arm-button');
 await acctScreen.waitForSelector('#hud[data-status="online"]');
-await desk.waitForFunction(async () => {
+await pollUntil(desk, async () => {
   const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
   return lectures.some((l) => !l.endedAt);
 }, null, { timeout: 15000 });
@@ -1651,7 +1651,7 @@ await acctScreen.keyboard.press('e');
 // Clean up the lecture that existed only to prove the reset above, so the
 // checks that follow find exactly the one lecture they expect - see
 // firstLectureId.
-await desk.waitForFunction(async () => {
+await pollUntil(desk, async () => {
   const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
   return lectures.every((l) => l.endedAt);
 }, null, { timeout: 15000 });
@@ -1757,7 +1757,7 @@ ok(`a past lecture downloads as a session zip again (${rebuiltFile.suggestedFile
 
 await desk.fill('#sessions .admin-name', 'Day 6 — Weighing the Evidence');
 await desk.dispatchEvent('#sessions .admin-name', 'change');
-await desk.waitForFunction(async () => {
+await pollUntil(desk, async () => {
   const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
   return lectures[0]?.title === 'Day 6 — Weighing the Evidence';
 }, null, { timeout: 8000 });
@@ -1908,7 +1908,7 @@ const openLectures = () => ctrlA.evaluate(async () => {
   const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
   return lectures.filter((l) => !l.endedAt);
 });
-await ctrlA.waitForFunction(async () => {
+await pollUntil(ctrlA, async () => {
   const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
   return lectures.some((l) => !l.endedAt);
 }, null, { timeout: 15000 });

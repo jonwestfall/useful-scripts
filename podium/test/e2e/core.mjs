@@ -18,6 +18,7 @@ import {
   CFG,
   browser,
   ok,
+  pollUntil,
   want,
   trap,
   bgMatches,
@@ -1346,7 +1347,7 @@ ok(`the controller is installable: a manifest served as ${shell.type?.split(';')
 ok('with a real PNG for the iOS home screen, and a theme colour',
   shell.iconOk && shell.theme === '#0b0d10');
 
-await pad.waitForFunction(async () => {
+await pollUntil(pad, async () => {
   const reg = await navigator.serviceWorker.getRegistration();
   return !!reg?.active;
 }, null, { timeout: 15000 }).catch(() => {});
