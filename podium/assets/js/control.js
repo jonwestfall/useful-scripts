@@ -4454,6 +4454,7 @@ function renderConnection() {
   else label = `Display connected${display.rtt ? ` · ${display.rtt} ms` : ''} · build ${BUILD}`;
 
   $('#display-state').textContent = label;
+  $('.topbar-status').title = label;
   $('#display-state').classList.toggle('is-bad', !display || !!mismatch);
   $('#peer-count').textContent = others.length ? `+${others.length} other controller${others.length > 1 ? 's' : ''}` : '';
 

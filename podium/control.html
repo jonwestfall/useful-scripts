@@ -29,11 +29,16 @@ try {
 <div id="app" hidden>
   <div class="topbar">
     <a class="brand" href="index.html" title="Back to Podium">PODIUM</a>
-    <span id="status" data-status="connecting">Connecting…</span>
-    <span id="display-state">No display connected</span>
-    <span id="peer-count"></span>
-    <span id="plan-name" hidden></span>
-    <span class="spacer"></span>
+    <!-- Status text changes on its own (a heartbeat's round-trip time, a
+         second controller joining), so it takes only leftover room and trims
+         itself rather than wrapping the bar - a wrap moves every button in it,
+         including one that is being held down for a photo. -->
+    <div class="topbar-status">
+      <span id="status" data-status="connecting">Connecting…</span>
+      <span id="display-state">No display connected</span>
+      <span id="peer-count"></span>
+      <span id="plan-name" hidden></span>
+    </div>
     <div id="clock-widget" class="clock-widget">
       <span id="topbar-clock" class="topbar-clock" title="Current time"></span>
       <button id="topbar-pacing" class="topbar-pacing" type="button" title="Lecture pacing timer (tap to start or reset)" hidden>

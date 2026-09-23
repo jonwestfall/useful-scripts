@@ -479,6 +479,13 @@ body.control.is-frozen { background: #171006; }
 .topbar .brand { font-weight: 700; color: var(--ink); letter-spacing: .04em; text-decoration: none; }
 .topbar .brand:hover { text-decoration: underline; }
 .topbar .spacer { flex: 1; }
+/* A zero flex-basis and a fixed min-width mean the wrap point depends only on
+   a constant, never on what the status text currently says: the group grows
+   into leftover room and ellipsizes past it. */
+.topbar-status {
+  flex: 3 1 0; min-width: 200px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.topbar-status > * + * { margin-left: 10px; }
 .version-tag { font-size: 11px; color: var(--dim); opacity: 0.75; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .version-stamp { font-size: 11px; color: var(--dim); opacity: 0.7; text-align: center; margin: 20px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 #status::before { content: '●'; margin-right: 6px; color: var(--dim); }
