@@ -371,6 +371,73 @@ async function checkService(healthUrl) {
   }
 }
 
+/**
+ * Plain HTTP answering (checkService, above) does not prove the relay
+ * actually relays. A reverse-proxy change that drops the Upgrade/Connection
+ * headers WebSocket needs, or a firewall rule scoped to one port's protocol,
+ * can leave /healthz answering 200 while every controller and display in the
+ * building sits on "Reconnecting…" - exactly the failure this command exists
+ * to catch, and exactly the one a plain fetch() cannot (Issue #118).
+ *
+ * Two real sockets in one throwaway room, not one: a single connection
+ * proves only that the handshake completes, and the relay never echoes a
+ * sender's own message back to it (see podium-server.js's message handler) -
+ * so this needs a second peer actually receiving what the first sent to
+ * prove the room's own message-forwarding path, not just the upgrade.
+ */
+async function checkRelay(healthUrl) {
+  if (!healthUrl) return say('warn', 'relay', 'no health URL to try (pass --health-url)');
+  let wsUrl;
+  try {
+    const u = new URL(healthUrl);
+    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    u.pathname = '/podium';
+    u.search = `?room=doctor-${crypto.randomBytes(6).toString('hex')}`;
+    wsUrl = u.toString();
+  } catch (err) {
+    return say('warn', 'relay', `could not derive a relay URL from ${healthUrl} (${err.message})`);
+  }
+
+  const WebSocket = require('ws');
+  return new Promise((resolve) => {
+    let a, b, settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { a?.terminate(); } catch { /* already closing */ }
+      try { b?.terminate(); } catch { /* already closing */ }
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish(say('bad', 'relay',
+      `no message round-tripped through ${wsUrl.replace(/\?.*$/, '')} within 4s`,
+      'HTTP answers but the WebSocket path may not - check a reverse proxy is forwarding Upgrade/Connection headers, and that nothing blocks WS specifically.')),
+      4000);
+
+    try {
+      a = new WebSocket(wsUrl);
+      b = new WebSocket(wsUrl);
+    } catch (err) {
+      finish(say('bad', 'relay', `could not open a socket to ${wsUrl.replace(/\?.*$/, '')} (${err.message})`,
+        'systemctl status podium.service, and check for a reverse proxy in front of it.'));
+      return;
+    }
+    let aOpen = false, bOpen = false;
+    const pingIfBothOpen = () => { if (aOpen && bOpen) a.send('doctor-ping'); };
+    a.on('open', () => { aOpen = true; pingIfBothOpen(); });
+    b.on('open', () => { bOpen = true; pingIfBothOpen(); });
+    b.on('message', (data) => {
+      if (data.toString() === 'doctor-ping') {
+        finish(say('ok', 'relay', `${wsUrl.replace(/\?.*$/, '')} round-trips a message between two peers`));
+      }
+    });
+    a.on('error', (err) => finish(say('bad', 'relay', `socket could not connect to ${wsUrl.replace(/\?.*$/, '')} (${err.message})`,
+      'HTTP answers but the WebSocket path may not - check a reverse proxy is forwarding Upgrade/Connection headers.')));
+    b.on('error', (err) => finish(say('bad', 'relay', `socket could not connect to ${wsUrl.replace(/\?.*$/, '')} (${err.message})`,
+      'HTTP answers but the WebSocket path may not - check a reverse proxy is forwarding Upgrade/Connection headers.')));
+  });
+}
+
 // --- running them -------------------------------------------------------------
 
 /**
@@ -412,6 +479,7 @@ async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, en
   await attempt(() => checkBuild(releaseDir, healthUrl));
   await attempt(() => checkCertificate(certPath));
   await attempt(() => checkService(healthUrl));
+  await attempt(() => checkRelay(healthUrl));
   return found;
 }
 
@@ -447,4 +515,5 @@ module.exports = {
   checkBuild,
   checkCertificate,
   checkService,
+  checkRelay,
 };

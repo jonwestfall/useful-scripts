@@ -29,7 +29,7 @@ export async function connect({ cfg, onMessage, onStatus, clientId }) {
   try {
     mqtt = (await import(/* @vite-ignore */ CDN)).default;
   } catch (err) {
-    throw new Error(`Could not load the MQTT client from ${new URL(CDN).host} — this network is probably blocking it. Self-hosted WebSocket needs no CDN. (${err?.message || err})`);
+    throw new Error(`Could not load the MQTT client from ${new URL(CDN).host} — this network is probably blocking it. Self-hosted WebSocket needs no CDN. (${err?.message || err})`, { cause: err });
   }
   const topic = `podium/${cfg.room}`;
   const where = `${base.protocol}//${base.host}${base.pathname}`;

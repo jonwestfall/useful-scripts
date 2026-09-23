@@ -16,7 +16,7 @@ export async function connectTransport(name, opts) {
     // Only the self-hosted adapter is local; the other two pull a client
     // library off a CDN, which is the first thing a locked-down campus
     // network blocks. Naming the adapter beats a bare "import failed".
-    throw new Error(`Could not load the ${entry.label} adapter: ${err?.message || err}`);
+    throw new Error(`Could not load the ${entry.label} adapter: ${err?.message || err}`, { cause: err });
   }
   return mod.connect(opts);
 }

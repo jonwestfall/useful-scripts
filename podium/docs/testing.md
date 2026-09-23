@@ -91,6 +91,19 @@ node podium/test/protocol.test.mjs
 
 ---
 
+## 1a. Linting (`eslint.config.mjs`)
+
+A minimal correctness pass (Issue #123) - `eslint:recommended` (`no-undef`, `no-unused-vars`, and the rest of that set) plus `eqeqeq` in its `smart` mode, which still catches a stray `==` between two real values but leaves the codebase's own `x == null` idiom (null-or-undefined, on purpose, in dozens of places) alone. It is deliberately not a style or formatting pass - nothing in it reformats a line of existing code.
+
+Nothing is committed for it, the same ad-hoc-install approach as the E2E job's Playwright install below:
+```bash
+cd podium
+npm install eslint@10.11.0 @eslint/js@10.0.1 globals@17.12.0
+npx eslint .
+```
+
+---
+
 ## 2. Server Diagnostics (`doctor.js`)
 
 On self-hosted instances (`server/`), Podium includes an autonomous diagnostics tool that inspects the running database, media directory, permissions, build alignment, and schema integrity:
@@ -179,5 +192,6 @@ node podium/test/e2e.mjs --only freeze
 ## 4. Continuous Integration (CI)
 
 All tests are automated in GitHub Actions (`.github/workflows/podium-tests.yml`):
+- **Lint Job:** Runs ESLint (see above) on every push and pull request touching `podium/**`.
 - **Fast Unit Test Job:** Runs immediately on every push and pull request touching `podium/**`.
 - **E2E Integration Job:** Runs Playwright headless test across matrix environments to prevent regressions.

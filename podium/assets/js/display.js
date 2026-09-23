@@ -11,11 +11,12 @@
 import {
   $, $$, el, uid, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell,
   enterFullscreen, exitFullscreen, toggleFullscreen, isFullscreen, onFullscreenChange,
+  safeStorageSet,
 } from './util.js';
 import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl } from './config.js';
 import { createBus } from './bus.js';
 import {
-  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION, COMMIT, versionStamp,
+  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION, versionStamp,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
@@ -23,9 +24,20 @@ import { encodeToFit } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
 import { createCameraReceiver } from './rtc.js';
 import { serverInfo } from './server.js';
+import { createAssetResolver } from './assets.js';
 
 const HEARTBEAT_MS = 2000;
 const TELEMETRY_MS = 400;
+
+// One-time warning that this browser stopped saving something (Issue #116) -
+// most of all saveStateNow()'s crash-recovery snapshot, which is what makes a
+// reload or a crash mid-lecture recoverable at all. Registered before
+// anything else runs, since setup below can itself be the first write to
+// fail - a listener added later would miss that report entirely
+// (reportStorageFailure only ever fires once per page). It never fades like
+// #hud does: there is nothing to reconnect to, the risk lasts until the tab
+// closes.
+window.addEventListener('podium:storage-failed', () => { $('#storage-warn').hidden = false; });
 
 const stage = $('#stage');
 const inkCanvas = $('#ink');
@@ -84,24 +96,61 @@ function getDeckSource(item) {
 // carrying it. That indirection is not incidental - the item lives in `state`,
 // which is broadcast to every controller twice a second, and it is the key ink
 // surfaces are addressed by. A data URL inline would make both enormous.
-const assetStore = new Map();
-const assetWanted = new Set();
-
-// A 1x1 transparent GIF: what the projector shows for the moment between an
-// item going up and its photo arriving, rather than a broken-image icon.
-const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-
-// Called only where an item is handed to a RENDERER, never on the way into
+//
+// Shared with control.js (Issue #124) - see assets.js. resolveAssets() is
+// called only where an item is handed to a RENDERER, never on the way into
 // `state`: resolving it any earlier would make this screen's ink surface keys
 // and layer keys disagree with every controller's.
-function resolveAssets(item) {
-  if (!item || typeof item.src !== 'string' || !item.src.startsWith('asset:')) return item;
-  const id = item.src.slice(6);
-  if (assetStore.has(id)) return { ...item, src: assetStore.get(id) };
-  assetWanted.add(id);
-  bus?.send({ t: 'asset-need', id });
-  return { ...item, src: BLANK_PIXEL };
+const { store: assetStore, wanted: assetWanted, want: wantAsset, resolveAssets } = createAssetResolver(() => bus);
+
+// Issue #120: unlike control.js's own assetStore (pruned on photo-drop and on
+// leaving a plan - see forgetPlanAssets/addPhoto there), this one only ever
+// grew - every photo, camera still and watermark shown over a session that is
+// meant to stay open for hours accumulated here with no way out.
+//
+// A count cap rather than a byte budget, matching the same choice control.js
+// already made for its own photo strip (MAX_PHOTOS): simpler, and a data URL
+// downscaled for the relay is already capped small (see MAX_ASSET_CHARS in
+// planfile.js) so a count cap bounds total memory closely enough.
+//
+// Never evicts anything actually referenced right now - the current/cued
+// item on every panel, or the watermark - even if that pushes the store
+// briefly over the cap; only what nothing on screen needs any more. Losing
+// something NOT currently shown is harmless either way: resolveAssets() and
+// the 'asset'/'asset-need' exchange above already treat a cache miss as
+// normal and just ask again, the same tolerance that makes a controller
+// reloading mid-lecture work at all.
+// Overridable so an e2e test can prove eviction without staging 40+ photos
+// to reach it - unset in production, where this is always exactly 40.
+const MAX_ASSET_ENTRIES = Number(window.__PODIUM_TEST_MAX_ASSET_ENTRIES__) || 40;
+
+function referencedAssetIds() {
+  const ids = new Set();
+  const note = (item) => {
+    if (item?.src?.startsWith?.('asset:')) ids.add(item.src.slice(6));
+  };
+  note(state.program);
+  note(state.preview);
+  for (const panel of state.panels) note(panel);
+  if (state.watermark?.image?.startsWith('asset:')) ids.add(state.watermark.image.slice(6));
+  return ids;
 }
+
+function pruneAssetStore() {
+  if (assetStore.size <= MAX_ASSET_ENTRIES) return;
+  const keep = referencedAssetIds();
+  // Map iterates oldest-inserted first, same "oldest first out" rule
+  // control.js's own photo strip already uses.
+  for (const id of assetStore.keys()) {
+    if (assetStore.size <= MAX_ASSET_ENTRIES) break;
+    if (keep.has(id)) continue;
+    assetStore.delete(id);
+  }
+}
+// A Map's size is not sensitive - this is here purely so an e2e test can
+// observe eviction actually happening, the same reason the cap above is
+// overridable.
+window.__podiumAssetStoreSize = () => assetStore.size;
 
 // A controller can be mid-reload when we ask, so keep asking for a while.
 setInterval(() => {
@@ -109,10 +158,11 @@ setInterval(() => {
     if (deckStore.has(id)) { deckWanted.delete(id); continue; }
     bus?.send({ t: 'deck-need', id });
   }
-  for (const id of assetWanted) {
+  for (const id of assetWanted.keys()) {
     if (assetStore.has(id)) { assetWanted.delete(id); continue; }
-    bus?.send({ t: 'asset-need', id });
+    wantAsset(id);
   }
+  pruneAssetStore();
 }, 3000);
 
 // --- content layers, split across up to four panels ------------------------
@@ -260,11 +310,40 @@ function syncLayers() {
     }
   }
 
+  // Issue #110: picture-in-picture shows exactly two of the (up to four)
+  // independently staged panes - one full screen (main), one as a small
+  // bordered inset - decided by role rather than by panel count the way
+  // every other layout decides visibility. A pane that is neither stays
+  // mounted underneath regardless, same as an unfocused tab, ready the
+  // instant either role picks it - see LAYOUTS.pip's own comment for why
+  // it reports 4.
+  const isPip = state.layout === 'pip';
+  const CORNERS = ['tl', 'tr', 'bl', 'br'];
+  const applyPipRole = (slot, isMain, isInset) => {
+    slot.classList.toggle('is-pip-main', isMain);
+    slot.classList.toggle('is-pip-inset', isInset);
+    for (const corner of CORNERS) slot.classList.toggle(`corner-${corner}`, isInset && state.pip.corner === corner);
+    slot.style.width = isInset ? `${state.pip.size}%` : '';
+    slot.style.height = isInset ? `${state.pip.size}%` : '';
+  };
+
+  // Panel A is always mounted (it is where the arming/standby screen itself
+  // lives before anything is picked); only its visibility is new here.
+  const aIsMain = isPip && state.pip.main === 'A';
+  const aIsInset = isPip && state.pip.inset === 'A';
+  slotA.classList.toggle('is-on', !isPip || aIsMain || aIsInset);
+  applyPipRole(slotA, aIsMain, aIsInset);
+
   // B/C/D: only as many as the current layout actually shows.
   const panelCount = LAYOUTS[state.layout] || 1;
+  const PANEL_LETTERS = ['B', 'C', 'D'];
   extraLayers.forEach((layer, i) => {
     const item = i + 1 < panelCount ? state.panels[i] : null;
-    layer.slot.classList.toggle('is-on', !!item);
+    const letter = PANEL_LETTERS[i];
+    const isMain = isPip && state.pip.main === letter;
+    const isInset = isPip && state.pip.inset === letter;
+    layer.slot.classList.toggle('is-on', !!item && (!isPip || isMain || isInset));
+    applyPipRole(layer.slot, isMain, isInset);
     if (!item) { if (layer.key) freeLayer(layer); return; }
     if (layer.key !== item.key) mount(layer, item);
     else layer.renderer.update(resolveAssets(item));
@@ -846,10 +925,10 @@ function syncMusic() {
           musicEl.currentTime = targetTime;
         } else {
           musicEl.addEventListener('loadedmetadata', () => {
-            try { musicEl.currentTime = targetTime; } catch {}
+            try { musicEl.currentTime = targetTime; } catch { /* track changed again before it loaded */ }
           }, { once: true });
         }
-      } catch {}
+      } catch { /* track changed again before it loaded */ }
     }
     if (music.playing && musicFade && musicFadeTo <= 0.005) {
       clearInterval(musicFade);
@@ -975,18 +1054,13 @@ function hideSpotlight() {
 // outlasts everything else on the stage), and it never takes a panel.
 
 // Resolves the same `asset:<id>` scheme every panel item uses, but called
-// from render() - every heartbeat - rather than once at mount time, so it
-// cannot reuse resolveAssets() as-is: that function unconditionally sends
-// asset-need on every call while unresolved, which here would mean asking
-// once a second for as long as a slow connection takes to answer. Piggybacks
-// on the same assetWanted set and its periodic re-ask loop instead, and only
-// sends the first time a given id goes unresolved.
+// from render() - every heartbeat - rather than once at mount time. Used to
+// need its own copy of resolveAssets() for that (see Issue #124): the asking
+// side is throttled now, in the one place both screens share it, so calling
+// straight through is no longer "ask once a second for as long as a slow
+// connection takes to answer".
 function watermarkImageSrc(ref) {
-  if (!ref || !ref.startsWith('asset:')) return ref || '';
-  const id = ref.slice(6);
-  if (assetStore.has(id)) return assetStore.get(id);
-  if (!assetWanted.has(id)) { assetWanted.add(id); bus?.send({ t: 'asset-need', id }); }
-  return BLANK_PIXEL;
+  return resolveAssets({ src: ref || '' }).src;
 }
 
 function renderWatermark() {
@@ -1697,16 +1771,14 @@ function inkStorageKey() {
 function saveInkNow() {
   clearTimeout(inkSaveTimer);
   {
-    try {
-      // Without `cleared`: what a Clear stashed is undoable for as long as the
-      // surface is on screen, not something to carry to next term, and keeping
-      // it would double what the ink of a wiped board costs on disk.
-      const saved = {};
-      for (const [key, surface] of Object.entries(state.ink.bySurface)) {
-        saved[key] = { strokes: surface.strokes, touched: surface.touched };
-      }
-      localStorage.setItem(inkStorageKey(), JSON.stringify(saved));
-    } catch { /* quota or private mode */ }
+    // Without `cleared`: what a Clear stashed is undoable for as long as the
+    // surface is on screen, not something to carry to next term, and keeping
+    // it would double what the ink of a wiped board costs on disk.
+    const saved = {};
+    for (const [key, surface] of Object.entries(state.ink.bySurface)) {
+      saved[key] = { strokes: surface.strokes, touched: surface.touched };
+    }
+    safeStorageSet(localStorage, inkStorageKey(), JSON.stringify(saved));
   }
 }
 
@@ -1743,7 +1815,7 @@ function stateStorageKey() {
 
 function saveStateNow() {
   clearTimeout(stateSaveTimer);
-  try {
+  {
     const { program, panels, layout, focus, timers, overlay, volume, contentVolume, muted, music, watermark } = state;
     // Everywhere else, only the `asset:<id>` reference goes into state and
     // the bytes are fetched fresh from whoever still holds them (see
@@ -1755,14 +1827,17 @@ function saveStateNow() {
     // answer it - the one controller that uploaded it may be long gone by
     // the time this screen asks again.
     const watermarkImageData = watermark.image?.startsWith('asset:') ? assetStore.get(watermark.image.slice(6)) : undefined;
-    localStorage.setItem(stateStorageKey(), JSON.stringify({
+    // This is the crash-recovery net (Issue #116) - if it silently stops
+    // persisting, a lecture just will not come back after a reload, and
+    // nothing said so until the day it mattered.
+    safeStorageSet(localStorage, stateStorageKey(), JSON.stringify({
       savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, contentVolume, muted, watermark, watermarkImageData,
       // The queue, not the playing: a reload lands on the arming screen, and
       // music that started itself the moment someone clicked Go live would be
       // a surprise in a room that had gone quiet.
       music: { ...music, playing: false },
     }));
-  } catch { /* quota or private mode - the lecture just will not come back */ }
+  }
 }
 
 function saveStateSoon() {
@@ -1788,7 +1863,7 @@ installOfflineShell();
 // What was on screen, if this tab is coming back rather than starting fresh.
 // Returns the item's name for the arming screen to mention, or null.
 function restoreState() {
-  let saved = null;
+  let saved;
   try { saved = JSON.parse(localStorage.getItem(stateStorageKey()) || 'null'); } catch { return null; }
   if (!saved || typeof saved !== 'object') return null;
   if (!Number.isFinite(saved.savedAt) || Date.now() - saved.savedAt > STATE_MAX_AGE_MS) return null;
@@ -1923,6 +1998,7 @@ async function connect() {
         if (!msg.id || typeof msg.data !== 'string') return;
         assetStore.set(msg.id, msg.data);
         assetWanted.delete(msg.id);
+        pruneAssetStore();
         syncLayers();
         // Same reason a deck redraws ink when it finishes mounting: until the
         // photo arrived, contentAspect() was answering for a 1x1 placeholder,
@@ -1991,6 +2067,7 @@ async function connect() {
             // and ask the room to send the 160 KB it produced itself straight
             // back to it.
             assetStore.set(id, shot.dataUrl);
+            pruneAssetStore();
             bus.send({ t: 'shot', id, target: msg.target, title: shot.title, data: shot.dataUrl, tooBig: !!shot.tooBig });
           })
           .catch((err) => bus.send({ t: 'shot-failed', to: msg.from, target: msg.target, reason: err?.message || String(err) }));
@@ -2281,8 +2358,8 @@ document.addEventListener('keydown', (ev) => {
   if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
 
   switch (ev.key) {
+    // Shift+/ on most layouts, but not all - accept the bare key too.
     case '?':
-      // Shift+/ on most layouts, but not all - accept the bare key too.
     case '/':
       ev.preventDefault();
       toggleShortcuts();

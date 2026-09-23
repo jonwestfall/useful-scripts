@@ -407,7 +407,7 @@ function renderWeb(item, opts) {
   const navigate = (dir) => {
     const win = frame.contentWindow;
     if (!win) return;
-    let sameOrigin = false;
+    let sameOrigin;
     try { sameOrigin = !!win.document; } catch { sameOrigin = false; }
     if (sameOrigin) {
       const reveal = win.Reveal;
@@ -445,7 +445,7 @@ function renderWeb(item, opts) {
 const pdfAspectCache = new Map();
 export function pdfAspectFor(src) { return pdfAspectCache.get(src) || null; }
 
-function renderPdf(item, opts) {
+function renderPdf(item) {
   const node = el('div', { class: 'r-fill r-pdf' });
   const canvas = el('canvas', { class: 'r-pdf-canvas' });
   let pageNumber = item.page || 1;
@@ -469,7 +469,11 @@ function renderPdf(item, opts) {
   node.appendChild(canvas);
 
   const render = async () => {
-    if (!window.pdfjsLib || !src) {
+    // Nothing picked yet (a freshly added item, before an upload or a typed
+    // path lands) - render nothing rather than an iframe whose src is the
+    // literal string "undefined", which the browser dutifully fetches.
+    if (!src) { node.replaceChildren(); return; }
+    if (!window.pdfjsLib) {
       node.replaceChildren(el('iframe', {
         class: 'r-frame',
         src: `${src}#page=${pageNumber}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,
@@ -495,7 +499,7 @@ function renderPdf(item, opts) {
       if (isDestroyed) return;
 
       if (currentRenderTask) {
-        try { currentRenderTask.cancel(); } catch {}
+        try { currentRenderTask.cancel(); } catch { /* already finished or already cancelled */ }
         currentRenderTask = null;
       }
 
@@ -583,7 +587,7 @@ function renderPdf(item, opts) {
     destroy() {
       isDestroyed = true;
       if (currentRenderTask) {
-        try { currentRenderTask.cancel(); } catch {}
+        try { currentRenderTask.cancel(); } catch { /* already finished or already cancelled */ }
         currentRenderTask = null;
       }
       currentDoc = null;

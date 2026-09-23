@@ -34,7 +34,7 @@ function computePacing(elapsedSec, durationMins) {
   const isNearEnd = !isOvertime && elapsedSec >= totalSec * 0.85;
   const pct = isOvertime ? 100 : Math.min(100, Math.round((elapsedSec / totalSec) * 100));
 
-  let label = '';
+  let label;
   if (isOvertime) {
     const overSec = elapsedSec - totalSec;
     label = `+${fmtTime(overSec)} (${durationMins}m)`;

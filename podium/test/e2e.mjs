@@ -334,6 +334,14 @@ const TEMPLATE_WRITE_FORBIDDEN = /403 \(Forbidden\).*\/api\/templates\/[^/]+$/;
 // for the one narrow window that test creates, same safety net as those.
 let expectingPollLost = false;
 
+// An eighth: PUT /api/plans/<id> answering 409 once its updatedAt has moved
+// past what this device staged its save against (Issue #117's e2e section,
+// which deliberately saves the same plan out from under itself to prove the
+// warning). Same text-only match as the poll-lost case above and for the
+// same reason: a fetch()-triggered console message here carries no location
+// URL to anchor on the way a resource-tag load does.
+let expectingPlanConflict = false;
+
 const trap = (page, tag) => {
   // The console message for a failed fetch and the network response that
   // caused it are two different CDP domains, and PR #86's own CI run showed
@@ -379,6 +387,7 @@ const trap = (page, tag) => {
     if (expectingLectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     if (expectingRecoveryConflict && RECOVERY_CONFLICT.test(where)) return;
     if (expectingTemplateWriteForbidden && TEMPLATE_WRITE_FORBIDDEN.test(where)) return;
+    if (expectingPlanConflict && /responded with a status of 409/.test(text)) return;
     // Killing and restarting a relay process (Issue #115's e2e section) is
     // its own brief burst of expected noise: a connection-refused while the
     // old process is down and the new one is not up yet, then a 404 once it
@@ -3396,7 +3405,7 @@ const alive = (page) => page.$$eval('.layer[data-role="program"]', (n) => n.leng
           return;
         }
         await route.fulfill({ response: res });
-      } catch (e) { /* ignore disposed */ }
+      } catch { /* ignore disposed */ }
     }),
   );
   await page.waitForSelector('#hud[data-status="online"]', { timeout: 15000 }).catch(() => {});
@@ -3512,6 +3521,28 @@ const planJson = await desk.evaluate(async () => {
 fs.writeFileSync(planFile, planJson);
 ok(`the plan writes as one self-contained file (${(planJson.length / 1024).toFixed(0)} KB, photo and slides inside it)`,
   planJson.includes('data:image/jpeg') && planJson.includes('Weighing the Evidence'));
+
+// Issue #109: which pane the controller focuses once auto-launch has staged
+// everything, editable right alongside where each pane itself is set up.
+// After planJson above, so nothing here is baked into the file that gets
+// loaded on the tablet later in this section.
+await desk.click('#plan-layout .layout-btn[data-layout="2h"]');
+await desk.check('#plan-autolaunch-enable');
+await desk.waitForSelector('#plan-autolaunch-panes .autolaunch-pane-card');
+ok('with more than one pane, each offers a way to make it the one that starts focused',
+  (await desk.$$('.autolaunch-pane-active')).length === 2);
+ok('pane A is the default', await desk.evaluate(() => document.querySelectorAll('.autolaunch-pane-active')[0].classList.contains('is-on')));
+
+await desk.locator('.autolaunch-pane-active').nth(1).click();
+ok('picking pane B moves the choice there, not both at once', await desk.evaluate(() => {
+  const btns = document.querySelectorAll('.autolaunch-pane-active');
+  return !btns[0].classList.contains('is-on') && btns[1].classList.contains('is-on');
+}));
+
+// Shrinking back to one pane leaves nothing to choose between.
+await desk.click('#plan-layout .layout-btn[data-layout="single"]');
+ok('and with a single pane the button disappears entirely, not just the extra ones',
+  (await desk.$$('.autolaunch-pane-active')).length === 0);
 
 // It really is reloadable from disk on this machine too.
 const desk2 = await office.newPage();
@@ -3630,16 +3661,22 @@ fs.writeFileSync(autoPlanFile, JSON.stringify({
   podium: 'plan',
   v: 1,
   title: 'Auto-launch demo',
-  layout: 'single',
+  layout: '2h',
   timers: [{ id: 't-intro', label: 'Intro Countdown', mins: 3 }],
   items: [
     { id: 'i-welcome', type: 'text', title: 'Welcome sign', body: 'Welcome to Class' },
+    { id: 'i-note', type: 'text', title: 'Panel B note', body: 'Group work starts now' },
   ],
   autoLaunch: {
     enabled: true,
     initialState: 'live',
+    // Issue #109: which pane the controller's own picker focuses once
+    // everything above has landed - here, deliberately not A, so this
+    // actually proves the choice rather than matching the default.
+    activePane: 'B',
     panes: {
       A: { type: 'item', itemId: 'i-welcome' },
+      B: { type: 'item', itemId: 'i-note' },
     },
     timer: {
       timerId: 't-intro',
@@ -3654,6 +3691,17 @@ await screen.waitForFunction(() => {
   return t && /Welcome to Class/.test(t.textContent);
 }, null, { timeout: 15000 });
 ok('auto-launch puts initial item live on screen upon plan load', true);
+await screen.waitForFunction(() => {
+  const t = document.querySelector('[data-panel="b"] .r-text');
+  return t && /Group work starts now/.test(t.textContent);
+}, null, { timeout: 15000 });
+ok('and stages panel B at the same time, from the same plan', true);
+
+await pad.waitForFunction(() => {
+  const btns = document.querySelectorAll('#panel-picker .panel-btn');
+  return btns[1]?.classList.contains('is-on');
+}, null, { timeout: 5000 });
+ok('the plan chose panel B to focus on load, not the default A (Issue #109)', true);
 
 await tablet.close();
 await room.close();
@@ -4704,6 +4752,122 @@ await screen.waitForFunction(() => {
 await ctx.close();
 }
 
+if (want('picture-in-picture: one pane full screen, another inset')) {
+console.log('\n-- picture-in-picture: one pane full screen, another inset --');
+const pipCtx = await browser.newContext();
+await pipCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'pip-room', passphrase: 'any two of four' }));
+const pipScreen = await pipCtx.newPage();
+trap(pipScreen, 'pip display');
+await pipScreen.goto(`${BASE}/display.html`);
+await pipScreen.click('#arm-button');
+await pipScreen.waitForSelector('#hud[data-status="online"]');
+const pipPad = await pipCtx.newPage();
+trap(pipPad, 'pip pad');
+await pipPad.goto(`${BASE}/control.html`);
+await pipPad.waitForSelector('.tile');
+await pipPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Stage three visually distinct things into A, B and C first - PiP is
+// choosing among panes already independently staged, the same as switching
+// into "4" and picking through A/B/C/D already works, not a new staging
+// path of its own.
+await pipPad.click('.layout-btn[data-layout="4"]');
+// The panel picker's B/C/D buttons only exist once this pad's own state
+// has caught up with the layout change it just sent - a separate round
+// trip from the display applying it, the same distinction the pip-main/
+// pip-inset waits below are about.
+await pipPad.waitForSelector('.panel-btn:text-is("B")');
+await pipPad.click('.tile:has(.tile-title:text-is("Whiteboard"))'); // A: light bg
+await pipPad.click('.panel-btn:text-is("B")');
+await pipPad.click('.tile:has(.tile-title:text-is("Chalkboard"))'); // B: dark bg
+await pipScreen.waitForFunction(() => document.querySelectorAll('.r-whiteboard').length === 2, null, { timeout: 8000 });
+await pipPad.click('.panel-btn:text-is("C")');
+await pipPad.click('.tab[data-tab="say"]');
+await pipPad.click('#text-open-editor');
+await pipPad.fill('#msg-body', 'Pane C');
+await pipPad.click('#message-editor-show');
+await pipScreen.waitForFunction(() => /Pane C/.test(document.querySelector('[data-panel="c"] .r-text-body')?.textContent || ''), null, { timeout: 8000 });
+ok('A, B and C each hold their own distinct content before PiP ever gets involved', true);
+
+await pipPad.click('.layout-btn[data-layout="pip"]');
+await pipScreen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-pip'), null, { timeout: 5000 });
+await pipPad.click('.tab[data-tab="say"]');
+await pipPad.waitForSelector('#pip-settings:not([hidden])', { timeout: 5000 });
+ok('the settings panel appears once PiP is the active layout', true);
+ok('defaulting to pane A full screen, pane B inset',
+  (await pipPad.inputValue('#pip-main')) === 'A' && (await pipPad.inputValue('#pip-inset')) === 'B');
+ok('the inset picker never offers the pane already chosen as main',
+  !(await pipPad.$$eval('#pip-inset option', (opts) => opts.map((o) => o.value))).includes('A'));
+
+const pipBox = (panel) => pipScreen.$eval(`[data-panel="${panel}"]`, (n) => {
+  const r = n.getBoundingClientRect();
+  return { x: r.x, y: r.y, w: r.width, h: r.height, visible: getComputedStyle(n).display !== 'none' };
+});
+const stageBox = () => pipScreen.$eval('#stage', (n) => { const r = n.getBoundingClientRect(); return { w: r.width, h: r.height }; });
+
+let [a, b, c, stage] = await Promise.all([pipBox('a'), pipBox('b'), pipBox('c'), stageBox()]);
+ok(`pane A fills the whole stage as the default main (${a.w}x${a.h} vs stage ${stage.w}x${stage.h})`,
+  Math.abs(a.w - stage.w) < 2 && Math.abs(a.h - stage.h) < 2);
+ok('pane B shows as a small inset, not full screen', b.visible && b.w < stage.w * 0.3 && b.h < stage.h * 0.3);
+ok('and pane C, staged but not chosen for PiP, is not shown at all', !c.visible);
+ok(`the inset sits in the top-right corner, ~5%% off each edge (left ${(b.x / stage.w * 100).toFixed(0)}%%, top ${(b.y / stage.h * 100).toFixed(0)}%%)`,
+  Math.abs(stage.w - (b.x + b.w)) / stage.w < 0.08 && b.y / stage.h < 0.08);
+ok(`and is close to the default 20%% of the frame (${(b.w / stage.w * 100).toFixed(0)}%%)`,
+  Math.abs(b.w / stage.w - 0.2) < 0.03);
+
+// Swap C in for B as the inset - proving a pane that was staged but never
+// shown comes up correctly the instant PiP actually picks it.
+await pipPad.selectOption('#pip-inset', 'C');
+await pipScreen.waitForFunction(() => getComputedStyle(document.querySelector('[data-panel="c"]')).display !== 'none', null, { timeout: 5000 });
+ok('choosing pane C as the inset shows it immediately, with no re-staging needed', true);
+[b, c] = await Promise.all([pipBox('b'), pipBox('c')]);
+ok('and pane B, no longer chosen, drops out of view', !b.visible);
+ok('with the content that was waiting there the whole time', /Pane C/.test(await pipScreen.textContent('[data-panel="c"] .r-text-body')));
+
+// Picking the pane already showing as main for the INSET side (not main
+// itself) is an ordinary, non-colliding change.
+await pipPad.selectOption('#pip-main', 'B');
+await pipScreen.waitForFunction(() => getComputedStyle(document.querySelector('[data-panel="b"]')).display !== 'none'
+  && getComputedStyle(document.querySelector('[data-panel="a"]')).display === 'none', null, { timeout: 5000 });
+ok('picking a new main (with no collision) swaps it straight in, dropping the old one', true);
+ok('leaving the inset (C) untouched', /Pane C/.test(await pipScreen.textContent('[data-panel="c"] .r-text-body')));
+
+// Now the genuine collision: main is B, inset is C - asking for C as main
+// too is read as "swap them", resolved by protocol.js against whatever
+// state.pip actually holds when the command lands, not refused and not
+// computed from anything this pad cached client-side.
+await pipPad.selectOption('#pip-main', 'C');
+await pipScreen.waitForFunction(() => getComputedStyle(document.querySelector('[data-panel="c"]')).display !== 'none'
+  && getComputedStyle(document.querySelector('[data-panel="b"]')).display !== 'none', null, { timeout: 5000 });
+ok('and picking the current inset as the new main swaps the two, rather than being rejected as a collision', true);
+await pipPad.waitForFunction(() => document.querySelector('#pip-main').value === 'C'
+  && document.querySelector('#pip-inset').value === 'B', null, { timeout: 5000 });
+ok('and this pad\'s own picker catches up to the swap too, not just the projector', true);
+
+// Corner and size.
+await pipPad.selectOption('#pip-corner', 'bl');
+// fill() refuses a range input outright - set it and fire the same 'input'
+// event a real drag would, which is what the size listener itself needs.
+await pipPad.evaluate(() => {
+  const input = document.querySelector('#pip-size');
+  input.value = '35';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+});
+await pipScreen.waitForFunction(() => {
+  const r = document.querySelector('[data-panel="b"]').getBoundingClientRect();
+  const s = document.querySelector('#stage').getBoundingClientRect();
+  return Math.abs(r.x - s.left) / s.width < 0.08 && Math.abs(s.bottom - r.bottom) / s.height < 0.08;
+}, null, { timeout: 5000 });
+ok('switching the corner moves the inset there, bottom-left this time', true);
+const resized = await pipBox('b');
+stage = await stageBox();
+ok(`and the size slider actually resizes it (~${(resized.w / stage.w * 100).toFixed(0)}%% now, vs ~20%% at the default)`,
+  resized.w / stage.w > 0.3);
+
+await pipCtx.close();
+}
+
 if (want('audience polls: a room full of phones answering')) {
 console.log('\n-- audience polls: a room full of phones answering --');
 // The relay is the only part of Podium that ever sees an answer in the clear,
@@ -5669,6 +5833,32 @@ await planner.goto(`${acctBase}/plan.html`);
 await planner.waitForSelector('#plan-server:not([hidden])');
 ok('the planning page offers the server when there is one', true);
 
+// Issue #108: a PDF/video/audio item can upload straight to this server's
+// library from the planner too, not just from the controller - the same
+// endpoint (Issue #82's #pdf-upload above), just reached from the desk.
+await planner.click('#type-picker .type-btn:has-text("PDF")');
+await planner.waitForSelector('#item-fields input[type=file]');
+await planner.setInputFiles('#item-fields input[type=file]', path.join(ROOT, 'content', 'sample.pdf'));
+// Two text inputs share this panel (Title, then the src path/URL field) -
+// index into the src one specifically, not whichever text input is first.
+await planner.waitForFunction(
+  () => (document.querySelectorAll('#item-fields input[type=text]')[1]?.value || '').startsWith('/media/'),
+  null, { timeout: 8000 },
+);
+ok('uploading a PDF from the planner fills the path field with a real server URL, not just a filename',
+  /^\/media\//.test(await planner.inputValue('#item-fields input[type=text] >> nth=1')));
+const plannerUploadedPdf = await planner.evaluate(async () => {
+  const res = await fetch('/api/library', { credentials: 'same-origin' });
+  const { items } = await res.json();
+  return items.some((i) => i.type === 'pdf' && i.title === 'sample');
+});
+ok('and it really landed in the library, the same place the controller\'s own upload does', plannerUploadedPdf);
+await planner.click('#plan-new');
+// newPlan() is async and re-renders the header only once it is done - wait for
+// the PDF row to leave the running order, not for an empty course field that
+// was already empty, or the title typed next gets wiped by that re-render.
+await planner.waitForFunction(() => !document.querySelector('#order .order-row'), null, { timeout: 5000 });
+
 await planner.fill('#plan-title', 'Day 6 — sent, not carried');
 await planner.fill('#plan-course', 'psy415');
 await planner.click('#plan-push');
@@ -5744,6 +5934,64 @@ ok('Update button hides itself once the plan it pointed at is gone',
   await planner.isHidden('#plan-push-update'));
 ok('and the button re-arms for the next lecture rather than staying locked',
   await planner.isEnabled('#plan-pull-delete') && await planner.textContent('#plan-pull-delete') === 'Delete from server');
+
+// -- Issue #117: warn before one save silently erases another -------------
+//
+// A second device (or tab) saving the same plan in between is simulated by
+// calling the API directly, exactly what actually happens when someone else
+// is the one who does it - this page's own Update button has no way to tell
+// the difference, which is the point.
+await planner.click('#plan-new');
+await planner.waitForFunction(() => document.querySelector('#plan-course').value === '', null, { timeout: 5000 });
+await planner.fill('#plan-title', 'Two tabs, one lecture');
+await planner.fill('#plan-course', 'psy415');
+await planner.click('#plan-push');
+await planner.waitForFunction(() => /Sent/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+const conflictPlanId = await planner.evaluate(async () => {
+  const res = await fetch('/api/plans', { credentials: 'same-origin' });
+  const { plans: rows } = await res.json();
+  return rows.find((p) => p.title === 'Two tabs, one lecture').id;
+});
+await planner.evaluate(async (id) => {
+  await fetch(`/api/plans/${id}`, {
+    method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Two tabs, one lecture (saved from the other tab)' }),
+  });
+}, conflictPlanId);
+
+await planner.fill('#plan-title', 'Two tabs, one lecture (this one)');
+// Both clicks below stage their PUT against the same now-stale
+// updatedAt (declining does not update it, so the retry after accepting
+// hits the same 409 before its own force-retry gets past it) - two
+// deliberate conflicts, not one.
+expectingPlanConflict = true;
+planner.once('dialog', (d) => d.dismiss());
+await planner.click('#plan-push-update');
+await planner.waitForFunction(() => /Not sent/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+ok('declining the overwrite prompt leaves the server copy alone, not silently applied anyway', true);
+const stillTheOtherTabs = await planner.evaluate(async (id) => {
+  const res = await fetch(`/api/plans/${id}`, { credentials: 'same-origin' });
+  return (await res.json()).plan.title;
+}, conflictPlanId);
+ok('the server still has what the "other tab" saved, not this one\'s title',
+  stillTheOtherTabs === 'Two tabs, one lecture (saved from the other tab)');
+
+planner.once('dialog', (d) => d.accept());
+await planner.click('#plan-push-update');
+await planner.waitForFunction(() => /Updated/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+expectingPlanConflict = false;
+const afterForce = await planner.evaluate(async (id) => {
+  const res = await fetch(`/api/plans/${id}`, { credentials: 'same-origin' });
+  return (await res.json()).plan.title;
+}, conflictPlanId);
+ok('agreeing to overwrite it forces the save through, this device\'s title now on the server',
+  afterForce === 'Two tabs, one lecture (this one)');
+
+await planner.selectOption('#plan-pull-pick', String(conflictPlanId));
+await planner.click('#plan-pull-delete');
+await planner.waitForFunction(() => /Tap again to delete/.test(document.querySelector('#plan-pull-delete')?.textContent || ''), null, { timeout: 3000 });
+await planner.click('#plan-pull-delete');
+await planner.waitForFunction(() => /Removed/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
 
 // -- Issue #80: a course's plan template ----------------------------------
 await planner.fill('#plan-course', 'psy415');
@@ -6842,6 +7090,171 @@ ok('the font/size/background reach the projector, the same values chosen in the 
   && await bgMatches(msgScreen, '.layer[data-role="program"] .r-text', '#552266'));
 
 await msgCtx.close();
+}
+
+if (want('display assetStore evicts old entries, not the one on screen')) {
+console.log('\n-- Issue #120: display.js prunes its assetStore instead of growing forever --');
+// The cap is overridden small (see MAX_ASSET_ENTRIES in display.js) so this
+// proves real eviction with a handful of pictures rather than the 40+ a
+// production-sized run would need.
+const evictCtx = await browser.newContext();
+await evictCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'asset-evict-room', passphrase: 'oldest first out' }));
+await evictCtx.addInitScript(() => { window.__PODIUM_TEST_MAX_ASSET_ENTRIES__ = 3; });
+
+const evictScreen = await evictCtx.newPage();
+trap(evictScreen, 'asset-evict display');
+await evictScreen.goto(`${BASE}/display.html`);
+await evictScreen.click('#arm-button');
+await evictScreen.waitForSelector('#hud[data-status="online"]');
+
+const evictPad = await evictCtx.newPage();
+trap(evictPad, 'asset-evict pad');
+await evictPad.goto(`${BASE}/control.html`);
+await evictPad.waitForSelector('.tile');
+await evictPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const evictImage = writeImageFixture();
+// One picture staged five times over, each its own fresh asset id (uid()
+// mints a new one per upload even for identical bytes) - well past the cap
+// of 3, so eviction has to actually run, more than once, for this to pass.
+for (let i = 1; i <= 5; i++) {
+  await evictPad.click('.tab[data-tab="say"]');
+  await evictPad.click('#text-open-editor');
+  await evictPad.fill('#msg-body', `Picture ${i}`);
+  await evictPad.setInputFiles('#msg-image', evictImage);
+  await evictPad.waitForFunction(() => /attached/.test(document.querySelector('#msg-image-note')?.textContent || ''), null, { timeout: 10000 });
+  await evictPad.click('#message-editor-show');
+  await evictScreen.waitForFunction((n) => document.querySelector('.layer[data-role="program"] .r-text-body')?.textContent === `Picture ${n}`, i, { timeout: 5000 });
+}
+
+const finalSize = await evictScreen.evaluate(() => window.__podiumAssetStoreSize());
+ok(`five distinct pictures staged over a cap of 3 leaves the store at the cap, not five (${finalSize})`, finalSize <= 3);
+ok('the picture actually on screen right now was never evicted to get there',
+  !!(await evictScreen.getAttribute('.layer[data-role="program"] .r-text-image', 'src')));
+ok('and it is real image data, not the blank-pixel placeholder a miss would show',
+  (await evictScreen.getAttribute('.layer[data-role="program"] .r-text-image', 'src')).startsWith('data:image/jpeg'));
+
+await evictCtx.close();
+}
+
+if (want('eraser hit-testing keeps up with a fast throttled swipe')) {
+console.log('\n-- Issue #119: erase hit-testing is throttled without losing coverage --');
+// A generous viewport, not the default: the default leaves the ink panel
+// taller than the visible window, so #pad sits partly scrolled out of view
+// and mouse coordinates computed from its (partly off-screen) bounding box
+// land nowhere near where they are meant to.
+const eraseCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await eraseCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'erase-throttle-room', passphrase: 'a fast swipe still gets both' }));
+const eraseScreen = await eraseCtx.newPage();
+trap(eraseScreen, 'erase-throttle display');
+await eraseScreen.goto(`${BASE}/display.html`);
+await eraseScreen.click('#arm-button');
+await eraseScreen.waitForSelector('#hud[data-status="online"]');
+const erasePad = await eraseCtx.newPage();
+trap(erasePad, 'erase-throttle pad');
+await erasePad.goto(`${BASE}/control.html`);
+await erasePad.waitForSelector('.tile');
+await erasePad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await erasePad.click('.tab[data-tab="ink"]');
+await erasePad.waitForSelector('#pad');
+// Measured fresh right before each use, not once up front and reused - the
+// tab switch above can still be settling its own scroll position, and #pad
+// moving between "drawn on" and "erased on" would silently aim every mouse
+// coordinate below at the wrong place on the page.
+const padBox = () => erasePad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+
+// Two strokes, well apart - "both gone" after one swipe only happens if the
+// throttled hit-test still covers the whole path, not just wherever the
+// swipe happened to be when a throttle window landed.
+let box = await padBox();
+await erasePad.mouse.move(box.x + box.w * 0.1, box.y + box.h * 0.15);
+await erasePad.mouse.down();
+for (let i = 1; i <= 8; i++) await erasePad.mouse.move(box.x + box.w * (0.1 + i * 0.02), box.y + box.h * 0.15);
+await erasePad.mouse.up();
+await erasePad.mouse.move(box.x + box.w * 0.1, box.y + box.h * 0.85);
+await erasePad.mouse.down();
+for (let i = 1; i <= 8; i++) await erasePad.mouse.move(box.x + box.w * (0.1 + i * 0.02), box.y + box.h * 0.85);
+await erasePad.mouse.up();
+
+await eraseScreen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+const paintedBefore = await eraseScreen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+ok(`two strokes, well apart, painted before erasing (${paintedBefore} px)`, paintedBefore > 200);
+
+await erasePad.click('#ink-tool-eraser');
+box = await padBox();
+// One continuous, fast swipe - many small moves with no pauses - straight
+// down the left edge, crossing BOTH strokes in a single pointer gesture:
+// exactly the shape of input that now sits behind the throttle.
+await erasePad.mouse.move(box.x + box.w * 0.12, box.y + box.h * 0.1);
+await erasePad.mouse.down();
+for (let i = 1; i <= 40; i++) await erasePad.mouse.move(box.x + box.w * 0.12, box.y + box.h * (0.1 + i * 0.02));
+await erasePad.mouse.up();
+
+await eraseScreen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+ok('a single fast swipe erases both strokes, not just the one nearer where it happened to slow down', true);
+const paintedAfter = await eraseScreen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+ok(`and the canvas is actually clear, not just flagged (${paintedAfter} px)`, paintedAfter === 0);
+
+await eraseCtx.close();
+}
+
+if (want('a local-storage write failure shows a warning on both control and display')) {
+console.log('\n-- Issue #116: a failed local save is surfaced, not silent --');
+// Storage.prototype.setItem is patched to throw for every page in this
+// context - the same shape of failure quota or private browsing produces -
+// so this proves the actual banner, not just that safeStorageSet caught
+// something somewhere.
+const failCtx = await browser.newContext();
+await failCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'storage-fail-room', passphrase: 'nothing is actually being kept' }));
+await failCtx.addInitScript(() => {
+  Storage.prototype.setItem = () => { throw new DOMException('quota', 'QuotaExceededError'); };
+});
+
+const failScreen = await failCtx.newPage();
+trap(failScreen, 'storage-fail display');
+await failScreen.goto(`${BASE}/display.html`);
+await failScreen.click('#arm-button');
+await failScreen.waitForSelector('#hud[data-status="online"]');
+ok('the display banner is not shown before anything has actually failed to save',
+  await failScreen.evaluate(() => document.querySelector('#storage-warn').hidden));
+
+const failPad = await failCtx.newPage();
+trap(failPad, 'storage-fail pad');
+await failPad.goto(`${BASE}/control.html`);
+await failPad.waitForSelector('.tile');
+await failPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Nothing is live yet, so picking a tile puts it straight on screen -
+// changing display's state, which schedules its debounced crash-recovery
+// snapshot (saveStateSoon -> saveStateNow, 1200ms).
+await failPad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await failScreen.waitForSelector('.r-whiteboard');
+await failScreen.waitForFunction(() => !document.querySelector('#storage-warn').hidden, null, { timeout: 5000 });
+ok('the display shows its own banner once its crash-recovery save actually fails', true);
+
+// A plain write on the controller (preview-toggle persists whether the cue
+// bar is shown) exercises the same safeStorageSet() path there, independently.
+await failPad.click('#preview-toggle');
+await failPad.waitForFunction(() => !document.querySelector('#storage-warning').hidden, null, { timeout: 5000 });
+ok('the controller shows its own banner too, not borrowed from the display', true);
+ok('with a real, specific detail line, not just "something is wrong"',
+  /reload or crash/.test(await failPad.textContent('#storage-warning-detail')));
+
+await failCtx.close();
 }
 
 if (want('back to the landing page')) {

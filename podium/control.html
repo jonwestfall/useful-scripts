@@ -29,11 +29,16 @@ try {
 <div id="app" hidden>
   <div class="topbar">
     <a class="brand" href="index.html" title="Back to Podium">PODIUM</a>
-    <span id="status" data-status="connecting">Connecting…</span>
-    <span id="display-state">No display connected</span>
-    <span id="peer-count"></span>
-    <span id="plan-name" hidden></span>
-    <span class="spacer"></span>
+    <!-- Status text changes on its own (a heartbeat's round-trip time, a
+         second controller joining), so it takes only leftover room and trims
+         itself rather than wrapping the bar - a wrap moves every button in it,
+         including one that is being held down for a photo. -->
+    <div class="topbar-status">
+      <span id="status" data-status="connecting">Connecting…</span>
+      <span id="display-state">No display connected</span>
+      <span id="peer-count"></span>
+      <span id="plan-name" hidden></span>
+    </div>
     <div id="clock-widget" class="clock-widget">
       <span id="topbar-clock" class="topbar-clock" title="Current time"></span>
       <button id="topbar-pacing" class="topbar-pacing" type="button" title="Lecture pacing timer (tap to start or reset)" hidden>
@@ -66,6 +71,9 @@ try {
       <button class="layout-btn" data-layout="4" type="button" title="Four panels">
         <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
       </button>
+      <button class="layout-btn" data-layout="pip" type="button" title="Picture in picture">
+        <span class="layout-icon layout-icon-pip"><i></i><i></i></span>
+      </button>
     </div>
     <div id="panel-picker" class="panel-picker" hidden></div>
     <!-- The fast way out of "I wanted C full screen and switching to single
@@ -92,6 +100,16 @@ try {
     <b>This page is running an old copy.</b>
     <span id="update-detail"></span>
     <button id="update-reload" type="button">Reload now</button>
+  </div>
+
+  <!-- Shown once per page load if a save to localStorage throws - quota,
+       private browsing, or a locked-down profile. Detection is generic
+       (see safeStorageSet in util.js); this is the one place that tells
+       anyone that preferences, the library, poll history or drafts are
+       not actually being kept (Issue #116). -->
+  <div id="storage-warning" hidden>
+    <b>This browser would not save something just now.</b>
+    <span id="storage-warning-detail"></span>
   </div>
 
   <div id="relay-help" hidden>
@@ -472,6 +490,31 @@ try {
               <button id="watermark-image-clear" type="button" hidden>Remove image</button>
             </div>
             <div id="watermark-note" class="hint"></div>
+          </div>
+          <!-- Only shown once the layout picker's own PiP button is on - see
+               #layout-picker above and pipPanel.render in control.js. Which
+               two panes, out of the same up-to-four this device can already
+               stage into under the "4" layout, is picked here rather than
+               fixed by position the way every other layout's panes are. -->
+          <div class="stack" id="pip-settings" hidden>
+            <label for="pip-main">Picture-in-picture — one pane full screen, another as a small inset
+              over a corner of it</label>
+            <div class="inline">
+              <span class="hint">Full screen</span>
+              <select id="pip-main" aria-label="Main pane (full screen)"></select>
+              <span class="hint">Inset</span>
+              <select id="pip-inset" aria-label="Inset pane"></select>
+            </div>
+            <div class="inline">
+              <select id="pip-corner" aria-label="Inset corner">
+                <option value="tr">Top right</option>
+                <option value="tl">Top left</option>
+                <option value="br">Bottom right</option>
+                <option value="bl">Bottom left</option>
+              </select>
+              <input id="pip-size" type="range" min="10" max="50" step="5" aria-label="Inset size">
+              <span id="pip-size-label" class="hint"></span>
+            </div>
           </div>
         </section>
 

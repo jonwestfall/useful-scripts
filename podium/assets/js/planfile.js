@@ -105,22 +105,36 @@ export const PLAN_TYPES = {
   },
   pdf: {
     label: 'PDF', icon: '\u{1F4C4}',
-    blurb: 'A handout or a figure, by path on your server.',
+    blurb: 'A handout or a figure, by path on your server - or upload one straight in (Issue #108).',
     fields: [
-      { key: 'src', label: 'Path or URL', kind: 'text', placeholder: 'content/handouts/ch4.pdf' },
+      // Issue #108: uploads a real file to this server's library (the same
+      // endpoint admin.html and the controller's own PDF upload use), not a
+      // plan-embedded asset - a handout can be far bigger than the ~160KB a
+      // plan asset has to survive traveling over the relay in one message.
+      // Only shown when this Podium actually has a server with a library;
+      // see serverUploadField in plan.js.
+      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.pdf,application/pdf',
+        hint: 'Stored on the server - works from any signed-in device, nothing to carry.' },
+      { key: 'src', label: 'or a path or URL', kind: 'text', placeholder: 'content/handouts/ch4.pdf' },
       { key: 'page', label: 'Open at page', kind: 'number', def: 1, min: 1, max: 9999 },
     ],
   },
   video: {
     label: 'Video', icon: '▶',
-    blurb: 'A clip on your server. Too big to carry inside a plan, so this one is a path.',
-    fields: [{ key: 'src', label: 'Path or URL', kind: 'text', placeholder: 'content/video/reaction.mp4' }],
+    blurb: 'A clip on your server, too big to carry inside a plan - or upload one straight in (Issue #108).',
+    fields: [
+      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.mp4,.webm,video/mp4,video/webm',
+        hint: 'Stored on the server - works from any signed-in device, nothing to carry.' },
+      { key: 'src', label: 'or a path or URL', kind: 'text', placeholder: 'content/video/reaction.mp4' },
+    ],
   },
   audio: {
     label: 'Audio', icon: '♪',
-    blurb: 'Waiting music, or a clip to play with the screen black.',
+    blurb: 'Waiting music, or a clip to play with the screen black - or upload one straight in (Issue #108).',
     fields: [
-      { key: 'src', label: 'Path or URL', kind: 'text', placeholder: 'content/audio/waiting-music.wav' },
+      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.mp3,.m4a,.ogg,.wav,audio/*',
+        hint: 'Stored on the server - works from any signed-in device, nothing to carry.' },
+      { key: 'src', label: 'or a path or URL', kind: 'text', placeholder: 'content/audio/waiting-music.wav' },
       { key: 'artist', label: 'Credit', kind: 'text', placeholder: 'Who made it' },
       { key: 'loop', label: 'Loop', kind: 'check', def: false },
     ],
@@ -169,6 +183,12 @@ export function emptyAutoLaunch() {
     enabled: false,
     initialState: 'live',
     panes: { A: null, B: null, C: null, D: null },
+    // Which pane the controller's panel picker focuses once auto-launch has
+    // staged everything (Issue #109) - purely a controller-UI convenience,
+    // not what shows on the projector, so an invalid or no-longer-relevant
+    // value (the layout shrank since this was set) just falls back to A
+    // rather than needing its own warning.
+    activePane: 'A',
     music: { playlist: '', autoplay: true, volume: 0.5 },
     timer: { timerId: '' },
   };
@@ -387,6 +407,7 @@ export function readPlan(raw) {
   if (rawAuto) {
     autoLaunch.enabled = !!rawAuto.enabled;
     autoLaunch.initialState = ['live', 'freeze', 'blank'].includes(rawAuto.initialState) ? rawAuto.initialState : 'live';
+    autoLaunch.activePane = ['A', 'B', 'C', 'D'].includes(rawAuto.activePane) ? rawAuto.activePane : 'A';
 
     const rawPanes = (rawAuto.panes && typeof rawAuto.panes === 'object') ? rawAuto.panes : {};
     for (const key of ['A', 'B', 'C', 'D']) {

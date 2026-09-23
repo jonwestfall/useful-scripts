@@ -195,7 +195,7 @@ chk('durationMins is parsed and clamped',
 // --- auto-launch on plan load (Issue #52) -----------------------------------
 chk('emptyAutoLaunch provides default structure', (() => {
   const al = emptyAutoLaunch();
-  return al.enabled === false && al.initialState === 'live'
+  return al.enabled === false && al.initialState === 'live' && al.activePane === 'A'
     && al.panes.A === null && al.panes.B === null && al.panes.C === null && al.panes.D === null
     && al.music.playlist === '' && al.music.autoplay === true && al.music.volume === 0.5
     && al.timer.timerId === '';
@@ -215,6 +215,7 @@ const fullPlanDoc = {
   autoLaunch: {
     enabled: true,
     initialState: 'freeze',
+    activePane: 'B',
     panes: {
       A: { type: 'item', itemId: 'i1' },
       B: {
@@ -243,6 +244,7 @@ chk('full autoLaunch configuration round-trips cleanly', (() => {
   const al = parsedFull.plan.autoLaunch;
   return al.enabled === true
     && al.initialState === 'freeze'
+    && al.activePane === 'B'
     && al.panes.A?.type === 'item' && al.panes.A?.itemId === 'i1'
     && al.panes.B?.type === 'set' && al.panes.B?.title === 'Auto set' && al.panes.B?.mode === 'random'
     && al.panes.B?.entries.length === 2 && al.panes.B?.entries[1].seconds === 40
@@ -260,6 +262,7 @@ const invalidAutoPlan = {
   autoLaunch: {
     enabled: 'yes',
     initialState: 'invalid-state',
+    activePane: 'Z',
     panes: {
       A: { type: 'item', itemId: 'missing-item' },
       B: {
@@ -282,6 +285,7 @@ chk('invalid autoLaunch fields are sanitized and warned', (() => {
   const al = parsedInvalid.plan.autoLaunch;
   return al.enabled === true
     && al.initialState === 'live'
+    && al.activePane === 'A'
     && al.panes.A === null
     && al.panes.B === null
     && al.music.volume === 0

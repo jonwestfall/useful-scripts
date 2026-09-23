@@ -694,7 +694,6 @@ function renderPeople() {
 // else's password is a rare, deliberate act, and a page carrying a dozen empty
 // password boxes invites a browser to fill one of them in.
 function changePassword(person) {
-  // eslint-disable-next-line no-alert
   const password = prompt(`A new password for ${person.username}. Every device it is signed in on will be signed out.`);
   if (password === null) return;
   if (password.length < 8) { sayPeople('A password has to be at least 8 characters.', true); return; }
@@ -1302,7 +1301,7 @@ async function loadPreviewDeckSource() {
       previewDeckMd = await res.text();
       return previewDeckMd;
     }
-  } catch {}
+  } catch { /* falls back to the built-in preview below */ }
   previewDeckMd = `---
 marp: true
 theme: default
