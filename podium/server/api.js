@@ -31,6 +31,7 @@ const templates = require('./templates.js');
 const content = require('./content.js');
 const store = require('./store.js');
 const zipImport = require('./zip-import.js');
+const zipStaging = require('./zip-staging.js');
 
 const COOKIE = 'podium_session';
 const API_VERSION = 1;
@@ -587,6 +588,65 @@ async function handleApi(req, res, url, ctx) {
       });
       res.end(csv);
       return true;
+    }
+
+    // --- ZIP imports (Issue #106) ------------------------------------------
+    //
+    // Upload stages and inspects; the review screen then commits or cancels.
+    // Every step after the upload is the uploader's alone (see loadJob).
+
+    if (head === 'import' && rest[0] === 'zip') {
+      const id = rest[1];
+      if (rest.length === 1 && req.method === 'POST') {
+        const surface = url.searchParams.get('surface') === 'admin' ? 'admin' : 'planner';
+        if (surface === 'admin' && !user.isAdmin) {
+          json(res, 403, { error: 'only an administrator can import into the content folders' });
+          return true;
+        }
+        const uploadMb = zipImport.uploadMbSetting(ctx.db, store);
+        // Refused before a byte is read when the browser says up front how
+        // big it is, which it does for a file.
+        const declared = Number(req.headers['content-length'] || 0);
+        if (declared > uploadMb * 1024 * 1024) {
+          json(res, 413, { error: `This ZIP is ${Math.round(declared / 1024 / 1024)} MB; the most this server takes is ${uploadMb} MB.` });
+          return true;
+        }
+        const job = await zipStaging.stage({
+          db: ctx.db, dataDir: ctx.dataDir, user, surface, stream: req, uploadMb,
+          archiveName: url.searchParams.get('filename') || 'Import.zip',
+          contentDir: content.resolveRoots(ctx).contentDir,
+        });
+        json(res, 200, { job });
+        return true;
+      }
+      if (rest.length === 2 && req.method === 'GET') {
+        json(res, 200, { job: await zipStaging.getJob(ctx.dataDir, user, id) });
+        return true;
+      }
+      if (rest.length === 2 && req.method === 'DELETE') {
+        json(res, 200, await zipStaging.cancel(ctx.dataDir, user, id));
+        return true;
+      }
+      if (rest.length === 3 && rest[2] === 'preview' && req.method === 'GET') {
+        const { type, body } = await zipStaging.preview(ctx.dataDir, user, id, url.searchParams.get('path') || '');
+        res.writeHead(200, {
+          'content-type': type,
+          'x-content-type-options': 'nosniff',
+          'content-security-policy': "default-src 'none'; sandbox",
+          'cache-control': 'private, no-store',
+        });
+        res.end(body);
+        return true;
+      }
+      if (rest.length === 3 && rest[2] === 'commit' && req.method === 'POST') {
+        const body = await readJson(req, 512 * 1024);
+        const result = await zipStaging.commit(ctx, user, id, body);
+        auditLog(ctx, req, user, 'zip_imported', {
+          surface: result.surface, imported: result.imported.length, skipped: result.skipped.length, failed: result.failed.length,
+        });
+        json(res, 200, result);
+        return true;
+      }
     }
 
     // --- system settings (Issue #72) --------------------------------------

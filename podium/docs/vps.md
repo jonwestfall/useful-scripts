@@ -263,6 +263,21 @@ disappearing, not somebody being unable to take back the wrong upload thirty
 seconds later. A TA's own upload is theirs to remove. A member can only ever
 remove their own, and nobody below owner can touch anyone else's.
 
+**Importing a ZIP (Issue #106).** `POST /api/import/zip?surface=planner|admin`
+takes the archive the same way (raw body), refuses it up front if
+`content-length` is over the admin setting, and keeps it unextracted under
+`DATA_DIR/zip-staging/<id>/` while the review screen is open. `yauzl` reads the
+central directory only; the file count, folder depth and unpacked size are
+checked from that before a byte is inflated, and a stream that turns out
+larger than its header claimed is an error. `POST …/<id>/commit` then reads
+only the entries that were kept: into the media store and `library_items` for
+the planner (a picture deck is one item whose slides are rows in
+`library_item_files`, which `mayReadMedia` and `forgetMediaIfUnused` both
+consult), or into `content/` for an admin. The admin surface is
+administrators only, since it is the one that may bring in HTML. A staged
+upload belongs to the account that sent it, is removed on commit or cancel,
+and is swept after two hours; one account keeps at most three.
+
 ### Phase 3 — plans and settings ✅
 
 `plans` and `course_settings`. `plan.html` gains "send to the server" and "open

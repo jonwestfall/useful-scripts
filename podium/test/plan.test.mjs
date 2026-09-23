@@ -293,6 +293,24 @@ chk('invalid autoLaunch fields are sanitized and warned', (() => {
     && parsedInvalid.warnings.length > 0;
 })());
 
+// --- starting in picture-in-picture (Issue #131) --------------------------------
+{
+  chk('a new plan carries PiP defaults: A full screen, B inset top right at 20%',
+    JSON.stringify(emptyPlan().pip) === JSON.stringify({ main: 'A', inset: 'B', corner: 'tr', size: 20 }));
+  const doc = (pip, layout = 'pip') => JSON.stringify({ podium: 'plan', v: PLAN_VERSION, layout, pip, items: [] });
+  const read = readPlan(doc({ main: 'C', inset: 'A', corner: 'bl', size: 35 })).plan;
+  chk('a plan can start in the pip layout', read.layout === 'pip');
+  chk('with its own panes, corner and size', read.pip.main === 'C' && read.pip.inset === 'A' && read.pip.corner === 'bl' && read.pip.size === 35);
+  chk('and they round-trip', JSON.stringify(readPlan(planToJson(read)).plan.pip) === JSON.stringify(read.pip));
+  const same = readPlan(doc({ main: 'B', inset: 'B' })).plan.pip;
+  chk('one pane cannot be both - the inset moves off the main pane', same.main === 'B' && same.inset === 'A');
+  const junk = readPlan(doc({ main: 'Z', inset: 7, corner: 'middle', size: 500 })).plan.pip;
+  chk('nonsense falls back to the defaults, and size is clamped to 50',
+    junk.main === 'A' && junk.inset === 'B' && junk.corner === 'tr' && junk.size === 50);
+  chk('a plan from before PiP settings existed still loads, with the defaults',
+    JSON.stringify(readPlan(doc(undefined, '2h')).plan.pip) === JSON.stringify(emptyPlan().pip));
+}
+
 // --- picture decks (Issue #106) ------------------------------------------------
 {
   const slides = Array.from({ length: 80 }, (_, i) => `/media/${'a'.repeat(64)}/Slide${i + 1}.png`);

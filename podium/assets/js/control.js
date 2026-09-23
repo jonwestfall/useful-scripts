@@ -515,6 +515,12 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
   } else if (plan.layout && plan.layout !== 'single') {
     send({ op: 'layout', mode: plan.layout });
   }
+  // Issue #131: a plan that starts in picture-in-picture says which two panes
+  // it shows and where the inset sits.
+  if (plan.layout === 'pip' && plan.pip) {
+    const { main, inset, corner, size } = plan.pip;
+    send({ op: 'pip', main, inset, corner, size });
+  }
   if (plan.timers.length) {
     // Ids carried through from the plan, so its countdown items name the same
     // clocks the display just created.
