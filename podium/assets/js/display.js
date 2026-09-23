@@ -24,6 +24,7 @@ import { encodeToFit } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
 import { createCameraReceiver } from './rtc.js';
 import { serverInfo } from './server.js';
+import { createAssetResolver } from './assets.js';
 
 const HEARTBEAT_MS = 2000;
 const TELEMETRY_MS = 400;
@@ -95,24 +96,12 @@ function getDeckSource(item) {
 // carrying it. That indirection is not incidental - the item lives in `state`,
 // which is broadcast to every controller twice a second, and it is the key ink
 // surfaces are addressed by. A data URL inline would make both enormous.
-const assetStore = new Map();
-const assetWanted = new Set();
-
-// A 1x1 transparent GIF: what the projector shows for the moment between an
-// item going up and its photo arriving, rather than a broken-image icon.
-const BLANK_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-
-// Called only where an item is handed to a RENDERER, never on the way into
+//
+// Shared with control.js (Issue #124) - see assets.js. resolveAssets() is
+// called only where an item is handed to a RENDERER, never on the way into
 // `state`: resolving it any earlier would make this screen's ink surface keys
 // and layer keys disagree with every controller's.
-function resolveAssets(item) {
-  if (!item || typeof item.src !== 'string' || !item.src.startsWith('asset:')) return item;
-  const id = item.src.slice(6);
-  if (assetStore.has(id)) return { ...item, src: assetStore.get(id) };
-  assetWanted.add(id);
-  bus?.send({ t: 'asset-need', id });
-  return { ...item, src: BLANK_PIXEL };
-}
+const { store: assetStore, wanted: assetWanted, want: wantAsset, resolveAssets } = createAssetResolver(() => bus);
 
 // Issue #120: unlike control.js's own assetStore (pruned on photo-drop and on
 // leaving a plan - see forgetPlanAssets/addPhoto there), this one only ever
@@ -169,9 +158,9 @@ setInterval(() => {
     if (deckStore.has(id)) { deckWanted.delete(id); continue; }
     bus?.send({ t: 'deck-need', id });
   }
-  for (const id of assetWanted) {
+  for (const id of assetWanted.keys()) {
     if (assetStore.has(id)) { assetWanted.delete(id); continue; }
-    bus?.send({ t: 'asset-need', id });
+    wantAsset(id);
   }
   pruneAssetStore();
 }, 3000);
@@ -1036,18 +1025,13 @@ function hideSpotlight() {
 // outlasts everything else on the stage), and it never takes a panel.
 
 // Resolves the same `asset:<id>` scheme every panel item uses, but called
-// from render() - every heartbeat - rather than once at mount time, so it
-// cannot reuse resolveAssets() as-is: that function unconditionally sends
-// asset-need on every call while unresolved, which here would mean asking
-// once a second for as long as a slow connection takes to answer. Piggybacks
-// on the same assetWanted set and its periodic re-ask loop instead, and only
-// sends the first time a given id goes unresolved.
+// from render() - every heartbeat - rather than once at mount time. Used to
+// need its own copy of resolveAssets() for that (see Issue #124): the asking
+// side is throttled now, in the one place both screens share it, so calling
+// straight through is no longer "ask once a second for as long as a slow
+// connection takes to answer".
 function watermarkImageSrc(ref) {
-  if (!ref || !ref.startsWith('asset:')) return ref || '';
-  const id = ref.slice(6);
-  if (assetStore.has(id)) return assetStore.get(id);
-  if (!assetWanted.has(id)) { assetWanted.add(id); bus?.send({ t: 'asset-need', id }); }
-  return BLANK_PIXEL;
+  return resolveAssets({ src: ref || '' }).src;
 }
 
 function renderWatermark() {
