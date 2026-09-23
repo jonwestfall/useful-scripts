@@ -15,6 +15,8 @@ import {
   spawn,
   execFileSync,
   writeImageFixture,
+  writeSlideFixtures,
+  SLIDE_COLOURS,
   freePort,
   PORT,
   BASE,
@@ -29,6 +31,7 @@ import {
   teardown,
   exitWithResult
 } from './harness.mjs';
+import { createZip } from '../../assets/js/zip.js';
 
 try {
 if (want('planning in the office, teaching from the plan')) {
@@ -1004,6 +1007,9 @@ console.log('\n-- signing in to a server with accounts --');
 const acctPort = await freePort();
 const acctBase = `http://127.0.0.1:${acctPort}`;
 const acctData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-data-'));
+// The admin ZIP import writes into the content folders; pointed somewhere
+// disposable so it never touches the repo's own content/.
+const acctContent = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-content-'));
 
 // The first account cannot come from a web form - a page that lets an
 // anonymous visitor make the first admin is a page that hands the box to
@@ -1019,7 +1025,7 @@ const acctServer = spawn(process.execPath, ['podium-server.js'], {
   cwd: path.join(ROOT, 'server'),
   // AUTH_PASSWORD is set on purpose: accounts must win, and the Basic Auth
   // door must be shut while they do.
-  env: { ...process.env, PORT: String(acctPort), STATIC: '../', DATA_DIR: acctData, AUTH_PASSWORD: 'should-be-ignored' },
+  env: { ...process.env, PORT: String(acctPort), STATIC: '../', DATA_DIR: acctData, CONTENT_DIR: acctContent, AUTH_PASSWORD: 'should-be-ignored' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 acctServer.stderr.on('data', (d) => process.stderr.write(`[acct-server] ${d}`));
@@ -1843,6 +1849,163 @@ const upgradeStatus = (cookie) => new Promise((resolve) => {
 ok(`the relay socket refuses a stranger who knows the room name (${await upgradeStatus('')})`,
   (await upgradeStatus('')) === 401);
 
+// --- Issue #106: a whole folder at once, reviewed before it is imported ---
+{
+  const slidePngs = writeSlideFixtures().map((rel) => fs.readFileSync(path.join(ROOT, rel)));
+  const zipFile = async (name, entries) => {
+    const file = path.join(acctData, name);
+    fs.writeFileSync(file, Buffer.from(await (await createZip(entries)).arrayBuffer()));
+    return file;
+  };
+
+  // The planner: into the server library, and this lecture's running order.
+  const lectureZip = await zipFile('Week 9.zip', [
+    ...slidePngs.map((data, i) => ({ name: `Memory/Slide${i + 1}.png`, data })),
+    // Not byte-identical to the sample.pdf uploaded above, which the import
+    // would rightly call "already in library".
+    { name: 'handout.pdf', data: Buffer.concat([fs.readFileSync(path.join(ROOT, 'content', 'sample.pdf')), Buffer.from('\n% zip import\n')]) },
+    { name: 'Old deck.pptx', data: 'not really a pptx' },
+    { name: '__MACOSX/._Slide1.png', data: 'junk' },
+  ]);
+  const zipPlanner = await acctCtx.newPage();
+  trap(zipPlanner, 'zip planner');
+  await zipPlanner.goto(`${acctBase}/plan.html`);
+  await zipPlanner.waitForSelector('#plan-zip-box:not([hidden])', { timeout: 10000 });
+  ok('the planner offers a ZIP import once it knows there is a server library', true);
+  const orderBefore = await zipPlanner.$$eval('#order > li', (n) => n.length);
+  await zipPlanner.setInputFiles('#plan-zip .zip-file', lectureZip);
+  await zipPlanner.waitForSelector('#plan-zip .zip-review:not([hidden]) .zip-row', { timeout: 15000 });
+  const rows = await zipPlanner.$$eval('#plan-zip .zip-items .zip-row', (n) => n.map((r) => ({
+    kind: r.dataset.kind, title: r.querySelector('.zip-title').value, on: r.querySelector('input[type=checkbox]').checked,
+  })));
+  ok(`the review screen lists a picture deck and a PDF (${rows.map((r) => `${r.kind}:${r.title}`).join(', ')})`,
+    rows.length === 2 && rows.some((r) => r.kind === 'imagedeck' && r.title === 'Memory') && rows.some((r) => r.kind === 'pdf'));
+  ok('and says the PowerPoint needs a decision rather than dropping it',
+    /1 needs your input/.test(await zipPlanner.textContent('#plan-zip .zip-needs-head'))
+    && /Presentation files are not converted/.test(await zipPlanner.textContent('#plan-zip .zip-needs')));
+  ok('the course picker offers this account\'s course', (await zipPlanner.$$eval('#plan-zip .zip-course option', (o) => o.map((x) => x.value))).includes('psy415'));
+  const thumbLoaded = await zipPlanner.waitForFunction(() => {
+    const img = document.querySelector('#plan-zip .zip-row[data-kind="imagedeck"] img.zip-thumb');
+    return img?.complete && img.naturalWidth === 320;
+  }, null, { timeout: 10000 }).then(() => true, () => false);
+  ok('the deck shows a thumbnail of its first slide, read from the staged upload', thumbLoaded);
+  ok(`the button counts what will be imported ("${await zipPlanner.textContent('#plan-zip .zip-commit')}")`,
+    (await zipPlanner.textContent('#plan-zip .zip-commit')) === 'Import 2 items');
+  await zipPlanner.fill('#plan-zip .zip-row[data-kind="imagedeck"] .zip-title', 'Memory systems');
+  await zipPlanner.selectOption('#plan-zip .zip-course', 'psy415');
+  await zipPlanner.click('#plan-zip .zip-commit');
+  await zipPlanner.waitForSelector('#plan-zip .zip-result', { timeout: 20000 });
+  ok(`importing reports what arrived (${(await zipPlanner.textContent('#plan-zip .zip-result')).replace(/\s+/g, ' ').slice(0, 80)}…)`,
+    /Imported Memory systems/.test(await zipPlanner.textContent('#plan-zip .zip-result')));
+  await zipPlanner.waitForFunction((n) => document.querySelectorAll('#order > li').length === n + 2, orderBefore, { timeout: 5000 });
+  ok('and both items join this lecture\'s running order', true);
+  const libDeck = await zipPlanner.evaluate(async () => {
+    const { items } = await (await fetch('/api/library', { credentials: 'same-origin' })).json();
+    const deck = items.find((i) => i.type === 'imagedeck' && i.title === 'Memory systems');
+    if (!deck) return null;
+    const slide = await fetch(deck.images[0], { credentials: 'same-origin' });
+    return { course: deck.course, slides: deck.images.length, served: slide.status, type: slide.headers.get('content-type') };
+  });
+  ok(`the picture deck is in the library under the chosen course, its slides served (${JSON.stringify(libDeck)})`,
+    libDeck?.course === 'psy415' && libDeck.slides === 3 && libDeck.served === 200 && libDeck.type === 'image/png');
+  await zipPlanner.click('#plan-zip .zip-done');
+
+  // And it plays: picked from the controller's Library, served from /media.
+  const zipScreen = await acctCtx.newPage();
+  trap(zipScreen, 'zip display');
+  await zipScreen.goto(`${acctBase}/display.html`);
+  await zipScreen.click('#arm-button');
+  await zipScreen.waitForSelector('#hud[data-status="online"]');
+  await pad.reload();
+  await pad.waitForSelector('#library .tile');
+  await pad.fill('#lib-filter', 'Memory systems');
+  await pad.click('#library .tile:not([hidden]):has(.tile-title:text-is("Memory systems"))');
+  const firstSlide = await zipScreen.waitForFunction((rgb) => {
+    const img = document.querySelector('.layer[data-role="program"] .r-image');
+    if (!img || !img.complete || !img.naturalWidth) return false;
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    c.getContext('2d').drawImage(img, 0, 0);
+    const px = c.getContext('2d').getImageData(c.width >> 1, c.height >> 1, 1, 1).data;
+    return Math.abs(px[0] - rgb[0]) < 12 && Math.abs(px[1] - rgb[1]) < 12 && Math.abs(px[2] - rgb[2]) < 12;
+  }, SLIDE_COLOURS[0], { timeout: 10000 }).then(() => true, () => false);
+  ok('the imported picture deck plays from the controller\'s Library, first slide first', firstSlide);
+  await pad.fill('#lib-filter', '');
+  await zipScreen.close();
+
+  // The same ZIP again: what is already there is said so, and left unticked.
+  await zipPlanner.setInputFiles('#plan-zip .zip-file', lectureZip);
+  await zipPlanner.waitForSelector('#plan-zip .zip-review:not([hidden]) .zip-row', { timeout: 15000 });
+  const deckRow = '#plan-zip .zip-row[data-kind="imagedeck"]';
+  ok(`uploading it again flags the deck as already in the library ("${(await zipPlanner.textContent(`${deckRow} .zip-flag`)).trim()}")`,
+    /Already in library as “Memory systems”/.test(await zipPlanner.textContent(`${deckRow} .zip-flag`))
+    && !(await zipPlanner.isChecked(`${deckRow} input[type=checkbox]`)));
+  ok('so there is nothing to import', await zipPlanner.isDisabled('#plan-zip .zip-commit'));
+  await zipPlanner.click('#plan-zip .zip-cancel');
+  ok('Cancel puts the upload button back', await zipPlanner.isVisible('#plan-zip .zip-pick'));
+  // The DELETE goes out after the screen resets, so give it a moment.
+  const stagedNow = () => (fs.existsSync(path.join(acctData, 'zip-staging')) ? fs.readdirSync(path.join(acctData, 'zip-staging')).length : 0);
+  for (let i = 0; i < 50 && stagedNow(); i++) await zipPlanner.waitForTimeout(100);
+  ok('and nothing is left staged on the server', stagedNow() === 0);
+  await zipPlanner.close();
+
+  // The admin page: into the content folders, with a clash numbered.
+  fs.mkdirSync(path.join(acctContent, 'photos'), { recursive: true });
+  fs.writeFileSync(path.join(acctContent, 'photos', 'campus.png'), 'already here');
+  const contentZip = await zipFile('Unit 4.zip', [
+    { name: 'campus.png', data: slidePngs[0] },
+    { name: 'Talk/index.html', data: '<link rel="stylesheet" href="css/talk.css"><h1>Talk</h1>' },
+    { name: 'Talk/css/talk.css', data: 'h1 { color: red; }' },
+    { name: 'Deck/Slide1.png', data: slidePngs[1] },
+    { name: 'Deck/Slide2.png', data: slidePngs[2] },
+  ]);
+  const zipDesk = await acctCtx.newPage();
+  trap(zipDesk, 'zip admin');
+  await zipDesk.goto(`${acctBase}/admin.html`);
+  await zipDesk.waitForSelector('#admin:not([hidden])');
+  await zipDesk.click('#tab-content');
+  await zipDesk.click('.content-subtab[data-pane="tab-pane-files"]');
+  await zipDesk.setInputFiles('#content-zip-import .zip-file', contentZip);
+  await zipDesk.waitForSelector('#content-zip-import .zip-review:not([hidden]) .zip-row', { timeout: 15000 });
+  const campusRow = '#content-zip-import .zip-row[data-kind="photo"]';
+  ok(`the admin review shows a taken name with its new number before import ("${(await zipDesk.textContent(`${campusRow} .zip-flag`)).trim()}")`,
+    /content\/photos\/campus-2\.png/.test(await zipDesk.textContent(`${campusRow} .zip-flag`)));
+  ok('an exported web deck is one row, not a stylesheet and a page',
+    (await zipDesk.$$eval('#content-zip-import .zip-row[data-kind="webdeck"]', (n) => n.length)) === 1);
+  // Split the picture deck into separate photos, to prove the choice is honoured.
+  await zipDesk.selectOption('#content-zip-import .zip-row[data-kind="imagedeck"] .zip-kind', 'photo');
+  ok(`splitting the deck into photos changes the count ("${await zipDesk.textContent('#content-zip-import .zip-commit')}")`,
+    (await zipDesk.textContent('#content-zip-import .zip-commit')) === 'Import 4 items');
+  await zipDesk.click('#content-zip-import .zip-commit');
+  await zipDesk.waitForSelector('#content-zip-import .zip-result', { timeout: 20000 });
+  ok('the clash was numbered, and the original left alone',
+    fs.readFileSync(path.join(acctContent, 'photos', 'campus.png'), 'utf8') === 'already here'
+    && fs.existsSync(path.join(acctContent, 'photos', 'campus-2.png')));
+  ok('the web deck kept its folder layout',
+    fs.existsSync(path.join(acctContent, 'slides', 'Talk', 'index.html')) && fs.existsSync(path.join(acctContent, 'slides', 'Talk', 'css', 'talk.css')));
+  ok('and the split deck became two photos',
+    fs.existsSync(path.join(acctContent, 'photos', 'Slide1.png')) && fs.existsSync(path.join(acctContent, 'photos', 'Slide2.png')));
+  const manifestItems = JSON.parse(fs.readFileSync(path.join(acctContent, 'manifest.json'), 'utf8')).items;
+  ok(`each import was added to the Library manifest under the ZIP's name (${manifestItems.map((i) => i.type).join(', ')})`,
+    manifestItems.length === 4 && manifestItems.every((i) => i.group === 'Unit 4'));
+  await zipDesk.click('.content-subtab[data-pane="tab-pane-manifest"]');
+  await zipDesk.waitForFunction(() => /Talk/.test(document.querySelector('#manifest-items-list')?.textContent || ''), null, { timeout: 5000 });
+  ok('and the manifest list on the page shows them without a reload', true);
+
+  // Only an administrator writes into the content folders.
+  // From here rather than a page: the 403 is the point, not console noise.
+  const taLogin = await fetch(`${acctBase}/api/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'ta', password: 'a good long password too' }),
+  });
+  const taCookie = (taLogin.headers.get('set-cookie') || '').split(';')[0];
+  const memberPost = (await fetch(`${acctBase}/api/import/zip?surface=admin&filename=x.zip`, {
+    method: 'POST', headers: { cookie: taCookie }, body: 'PK',
+  })).status;
+  ok(`a non-admin account cannot import into the content folders (${memberPost})`, memberPost === 403);
+  await zipDesk.close();
+}
+
 const signedInCookie = (await acctCtx.cookies())
   .filter((c) => c.name === 'podium_session').map((c) => `${c.name}=${c.value}`).join('; ');
 ok('the session cookie is HttpOnly, so no page script can read or leak it',
@@ -1864,6 +2027,7 @@ await acctCtx.close();
 acctServer.kill();
 await new Promise((resolve) => acctServer.on('exit', resolve));
 fs.rmSync(acctData, { recursive: true, force: true });
+fs.rmSync(acctContent, { recursive: true, force: true });
 }
 
 if (want('multiple displays and multiple controllers share one room')) {

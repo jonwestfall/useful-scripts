@@ -32,6 +32,9 @@ const MAX_UPLOAD_MB = 4096;
 const MAX_FILES = 2000;
 const MAX_DEPTH = 8;
 const MIN_UNPACKED_BYTES = 1024 * MB;
+// The most slides a picture deck plays - MAX_IMAGEDECK_SLIDES in protocol.js,
+// which the browser side enforces on its own.
+const MAX_IMAGEDECK_SLIDES = 500;
 
 function limitsFor(uploadMb = DEFAULT_UPLOAD_MB) {
   const maxUploadBytes = uploadMb * MB;
@@ -138,6 +141,9 @@ function classifyEntries(files, { surface, archiveName = 'Import' } = {}) {
       for (const m of members) claimed.add(m.path);
       items.push({
         id: id(), kind: 'webdeck', title: dir === '.' ? titleFrom(archiveName) : path.posix.basename(dir),
+        // The folder the deck lives in, so its files keep their layout under
+        // it when imported (stylesheets are linked by relative path).
+        root: dir,
         files: members.map((m) => m.path).sort(), size: members.reduce((s, m) => s + m.size, 0),
       });
     }
@@ -201,6 +207,10 @@ function classifyEntries(files, { surface, archiveName = 'Import' } = {}) {
     if (new Set(numbers).size !== numbers.length) {
       // Slide3.png and Slide3.jpg: which one is slide 3 is not a guess to make.
       needsInput.push({ id: id(), paths: files, suggestedKind: 'imagedeck', title, reason: 'Some slide numbers appear more than once, so the order is not clear. Pick the files that belong, or import them as separate photos.' });
+      continue;
+    }
+    if (files.length > MAX_IMAGEDECK_SLIDES) {
+      needsInput.push({ id: id(), paths: files, title, reason: `A picture deck can have at most ${MAX_IMAGEDECK_SLIDES} slides; this one has ${files.length}. Split the folder and upload the parts separately.` });
       continue;
     }
     items.push({ id: id(), kind: 'imagedeck', title, files, size: members.reduce((s, m) => s + m.c.size, 0) });
@@ -279,6 +289,6 @@ async function inspectZip(file, { surface, archiveName, limits } = {}) {
 }
 
 module.exports = {
-  DEFAULT_UPLOAD_MB, MAX_UPLOAD_MB, MAX_FILES, MAX_DEPTH,
+  DEFAULT_UPLOAD_MB, MAX_UPLOAD_MB, MAX_FILES, MAX_DEPTH, MAX_IMAGEDECK_SLIDES,
   ZipLimitError, limitsFor, uploadMbSetting, classifyEntries, readEntries, inspectZip,
 };

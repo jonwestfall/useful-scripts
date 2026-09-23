@@ -22,6 +22,7 @@ import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle } from './deck.js';
 import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS } from './protocol.js';
 import { mountSessionBadge, serverInfo } from './server.js';
+import { mountZipImport } from './zip-review.js';
 
 mountSessionBadge($('#session-badge'));
 
@@ -571,6 +572,47 @@ function serverUploadField(item, spec) {
     },
   });
   return field(spec.label, el('div', {}, input, note));
+}
+
+// Issue #106: a ZIP of a lecture's materials, into the server library - and,
+// unless unticked, straight into this lecture's running order as well.
+function planItemFromLibrary(li) {
+  const type = { image: 'image', deck: 'deck', pdf: 'pdf', video: 'video', audio: 'audio', imagedeck: 'imagedeck' }[li.type];
+  if (!type) return null;
+  const item = newItem(type);
+  item.title = li.title;
+  if (type === 'imagedeck') item.images = (li.images || []).join('\n');
+  else item.src = li.src;
+  return item;
+}
+
+function mountPlanZipImport() {
+  $('#plan-zip-box').hidden = false;
+  let addToOrder = null;
+  mountZipImport($('#plan-zip'), {
+    surface: 'planner',
+    loadCourses: async () => {
+      const res = await fetch('/api/library', { credentials: 'same-origin' });
+      return res.ok ? (await res.json()).courses || [] : [];
+    },
+    defaultCourse: () => plan.course || '',
+    extraOptions: () => {
+      addToOrder = el('input', { type: 'checkbox', class: 'zip-add-order', checked: true });
+      return el('label', { class: 'check' }, addToOrder, ' Also add them to this lecture\u2019s running order');
+    },
+    onImported: (result) => {
+      if (!addToOrder?.checked) return;
+      // What was already in the library is still wanted in this lecture.
+      const found = [...result.imported, ...result.skipped].map((r) => r.item).filter(Boolean);
+      const items = found.map(planItemFromLibrary).filter(Boolean);
+      if (!items.length) return;
+      const at = plan.items.findIndex((i) => i.id === selectedId);
+      plan.items.splice(at < 0 ? plan.items.length : at + 1, 0, ...items);
+      touch();
+      renderOrder();
+      renderAutoLaunch();
+    },
+  });
 }
 
 function imageField(item, spec) {
@@ -1379,6 +1421,7 @@ serverInfo().then((info) => {
   if (info.features.includes('library')) {
     serverLibraryUpload = true;
     renderEditor();
+    mountPlanZipImport();
   }
   if (!info.features.includes('plans')) return;
   $('#plan-server').hidden = false;

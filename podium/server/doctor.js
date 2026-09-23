@@ -185,13 +185,15 @@ function checkMedia(db, dataDir) {
     }
   }
 
-  // A media row neither table claims: forgetMediaIfUnused checks exactly
-  // these same two tables to decide "nothing wants this any more", so a row
+  // A media row no table claims: forgetMediaIfUnused checks exactly these
+  // same three tables to decide "nothing wants this any more", so a row
   // that never got as far as either one is invisible to it and would
   // otherwise sit there forever, correct-looking (its bytes ARE on disk) but
   // pointing at nothing.
   const orphanRows = db.prepare(`SELECT COUNT(*) AS n FROM media m
       WHERE NOT EXISTS (SELECT 1 FROM library_items li WHERE li.media_id = m.id AND li.deleted_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM library_item_files lif JOIN library_items li ON li.id = lif.item_id
+                         WHERE lif.media_id = m.id AND li.deleted_at IS NULL)
         AND NOT EXISTS (SELECT 1 FROM lecture_files lf WHERE lf.media_id = m.id)`).get().n;
 
   if (missing.length) {
