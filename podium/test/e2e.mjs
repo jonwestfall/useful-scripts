@@ -3522,6 +3522,28 @@ fs.writeFileSync(planFile, planJson);
 ok(`the plan writes as one self-contained file (${(planJson.length / 1024).toFixed(0)} KB, photo and slides inside it)`,
   planJson.includes('data:image/jpeg') && planJson.includes('Weighing the Evidence'));
 
+// Issue #109: which pane the controller focuses once auto-launch has staged
+// everything, editable right alongside where each pane itself is set up.
+// After planJson above, so nothing here is baked into the file that gets
+// loaded on the tablet later in this section.
+await desk.click('#plan-layout .layout-btn[data-layout="2h"]');
+await desk.check('#plan-autolaunch-enable');
+await desk.waitForSelector('#plan-autolaunch-panes .autolaunch-pane-card');
+ok('with more than one pane, each offers a way to make it the one that starts focused',
+  (await desk.$$('.autolaunch-pane-active')).length === 2);
+ok('pane A is the default', await desk.evaluate(() => document.querySelectorAll('.autolaunch-pane-active')[0].classList.contains('is-on')));
+
+await desk.locator('.autolaunch-pane-active').nth(1).click();
+ok('picking pane B moves the choice there, not both at once', await desk.evaluate(() => {
+  const btns = document.querySelectorAll('.autolaunch-pane-active');
+  return !btns[0].classList.contains('is-on') && btns[1].classList.contains('is-on');
+}));
+
+// Shrinking back to one pane leaves nothing to choose between.
+await desk.click('#plan-layout .layout-btn[data-layout="single"]');
+ok('and with a single pane the button disappears entirely, not just the extra ones',
+  (await desk.$$('.autolaunch-pane-active')).length === 0);
+
 // It really is reloadable from disk on this machine too.
 const desk2 = await office.newPage();
 trap(desk2, 'plan reopen');
@@ -3639,16 +3661,22 @@ fs.writeFileSync(autoPlanFile, JSON.stringify({
   podium: 'plan',
   v: 1,
   title: 'Auto-launch demo',
-  layout: 'single',
+  layout: '2h',
   timers: [{ id: 't-intro', label: 'Intro Countdown', mins: 3 }],
   items: [
     { id: 'i-welcome', type: 'text', title: 'Welcome sign', body: 'Welcome to Class' },
+    { id: 'i-note', type: 'text', title: 'Panel B note', body: 'Group work starts now' },
   ],
   autoLaunch: {
     enabled: true,
     initialState: 'live',
+    // Issue #109: which pane the controller's own picker focuses once
+    // everything above has landed - here, deliberately not A, so this
+    // actually proves the choice rather than matching the default.
+    activePane: 'B',
     panes: {
       A: { type: 'item', itemId: 'i-welcome' },
+      B: { type: 'item', itemId: 'i-note' },
     },
     timer: {
       timerId: 't-intro',
@@ -3663,6 +3691,17 @@ await screen.waitForFunction(() => {
   return t && /Welcome to Class/.test(t.textContent);
 }, null, { timeout: 15000 });
 ok('auto-launch puts initial item live on screen upon plan load', true);
+await screen.waitForFunction(() => {
+  const t = document.querySelector('[data-panel="b"] .r-text');
+  return t && /Group work starts now/.test(t.textContent);
+}, null, { timeout: 15000 });
+ok('and stages panel B at the same time, from the same plan', true);
+
+await pad.waitForFunction(() => {
+  const btns = document.querySelectorAll('#panel-picker .panel-btn');
+  return btns[1]?.classList.contains('is-on');
+}, null, { timeout: 5000 });
+ok('the plan chose panel B to focus on load, not the default A (Issue #109)', true);
 
 await tablet.close();
 await room.close();

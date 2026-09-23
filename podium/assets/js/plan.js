@@ -847,9 +847,14 @@ function renderAutoLaunchPanes() {
   if (!container || !plan) return;
   if (!plan.autoLaunch) plan.autoLaunch = emptyAutoLaunch();
   if (!plan.autoLaunch.panes) plan.autoLaunch.panes = { A: null, B: null, C: null, D: null };
+  if (!plan.autoLaunch.activePane) plan.autoLaunch.activePane = 'A';
 
   const count = LAYOUTS[plan.layout || 'single'] || 1;
   const activeKeys = ['A', 'B', 'C', 'D'].slice(0, count);
+  // A stale pick from a plan last edited under a bigger layout (see the
+  // apply-side comment in control.js) - reset here too, so the picker shown
+  // to a person editing it agrees with what will actually happen on load.
+  if (!activeKeys.includes(plan.autoLaunch.activePane)) plan.autoLaunch.activePane = 'A';
 
   container.replaceChildren(...activeKeys.map((key) => {
     const p = plan.autoLaunch.panes[key];
@@ -881,8 +886,23 @@ function renderAutoLaunchPanes() {
       el('option', { value: 'set', selected: mode === 'set' }, 'Automated set (slideshow)'),
     );
 
+    // Which pane the controller's panel picker focuses once auto-launch has
+    // staged everything (Issue #109) - moot with only one pane, so the
+    // button only shows once there is an actual choice to make.
+    const activeBtn = count > 1 ? el('button', {
+      type: 'button',
+      class: `autolaunch-pane-active${plan.autoLaunch.activePane === key ? ' is-on' : ''}`,
+      title: 'Focus this pane on the controller once the plan loads',
+      onclick: () => {
+        plan.autoLaunch.activePane = key;
+        touch();
+        renderAutoLaunchPanes();
+      },
+    }, 'Active on load') : null;
+
     const header = el('div', { class: 'autolaunch-pane-header' },
       el('span', { class: 'pane-badge' }, `Pane ${key}${count === 1 ? ' (Full screen)' : ''}`),
+      ...(activeBtn ? [activeBtn] : []),
       modeSelect,
     );
 

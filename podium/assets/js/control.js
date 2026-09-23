@@ -591,6 +591,13 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
         }
       }
 
+      // Which pane the panel picker focuses once everything above has
+      // landed (Issue #109). paneKeys is already sliced to this layout's
+      // real panes, so a stale activePane from a plan last edited under a
+      // bigger layout just falls back to A rather than being refused.
+      const activeIndex = paneKeys.indexOf(plan.autoLaunch.activePane || 'A');
+      send({ op: 'focus', index: activeIndex >= 0 ? activeIndex : 0 });
+
       if (isBlank) {
         send({ op: 'blank', on: true });
       }

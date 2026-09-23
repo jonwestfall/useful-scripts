@@ -169,6 +169,12 @@ export function emptyAutoLaunch() {
     enabled: false,
     initialState: 'live',
     panes: { A: null, B: null, C: null, D: null },
+    // Which pane the controller's panel picker focuses once auto-launch has
+    // staged everything (Issue #109) - purely a controller-UI convenience,
+    // not what shows on the projector, so an invalid or no-longer-relevant
+    // value (the layout shrank since this was set) just falls back to A
+    // rather than needing its own warning.
+    activePane: 'A',
     music: { playlist: '', autoplay: true, volume: 0.5 },
     timer: { timerId: '' },
   };
@@ -387,6 +393,7 @@ export function readPlan(raw) {
   if (rawAuto) {
     autoLaunch.enabled = !!rawAuto.enabled;
     autoLaunch.initialState = ['live', 'freeze', 'blank'].includes(rawAuto.initialState) ? rawAuto.initialState : 'live';
+    autoLaunch.activePane = ['A', 'B', 'C', 'D'].includes(rawAuto.activePane) ? rawAuto.activePane : 'A';
 
     const rawPanes = (rawAuto.panes && typeof rawAuto.panes === 'object') ? rawAuto.panes : {};
     for (const key of ['A', 'B', 'C', 'D']) {
