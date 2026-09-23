@@ -121,6 +121,12 @@
 
     <h3>Add</h3>
     <div id="type-picker" class="type-picker"></div>
+    <!-- Issue #106: only on a Podium with a server library to import into. -->
+    <div id="plan-zip-box" class="stack" hidden>
+      <h3>Or bring in a whole folder</h3>
+      <p class="hint">A ZIP of slide images, decks, PDFs, audio and video goes into this server's library. You check what Podium found before anything is imported.</p>
+      <div id="plan-zip"></div>
+    </div>
 
     <h3>Timers</h3>
     <p class="hint">Saved countdowns. These replace the iPad's 1/2/5/10/15 buttons.</p>
@@ -148,6 +154,30 @@
       <button class="layout-btn" data-layout="4" type="button" title="Four tiles">
         <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
       </button>
+      <button class="layout-btn" data-layout="pip" type="button" title="Picture in picture">
+        <span class="layout-icon layout-icon-pip"><i></i><i></i></span>
+      </button>
+    </div>
+    <div class="stack" id="plan-pip" hidden>
+      <p class="hint">Picture in picture: one pane full screen, another as a small inset over a corner. Stage what each pane shows under Auto-launch below.</p>
+      <div class="inline">
+        <label for="plan-pip-main">Full screen</label>
+        <select id="plan-pip-main"></select>
+        <label for="plan-pip-inset">Inset</label>
+        <select id="plan-pip-inset"></select>
+      </div>
+      <label for="plan-pip-corner">Inset corner</label>
+      <div class="inline">
+        <select id="plan-pip-corner">
+          <option value="tr">Top right</option>
+          <option value="tl">Top left</option>
+          <option value="br">Bottom right</option>
+          <option value="bl">Bottom left</option>
+        </select>
+        <label for="plan-pip-size">Size</label>
+        <input id="plan-pip-size" type="range" min="10" max="50" step="5">
+        <span id="plan-pip-size-label" class="hint"></span>
+      </div>
     </div>
 
     <h3>On plan load (Auto-launch)</h3>

@@ -186,3 +186,15 @@ The **Plan** page (`plan.html`) is designed for your office computer:
 - Test slide timings and configure timers.
 - Export as a single `.podium` file to load onto your iPad, or sync directly via the self-hosted server.
 - On a self-hosted server, **Update the copy already there** overwrites a lecture you previously sent instead of leaving a duplicate behind, and **Delete from server** removes one you no longer need — the plan file on your own machine, if you saved one, is untouched either way.
+- **Start in picture-in-picture.** Under *Screen layout to start in*, the PiP layout lets a plan choose which pane fills the screen, which is the inset, the inset's corner and its size. Auto-launch then stages what each pane shows when the plan is opened in class.
+
+### Importing a whole folder (ZIP)
+
+On a self-hosted server, both the planner (under **Add**) and the admin page (**Global Content → Pre-load Files**) take a ZIP of a lecture's materials at once: slide images exported from PowerPoint or Keynote, Marp decks, PDFs, audio, video and photos. Podium sorts what it finds and shows one review screen before anything is imported:
+
+- A folder of numbered images (`Slide1.png`, `Slide2.png`, … or Keynote's `Name.001.png`) becomes one **picture deck**, stepped through like any other deck. Split it into separate photos from the same row if that guess was wrong.
+- Rename anything, untick what you do not want, and decide on anything Podium was not sure about (the same slide number twice, say). PowerPoint files are not converted; export them as images or a PDF first.
+- **From the planner**, everything goes into the server library for a course you choose (or everyone), and by default into this lecture's running order too. A file already in the library is shown as such and not added twice. The planner never takes HTML.
+- **From the admin page**, files go into the matching `content/` folder; an exported web deck (a folder with an `index.html`) keeps its layout under `content/slides/`. A name that is already taken gets a number added, shown on the review screen before you import. Each item can also be added to the Library manifest.
+
+The upload is kept on the server only until you import or cancel, and is cleared away after two hours if you do neither. The largest ZIP it accepts is an admin setting (200 MB unless raised).

@@ -338,6 +338,24 @@ const MIGRATIONS = [
       );
     `);
   },
+
+  (db) => {
+    db.exec(`
+      -- The files behind a library item that is more than one file (Issue
+      -- #106): a picture deck is one item made of N slide images. media_id on
+      -- library_items still covers every one-file item; this is only the
+      -- extra files, in order, and it is what mayReadMedia and
+      -- forgetMediaIfUnused consult so that "may read" and "still in use" see
+      -- them too.
+      CREATE TABLE library_item_files (
+        item_id  INTEGER NOT NULL REFERENCES library_items(id) ON DELETE CASCADE,
+        media_id INTEGER NOT NULL REFERENCES media(id),
+        position INTEGER NOT NULL,
+        PRIMARY KEY (item_id, position)
+      );
+      CREATE INDEX library_item_files_by_media ON library_item_files(media_id);
+    `);
+  },
 ];
 
 function migrate(db) {

@@ -10,6 +10,7 @@ import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg, loadImage } from './pdf-writer.js';
 import { versionStamp } from './protocol.js';
 import { TYPES } from './renderers.js';
+import { mountZipImport } from './zip-review.js';
 
 mountSessionBadge($('#session-badge'));
 const stampEl = $('#admin-version-stamp');
@@ -1159,7 +1160,8 @@ function renderManifestItems() {
       el('span', { class: 'admin-title' },
         el('strong', {}, item.title || '(untitled)'),
         el('span', { class: 'admin-meta', style: 'margin-left:8px;' },
-          [typeSpec.label, item.group, item.order !== undefined ? `#${item.order}` : '', item.src || ''].filter(Boolean).join(' · '))
+          [typeSpec.label, item.group, item.order !== undefined ? `#${item.order}` : '',
+            item.src || (Array.isArray(item.images) ? `${item.images.length} slides` : '')].filter(Boolean).join(' · '))
       ),
       el('button', {
         type: 'button',
@@ -1254,7 +1256,9 @@ function saveManifestItemFromForm() {
   };
 
   if (editingManifestIndex >= 0) {
-    manifestData.items[editingManifestIndex] = item;
+    // Merged over what was there: the form only has the common fields, and a
+    // picture deck's slide list or a text sign's body must survive an edit.
+    manifestData.items[editingManifestIndex] = { ...manifestData.items[editingManifestIndex], ...item };
   } else {
     manifestData.items.push(item);
   }
@@ -1915,6 +1919,12 @@ function sayContent(msg, isBad = false) {
 
 function setupContentManagement() {
   setupSubtabs();
+
+  // Issue #106: import a whole folder into the category folders.
+  mountZipImport($('#content-zip-import'), {
+    surface: 'admin',
+    onImported: () => { refreshContentFiles(); refreshManifest(); },
+  });
 
   // 1. Manifest
   $('#manifest-add-btn').addEventListener('click', () => openManifestForm(-1));

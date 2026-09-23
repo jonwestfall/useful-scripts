@@ -205,6 +205,27 @@ export function emptyAutoLaunch() {
   };
 }
 
+// Which two panes picture-in-picture shows, and where the inset sits (Issue
+// #131) - the same four settings as state.pip on the display, applied when a
+// plan whose layout is 'pip' is loaded.
+const PANE_LETTERS = ['A', 'B', 'C', 'D'];
+export function emptyPip() {
+  return { main: 'A', inset: 'B', corner: 'tr', size: 20 };
+}
+function readPip(raw) {
+  const pip = emptyPip();
+  if (!raw || typeof raw !== 'object') return pip;
+  if (PANE_LETTERS.includes(raw.main)) pip.main = raw.main;
+  if (PANE_LETTERS.includes(raw.inset)) pip.inset = raw.inset;
+  // One pane cannot be both - keep the main pick and give the inset the
+  // first other letter, the same pair a fresh plan starts with.
+  if (pip.inset === pip.main) pip.inset = PANE_LETTERS.find((l) => l !== pip.main);
+  if (['tl', 'tr', 'bl', 'br'].includes(raw.corner)) pip.corner = raw.corner;
+  const size = Number(raw.size);
+  if (Number.isFinite(size)) pip.size = Math.min(50, Math.max(10, Math.round(size)));
+  return pip;
+}
+
 export function emptyPlan(title = 'Untitled lecture') {
   const now = Date.now();
   return {
@@ -218,6 +239,7 @@ export function emptyPlan(title = 'Untitled lecture') {
     created: now,
     updated: now,
     layout: 'single',
+    pip: emptyPip(),
     items: [],
     timers: [],
     assets: {},
@@ -511,7 +533,8 @@ export function readPlan(raw) {
     targetDuration: num(data.targetDuration, 50, 1, 360),
     created: Number(data.created) || Date.now(),
     updated: Number(data.updated) || Date.now(),
-    layout: ['single', '2h', '2v', '3', '4'].includes(data.layout) ? data.layout : 'single',
+    layout: ['single', '2h', '2v', '3', '4', 'pip'].includes(data.layout) ? data.layout : 'single',
+    pip: readPip(data.pip),
     items,
     timers,
     assets,

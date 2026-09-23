@@ -258,6 +258,7 @@
             <span>Type</span>
             <select id="m-type">
               <option value="deck">Marp deck</option>
+              <option value="imagedeck">Picture deck</option>
               <option value="video">Video</option>
               <option value="audio">Audio</option>
               <option value="image">Photo / Image</option>
@@ -394,6 +395,17 @@
           <button id="file-upload-btn" type="button">Upload File</button>
           <span class="hint" id="file-upload-status" role="status"></span>
         </div>
+      </div>
+
+      <!-- Issue #106: a whole folder at once. Staged on the server, reviewed
+           here, and only then written into the category folders above. -->
+      <div style="background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px; margin-bottom:14px;">
+        <h4 style="margin:0 0 6px; font-size:13px;">Import a ZIP</h4>
+        <p class="hint" style="margin:0 0 8px;">
+          Slide images, decks, audio, video, photos, PDFs and exported web decks, sorted into the folders above.
+          You review everything before it is imported; a name already taken gets a number added.
+        </p>
+        <div id="content-zip-import"></div>
       </div>
 
       <div class="admin-head">

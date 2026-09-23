@@ -1714,3 +1714,26 @@ body.plan .linkish:hover { text-decoration: underline; }
   .mock-link-label { max-width: 140px; text-align: left; }
 }
 
+
+/* ZIP import review screen (Issue #106), on the admin page and the planner. */
+.zip-review { display: grid; gap: 10px; margin-top: 8px; }
+.zip-review h3, .zip-review h4 { margin: 6px 0 0; }
+.zip-items, .zip-needs { display: grid; gap: 6px; }
+.zip-row {
+  display: grid; grid-template-columns: auto 48px 1fr; gap: 10px; align-items: center;
+  padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel);
+}
+.zip-row.zip-need { grid-template-columns: 48px 1fr; }
+.zip-row.is-off { opacity: 0.55; }
+.zip-row input[type="checkbox"] { width: 20px; height: 20px; }
+.zip-row-main { display: grid; gap: 4px; min-width: 0; }
+.zip-row-main code { overflow-wrap: anywhere; font-size: 12px; }
+.zip-row-main .hint { margin: 0; }
+.zip-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--dim); }
+.zip-meta select { min-height: 28px; height: 28px; padding: 2px 6px; font-size: 12px; width: auto; }
+.zip-thumb { width: 48px; height: 36px; object-fit: cover; border-radius: 4px; background: var(--panel-2); }
+.zip-flag { color: var(--cue); font-size: 12px; }
+.zip-target { font-size: 12px; overflow-wrap: anywhere; }
+.zip-skipped summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+.zip-skipped ul, .zip-result { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.zip-result .is-bad, .zip-status.is-bad { color: #ffb3b3; }

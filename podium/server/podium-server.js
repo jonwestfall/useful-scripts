@@ -50,6 +50,7 @@ const accounts = require('./accounts.js');
 const api = require('./api.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
+const zipStaging = require('./zip-staging.js');
 
 const PORT = Number(process.env.PORT || 8080);
 // Unset means every interface, which is what running this on a laptop for a
@@ -916,6 +917,14 @@ function sweepIdleLectures() {
 const idleSweep = db ? setInterval(sweepIdleLectures, 60 * 1000) : null;
 idleSweep?.unref();
 
+// ZIP imports waiting on a review screen nobody came back to (Issue #106).
+function sweepZipStaging() {
+  if (!db || !DATA_DIR) return;
+  zipStaging.sweep(DATA_DIR).catch((err) => console.error(`podium: ZIP staging sweep failed (${err.message})`));
+}
+const zipSweep = db ? setInterval(sweepZipStaging, 15 * 60 * 1000) : null;
+zipSweep?.unref();
+
 /** Say out loud which of the three authentication configurations is live. */
 function describeAuth() {
   if (!STATIC) return 'relay only';
@@ -953,4 +962,5 @@ server.listen(PORT, HOST || undefined, () => {
   // open: a crash or a restart mid-class is exactly the case the idle sweep
   // exists for, and waiting a minute to notice serves nobody.
   sweepIdleLectures();
+  sweepZipStaging();
 });
