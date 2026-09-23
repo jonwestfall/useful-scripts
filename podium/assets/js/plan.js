@@ -1317,8 +1317,8 @@ $('#plan-save-template').addEventListener('click', async () => {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'that did not work');
-    note.textContent = `Saved — new lectures for ${body.saved.course} can start from this.`;
     await refreshTemplates();
+    note.textContent = `Saved — new lectures for ${body.saved.course} can start from this.`;
   } catch (err) {
     note.textContent = err.message;
   }
@@ -1332,8 +1332,8 @@ $('#plan-remove-template').addEventListener('click', async () => {
     const res = await fetch(`/api/templates/${encodeURIComponent(course)}`, { method: 'DELETE', credentials: 'same-origin' });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'that did not work');
-    note.textContent = `Removed — new lectures for ${course} start blank again.`;
     await refreshTemplates();
+    note.textContent = `Removed — new lectures for ${course} start blank again.`;
   } catch (err) {
     note.textContent = err.message;
   }

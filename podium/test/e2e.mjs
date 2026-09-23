@@ -5854,7 +5854,10 @@ const plannerUploadedPdf = await planner.evaluate(async () => {
 });
 ok('and it really landed in the library, the same place the controller\'s own upload does', plannerUploadedPdf);
 await planner.click('#plan-new');
-await planner.waitForFunction(() => document.querySelector('#plan-course').value === '', null, { timeout: 5000 });
+// newPlan() is async and re-renders the header only once it is done - wait for
+// the PDF row to leave the running order, not for an empty course field that
+// was already empty, or the title typed next gets wiped by that re-render.
+await planner.waitForFunction(() => !document.querySelector('#order .order-row'), null, { timeout: 5000 });
 
 await planner.fill('#plan-title', 'Day 6 — sent, not carried');
 await planner.fill('#plan-course', 'psy415');
@@ -5875,16 +5878,9 @@ ok('a course this server does not have is saved privately, and says so rather th
 // must not need a reload to see it.
 await pad.click('.tab[data-tab="library"]');
 await pad.waitForSelector('#plan-server:not([hidden])', { timeout: 8000 });
-// A plain fetch('/api/plans') against an already-committed row (the POST
-// above only reports "Sent" after its own response lands) has no reason to
-// be slow - but this pad has been open and accumulating work since early in
-// the suite, and under a full run's load this wait has been observed to
-// occasionally run past 8s here specifically (CI's runner more consistently
-// than this sandbox's own local runs). 20s, matching the more generous
-// waits already used elsewhere in this file for a similar round trip.
 await pad.waitForFunction(
   () => [...document.querySelectorAll('#plan-server-pick option')].some((o) => o.textContent.includes('sent, not carried')),
-  null, { timeout: 20000 },
+  null, { timeout: 8000 },
 );
 const offered = await pad.$$eval('#plan-server-pick option', (els) => els.map((e) => e.textContent));
 ok(`the controller lists what is on the server (${offered.join(', ')})`,
