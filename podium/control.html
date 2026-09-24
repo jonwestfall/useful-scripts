@@ -1063,6 +1063,8 @@ try {
         <p class="hint" style="margin-bottom:10px;">
           Hide tabs you never reach for and reorder the rest — a hidden tab
           is never removed, just tucked under the tab bar's "More" button.
+          This order is also what <kbd>[</kbd> and <kbd>]</kbd> step through
+          from an attached keyboard — see <kbd>?</kbd> for the full list.
         </p>
         <div id="tab-order-list" class="tab-order-list"></div>
       </div>
@@ -1236,6 +1238,36 @@ try {
 </div>
 
 <!-- Modal: Compose full-screen message (Issue #103) -->
+<!-- Keyboard shortcuts, on ? (Issue #138). Shares #keys/.sheet/dl.keys with
+     display.html's own card, whose z-index this stylesheet already reserved
+     a slot for - the two never show at once, since they live on different
+     devices. -->
+<div id="keys" class="sheet" hidden>
+  <div class="card">
+    <h2>Keyboard shortcuts</h2>
+    <p>For a Magic Keyboard or a clicker paired to this device. Typing into a field is never intercepted.</p>
+    <dl class="keys">
+      <dt><kbd>?</kbd></dt><dd>Show or hide this card</dd>
+      <dt><kbd>B</kbd></dt><dd>Blank the screen</dd>
+      <dt><kbd>F</kbd></dt><dd>Freeze the screen</dd>
+      <dt><kbd>T</kbd></dt><dd>TAKE — send the cued item live</dd>
+      <dt><kbd>C</kbd></dt><dd>Clear the cued preview</dd>
+      <dt><kbd>W</kbd></dt><dd>Quick whiteboard</dd>
+      <dt><kbd>M</kbd></dt><dd>Play or pause the background music</dd>
+      <dt><kbd>R</kbd></dt><dd>Start, pause or resume the current timer</dd>
+      <dt><kbd>P</kbd></dt><dd>Photo of the focused panel</dd>
+      <dt><kbd>Shift</kbd>+<kbd>P</kbd></dt><dd>Photo of the whole screen</dd>
+      <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Previous / next tab</dd>
+      <dt><kbd>&larr;</kbd> <kbd>&rarr;</kbd></dt><dd>Previous / next slide or page</dd>
+      <dt><kbd>Space</kbd></dt><dd>Next slide or page — or play/pause a video, audio clip or YouTube</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close whatever is open</dd>
+    </dl>
+    <p class="hint">On the Ink tab: <kbd>1</kbd>-<kbd>5</kbd> or <kbd>E</kbd> <kbd>H</kbd> <kbd>L</kbd> <kbd>S</kbd> pick a tool, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Z</kbd> undoes.</p>
+    <p class="hint">On the Slides tab: <kbd>L</kbd> toggles the laser pointer, <kbd>S</kbd> toggles the spotlight.</p>
+    <button id="keys-close" style="margin-top:18px;width:100%">Done</button>
+  </div>
+</div>
+
 <div id="message-editor" class="sheet" hidden>
   <div class="card">
     <h1>Full-screen message</h1>
