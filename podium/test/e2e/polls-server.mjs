@@ -1827,6 +1827,33 @@ ok('a rejected rename reverts the field rather than leaving it looking saved', t
 await desk.unroute('**/api/lectures/*');
 expecting.lectureRenameForbidden = false;
 
+// --- Issue #144: bulk actions at the bottom of the Sessions tab -----------
+const allZip = desk.waitForEvent('download', { timeout: 30000 });
+await desk.click('#sess-download-all');
+const allZipFile = await allZip;
+ok(`downloading every session at once comes out as one zip (${allZipFile.suggestedFilename()})`,
+  /^podium-all-sessions-\d{4}-\d{2}-\d{2}.*\.zip$/.test(allZipFile.suggestedFilename()));
+
+// The one lecture here started moments ago, nowhere near 15 days old by any
+// real clock. Push Date.now() itself forward rather than waiting, so the age
+// math this exercises is the same code an actually-old session would hit.
+await desk.evaluate(() => {
+  const realNow = Date.now;
+  Date.now = () => realNow() + 30 * 24 * 60 * 60 * 1000;
+});
+await desk.fill('#sess-purge-days', '15');
+ok('the first click only arms the button - nothing is deleted yet',
+  await desk.evaluate(() => {
+    document.querySelector('#sess-purge-go').click();
+    return document.querySelector('#sess-purge-go').textContent.includes('Really delete');
+  }));
+await desk.click('#sess-purge-go');
+await desk.waitForFunction(() => /Removed 1 session/.test(document.querySelector('#sess-purge-note')?.textContent || ''),
+  null, { timeout: 8000 })
+  .then(() => ok('a second click removes what is older than the chosen number of days', true))
+  .catch(() => ok('a second click removes what is older than the chosen number of days', false));
+ok('and the row is gone from the list', await desk.evaluate(() => !document.querySelector('#sessions .admin-row')));
+
 await desk.close();
 await acctScreen.close();
 
