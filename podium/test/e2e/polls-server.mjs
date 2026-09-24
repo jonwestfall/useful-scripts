@@ -364,6 +364,61 @@ await tablet.close();
 await room.close();
 }
 
+if (want('adding a Countdown item gives it its own timer, not a shared one')) {
+console.log('\n-- adding a Countdown item gives it its own timer, not a shared one --');
+// A lecture can hold up to four independent countdowns (MAX_TIMERS, see
+// protocol.js). Adding a Countdown item used to always point at whichever
+// timer was created first, so every item after the first one looked like it
+// had no real choice - "Countdown - 5m" was the only option in its picker.
+const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+const desk = await ctx.newPage();
+trap(desk, 'countdown plan');
+await desk.goto(`${BASE}/plan.html`);
+await desk.waitForSelector('#type-picker .type-btn');
+
+const addCountdown = () => desk.click('#type-picker .type-btn:has-text("Countdown")');
+const timerPickOptions = () => desk.$eval('#item-fields select', (sel) => [...sel.options].map((o) => o.textContent));
+
+await addCountdown();
+ok('the first Countdown item gets a real timer, not an inert placeholder',
+  (await desk.$$eval('#timers .timer-row', (n) => n.length)) === 1);
+ok('and its own picker shows that one timer to choose from ("' + (await timerPickOptions()).join('", "') + '")',
+  (await timerPickOptions()).length === 1);
+
+await addCountdown();
+ok('a second Countdown item brings its own second timer along, rather than reusing the first',
+  (await desk.$$eval('#timers .timer-row', (n) => n.length)) === 2);
+ok(`and its picker now offers a real choice between them (${(await timerPickOptions()).join(', ')})`,
+  (await timerPickOptions()).length === 2);
+
+await addCountdown();
+await addCountdown();
+ok('a lecture can build up to four independent countdowns this way',
+  (await desk.$$eval('#timers .timer-row', (n) => n.length)) === 4);
+
+await addCountdown();
+ok('a fifth Countdown item finds no free slot left, and asks which of the four to share rather than silently picking one',
+  (await timerPickOptions())[0] === 'Choose a timer…');
+
+// Naming and sizing a timer happens right there in the Timers list - it used
+// to be a static line, unrenamable and unresizable once created.
+await desk.fill('#timers .timer-row:nth-child(1) input[type=text]', 'Group work');
+await desk.fill('#timers .timer-row:nth-child(1) input[type=number]', '12');
+ok(`renaming and resizing a timer in place reaches every item's picker immediately (${(await timerPickOptions()).join(', ')})`,
+  (await timerPickOptions()).includes('Group work · 12m'));
+
+// Removing a timer a Countdown item was actually using leaves that item
+// honestly unassigned - not silently pointed at whatever is left. The very
+// first Countdown item above was assigned to the very first timer created,
+// still the first row in the Timers list (renaming does not reorder it).
+await desk.click('#timers .timer-row:nth-child(1) button');
+await desk.click('#order .order-row:first-child');
+ok('and its picker comes back asking again, rather than pointing at a timer that no longer exists',
+  (await timerPickOptions())[0] === 'Choose a timer…');
+
+await ctx.close();
+}
+
 if (want('audience polls: a room full of phones answering')) {
 console.log('\n-- audience polls: a room full of phones answering --');
 // The relay is the only part of Podium that ever sees an answer in the clear,
