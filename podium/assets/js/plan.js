@@ -285,12 +285,20 @@ function renderTypePicker() {
     class: 'type-btn', type: 'button', title: spec.blurb,
     onclick: () => {
       const item = newItem(type);
-      // A countdown names one of the lecture's timers, so adding the first one
-      // has to bring a timer with it or the item is inert and the reason is
-      // two screens away.
+      // A countdown names one of the lecture's timers, so adding one brings
+      // its own fresh timer with it - not whichever one happened to be
+      // created first - or the item is inert and the reason is two screens
+      // away. Once every slot the room allows (MAX_TIMERS) is taken, there is
+      // nothing left to create, so this one has to share; the timer-pick
+      // field below asks which, rather than silently picking one.
       if (type === 'timer') {
-        if (!plan.timers.length) plan.timers.push({ id: uid(6), label: 'Countdown', mins: 5 });
-        item.timerId = plan.timers[0].id;
+        if (plan.timers.length < MAX_TIMERS) {
+          const timer = { id: uid(6), label: '', mins: 5 };
+          plan.timers.push(timer);
+          item.timerId = timer.id;
+        } else {
+          item.timerId = '';
+        }
       }
       const at = plan.items.findIndex((i) => i.id === selectedId);
       // Inserted after whatever is selected: you build a lecture by working
@@ -298,6 +306,7 @@ function renderTypePicker() {
       plan.items.splice(at < 0 ? plan.items.length : at + 1, 0, item);
       touch();
       select(item.id);
+      if (type === 'timer') renderTimers();
       renderAutoLaunch();
     },
   }, el('span', { class: 'type-icon' }, spec.icon), el('span', {}, spec.label))));
@@ -305,14 +314,39 @@ function renderTypePicker() {
 
 // --- timers ------------------------------------------------------------------
 
+// Refreshed everywhere a timer's name or length shows up somewhere other
+// than this list - the item chips in the running order, the item editor's
+// own timer-pick field, and the auto-launch panel's timer option.
+function afterTimerEdit() {
+  touch();
+  renderOrder();
+  renderEditor();
+  renderAutoLaunch();
+}
+
 function renderTimers() {
-  $('#timers').replaceChildren(...plan.timers.map((timer) => el('li', { class: 'timer-row' },
-    el('span', { class: 'grow' }, `${timer.label || 'Countdown'} · ${timer.mins}m`),
+  $('#timers').replaceChildren(...plan.timers.map((timer, i) => el('li', { class: 'timer-row' },
+    el('input', {
+      type: 'text', class: 'grow', value: timer.label, placeholder: `Timer ${i + 1}`,
+      'aria-label': `Name for timer ${i + 1}`,
+      oninput: (ev) => { timer.label = ev.target.value; afterTimerEdit(); },
+    }),
+    el('input', {
+      type: 'number', min: '1', max: '180', step: '1', style: 'width: 80px;',
+      value: String(timer.mins), 'aria-label': `Minutes for timer ${i + 1}`,
+      oninput: (ev) => {
+        const mins = Number(ev.target.value);
+        if (!Number.isFinite(mins) || mins < 1) return;
+        timer.mins = Math.min(180, Math.round(mins));
+        afterTimerEdit();
+      },
+    }),
     el('button', {
-      type: 'button', 'aria-label': `Remove ${timer.label || 'countdown'}`,
+      type: 'button', 'aria-label': `Remove ${timer.label || `timer ${i + 1}`}`,
       onclick: () => {
         plan.timers = plan.timers.filter((t) => t.id !== timer.id);
         pruneAutoLaunchTimer(timer.id);
+        pruneItemsForTimer(timer.id);
         touch();
         renderTimers();
         renderOrder();
@@ -321,6 +355,15 @@ function renderTimers() {
       },
     }, '×'))));
   if (!plan.timers.length) $('#timers').append(el('li', { class: 'empty' }, 'None yet — the iPad will show one unnamed countdown and the 1/2/5/10/15 buttons.'));
+}
+
+// A countdown item pointed at a timer that no longer exists is worse than
+// one asking again which to use - see the "Choose a timer…" placeholder in
+// fieldFor's timer-pick branch, which only shows once this is empty.
+function pruneItemsForTimer(timerId) {
+  for (const item of plan.items) {
+    if (item.type === 'timer' && item.timerId === timerId) item.timerId = '';
+  }
 }
 
 // --- the editor --------------------------------------------------------------
@@ -473,10 +516,15 @@ function fieldFor(item, spec) {
       return field(spec.label, el('p', { class: 'hint stale-note' },
         'This lecture has no countdowns yet. Add one under Timers, below the running order.'));
     }
+    // No real answer to default to once the item's own timer is gone (the
+    // room is full of other timers, or its slot was deleted) - an honest
+    // placeholder asks, rather than quietly pointing at whichever is first.
+    const known = plan.timers.some((t) => t.id === item.timerId);
     return field(spec.label, el('select', { onchange: (ev) => set(ev.target.value, { remount: true, label: true }) },
+      ...(known ? [] : [el('option', { value: '', selected: true, disabled: true }, 'Choose a timer…')]),
       ...plan.timers.map((timer, i) => el('option', {
         value: timer.id,
-        selected: (item.timerId || plan.timers[0].id) === timer.id,
+        selected: known && item.timerId === timer.id,
       }, `${timer.label || `Timer ${i + 1}`} · ${timer.mins}m`))), spec.hint);
   }
   if (spec.kind === 'upload') return uploadField(item, spec);
@@ -947,9 +995,9 @@ function renderAutoLaunch() {
     const val = al.timer?.timerId || '';
     timerSelect.replaceChildren(
       el('option', { value: '' }, 'None'),
-      ...(plan.timers || []).map((t) => el('option', {
+      ...(plan.timers || []).map((t, i) => el('option', {
         value: t.id,
-      }, `⏱️ ${t.label ? `${t.label} (${t.mins}m)` : `${t.mins}m countdown`}`)),
+      }, `⏱️ ${t.label || `Timer ${i + 1}`} (${t.mins}m)`)),
     );
     timerSelect.value = (plan.timers || []).some((t) => t.id === val) ? val : '';
   }

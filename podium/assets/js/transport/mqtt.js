@@ -71,7 +71,13 @@ export async function connect({ cfg, onMessage, onStatus, clientId }) {
     onStatus('error', `${where}: ${lastError}`);
   });
   client.on('message', (_topic, buf) => {
-    try { onMessage(JSON.parse(new TextDecoder().decode(buf))); } catch { /* not ours */ }
+    // Only a malformed payload is "not ours" — a bug in onMessage itself
+    // (state processing, rendering) is real and must not vanish into this
+    // catch, or a display/controller can get stuck mid-update with nothing
+    // in the console to explain why.
+    let parsed;
+    try { parsed = JSON.parse(new TextDecoder().decode(buf)); } catch { return; }
+    onMessage(parsed);
   });
 
   await new Promise((resolve) => {
