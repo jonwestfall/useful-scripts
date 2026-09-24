@@ -1123,6 +1123,9 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 /* A track that will not play says so here, and a dim grey hint is exactly
    what the eye skips over, so the line takes the cue colour instead. */
 #music-sub.is-warning { color: var(--cue); }
+/* The feedback risk beside "Play through the display's speakers" (Issue
+   #147) is worth actually reading, the same reason as above. */
+#mic-amplify-warning { color: var(--cue); }
 .music-bar {
   height: 6px; margin-top: 10px; border-radius: 999px; overflow: hidden;
   background: #0e1216;

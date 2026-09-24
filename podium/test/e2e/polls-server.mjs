@@ -2145,6 +2145,86 @@ ok('signing out goes back to the login page', /login\.html/.test(pad.url()));
 ok('and the controller is behind the gate again',
   (await fetch(`${acctBase}/control.html`)).status === 401);
 
+// --- a controller's own mic, recorded to the session (Issue #147) ---------
+//
+// Its own fresh context and pages rather than reusing pad/acctCtx above,
+// which by this point in the section have been through a long run of
+// uploads, decks and camera use - not something worth risking a flaky mic
+// test on. A lecture with no course is still a record of its own teaching
+// (see the VISIBLE comment in lectures.js), so no course setup is needed.
+{
+const micCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await micCtx.grantPermissions(['microphone']);
+// So a chunk boundary shows up without waiting two real minutes for one -
+// see MIC_CHUNK_MS in control.js. Set before either page ever loads it.
+await micCtx.addInitScript(() => { window.__PODIUM_TEST_MIC_CHUNK_MS__ = 1500; });
+
+const micRoomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${acctPort}/podium`, room: 'mic-room', passphrase: 'say it loud' });
+await micCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), micRoomCfg);
+
+const micScreen = await micCtx.newPage();
+trap(micScreen, 'mic display');
+await micScreen.goto(`${acctBase}/display.html`);
+await micScreen.waitForSelector('#username');
+await micScreen.fill('#username', 'jon');
+await micScreen.fill('#password', 'a good long password');
+await Promise.all([micScreen.waitForURL(/display\.html/), micScreen.click('#go')]);
+await micScreen.click('#arm-button');
+await micScreen.waitForSelector('#hud[data-status="online"]');
+
+// Signing in on the display above already covers this whole context - one
+// cookie jar, shared by every page in it, same as a real person's browser.
+const micPad = await micCtx.newPage();
+trap(micPad, 'mic control');
+await micPad.goto(`${acctBase}/control.html`);
+await micPad.waitForSelector('.tile');
+await micPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Recording defaults ON (per device) - the opposite of Keep photos above,
+// which defaults off because a photo is usually somebody else's picture. A
+// presenter's own mic is exactly that: theirs.
+await micPad.click('.tab[data-tab="say"]');
+await micPad.waitForSelector('#mic-record-row:not([hidden])');
+ok('a server-backed controller offers to record its own mic to the session, on by default',
+  await micPad.isChecked('#mic-record'));
+
+await micPad.click('#mic-start');
+await micPad.waitForFunction(() => document.querySelector('#mic-status')?.textContent === 'Live', null, { timeout: 8000 });
+ok('starting it actually acquires the microphone', true);
+
+await pollUntil(micPad, async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  if (!lectures.length) return false;
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' })
+    .then((r) => r.json());
+  return (lecture.files || []).some((f) => f.kind === 'audio');
+}, null, { timeout: 15000 });
+ok('and a recorded segment reaches the session on its own - no export needed, unlike a photo', true);
+
+// Unchecking mid-recording stops it; the segment already in flight still
+// uploads, but no new one should start after this.
+await micPad.uncheck('#mic-record');
+const segmentsAtUncheck = await micPad.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' }).then((r) => r.json());
+  return (lecture.files || []).filter((f) => f.kind === 'audio').length;
+});
+await micPad.waitForTimeout(2000);
+const segmentsAfterWait = await micPad.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' }).then((r) => r.json());
+  return (lecture.files || []).filter((f) => f.kind === 'audio').length;
+});
+ok(`unchecking Record stops new segments from starting (${segmentsAtUncheck} then ${segmentsAfterWait}, at most one more in flight)`,
+  segmentsAfterWait <= segmentsAtUncheck + 1);
+
+await micPad.click('#mic-start');
+ok('stopping the mic leaves the button and status back where they started',
+  await micPad.textContent('#mic-status') === 'Off' && !(await micPad.evaluate(() => document.querySelector('#mic-start').classList.contains('is-on'))));
+
+await micCtx.close();
+}
+
 await acctCtx.close();
 acctServer.kill();
 await new Promise((resolve) => acctServer.on('exit', resolve));

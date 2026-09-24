@@ -464,10 +464,12 @@ function renderSessionBody(detail) {
   if (detail.files.length) {
     const photos = detail.files.filter((f) => f.kind === 'photo').length;
     const ink = detail.files.some((f) => f.kind === 'ink');
+    const audio = detail.files.filter((f) => f.kind === 'audio').length;
     body.append(el('p', { class: 'hint' },
       [`${detail.files.length} file${detail.files.length === 1 ? '' : 's'} kept`,
         photos ? `${photos} photo${photos === 1 ? '' : 's'}` : '',
-        ink ? 'the ink' : ''].filter(Boolean).join(' · ')));
+        ink ? 'the ink' : '',
+        audio ? `${audio} mic segment${audio === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')));
   }
 
   if (detail.truncated) {
