@@ -16,6 +16,7 @@ import {
   execFileSync,
   writeImageFixture,
   writeSlideFixtures,
+  writeMinimalPptxFixture,
   SLIDE_COLOURS,
   freePort,
   PORT,
@@ -1859,12 +1860,17 @@ ok(`the relay socket refuses a stranger who knows the room name (${await upgrade
   };
 
   // The planner: into the server library, and this lecture's running order.
+  const pptxBytes = fs.readFileSync(await writeMinimalPptxFixture());
   const lectureZip = await zipFile('Week 9.zip', [
     ...slidePngs.map((data, i) => ({ name: `Memory/Slide${i + 1}.png`, data })),
     // Not byte-identical to the sample.pdf uploaded above, which the import
     // would rightly call "already in library".
     { name: 'handout.pdf', data: Buffer.concat([fs.readFileSync(path.join(ROOT, 'content', 'sample.pdf')), Buffer.from('\n% zip import\n')]) },
-    { name: 'Old deck.pptx', data: 'not really a pptx' },
+    // Issue #107: a real .pptx converts and imports like any other PDF now;
+    // .odp is not one of the formats this converts, so it is what still
+    // proves the "needs your input" path.
+    { name: 'Old deck.pptx', data: pptxBytes },
+    { name: 'Old talk.odp', data: 'not really an odp' },
     { name: '__MACOSX/._Slide1.png', data: 'junk' },
   ]);
   const zipPlanner = await acctCtx.newPage();
@@ -1878,11 +1884,12 @@ ok(`the relay socket refuses a stranger who knows the room name (${await upgrade
   const rows = await zipPlanner.$$eval('#plan-zip .zip-items .zip-row', (n) => n.map((r) => ({
     kind: r.dataset.kind, title: r.querySelector('.zip-title').value, on: r.querySelector('input[type=checkbox]').checked,
   })));
-  ok(`the review screen lists a picture deck and a PDF (${rows.map((r) => `${r.kind}:${r.title}`).join(', ')})`,
-    rows.length === 2 && rows.some((r) => r.kind === 'imagedeck' && r.title === 'Memory') && rows.some((r) => r.kind === 'pdf'));
-  ok('and says the PowerPoint needs a decision rather than dropping it',
+  ok(`the review screen lists a picture deck, a PDF and a PowerPoint file - already shown as the PDF it will become (${rows.map((r) => `${r.kind}:${r.title}`).join(', ')})`,
+    rows.length === 3 && rows.some((r) => r.kind === 'imagedeck' && r.title === 'Memory')
+    && rows.filter((r) => r.kind === 'pdf').map((r) => r.title).sort().join() === 'Old deck,handout');
+  ok('and says the OpenDocument file needs a decision rather than dropping it',
     /1 needs your input/.test(await zipPlanner.textContent('#plan-zip .zip-needs-head'))
-    && /Presentation files are not converted/.test(await zipPlanner.textContent('#plan-zip .zip-needs')));
+    && /not converted/.test(await zipPlanner.textContent('#plan-zip .zip-needs')));
   ok('the course picker offers this account\'s course', (await zipPlanner.$$eval('#plan-zip .zip-course option', (o) => o.map((x) => x.value))).includes('psy415'));
   const thumbLoaded = await zipPlanner.waitForFunction(() => {
     const img = document.querySelector('#plan-zip .zip-row[data-kind="imagedeck"] img.zip-thumb');
@@ -1890,15 +1897,17 @@ ok(`the relay socket refuses a stranger who knows the room name (${await upgrade
   }, null, { timeout: 10000 }).then(() => true, () => false);
   ok('the deck shows a thumbnail of its first slide, read from the staged upload', thumbLoaded);
   ok(`the button counts what will be imported ("${await zipPlanner.textContent('#plan-zip .zip-commit')}")`,
-    (await zipPlanner.textContent('#plan-zip .zip-commit')) === 'Import 2 items');
+    (await zipPlanner.textContent('#plan-zip .zip-commit')) === 'Import 3 items');
   await zipPlanner.fill('#plan-zip .zip-row[data-kind="imagedeck"] .zip-title', 'Memory systems');
   await zipPlanner.selectOption('#plan-zip .zip-course', 'psy415');
   await zipPlanner.click('#plan-zip .zip-commit');
-  await zipPlanner.waitForSelector('#plan-zip .zip-result', { timeout: 20000 });
-  ok(`importing reports what arrived (${(await zipPlanner.textContent('#plan-zip .zip-result')).replace(/\s+/g, ' ').slice(0, 80)}…)`,
-    /Imported Memory systems/.test(await zipPlanner.textContent('#plan-zip .zip-result')));
-  await zipPlanner.waitForFunction((n) => document.querySelectorAll('#order > li').length === n + 2, orderBefore, { timeout: 5000 });
-  ok('and both items join this lecture\'s running order', true);
+  await zipPlanner.waitForSelector('#plan-zip .zip-result', { timeout: 30000 });
+  const importResultText = await zipPlanner.textContent('#plan-zip .zip-result');
+  ok(`importing reports what arrived (${importResultText.replace(/\s+/g, ' ').slice(0, 100)}…)`,
+    /Imported Memory systems/.test(importResultText));
+  ok('including the PowerPoint file, actually converted rather than just renamed', /Imported Old deck/.test(importResultText));
+  await zipPlanner.waitForFunction((n) => document.querySelectorAll('#order > li').length === n + 3, orderBefore, { timeout: 5000 });
+  ok('and all three imported items join this lecture\'s running order', true);
   const libDeck = await zipPlanner.evaluate(async () => {
     const { items } = await (await fetch('/api/library', { credentials: 'same-origin' })).json();
     const deck = items.find((i) => i.type === 'imagedeck' && i.title === 'Memory systems');
@@ -1908,6 +1917,16 @@ ok(`the relay socket refuses a stranger who knows the room name (${await upgrade
   });
   ok(`the picture deck is in the library under the chosen course, its slides served (${JSON.stringify(libDeck)})`,
     libDeck?.course === 'psy415' && libDeck.slides === 3 && libDeck.served === 200 && libDeck.type === 'image/png');
+  const pptxItem = await zipPlanner.evaluate(async () => {
+    const { items } = await (await fetch('/api/library', { credentials: 'same-origin' })).json();
+    const item = items.find((i) => i.title === 'Old deck');
+    if (!item) return null;
+    const media = await fetch(item.src, { credentials: 'same-origin' });
+    const bytes = new Uint8Array(await media.arrayBuffer());
+    return { type: item.type, filename: item.filename, status: media.status, contentType: media.headers.get('content-type'), magic: String.fromCharCode(...bytes.slice(0, 5)) };
+  });
+  ok(`the PowerPoint file landed in the library as a real, served PDF, not the original bytes under a new name (${JSON.stringify(pptxItem)})`,
+    pptxItem?.type === 'pdf' && pptxItem.filename === 'Old deck.pdf' && pptxItem.status === 200 && pptxItem.contentType === 'application/pdf' && pptxItem.magic === '%PDF-');
   await zipPlanner.click('#plan-zip .zip-done');
 
   // And it plays: picked from the controller's Library, served from /media.
@@ -1933,14 +1952,21 @@ ok(`the relay socket refuses a stranger who knows the room name (${await upgrade
   await pad.fill('#lib-filter', '');
   await zipScreen.close();
 
-  // The same ZIP again: what is already there is said so, and left unticked.
+  // The same ZIP again: what is already there is said so, and left unticked -
+  // except the PowerPoint file, which is never hash-checked for this (see
+  // zip-staging.js's stage()) and so is offered again rather than flagged.
   await zipPlanner.setInputFiles('#plan-zip .zip-file', lectureZip);
   await zipPlanner.waitForSelector('#plan-zip .zip-review:not([hidden]) .zip-row', { timeout: 15000 });
   const deckRow = '#plan-zip .zip-row[data-kind="imagedeck"]';
   ok(`uploading it again flags the deck as already in the library ("${(await zipPlanner.textContent(`${deckRow} .zip-flag`)).trim()}")`,
     /Already in library as “Memory systems”/.test(await zipPlanner.textContent(`${deckRow} .zip-flag`))
     && !(await zipPlanner.isChecked(`${deckRow} input[type=checkbox]`)));
-  ok('so there is nothing to import', await zipPlanner.isDisabled('#plan-zip .zip-commit'));
+  const pdfRows = await zipPlanner.$$eval('#plan-zip .zip-row[data-kind="pdf"]', (rows) => rows.map((r) => ({
+    title: r.querySelector('.zip-title').value, on: r.querySelector('input[type=checkbox]').checked,
+  })));
+  ok('but the PowerPoint file is offered again, a known gap rather than a silent duplicate',
+    pdfRows.find((r) => r.title === 'Old deck')?.on === true);
+  ok('so it is the only thing left to import', (await zipPlanner.textContent('#plan-zip .zip-commit')) === 'Import 1 item');
   await zipPlanner.click('#plan-zip .zip-cancel');
   ok('Cancel puts the upload button back', await zipPlanner.isVisible('#plan-zip .zip-pick'));
   // The DELETE goes out after the screen resets, so give it a moment.
