@@ -4976,7 +4976,10 @@ $('#pdf-upload').addEventListener('change', async (ev) => {
   const note = $('#pdf-upload-note');
   note.textContent = `Uploading ${file.name}…`;
   try {
-    const params = new URLSearchParams({ filename: file.name, title: file.name.replace(/\.pdf$/i, ''), course: '', group: '' });
+    // Issue #107: a .ppt/.pptx picked here is converted to a PDF by the same
+    // upload route admin.html and the planner use - .pdf$ alone would leave
+    // "Talk.pptx" as the title once it comes back named "Talk.pdf".
+    const params = new URLSearchParams({ filename: file.name, title: file.name.replace(/\.[^.]+$/, ''), course: '', group: '' });
     const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'that did not work');

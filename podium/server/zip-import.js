@@ -20,6 +20,7 @@ const yauzl = require('yauzl');
 
 const content = require('./content.js');
 const library = require('./library.js');
+const pptxConvert = require('./pptx-convert.js');
 
 const MB = 1024 * 1024;
 
@@ -63,7 +64,11 @@ class ZipLimitError extends Error {
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const HTML_EXTS = new Set(['.html', '.htm']);
-const POWERPOINT_EXTS = new Set(['.ppt', '.pptx', '.pps', '.ppsx', '.key', '.odp']);
+// .ppt/.pptx are converted to a PDF at commit time (Issue #107, see
+// destinationFor below and zip-staging.js) and so flow through this module
+// like any other importable file. The rest of PowerPoint's neighbourhood -
+// Keynote, OpenDocument, the old "Show" variants - is not, and still says so.
+const UNSUPPORTED_PRESENTATION_EXTS = new Set(['.pps', '.ppsx', '.key', '.odp']);
 
 // Files that are never content, anywhere: OS droppings and Office lock files.
 const isJunk = (p) => {
@@ -78,6 +83,14 @@ const isJunk = (p) => {
 // category, or the planner library's kind. Null when that destination does
 // not take this type at all.
 function destinationFor(surface, ext) {
+  // Converted before it is ever written anywhere, so it lands exactly where
+  // an uploaded PDF already would - the same category (admin) or kind
+  // (planner) a .pdf gets, sized by that same limit.
+  if (pptxConvert.CONVERTIBLE_EXTS.has(ext)) {
+    return surface === 'admin'
+      ? { category: 'pdfs', maxBytes: content.CATEGORIES.pdfs.maxBytes }
+      : { category: 'pdf', maxBytes: library.MAX_UPLOAD_BYTES };
+  }
   if (surface === 'admin') {
     for (const [category, spec] of Object.entries(content.CATEGORIES)) {
       if (spec.extensions.includes(ext)) return { category, maxBytes: spec.maxBytes };
@@ -155,8 +168,8 @@ function classifyEntries(files, { surface, archiveName = 'Import' } = {}) {
     const ext = path.posix.extname(f.path).toLowerCase();
     if (f.encrypted) { skipped.push({ path: f.path, reason: 'It is password-protected, so it cannot be read.' }); continue; }
     if (ext === '.zip') { skipped.push({ path: f.path, reason: 'ZIPs inside a ZIP are not opened - upload that one on its own.' }); continue; }
-    if (POWERPOINT_EXTS.has(ext)) {
-      needsInput.push({ id: id(), paths: [f.path], reason: 'Presentation files are not converted yet. Export the slides as images or a PDF and upload those instead.' });
+    if (UNSUPPORTED_PRESENTATION_EXTS.has(ext)) {
+      needsInput.push({ id: id(), paths: [f.path], reason: 'This presentation format is not converted. Save it as .pptx, or export the slides as images or a PDF, and upload that instead.' });
       continue;
     }
     if (HTML_EXTS.has(ext) && surface === 'planner') {

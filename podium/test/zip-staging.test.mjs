@@ -64,18 +64,22 @@ try {
     { name: 'Week 3/Slide10.png', data: png('w3-10') },
     { name: 'intro.md', data: '# Intro' },
     { name: 'cover.jpg', data: png('cover') },
+    // Issue #107: a real conversion is covered end to end, with a genuine
+    // presentation, in pptx-convert.test.mjs - this fixture uses fake bytes
+    // on purpose, to prove the surrounding pipeline (classification, then a
+    // failed conversion during commit) behaves the same in any environment,
+    // with or without LibreOffice actually installed to convert it.
     { name: 'Old/Lecture.pptx', data: 'pptx' },
     { name: 'Dup/Slide3.png', data: png('dup-a') },
     { name: 'Dup/Slide3.jpg', data: png('dup-b') },
   ]);
   const job = await stageFile(lecture, ta, 'planner');
-  chk('staging answers with the proposal: a picture deck, a Marp deck and a photo',
-    ['deck:intro', 'imagedeck:Week 3', 'photo:cover'].every((k) => job.items.some((i) => `${i.kind}:${i.title}` === k)));
+  chk('staging answers with the proposal: a picture deck, a Marp deck, a photo and a PowerPoint file',
+    ['deck:intro', 'imagedeck:Week 3', 'photo:cover', 'pdf:Lecture'].every((k) => job.items.some((i) => `${i.kind}:${i.title}` === k)));
   chk('a picture deck may be split into photos on the review screen', byTitle(job.items, 'Week 3').options.join() === 'imagedeck,photo');
   const dupEntry = job.needsInput.find((n) => n.suggestedKind === 'imagedeck');
   chk('an ambiguous deck waits for a decision, offering deck or photos', dupEntry && dupEntry.options.join() === 'imagedeck,photo');
-  const pptx = job.needsInput.find((n) => n.paths[0].endsWith('.pptx'));
-  chk('a PowerPoint file needs input but has nothing to be imported as', pptx && pptx.options.length === 0);
+  chk('the PowerPoint file is a normal candidate now, not a decision to make (Issue #107)', job.needsInput.every((n) => n.paths[0] !== 'Old/Lecture.pptx'));
   chk('nothing is marked as already in the library the first time', job.items.every((i) => !i.duplicate));
   chk('the staged upload is kept, unextracted: the archive and a job file',
     fs.readdirSync(path.join(staging.stagingDir(dataDir), job.id)).sort().join() === 'archive.zip,job.json');
@@ -101,8 +105,10 @@ try {
   });
   chk(`imports the deck, the Marp deck and the two ambiguous images as photos (${result.imported.map((i) => i.title).join(', ')})`,
     result.imported.length === 4 && result.imported.some((i) => i.title === 'Memory, week 3'));
-  chk('the left-out photo and the unimportable PowerPoint are reported, not silently dropped',
-    result.skipped.some((s) => s.title === 'cover') && result.unresolved === 1);
+  chk('the left-out photo is reported, not silently dropped', result.skipped.some((s) => s.title === 'cover'));
+  chk('nothing was left needing a decision - the PowerPoint file was a normal item, not one of those', result.unresolved === 0);
+  chk('and it failed cleanly (fake bytes cannot really convert) rather than crashing the whole import or landing a broken item',
+    result.failed.length === 1 && result.failed[0].title === 'Lecture' && result.failed[0].reason.length > 0);
   chk('the staged upload is gone once it is imported', !jobDirs().includes(job.id));
 
   const deck = result.imported.find((i) => i.kind === 'imagedeck').item;
@@ -120,9 +126,13 @@ try {
   chk('the review screen already knows the deck is in the library', byTitle(again.items, 'Week 3').duplicate?.title === 'Memory, week 3');
   chk('and the Marp deck', !!byTitle(again.items, 'intro').duplicate);
   chk('but not the photo that was left out last time', !byTitle(again.items, 'cover').duplicate);
+  chk('nor the PowerPoint file - never hashed for this, since converted bytes are what would actually be compared',
+    !byTitle(again.items, 'Lecture').duplicate);
   const second = await staging.commit(ctx, ta, again.id, {});
   chk('importing it skips what is already there, saying so', second.skipped.filter((s) => /Already in the library/.test(s.reason)).length === 2);
-  chk('and brings in only the new photo', second.imported.map((i) => i.title).join() === 'cover');
+  chk('brings in only the new photo', second.imported.map((i) => i.title).join() === 'cover');
+  chk('and the PowerPoint file fails the same way a second time, not silently skipped as if it were a duplicate',
+    second.failed.some((f) => f.title === 'Lecture'));
 
   console.log('\n-- course scope --');
   courses.create(db, admin, { code: 'psy101', title: 'Intro Psych' });
@@ -149,14 +159,24 @@ try {
     { name: 'Deck/Slide1.png', data: png('d1') },
     { name: 'Deck/Slide2.png', data: png('d2') },
     { name: 'music.mp3', data: 'ID3' },
+    // Same reasoning as the planner fixture above: fake bytes, on purpose,
+    // to prove adminPlacement's naming and commitAdmin's failure handling
+    // without needing LibreOffice installed to run this file at all.
+    { name: 'Slides/Old talk.pptx', data: 'pptx' },
   ]);
   const adminJob = await stageFile(adminZip, admin, 'admin');
   const cat = byTitle(adminJob.items, 'cat');
   chk(`a name already taken is shown with its new suffix before import (${cat.target})`, cat.renamed && cat.target === 'content/photos/cat-2.jpg');
   chk('an exported web deck is one item, kept as a folder', byTitle(adminJob.items, 'Talk').kind === 'webdeck');
   chk('where the deck folder lives is not sent to the browser', adminJob.items.every((i) => !('root' in i)));
+  const talkPptx = byTitle(adminJob.items, 'Old talk');
+  chk(`a PowerPoint file already shows its real, converted target before import (${talkPptx.target})`,
+    talkPptx.kind === 'pdf' && talkPptx.target === 'content/pdfs/Old talk.pdf' && !talkPptx.renamed);
   const adminResult = await staging.commit(ctx, admin, adminJob.id, { group: 'Unit 2' });
-  chk('everything is imported', adminResult.imported.length === 4 && !adminResult.failed.length);
+  chk('everything else is imported', adminResult.imported.length === 4);
+  chk('and the PowerPoint file fails cleanly (fake bytes) rather than landing a broken file in content/pdfs/',
+    adminResult.failed.length === 1 && adminResult.failed[0].title === 'Old talk'
+    && !fs.existsSync(path.join(contentDir, 'pdfs', 'Old talk.pdf')));
   chk('the existing file is untouched', fs.readFileSync(path.join(contentDir, 'photos', 'cat.jpg'), 'utf8') === 'already here');
   chk('and the new one sits beside it with the suffix', fs.existsSync(path.join(contentDir, 'photos', 'cat-2.jpg')));
   chk("the web deck keeps its own layout, so its stylesheet link still works",
