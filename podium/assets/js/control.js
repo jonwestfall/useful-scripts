@@ -5602,6 +5602,32 @@ window.addEventListener('keydown', (ev) => {
   }
 });
 
+// --- the shortcut card (Issue #138) -----------------------------------------
+//
+// Same #keys/.sheet/dl.keys markup display.html's own card uses, and the
+// same '?' trigger - a keyboard user who already knows one knows both.
+
+function showShortcuts() { $('#keys').hidden = false; }
+function hideShortcuts() { $('#keys').hidden = true; }
+function toggleShortcuts() { $('#keys').hidden ? showShortcuts() : hideShortcuts(); }
+
+$('#keys-close')?.addEventListener('click', hideShortcuts);
+$('#keys')?.addEventListener('click', (ev) => { if (ev.target === $('#keys')) hideShortcuts(); });
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !$('#keys').hidden) hideShortcuts();
+});
+
+// Step through this device's own tab order (Settings > Controller tabs),
+// skipping whatever it has hidden - never a fixed list, since that
+// preference already decides what "next tab" means. Wraps at both ends.
+function cycleTab(delta) {
+  const visible = presentation.tabOrder.filter((id) => !presentation.hiddenTabs.includes(id));
+  if (visible.length < 2) return;
+  const current = document.querySelector('.tab.is-on:not(#dual-pane-toggle)')?.dataset.tab;
+  const at = visible.indexOf(current);
+  tab(visible[((at < 0 ? 0 : at) + delta + visible.length) % visible.length]);
+}
+
 const COUNTDOWN_QUEUE_KEY = 'podium.countdownQueue';
 
 function isCountdownQueue() {
@@ -5699,6 +5725,10 @@ document.addEventListener('keydown', (ev) => {
   // nothing, so a modified key is not ours.
   if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
 
+  // Shift+/ on most layouts, but not all - accept the bare key too, same as
+  // display.js's own card.
+  if (ev.key === '?' || ev.key === '/') { ev.preventDefault(); toggleShortcuts(); return; }
+
   // Blank and freeze apply to whatever is on screen, so they come first. They
   // used to sit behind the "is this paged content" guard below, which meant B
   // did nothing on a photo or a video - exactly when you reach for it.
@@ -5712,6 +5742,32 @@ document.addEventListener('keydown', (ev) => {
     ev.preventDefault();
     if (ev.shiftKey) askForShot('screen', 'the whole screen');
     else askForShot(state.focus, `panel ${PANEL_LABELS[state.focus]}`);
+    return;
+  }
+
+  // Issue #138: the rest of the bottom-dock's own action vocabulary
+  // (executeSlotAction, below) gets a bare key too, so the same actions are
+  // one tap on a touchscreen or one keystroke from an attached keyboard. T
+  // and C guard on there being anything cued, the same as the dock buttons
+  // disable themselves - a keystroke that would send a pointless "take"
+  // with nothing cued is worse than one that quietly does nothing.
+  const cued = () => !!state.preview || state.previewLayout !== null;
+  if (ev.key === 't' || ev.key === 'T') { if (cued()) { ev.preventDefault(); executeSlotAction('take'); } return; }
+  if (ev.key === 'c' || ev.key === 'C') { if (cued()) { ev.preventDefault(); executeSlotAction('clear'); } return; }
+  if (ev.key === 'w' || ev.key === 'W') { ev.preventDefault(); executeSlotAction('whiteboard'); return; }
+  if (ev.key === 'm' || ev.key === 'M') { if (state.music?.tracks?.length) { ev.preventDefault(); executeSlotAction('music'); } return; }
+  if (ev.key === 'r' || ev.key === 'R') { ev.preventDefault(); executeSlotAction('timer'); return; }
+
+  // [ and ] step through this device's own tab order, wrapping at both ends -
+  // see cycleTab for why that order is never a fixed list.
+  if (ev.key === '[' || ev.key === ']') { ev.preventDefault(); cycleTab(ev.key === ']' ? 1 : -1); return; }
+
+  // Space plays or pauses a video, audio clip or YouTube embed the same way
+  // it does in every other media player - checked here, above the "has
+  // pages" guard below, because a playable item is never a paged one.
+  if (ev.key === ' ' && ['video', 'audio', 'youtube'].includes(focusedItem(state)?.type)) {
+    ev.preventDefault();
+    executeSlotAction('play');
     return;
   }
 
