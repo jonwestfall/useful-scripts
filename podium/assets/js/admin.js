@@ -1697,7 +1697,13 @@ async function uploadContentFile() {
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'upload failed');
-    status.textContent = `Uploaded ${file.name} to ${cat}.`;
+    // A PowerPoint upload is saved under a renamed .pdf (Issue #107) - said
+    // here, since "Uploaded Talk.pptx" next to a Talk.pdf in the list below
+    // would read like the upload silently went somewhere else.
+    const savedName = body.saved?.filename || file.name;
+    status.textContent = savedName === file.name
+      ? `Uploaded ${file.name} to ${cat}.`
+      : `Uploaded ${file.name} to ${cat}, converted to ${savedName}.`;
     input.value = '';
     await refreshContentFiles();
     setTimeout(() => { if (status.textContent.includes('Uploaded')) status.textContent = ''; }, 4000);
