@@ -20,6 +20,7 @@ Podium is designed for real classroom lectures. It gives you total control over 
 - [Audience Polls & Interactive Questions](#audience-polls--interactive-questions)
 - [Automated Presentation Sets](#automated-presentation-sets)
 - [Watermarks](#watermarks)
+- [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Planning Lectures with `plan.html`](#planning-lectures-with-planhtml)
 
 ---
@@ -176,6 +177,26 @@ Create timed, automated rotations of items:
 ## Watermarks
 
 Pin your university logo, course number (e.g. `CS 101`), or date to any corner of the projector display. The watermark remains persistently anchored across all slide transitions and split-screen layouts.
+
+---
+
+## Keyboard Shortcuts
+
+Both `control.html` (the controller) and `display.html` (the projector's own machine) answer a Magic Keyboard, a Bluetooth clicker, or any keyboard paired to that device. Press **`?`** on either page for the full, always-current list — typing into a field is never intercepted, and a modified key (Cmd/Ctrl/Alt) is never claimed, so a room name or a passphrase with a shortcut letter in it is just text.
+
+On the controller, the letter keys mirror the same handful of actions the bottom-bar dock and Settings' clicker remapping already use (Take, Clear cue, Quick whiteboard, Music, Timer, Play/Pause, Next/Prev) — one action, three ways to reach it: a tap, a keystroke, or a physical clicker button. The highlights:
+
+- **B** / **F** blank / freeze the screen, from any tab.
+- **T** / **C** TAKE the cued item live, or clear the cue — a no-op with nothing cued, same as the dock buttons disabling themselves.
+- **P** / **Shift+P** photograph the focused panel / the whole screen.
+- **W** a quick whiteboard.
+- **M** play or pause the loaded background playlist.
+- **R** start, pause, or resume the currently-selected timer.
+- **`[`** / **`]`** step through this device's own tab order — whatever Settings → Controller tabs has it set to, hidden tabs skipped, so reordering or hiding a tab changes what cycling through them means too, not just what they look like.
+- **Space**, **←** / **→**, **PageUp** / **PageDown** page through a deck, PDF, HTML slides or web page — or, when the focused item is a video, audio clip or YouTube embed instead, **Space** plays or pauses it, the way it does in any other media player.
+- On the **Ink** tab, **1**-**5** or **E H L S** pick a tool and **Ctrl/Cmd+Z** undoes; on the **Slides** tab, **L** / **S** toggle the laser pointer / spotlight.
+
+`display.html`'s own card (also `?`) covers the far smaller surface that machine has of its own: going live, fullscreen, pairing, and Settings — paging, blanking and freezing live on the controller, not there.
 
 ---
 
