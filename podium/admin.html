@@ -204,6 +204,22 @@
     </div>
     <p class="hint" id="sess-note"></p>
     <div id="sessions"></div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 12px 0">
+    <div class="admin-head">
+      <h2>Bulk actions</h2>
+    </div>
+    <div class="admin-actions">
+      <button type="button" id="sess-download-all" class="admin-small">Download all sessions</button>
+      <span class="hint" id="sess-download-all-note" role="status"></span>
+    </div>
+    <div class="admin-actions">
+      <label class="field" style="max-width:160px">
+        <span>Delete sessions older than (days)</span>
+        <input id="sess-purge-days" type="number" min="1" step="1" value="15">
+      </label>
+      <button type="button" id="sess-purge-go" class="admin-del">Delete sessions older than this</button>
+      <span class="hint" id="sess-purge-note" role="status"></span>
+    </div>
   </section>
   </div>
 
@@ -383,7 +399,7 @@
               <option value="slides">Slides (.html, .htm, .zip — max 25MB)</option>
               <option value="video">Video (.mp4, .webm, .mov, .mkv — max 100MB)</option>
               <option value="photos">Photos (.png, .jpg, .jpeg, .gif, .webp, .svg — max 20MB)</option>
-              <option value="pdfs">PDFs (.pdf — max 25MB)</option>
+              <option value="pdfs">PDFs (.pdf, or .ppt/.pptx converted to PDF — max 25MB)</option>
             </select>
           </label>
           <label class="field">

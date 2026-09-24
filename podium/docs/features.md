@@ -214,8 +214,19 @@ The **Plan** page (`plan.html`) is designed for your office computer:
 On a self-hosted server, both the planner (under **Add**) and the admin page (**Global Content → Pre-load Files**) take a ZIP of a lecture's materials at once: slide images exported from PowerPoint or Keynote, Marp decks, PDFs, audio, video and photos. Podium sorts what it finds and shows one review screen before anything is imported:
 
 - A folder of numbered images (`Slide1.png`, `Slide2.png`, … or Keynote's `Name.001.png`) becomes one **picture deck**, stepped through like any other deck. Split it into separate photos from the same row if that guess was wrong.
-- Rename anything, untick what you do not want, and decide on anything Podium was not sure about (the same slide number twice, say). PowerPoint files are not converted; export them as images or a PDF first.
+- A `.ppt`/`.pptx` file is converted to a PDF (see [PowerPoint Uploads](#powerpoint-uploads) below) and imported as one. Keynote, OpenDocument and the old "PowerPoint Show" formats are not; export those to images or a PDF first.
+- Rename anything, untick what you do not want, and decide on anything Podium was not sure about (the same slide number twice, say).
 - **From the planner**, everything goes into the server library for a course you choose (or everyone), and by default into this lecture's running order too. A file already in the library is shown as such and not added twice. The planner never takes HTML.
 - **From the admin page**, files go into the matching `content/` folder; an exported web deck (a folder with an `index.html`) keeps its layout under `content/slides/`. A name that is already taken gets a number added, shown on the review screen before you import. Each item can also be added to the Library manifest.
 
 The upload is kept on the server only until you import or cancel, and is cleared away after two hours if you do neither. The largest ZIP it accepts is an admin setting (200 MB unless raised).
+
+### PowerPoint Uploads
+
+On a self-hosted server with LibreOffice installed (see [Installing LibreOffice for PowerPoint uploads](vps.md#installing-libreoffice-for-powerpoint-uploads)), a `.ppt` or `.pptx` file is converted to a PDF the moment it is uploaded, and plays with Podium's existing PDF viewer — the same page navigation, the same projector experience a hand-exported PDF already has. This works everywhere a PDF upload already does:
+
+- The planner's **PDF** item, under *Upload to this server*.
+- The admin page's **Global Content → Pre-load Files**, uploaded to the **PDFs** category.
+- A `.ppt`/`.pptx` found inside a ZIP (see above).
+
+The converted file is named after the original with `.pdf` in place of `.ppt`/`.pptx`; nothing about the upload — the size limit, who may use it, where it is filed — differs from uploading a PDF directly, since converting happens before anything is stored. Without LibreOffice installed, uploading one of these files fails with a plain error saying so, rather than a silent no-op; every other upload keeps working as it always has. Speaker notes are not carried over.

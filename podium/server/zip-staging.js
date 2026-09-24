@@ -19,8 +19,11 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const yauzl = require('yauzl');
 
+const { Readable } = require('node:stream');
+
 const content = require('./content.js');
 const library = require('./library.js');
+const pptxConvert = require('./pptx-convert.js');
 const zipImport = require('./zip-import.js');
 
 const STAGING_TTL_MS = 2 * 60 * 60 * 1000;
@@ -124,6 +127,15 @@ function hashStream(stream) {
   });
 }
 
+function bufferStream(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on('data', (c) => chunks.push(c));
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
+    stream.on('error', reject);
+  });
+}
+
 // --- where admin imports land ----------------------------------------------------
 
 const safeSegment = (name) => name.replace(/[^\w .()-]+/g, '-').replace(/^[.\s-]+/, '').trim().slice(0, 120);
@@ -188,14 +200,21 @@ function adminPlacement(item, reserve) {
     return { files, target: `content/slides/${folder}/`, entry };
   }
   const from = item.files[0];
-  const category = categoryFor(from);
+  const ext = path.posix.extname(from).toLowerCase();
+  // A PowerPoint file becomes a PDF (Issue #107): the reserved name already
+  // says so, so the review screen shows the real target rather than a
+  // filename that is about to stop matching its own bytes.
+  const converts = pptxConvert.CONVERTIBLE_EXTS.has(ext);
+  const category = converts ? 'pdfs' : categoryFor(from);
   const dir = content.CATEGORIES[category].dir;
-  const name = reserve(dir, safeSegment(path.posix.basename(from)) || `file${path.posix.extname(from)}`);
+  const baseName = converts ? `${path.posix.basename(from, ext)}.pdf` : path.posix.basename(from);
+  const name = reserve(dir, safeSegment(baseName) || `file${converts ? '.pdf' : ext}`);
   const to = `${dir}/${name}`;
   return {
     files: [{ from, to }],
     target: `content/${to}`,
-    renamed: name !== path.posix.basename(from),
+    // Only a real clash gets flagged, never the expected .pptx -> .pdf swap.
+    renamed: name !== baseName,
     entry: { type: MANIFEST_TYPE[item.kind] || item.kind, title: item.title, src: `content/${to}` },
   };
 }
@@ -312,11 +331,21 @@ async function stage({ db, dataDir, user, surface, archiveName, stream, uploadMb
 
     if (surface === 'planner') {
       // Hash what could be imported, so the review screen can say which of it
-      // is already in the library before anyone presses Import.
-      const wanted = new Set(manifest.items.flatMap((i) => i.files));
+      // is already in the library before anyone presses Import. A PowerPoint
+      // file is excluded: it is not the bytes that will actually be stored
+      // (see commitPlanner) - hashing it here would only ever compare a
+      // pptx's hash against a library of PDFs, never matching, and
+      // converting a second time just to throw the hash away is not worth
+      // it for what "already in library" is - a courtesy, not a guarantee
+      // (storeUpload's own content addressing still collapses the bytes
+      // either way, so nothing is duplicated on disk, only in the list).
+      const hashable = manifest.items.filter((item) => !item.files.some(
+        (f) => pptxConvert.CONVERTIBLE_EXTS.has(path.posix.extname(f).toLowerCase()),
+      ));
+      const wanted = new Set(hashable.flatMap((i) => i.files));
       const hashes = {};
       await eachEntry(archive, wanted, async (entryName, entryStream) => { hashes[entryName] = await hashStream(entryStream); });
-      for (const item of manifest.items) {
+      for (const item of hashable) {
         const found = library.findDuplicate(db, user, { kind: LIBRARY_KIND[item.kind], sha256s: item.files.map((f) => hashes[f]) });
         if (found) item.duplicate = { id: found.id, title: found.title };
       }
@@ -414,11 +443,18 @@ async function commitPlanner({ db, dataDir, user, archive, planned, course, grou
   const stored = new Map();
   const wanted = new Set(planned.flatMap((p) => p.files));
   await eachEntry(archive, wanted, async (entryName, stream) => {
-    const allowed = library.uploadKindFor(entryName);
     try {
-      const { sha256, bytes } = await library.storeUpload(dataDir, stream, { limit: library.MAX_UPLOAD_BYTES });
-      const mediaId = library.rememberMedia(db, user, { sha256, bytes, contentType: allowed.type });
-      stored.set(entryName, { sha256, mediaId });
+      const ext = path.posix.extname(entryName).toLowerCase();
+      // A PowerPoint file becomes a PDF here (Issue #107), the one place in
+      // this loop that needs the whole file before it can store anything -
+      // everything else streams straight into storeUpload.
+      const converts = pptxConvert.CONVERTIBLE_EXTS.has(ext);
+      const contentType = converts ? 'application/pdf' : library.uploadKindFor(entryName).type;
+      const uploadStream = converts ? Readable.from(await pptxConvert.convertToPdf(await bufferStream(stream), ext)) : stream;
+      const filename = converts ? `${path.posix.basename(entryName, ext)}.pdf` : path.posix.basename(entryName);
+      const { sha256, bytes } = await library.storeUpload(dataDir, uploadStream, { limit: library.MAX_UPLOAD_BYTES });
+      const mediaId = library.rememberMedia(db, user, { sha256, bytes, contentType });
+      stored.set(entryName, { sha256, mediaId, filename });
     } catch (err) {
       stream.resume();
       stored.set(entryName, { error: err.message });
@@ -441,7 +477,7 @@ async function commitPlanner({ db, dataDir, user, archive, planned, course, grou
       } else {
         item = library.addItem(db, user, {
           courseCode: course, kind, title: p.title, group,
-          filename: path.posix.basename(p.files[0]).slice(0, 200), mediaId: files[0].mediaId,
+          filename: files[0].filename.slice(0, 200), mediaId: files[0].mediaId,
         });
       }
       imported.push({ title: p.title, kind: p.kind, item });
@@ -474,13 +510,21 @@ async function commitAdmin({ ctx, archive, planned, addToLibrary, group }) {
     try {
       if (!full.startsWith(path.resolve(contentDir) + path.sep)) throw new Error('That path is outside the content folder.');
       await fsp.mkdir(path.dirname(full), { recursive: true });
-      await new Promise((resolve, reject) => {
-        const out = fs.createWriteStream(full, { flags: 'wx' });
-        stream.on('error', reject);
-        out.on('error', reject);
-        out.on('close', resolve);
-        stream.pipe(out);
-      });
+      const ext = path.posix.extname(entryName).toLowerCase();
+      if (pptxConvert.CONVERTIBLE_EXTS.has(ext)) {
+        // Needs the whole file before it can even start (Issue #107) -
+        // unlike everything else here, which streams straight through.
+        const pdf = await pptxConvert.convertToPdf(await bufferStream(stream), ext);
+        await fsp.writeFile(full, pdf, { flag: 'wx' });
+      } else {
+        await new Promise((resolve, reject) => {
+          const out = fs.createWriteStream(full, { flags: 'wx' });
+          stream.on('error', reject);
+          out.on('error', reject);
+          out.on('close', resolve);
+          stream.pipe(out);
+        });
+      }
       written.set(entryName, true);
     } catch (err) {
       stream.resume();

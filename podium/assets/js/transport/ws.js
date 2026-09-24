@@ -60,7 +60,13 @@ export async function connect({ cfg, onMessage, onStatus, clientId }) {
       onStatus('online');
     });
     socket.addEventListener('message', (ev) => {
-      try { onMessage(JSON.parse(ev.data)); } catch { /* not ours */ }
+      // Only a malformed payload is "not ours" — a bug in onMessage itself
+      // (state processing, rendering) is real and must not vanish into this
+      // catch, or a display/controller can get stuck mid-update with nothing
+      // in the console to explain why.
+      let parsed;
+      try { parsed = JSON.parse(ev.data); } catch { return; }
+      onMessage(parsed);
     });
     // 'error' carries no detail anywhere; the close event that follows it does
     // at least carry a code, so let that one do the talking.

@@ -124,8 +124,11 @@ export const PLAN_TYPES = {
       // plan asset has to survive traveling over the relay in one message.
       // Only shown when this Podium actually has a server with a library;
       // see serverUploadField in plan.js.
-      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.pdf,application/pdf',
-        hint: 'Stored on the server - works from any signed-in device, nothing to carry.' },
+      // Issue #107: a .ppt/.pptx is accepted here too, and converted to a
+      // PDF on the way in - the server upload route does the conversion,
+      // so this is the only planner-side change the feature needed.
+      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.pdf,.ppt,.pptx,application/pdf',
+        hint: 'Stored on the server - works from any signed-in device, nothing to carry. A PowerPoint file is converted to a PDF.' },
       { key: 'src', label: 'or a path or URL', kind: 'text', placeholder: 'content/handouts/ch4.pdf' },
       { key: 'page', label: 'Open at page', kind: 'number', def: 1, min: 1, max: 9999 },
     ],

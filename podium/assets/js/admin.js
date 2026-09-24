@@ -604,6 +604,116 @@ async function refreshSessions() {
   renderSessions();
 }
 
+const PURGE_LABEL = 'Delete sessions older than this';
+
+// Two taps, the same as a single session's own Remove: nothing here can be
+// got back, and a whole batch of it is a worse place to fat-finger than one.
+async function purgeOldSessions() {
+  const button = $('#sess-purge-go');
+  const note = $('#sess-purge-note');
+  const days = Math.max(1, Math.round(Number($('#sess-purge-days').value)) || 15);
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  // The same permission this list already enforces per row (see the Remove
+  // button in renderSessions): a course owner or plain member sweeping their
+  // own old sessions only ever reaches what they could delete one at a time.
+  const targets = lectures.filter((l) => mayEditLecture(l) && l.startedAt < cutoff);
+
+  note.textContent = '';
+  if (!targets.length) {
+    note.textContent = `Nothing recorded is older than ${days} day${days === 1 ? '' : 's'}.`;
+    return;
+  }
+
+  if (button.dataset.armed !== 'yes') {
+    button.dataset.armed = 'yes';
+    button.textContent = `Really delete ${targets.length} session${targets.length === 1 ? '' : 's'}?`;
+    setTimeout(() => {
+      if (!button.isConnected) return;
+      button.dataset.armed = '';
+      button.textContent = PURGE_LABEL;
+    }, 4000);
+    return;
+  }
+
+  button.dataset.armed = '';
+  button.disabled = true;
+  button.textContent = 'Deleting…';
+
+  const removed = new Set();
+  for (const lecture of targets) {
+    try {
+      const res = await fetch(`/api/lectures/${lecture.id}`, { method: 'DELETE', credentials: 'same-origin' });
+      if (res.ok) removed.add(lecture.id);
+    } catch { /* left in place; the note below says how many were not reached */ }
+  }
+  lectures = lectures.filter((l) => !removed.has(l.id));
+  if (openLecture && removed.has(openLecture.id)) openLecture = null;
+  renderSessions();
+
+  button.disabled = false;
+  button.textContent = PURGE_LABEL;
+  note.textContent = removed.size === targets.length
+    ? `Removed ${removed.size} session${removed.size === 1 ? '' : 's'}.`
+    : `Removed ${removed.size} of ${targets.length} — the rest could not be reached; try again.`;
+}
+
+/**
+ * Every session this account can see, each under its own folder in one zip -
+ * the same files downloadSessionZip hands you one at a time, rebuilt in bulk.
+ * A session with nothing kept (no files) contributes no folder rather than an
+ * empty one.
+ */
+async function downloadAllSessions() {
+  const button = $('#sess-download-all');
+  const note = $('#sess-download-all-note');
+  note.textContent = '';
+  if (!lectures.length) { note.textContent = 'Nothing recorded yet.'; return; }
+
+  button.disabled = true;
+  const was = button.textContent;
+  try {
+    const files = [];
+    let packed = 0;
+    for (let i = 0; i < lectures.length; i++) {
+      const lecture = lectures[i];
+      button.textContent = `Reading session ${i + 1} of ${lectures.length}…`;
+      const res = await fetch(`/api/lectures/${lecture.id}`, { credentials: 'same-origin' });
+      if (!res.ok) continue;
+      const { lecture: detail } = await res.json();
+      const sourceFiles = (detail.files || []).filter((f) => f.kind !== 'ink');
+      if (!sourceFiles.length) continue;
+
+      const stamp = new Date(detail.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      const folder = `${safeName(detail)}-${stamp}`;
+      let got = 0;
+      for (const file of sourceFiles) {
+        const fres = await fetch(file.url, { credentials: 'same-origin' });
+        if (!fres.ok) continue;
+        files.push({ name: `${folder}/${file.name}`, data: new Uint8Array(await fres.arrayBuffer()) });
+        got++;
+      }
+      if (got) packed++;
+    }
+    if (!files.length) { button.textContent = 'Nothing could be fetched'; return; }
+
+    button.textContent = 'Building the zip…';
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const blob = await createZip(files);
+    const a = el('a', { href: URL.createObjectURL(blob), download: `podium-all-sessions-${stamp}.zip` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    note.textContent = `Packed ${packed} of ${lectures.length} session${lectures.length === 1 ? '' : 's'}.`;
+  } catch {
+    button.textContent = 'That did not work';
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  button.textContent = was;
+}
+
 // --- people ------------------------------------------------------------------
 //
 // Administrators only, and the card is absent rather than disabled for everyone
@@ -1697,7 +1807,13 @@ async function uploadContentFile() {
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'upload failed');
-    status.textContent = `Uploaded ${file.name} to ${cat}.`;
+    // A PowerPoint upload is saved under a renamed .pdf (Issue #107) - said
+    // here, since "Uploaded Talk.pptx" next to a Talk.pdf in the list below
+    // would read like the upload silently went somewhere else.
+    const savedName = body.saved?.filename || file.name;
+    status.textContent = savedName === file.name
+      ? `Uploaded ${file.name} to ${cat}.`
+      : `Uploaded ${file.name} to ${cat}, converted to ${savedName}.`;
     input.value = '';
     await refreshContentFiles();
     setTimeout(() => { if (status.textContent.includes('Uploaded')) status.textContent = ''; }, 4000);
@@ -2025,6 +2141,8 @@ if (!info.features.includes('library')) {
   if (info.features.includes('sessions')) {
     $('#tab-sessions').hidden = false;
     $('#sess-search').addEventListener('input', renderSessions);
+    $('#sess-download-all').addEventListener('click', downloadAllSessions);
+    $('#sess-purge-go').addEventListener('click', purgeOldSessions);
     await refreshSessions();
   }
 

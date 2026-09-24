@@ -20,6 +20,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { Readable } = require('node:stream');
 
 const accounts = require('./accounts.js');
 const courses = require('./courses.js');
@@ -30,6 +31,7 @@ const settings = require('./settings.js');
 const templates = require('./templates.js');
 const content = require('./content.js');
 const store = require('./store.js');
+const pptxConvert = require('./pptx-convert.js');
 const zipImport = require('./zip-import.js');
 const zipStaging = require('./zip-staging.js');
 
@@ -763,7 +765,7 @@ async function handleApi(req, res, url, ctx) {
 
         if (rest.length === 2 && req.method === 'POST') {
           const category = rest[1];
-          const filename = url.searchParams.get('filename') || '';
+          let filename = url.searchParams.get('filename') || '';
           if (!filename) {
             json(res, 400, { error: 'filename required in query parameter (?filename=...)' });
             return true;
@@ -773,7 +775,16 @@ async function handleApi(req, res, url, ctx) {
             json(res, 400, { error: `invalid category: ${category}` });
             return true;
           }
-          const buf = await readBuffer(req, spec.maxBytes);
+          let buf = await readBuffer(req, spec.maxBytes);
+          // A PowerPoint file into the PDFs category becomes a PDF on the way
+          // in (Issue #107), read up to that category's own limit since that
+          // is what it is about to be - the rest of this route never learns
+          // the upload was anything else.
+          const ext = path.extname(filename).toLowerCase();
+          if (category === 'pdfs' && pptxConvert.CONVERTIBLE_EXTS.has(ext)) {
+            buf = await pptxConvert.convertToPdf(buf, ext);
+            filename = `${filename.slice(0, -ext.length)}.pdf`;
+          }
           json(res, 200, { saved: content.saveContentFile(ctx, category, filename, buf) });
           return true;
         }
@@ -868,8 +879,10 @@ async function handleApi(req, res, url, ctx) {
  * whole client side of it.
  */
 async function receiveUpload(req, url, ctx, user) {
-  const filename = String(url.searchParams.get('filename') || '').split(/[\\/]/).pop().slice(0, 200);
-  const allowed = library.uploadKindFor(filename);
+  let filename = String(url.searchParams.get('filename') || '').split(/[\\/]/).pop().slice(0, 200);
+  const ext = path.extname(filename).toLowerCase();
+  const converts = pptxConvert.CONVERTIBLE_EXTS.has(ext);
+  const allowed = converts ? { type: 'application/pdf', kind: 'pdf' } : library.uploadKindFor(filename);
   if (!allowed) {
     throw Object.assign(new Error(
       `Podium does not take ${filename.includes('.') ? `${filename.split('.').pop()} files` : 'files without an extension'}`,
@@ -883,12 +896,24 @@ async function receiveUpload(req, url, ctx, user) {
   const courseCode = url.searchParams.get('course') || '';
   library.courseIdFor(ctx.db, user, courseCode);
 
+  // A PowerPoint file becomes a PDF on the way in (Issue #107) - read up to
+  // the same limit an ordinary PDF upload already has, since that is what it
+  // is about to become, then hand it to LibreOffice before anything is
+  // stored. Everything after this point never learns the upload was
+  // anything but a plain PDF.
+  let body = req;
+  if (converts) {
+    const raw = await readBuffer(req, library.MAX_UPLOAD_BYTES);
+    body = Readable.from(await pptxConvert.convertToPdf(raw, ext));
+    filename = `${filename.slice(0, -ext.length)}.pdf`;
+  }
+
   // The declared content type is ignored in favour of the extension's: these
   // bytes come back from this origin later, and what a browser is told they
   // are must not be something an uploader chose. The KIND comes from the same
   // mapping for the same reason - `week.md&type=web` would otherwise hand
   // markdown to the web-page renderer.
-  const { sha256, bytes } = await library.storeUpload(ctx.dataDir, req);
+  const { sha256, bytes } = await library.storeUpload(ctx.dataDir, body);
   let mediaId;
   try {
     mediaId = library.rememberMedia(ctx.db, user, { sha256, bytes, contentType: allowed.type });
