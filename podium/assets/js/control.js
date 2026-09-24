@@ -2311,6 +2311,16 @@ function renderKeepPhotos() {
     $('#finish-session-hint').hidden = !serverKeepsSessions;
     $('#finish-session').disabled = !bus || !recordingNow();
   }
+  // Same two things gate the mic's own "record to the session" row - see
+  // startMicRecording below. A lecture ending out from under a running
+  // recording stops it here rather than leaving it recording into a void;
+  // the segment already in flight still uploads, under the lecture it
+  // actually belongs to (see lastKnownLectureId in beginMicSegment).
+  const micRow = $('#mic-record-row');
+  if (micRow) {
+    micRow.hidden = !serverKeepsSessions;
+    if (!recordingNow() && micRecorder) stopMicRecording();
+  }
 }
 
 function filePollWithLecture(entry) {
@@ -5287,6 +5297,126 @@ function startCaptions() {
 }
 
 $('#caption-toggle').addEventListener('click', () => { if (recognizer) stopCaptions(); else startCaptions(); });
+
+// --- controller mic: record to the session (Issue #147) --------------------
+//
+// Independent of Live Captions above, which never touches a MediaStream at
+// all - this is the raw audio itself. Recorded in fixed-length segments,
+// each a complete, independently playable file rather than a fragment only
+// valid concatenated with the ones around it (a MediaRecorder timeslice
+// would produce exactly that), uploaded as it goes the same reason
+// chunkStrokes in display.js splits ink.json rather than holding it for one
+// save at the end: a lecture that stops early keeps whatever already
+// uploaded, not nothing. Stopping and immediately restarting the recorder
+// at each boundary costs a sub-second gap in the audio, a fair trade for
+// every segment standing on its own.
+//
+// Amplifying this same stream through the display is Issue #147's other
+// half, layered on separately - this file only ever asks for the stream
+// once (see startMic) and hands it out from here.
+
+// Overridable the same way MAX_ASSET_ENTRIES is in display.js, so a test can
+// see a chunk boundary without actually waiting two minutes for one.
+const MIC_CHUNK_MS = Number(window.__PODIUM_TEST_MIC_CHUNK_MS__) || 120000;
+
+let micStream = null;
+let micRecorder = null;
+let micChunkTimer = null;
+let micRecordSeq = 0;
+let micSessionStamp = 0;
+
+function micMimeType() {
+  for (const type of ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']) {
+    if (window.MediaRecorder?.isTypeSupported?.(type)) return type;
+  }
+  return '';
+}
+
+// Named from this device's own bus id, a session start time and a sequence
+// number - never a local count alone, since more than one controller can be
+// recording into the same lecture at once (Issue #147 supports several
+// mics live together), and lecture_files is unique by name: two devices
+// racing to file "audio/0002.webm" would have the second replace the first
+// rather than both landing.
+function micChunkName(seq) {
+  const ext = micMimeType().includes('ogg') ? 'ogg' : 'webm';
+  return `audio/${bus?.clientId || 'mic'}-${micSessionStamp}-${String(seq).padStart(4, '0')}.${ext}`;
+}
+
+function beginMicSegment() {
+  if (!micStream || !recordingNow() || !window.MediaRecorder) return;
+  const mimeType = micMimeType();
+  const recorder = mimeType ? new MediaRecorder(micStream, { mimeType }) : new MediaRecorder(micStream);
+  const seq = micRecordSeq++;
+  // Captured now, not read back off state.lectureId when the upload actually
+  // fires - the same reason the session export path takes an explicit
+  // lectureId (see fileWithLecture's own comment): this segment can easily
+  // still be uploading after standDown has already cleared it.
+  const lectureId = lastKnownLectureId;
+  const parts = [];
+  recorder.ondataavailable = (ev) => { if (ev.data.size) parts.push(ev.data); };
+  recorder.onstop = () => {
+    if (!parts.length) return;
+    fileWithLecture(micChunkName(seq), 'audio', new Blob(parts, { type: mimeType || 'audio/webm' }), mimeType || 'audio/webm', lectureId);
+  };
+  micRecorder = recorder;
+  recorder.start();
+  micChunkTimer = setTimeout(() => {
+    if (micRecorder !== recorder) return;   // already stopped from elsewhere
+    recorder.stop();
+    beginMicSegment();
+  }, MIC_CHUNK_MS);
+}
+
+function startMicRecording() {
+  if (micRecorder || !micStream || !recordingNow()) return;
+  micSessionStamp = Date.now();
+  micRecordSeq = 0;
+  beginMicSegment();
+}
+
+function stopMicRecording() {
+  clearTimeout(micChunkTimer);
+  micChunkTimer = null;
+  const recorder = micRecorder;
+  micRecorder = null;
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+}
+
+async function startMic() {
+  if (micStream) return;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    $('#mic-status').textContent = 'This browser has no microphone access.';
+    return;
+  }
+  $('#mic-status').textContent = 'Requesting…';
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (err) {
+    $('#mic-status').textContent = `Could not start: ${err.message}`;
+    return;
+  }
+  $('#mic-start').textContent = 'Stop my mic';
+  $('#mic-start').classList.add('is-on');
+  $('#mic-status').textContent = 'Live';
+  if ($('#mic-record').checked) startMicRecording();
+}
+
+function stopMic() {
+  stopMicRecording();
+  micStream?.getTracks().forEach((t) => t.stop());
+  micStream = null;
+  $('#mic-start').textContent = 'Start my mic';
+  $('#mic-start').classList.remove('is-on');
+  $('#mic-status').textContent = 'Off';
+}
+
+$('#mic-start').addEventListener('click', () => { if (micStream) stopMic(); else startMic(); });
+$('#mic-record').addEventListener('change', () => {
+  if (!micStream) return;
+  if ($('#mic-record').checked) startMicRecording();
+  else stopMicRecording();
+});
 
 // --- watermark ---------------------------------------------------------------
 // Extracted to watermark.js (Issue #121) - a small, explicit interface, and

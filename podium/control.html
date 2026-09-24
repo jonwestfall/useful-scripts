@@ -462,6 +462,19 @@ try {
               Safari recognizes on-device instead. Not available in Firefox.
             </p>
           </div>
+          <!-- Controller mic: recorded to the session, independent of Live
+               Captions above (which never touches a MediaStream at all -
+               see the comment on caption-block) and of amplifying it through
+               the display (Issue #147). -->
+          <div class="stack" id="mic-block">
+            <div class="inline">
+              <button id="mic-start" type="button">Start my mic</button>
+              <span class="hint" id="mic-status">Off</span>
+            </div>
+            <div class="inline" id="mic-record-row" hidden>
+              <label class="check"><input id="mic-record" type="checkbox" checked> Record this mic to the session</label>
+            </div>
+          </div>
           <form id="qr-form" class="stack">
             <label for="qr-data">QR code for the class</label>
             <div class="inline">
