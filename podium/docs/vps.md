@@ -278,6 +278,48 @@ administrators only, since it is the one that may bring in HTML. A staged
 upload belongs to the account that sent it, is removed on commit or cancel,
 and is swept after two hours; one account keeps at most three.
 
+**PowerPoint uploads (Issue #107).** The issue itself weighs four ways to
+read a `.ppt`/`.pptx` and recommends this one: shell out to LibreOffice for a
+PDF, then let the existing pdf.js-based `pdf` item type do the rest, rather
+than building anything that understands slide masters, layouts or embedded
+fonts. `server/pptx-convert.js` is the whole of it - one function, run
+synchronously as part of the request that uploaded the file (a queued/polled
+job would need its own staging area, status route and UI for what a single
+deck converts in a couple of seconds), in a private temp directory with its
+own LibreOffice profile (`-env:UserInstallation`), since two conversions
+sharing one profile is a documented way to deadlock them both on the same
+lock file. LibreOffice does not use its exit code to report a failed
+conversion - a corrupt file still exits 0 and says so on stdout - so success
+is judged by whether a PDF actually landed next to the input, not by the
+process's own exit code.
+
+Three call sites share it, each already accepting a plain PDF: the planner's
+upload route, the admin content route (only for the `pdfs` category), and a
+`.ppt`/`.pptx` found inside a ZIP (classified as an ordinary PDF-destined
+candidate in `zip-import.js`, converted at commit time in `zip-staging.js`,
+since classification only ever reads a ZIP's central directory and never a
+byte of the files themselves). Converting before anything is stored is what
+makes the admin/planner HTML trust split #106 drew moot here: a converted
+deck is an ordinary PDF, filed exactly where an uploaded PDF already would
+be, and nothing HTML-shaped is ever produced. A missing `soffice` binary, a
+corrupt file, or a conversion over two minutes each fail the one upload with
+a plain reason; nothing else on the server depends on LibreOffice being
+there at all.
+
+#### Installing LibreOffice for PowerPoint uploads
+
+Optional - every other upload works without it. `libreoffice-impress` is the
+one package this actually needs (Draw and its own dependencies come with
+it); the full `libreoffice` metapackage works too but installs Writer, Calc
+and the rest for nothing this feature uses:
+
+```
+apt install libreoffice-impress
+```
+
+No further configuration; the server finds `soffice` on `PATH`. Confirm it
+works with `soffice --headless --convert-to pdf --outdir /tmp yourfile.pptx`.
+
 ### Phase 3 — plans and settings ✅
 
 `plans` and `course_settings`. `plan.html` gains "send to the server" and "open
