@@ -462,6 +462,27 @@ try {
               Safari recognizes on-device instead. Not available in Firefox.
             </p>
           </div>
+          <!-- Controller mic: recorded to the session and/or amplified
+               through the display, independent of Live Captions above
+               (which never touches a MediaStream at all - see the comment
+               on caption-block). Issue #147. -->
+          <div class="stack" id="mic-block">
+            <div class="inline">
+              <button id="mic-start" type="button">Start my mic</button>
+              <span class="hint" id="mic-status">Off</span>
+            </div>
+            <div class="inline" id="mic-record-row" hidden>
+              <label class="check"><input id="mic-record" type="checkbox" checked> Record this mic to the session</label>
+            </div>
+            <div class="inline">
+              <label class="check"><input id="mic-amplify" type="checkbox"> Play through the display's speakers</label>
+              <span class="hint" id="mic-amplify-status"></span>
+            </div>
+            <p class="hint" id="mic-amplify-warning">
+              Can howl (feedback) if this device is near the display's own speakers - keep
+              it across the room, or on a presenter far from them, before turning this on.
+            </p>
+          </div>
           <form id="qr-form" class="stack">
             <label for="qr-data">QR code for the class</label>
             <div class="inline">
@@ -622,12 +643,13 @@ try {
         <!-- Audio Mixer -->
         <section class="panel" data-panel="mixer" hidden>
           <p class="hint">
-            Two different things share the word "volume" in Podium, and this is where
+            A few different things share the word "volume" in Podium, and this is where
             each one gets its own fader instead of fighting over one slider: whatever is
-            playing on a panel (a video, an audio file, YouTube) and the background music
-            the room hears with nothing on the projector for it. A channel here is set
-            once and mostly left alone; <b>Master</b>, also on the bottom bar of every
-            tab, is the one fader for "everything is too loud right now."
+            playing on a panel (a video, an audio file, YouTube), the background music
+            the room hears with nothing on the projector for it, and any controller mic
+            amplified through this screen. A channel here is set once and mostly left
+            alone; <b>Master</b>, also on the bottom bar of every tab, is the one fader
+            for "everything is too loud right now."
           </p>
           <div class="mixer-channel">
             <div class="inline">
@@ -650,11 +672,18 @@ try {
             </div>
             <input id="mixer-music" type="range" min="0" max="1" step="0.01" value="0.6" aria-label="Background music level">
           </div>
+          <div class="mixer-channel">
+            <div class="inline">
+              <label class="grow" for="mixer-mic">Controller mics — every one amplified through this screen</label>
+              <span id="mixer-mic-pct" class="mono">100%</span>
+            </div>
+            <input id="mixer-mic" type="range" min="0" max="1" step="0.01" value="1" aria-label="Controller mic level">
+          </div>
           <p class="hint">
             A channel's own level and the Master multiply together — a channel at half
             and Master at full sounds the same as a channel at full and Master at half.
-            Muting (the speaker icon on the bottom bar) silences both channels at once,
-            regardless of where either fader sits.
+            Muting (the speaker icon on the bottom bar) silences every channel at once,
+            regardless of where any fader sits.
           </p>
         </section>
 
