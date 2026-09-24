@@ -630,6 +630,60 @@ ok('one unrelated keypress afterward is enough to self-heal it - no need to find
 await ctx.close();
 }
 
+if (want('a background-music play() blocked after Go live shows up as an error, not silence')) {
+console.log('\n-- a background-music play() blocked after Go live shows up as an error, not silence --');
+// Distinct from the Waiting Music cases above: this is state.music (#music,
+// driven from display.js's syncMusic()), not a program-layer renderer. Before
+// Go live a rejection is expected and stays quiet - see the comment in
+// syncMusic(). This blocks play() only for #music and only once armed, so it
+// simulates the rarer case where the browser is still refusing sound on an
+// already-live screen (a revoked site permission, say) - which Issue #143
+// reported as Play simply not working, with nothing to say why.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'music-blocked-room', passphrase: 'still blocked' }));
+await ctx.addInitScript(() => {
+  window.__blockMusic = true;
+  const nativePlay = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () {
+    if (!window.__blockMusic || this.id !== 'music') return nativePlay.call(this);
+    return Promise.reject(new DOMException('simulated autoplay block', 'NotAllowedError'));
+  };
+});
+const screen = await ctx.newPage();
+trap(screen, 'music-blocked display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'music-blocked control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="music"]');
+await pad.fill('#music-url', 'content/audio/waiting-music.wav');
+await pad.click('#music-url-form button[type="submit"]');
+await pad.click('#music-play');
+
+await pad.waitForFunction(() => /blocking sound/.test(document.querySelector('#music-sub').textContent), null, { timeout: 8000 })
+  .then(() => ok('a play() rejected after Go live tells the controller, rather than leaving Play looking broken', true))
+  .catch(() => ok('a play() rejected after Go live tells the controller, rather than leaving Play looking broken', false));
+ok('and it is shown as a warning, not a grey hint',
+  await pad.evaluate(() => document.querySelector('#music-sub').classList.contains('is-warning')));
+
+await screen.evaluate(() => { window.__blockMusic = false; });
+// The next Play toggle (pause, then play again) is a real controller action,
+// not a hidden internal - it round-trips through state.music.playing exactly
+// as a person retrying the button would.
+await pad.click('#music-play');
+await pad.click('#music-play');
+await pad.waitForFunction(() => !/blocking sound/.test(document.querySelector('#music-sub').textContent), null, { timeout: 8000 })
+  .then(() => ok('and clears once the track actually plays', true))
+  .catch(() => ok('and clears once the track actually plays', false));
+await ctx.close();
+}
+
 if (want('more than one clock, and a laser you can pick the colour of')) {
 console.log('\n-- more than one clock, and a laser you can pick the colour of --');
 const roomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'clocks', passphrase: 'tick' });

@@ -944,10 +944,20 @@ function syncMusic() {
 
   if (music.playing) {
     if (musicEl.paused || changed) {
-      // A play() the browser refuses (nobody has clicked Go live yet) is not
-      // an error worth showing: the click that arms this screen commits state
-      // again, which brings us straight back here.
-      musicEl.play().then(() => rampMusic(target, music.fadeMs)).catch(() => {});
+      // A play() the browser refuses before Go live is not an error worth
+      // showing: the click that arms this screen commits state again, which
+      // brings us straight back here. Once the screen IS armed, though, the
+      // browser has already granted this origin sound - a rejection at that
+      // point means something is actually wrong (a revoked site permission,
+      // most likely), and staying silent just leaves Play looking broken with
+      // no way to tell why. The 'playing'/'loadeddata' listeners above clear
+      // this the moment a play() actually succeeds.
+      musicEl.play().then(() => rampMusic(target, music.fadeMs)).catch(() => {
+        if (state.armed && !musicError) {
+          musicError = 'the browser is blocking sound on this page — check its site permissions';
+          broadcastSoon();
+        }
+      });
     } else if (Math.abs(target - heading) > 0.005) {
       // A duck, an un-duck, the level being dragged on the iPad - or Play
       // pressed during a fade out, which has to catch the level on its way
