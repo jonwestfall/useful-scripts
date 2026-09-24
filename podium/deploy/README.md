@@ -212,6 +212,17 @@ Then check it:
 sudo -u podium DATA_DIR=/var/lib/podium node /opt/podium/current/server/podium-admin.js doctor
 ```
 
+Beta restores can accumulate rollback copies beside `/var/lib/podium-beta`.
+Keep the newest five and remove the rest with:
+
+```bash
+sudo ./deploy/prune-beta-backups.sh
+sudo DRY_RUN=1 ./deploy/prune-beta-backups.sh       # preview only
+```
+
+Set `KEEP_BETA_BACKUPS` to retain a different number. The live
+`/var/lib/podium-beta` directory is never touched.
+
 ## Checking up on it
 
 ```bash

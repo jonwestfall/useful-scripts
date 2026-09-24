@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 55;
+export const BUILD = 57;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -38,7 +38,7 @@ export const BUILD = 55;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.1';
-export const COMMIT = 'd4d278c';
+export const COMMIT = '7a31096';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -152,6 +152,11 @@ export function initialState() {
     // Mixer tab is for setting once and mostly leaving alone.
     volume: 0.8,
     contentVolume: 1,
+    // A controller's own mic (Issue #147), amplified through the display -
+    // its own channel for the same reason content and music have theirs,
+    // set once in the Mixer and mostly left alone. Every connected mic
+    // shares this one level; there is no per-presenter fader.
+    micVolume: 1,
     muted: false,
     // `live` is true while a device's speech recognition is actively
     // feeding this bar (Issue #79) - see the 'caption' op below. It rides
@@ -944,6 +949,12 @@ export function applyCommand(state, cmd) {
     // see the comment on contentVolume in initialState().
     case 'contentVolume':
       state.contentVolume = clamp01(cmd.value);
+      return true;
+
+    // The Mixer's own channel for a controller's amplified mic - see the
+    // comment on micVolume in initialState().
+    case 'micVolume':
+      state.micVolume = clamp01(cmd.value);
       return true;
 
     case 'mute':
