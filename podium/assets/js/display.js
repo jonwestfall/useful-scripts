@@ -22,7 +22,7 @@ import {
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { encodeToFit } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
-import { createCameraReceiver } from './rtc.js';
+import { createCameraReceiver, createMicReceiver } from './rtc.js';
 import { serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
 
@@ -854,7 +854,7 @@ function musicTarget() {
   // The same master that scales the content channel (see syncLayers) scales
   // this one too - one fader for "everything is too loud", each channel's
   // own level set once in the Mixer and mostly left alone.
-  return state.music.volume * state.volume * (contentIsSounding() ? MUSIC_DUCK : 1);
+  return state.music.volume * state.volume * ((contentIsSounding() || micIsSounding()) ? MUSIC_DUCK : 1);
 }
 
 // A track that will not play is the single most likely thing to go wrong the
@@ -990,6 +990,39 @@ setInterval(() => {
   if (!state.music.playing) return;
   if (Math.abs(musicTarget() - musicApplied.target) > 0.005) syncMusic();
 }, TELEMETRY_MS);
+
+// --- controller mic relay: amplification (Issue #147, part 2) --------------
+//
+// One <audio> element per connected sender, created and torn down by the
+// createMicReceiver callbacks wired up in connect() - unlike background
+// music, more than one of these can be live at once (Issue #147 lets
+// several controllers have a mic live together), and the browser's own
+// audio output already sums whatever plays through several elements
+// simultaneously, the same way a room would hear two open mics in
+// reality. No separate mixing graph is needed just for that; the Mixer's
+// own mic channel below sets every element's volume together, the same
+// way musicEl's is set above.
+//
+// Recording this same audio into the session is the OTHER half of Issue
+// #147, and does not touch any of this - see control.js - it runs
+// entirely off the controller's own local stream, never routed through
+// the display at all.
+
+const micAudioEls = new Map();   // peerId -> <audio>
+
+function micIsSounding() {
+  return micAudioEls.size > 0;
+}
+
+function micTarget() {
+  if (state.muted) return 0;
+  return (state.micVolume ?? 1) * state.volume;
+}
+
+function syncMicVolumes() {
+  const target = micTarget();
+  for (const el of micAudioEls.values()) el.volume = target;
+}
 
 // --- laser pointer -----------------------------------------------------------
 //
@@ -1694,6 +1727,7 @@ function beaconEvents() {
 
 function render() {
   syncMusic();
+  syncMicVolumes();
   blankEl.classList.toggle('is-on', state.blank);
   overlayEl.textContent = state.overlay.text;
   overlayEl.classList.toggle('is-on', state.overlay.visible && !!state.overlay.text);
@@ -1826,7 +1860,7 @@ function stateStorageKey() {
 function saveStateNow() {
   clearTimeout(stateSaveTimer);
   {
-    const { program, panels, layout, focus, timers, overlay, volume, contentVolume, muted, music, watermark } = state;
+    const { program, panels, layout, focus, timers, overlay, volume, contentVolume, micVolume, muted, music, watermark } = state;
     // Everywhere else, only the `asset:<id>` reference goes into state and
     // the bytes are fetched fresh from whoever still holds them (see
     // resolveAssets) - deliberately, so a photo of a student's worksheet is
@@ -1841,7 +1875,7 @@ function saveStateNow() {
     // persisting, a lecture just will not come back after a reload, and
     // nothing said so until the day it mattered.
     safeStorageSet(localStorage, stateStorageKey(), JSON.stringify({
-      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, contentVolume, muted, watermark, watermarkImageData,
+      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, contentVolume, micVolume, muted, watermark, watermarkImageData,
       // The queue, not the playing: a reload lands on the arming screen, and
       // music that started itself the moment someone clicked Go live would be
       // a surprise in a room that had gone quiet.
@@ -1889,6 +1923,7 @@ function restoreState() {
   if (saved.overlay && typeof saved.overlay === 'object') state.overlay = saved.overlay;
   if (Number.isFinite(saved.volume)) state.volume = saved.volume;
   if (Number.isFinite(saved.contentVolume)) state.contentVolume = saved.contentVolume;
+  if (Number.isFinite(saved.micVolume)) state.micVolume = saved.micVolume;
   state.muted = !!saved.muted;
   if (saved.music && Array.isArray(saved.music.tracks)) {
     state.music = { ...state.music, ...saved.music, playing: false };
@@ -1979,6 +2014,7 @@ function setHud(status, detail) {
 }
 
 let camera = null;
+let mic = null;
 
 async function connect() {
   bus = await createBus({
@@ -2016,7 +2052,7 @@ async function connect() {
         redrawInk(true);
         return;
       }
-      if (msg.t === 'rtc') { camera.handle(msg); return; }
+      if (msg.t === 'rtc') { camera.handle(msg); mic.handle(msg); return; }
       if (msg.t === 'sync') { broadcast(); return; }
       // The manual, controller-driven way to end class - "Finish session &
       // save" on the Photos tab - alongside the local 'e' key and the
@@ -2110,6 +2146,31 @@ async function connect() {
     bus,
     onStream: (stream) => { cameraStream = stream; syncLayers(); },
     onState: (status) => { cameraStatus = status; syncLayers(); },
+  });
+
+  mic = createMicReceiver({
+    bus,
+    onTrack: (peerId, stream) => {
+      let el = micAudioEls.get(peerId);
+      if (!el) {
+        el = new Audio();
+        el.className = 'mic-relay';
+        el.hidden = true;
+        document.body.append(el);
+        micAudioEls.set(peerId, el);
+      }
+      el.srcObject = stream;
+      el.volume = micTarget();
+      el.play().catch(() => { /* same story as musicEl - a play() refused before Go live sorts itself out on the next commit */ });
+    },
+    onGone: (peerId) => {
+      const el = micAudioEls.get(peerId);
+      if (!el) return;
+      el.pause();
+      el.srcObject = null;
+      el.remove();
+      micAudioEls.delete(peerId);
+    },
   });
 
   $('#fingerprint').textContent = bus.fingerprint;
@@ -2468,6 +2529,7 @@ $('#arm-fresh-session').addEventListener('click', () => {
   state.timers = fresh.timers;
   state.volume = fresh.volume;
   state.contentVolume = fresh.contentVolume;
+  state.micVolume = fresh.micVolume;
   state.muted = fresh.muted;
   state.music = fresh.music;
   state.watermark = fresh.watermark;

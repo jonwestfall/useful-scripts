@@ -9,7 +9,7 @@ import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIM
   inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
-import { createCameraSender } from './rtc.js';
+import { createCameraSender, createMicSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
@@ -2140,6 +2140,10 @@ function renderMixer() {
     $('#mixer-music').value = String(state.music.volume);
     $('#mixer-music-pct').textContent = pct(state.music.volume);
   }
+  if (mixerSliding !== 'mic') {
+    $('#mixer-mic').value = String(state.micVolume ?? 1);
+    $('#mixer-mic-pct').textContent = pct(state.micVolume ?? 1);
+  }
 }
 
 // Audience polls: a normal item once staged, but composing and running one
@@ -3608,6 +3612,7 @@ $('#pan-right').addEventListener('click', () => pan(-PAN_STEP, 0));
 // --- camera -----------------------------------------------------------------
 
 let cameraSender = null;
+let micSender = null;
 let facing = 'environment';
 
 function setCameraState(status) {
@@ -4568,7 +4573,7 @@ async function connect() {
           && !$('[data-panel="ink"]').hidden) redrawPad();
         return;
       }
-      if (msg.t === 'rtc') cameraSender?.handle(msg);
+      if (msg.t === 'rtc') { cameraSender?.handle(msg); micSender?.handle(msg); }
     },
   });
 
@@ -4582,6 +4587,8 @@ async function connect() {
       $('#cam-local').hidden = !stream;
     },
   });
+
+  micSender = createMicSender({ bus, onState: setMicAmplifyState });
 
   $('#fingerprint').textContent = bus.fingerprint;
   $('#room-name').textContent = cfg.room;
@@ -4718,7 +4725,7 @@ $('#clear-preview').addEventListener('click', () => send({ op: 'clear', where: '
 $('#mute').addEventListener('click', () => send({ op: 'mute' }));
 $('#volume').addEventListener('input', (ev) => send({ op: 'volume', value: Number(ev.target.value) }));
 
-// Three faders, one meaning each - see the Mixer tab's own explanation and
+// Four faders, one meaning each - see the Mixer tab's own explanation and
 // the comment on contentVolume in protocol.js. mixerSliding stops the next
 // broadcast's echo from yanking a fader out from under a still-moving thumb,
 // the same reason musicSliding and scrubbing already exist.
@@ -4737,6 +4744,11 @@ $('#mixer-music').addEventListener('input', (ev) => {
   sendMusicVolume(Number(ev.target.value));
 });
 $('#mixer-music').addEventListener('change', () => { mixerSliding = null; });
+$('#mixer-mic').addEventListener('input', (ev) => {
+  mixerSliding = 'mic';
+  send({ op: 'micVolume', value: Number(ev.target.value) });
+});
+$('#mixer-mic').addEventListener('change', () => { mixerSliding = null; });
 
 $('#play-pause').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
 $('#back10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: -10 }));
@@ -5400,10 +5412,12 @@ async function startMic() {
   $('#mic-start').classList.add('is-on');
   $('#mic-status').textContent = 'Live';
   if ($('#mic-record').checked) startMicRecording();
+  if ($('#mic-amplify').checked) micSender.start(micStream);
 }
 
 function stopMic() {
   stopMicRecording();
+  micSender.stop();
   micStream?.getTracks().forEach((t) => t.stop());
   micStream = null;
   $('#mic-start').textContent = 'Start my mic';
@@ -5411,11 +5425,25 @@ function stopMic() {
   $('#mic-status').textContent = 'Off';
 }
 
+function setMicAmplifyState(status) {
+  $('#mic-amplify-status').textContent = {
+    idle: '',
+    connecting: 'connecting…',
+    live: 'live on the display',
+    failed: 'could not connect - a guest network may be blocking the two devices from reaching each other',
+  }[status] || status;
+}
+
 $('#mic-start').addEventListener('click', () => { if (micStream) stopMic(); else startMic(); });
 $('#mic-record').addEventListener('change', () => {
   if (!micStream) return;
   if ($('#mic-record').checked) startMicRecording();
   else stopMicRecording();
+});
+$('#mic-amplify').addEventListener('change', () => {
+  if (!micStream) return;
+  if ($('#mic-amplify').checked) micSender.start(micStream);
+  else micSender.stop();
 });
 
 // --- watermark ---------------------------------------------------------------

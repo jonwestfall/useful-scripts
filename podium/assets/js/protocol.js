@@ -152,6 +152,11 @@ export function initialState() {
     // Mixer tab is for setting once and mostly leaving alone.
     volume: 0.8,
     contentVolume: 1,
+    // A controller's own mic (Issue #147), amplified through the display -
+    // its own channel for the same reason content and music have theirs,
+    // set once in the Mixer and mostly left alone. Every connected mic
+    // shares this one level; there is no per-presenter fader.
+    micVolume: 1,
     muted: false,
     // `live` is true while a device's speech recognition is actively
     // feeding this bar (Issue #79) - see the 'caption' op below. It rides
@@ -944,6 +949,12 @@ export function applyCommand(state, cmd) {
     // see the comment on contentVolume in initialState().
     case 'contentVolume':
       state.contentVolume = clamp01(cmd.value);
+      return true;
+
+    // The Mixer's own channel for a controller's amplified mic - see the
+    // comment on micVolume in initialState().
+    case 'micVolume':
+      state.micVolume = clamp01(cmd.value);
       return true;
 
     case 'mute':
