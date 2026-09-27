@@ -293,6 +293,9 @@ body.display #standby:not(.is-on) { display: none; }
   background: #2a1e12; border: 1px solid #6b4a22; color: #ffd9a8;
   border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 16px;
 }
+/* The same box, for a problem past "worth knowing" - matches the red already
+   used for #storage-warning and #link-help.is-mismatch. */
+.warn.is-bad { background: #2a1216; border-color: #6b2b2b; color: #ffc4c4; }
 
 kbd {
   display: inline-block; min-width: 30px; padding: 3px 8px;

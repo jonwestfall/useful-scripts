@@ -1842,6 +1842,22 @@ ok(`the page says what the box is holding (${(await desk.textContent('#storage-n
   /Library: 2 files/.test(await desk.textContent('#storage-note'))
   && /database:/.test(await desk.textContent('#storage-note')));
 
+// Issue #160: whether this particular box counts as "under pressure" varies
+// by environment (see store.diskPressure, unit-tested with numbers this test
+// controls in test/store.test.mjs) - what belongs in an end-to-end run is
+// that the page agrees with its own API response, whatever that happens to
+// say here.
+const held = await desk.evaluate(() => fetch('/api/storage', { credentials: 'same-origin' }).then((r) => r.json()));
+const bannerHidden = await desk.isHidden('#storage-pressure');
+const shouldShow = held.disk?.ok && held.disk.level !== 'ok';
+ok(`the disk-pressure banner matches what /api/storage actually reports (level: ${held.disk?.level})`,
+  bannerHidden === !shouldShow);
+if (shouldShow) {
+  const cls = (await desk.getAttribute('#storage-pressure', 'class')) || '';
+  ok(`and is marked bad only when the level actually is (class: "${cls}")`,
+    cls.includes('is-bad') === (held.disk.level === 'bad'));
+}
+
 const backup = desk.waitForEvent('download', { timeout: 30000 });
 await desk.click('#backup-go');
 const backupFile = await backup;

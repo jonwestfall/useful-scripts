@@ -1191,6 +1191,23 @@ async function refreshStorage() {
       ? `session files are kept for ${held.retentionDays} days`
       : 'session files are kept indefinitely',
   ].join(' · ') + `. All of it under ${held.dataDir}.`;
+  renderStoragePressure(held.disk);
+}
+
+// A top-level banner, not tucked inside the Storage tab an admin has no
+// reason to open until something already went wrong (Issue #160) - same
+// disk-pressure thresholds podium-admin doctor uses (see diskPressure in
+// store.js), so the two never quietly disagree about what "getting full"
+// means.
+function renderStoragePressure(disk) {
+  const banner = $('#storage-pressure');
+  if (!disk?.ok || disk.level === 'ok') { banner.hidden = true; return; }
+  banner.classList.toggle('is-bad', disk.level === 'bad');
+  const share = disk.share.toFixed(0);
+  banner.textContent = disk.level === 'bad'
+    ? `Low disk space: only ${bytes(disk.free)} free (${share}%) on this box. Free some up soon - a full disk stops logins before anything else.`
+    : `Disk space is getting tight: ${bytes(disk.free)} free (${share}%) on this box. Worth a look before it becomes urgent.`;
+  banner.hidden = false;
 }
 
 function downloadBackup() {

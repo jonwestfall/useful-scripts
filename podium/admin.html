@@ -50,6 +50,11 @@
 </div>
 
 <div id="admin" class="admin-wrap" hidden>
+  <!-- Disk pressure, an administrator's problem regardless of which tab they
+       land on - see refreshStorage in admin.js. Populated only once the
+       People/Storage block below is reached (that request is admin-only),
+       same as everything else this banner would need to say anything about. -->
+  <p class="warn" id="storage-pressure" style="grid-column: 1 / -1;" hidden></p>
   <div class="tabs admin-tabs" id="admin-tabs" style="grid-column: 1 / -1; margin-bottom: 0;">
     <button type="button" class="tab" id="tab-people" data-target="panel-people" hidden>People</button>
     <button type="button" class="tab" id="tab-courses" data-target="panel-courses" hidden>Courses</button>
