@@ -385,6 +385,15 @@ const OFFLINE_NOISE = /ERR_TUNNEL_CONNECTION_FAILED|ERR_NAME_NOT_RESOLVED|ERR_IN
 // test actually cares about - still fails its own assertion.
 const DELIBERATE = /not-a-real-file|\/api\/login|415 \(Unsupported Media Type\)|404 \(Not Found\).*favicon\.ico/;
 
+// Headless Chromium denies the Vibration API outright, even for a click
+// Playwright dispatches as genuine, trusted input - haptic() in control.js
+// already treats this as an expected, silently-ignored failure (see its own
+// try/catch), but the browser's own console.warn about the block is not a
+// thrown error that catch can intercept, and can be reported asynchronously
+// enough to land in whichever test section happens to still be running when
+// it does. Not a result of anything any test here caused.
+const PLATFORM_NOISE = /Blocked call to navigator\.vibrate/;
+
 // A fourth deliberate case - a PATCH to /api/lectures/<id> forced to answer
 // 403, to prove a rejected rename reverts the field rather than leaving it
 // looking saved - does not fit DELIBERATE above: matching on status and path
@@ -480,7 +489,7 @@ const trap = (page, tag) => {
     if (m.type() !== 'error') return;
     const text = m.text();
     const where = `${text} ${m.location()?.url || ''}`;
-    if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where)) return;
+    if (OFFLINE_NOISE.test(where) || DELIBERATE.test(where) || PLATFORM_NOISE.test(where)) return;
     if (expecting.lectureRenameForbidden && LECTURE_RENAME_FORBIDDEN.test(where)) return;
     if (expecting.recoveryConflict && RECOVERY_CONFLICT.test(where)) return;
     if (expecting.templateWriteForbidden && TEMPLATE_WRITE_FORBIDDEN.test(where)) return;
