@@ -347,7 +347,7 @@ async function main(argv) {
       db.exec(`VACUUM INTO '${temp.replace(/'/g, "''")}'`);
     } catch (err) {
       try { fs.rmSync(temp, { force: true }); } catch { /* never written, or already gone */ }
-      throw new Error(`backup failed: ${err.message}`);
+      throw new Error(`backup failed: ${err.message}`, { cause: err });
     }
     fs.renameSync(temp, dest);
     const { size } = fs.statSync(dest);
