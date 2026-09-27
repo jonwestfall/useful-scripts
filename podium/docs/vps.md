@@ -513,6 +513,13 @@ beside the database, so restoring it alone gives you every entry pointing at
 bytes that are not there. Backing up the whole data directory is what
 `deploy/` documents, and the ops script in phase 6 is where it gets automated.
 
+A disk running low is worth knowing about before it is actually full, not
+after (Issue #160): the admin page now warns on its own, at the top, on
+whichever tab an administrator happens to have open, rather than only once
+somebody thinks to visit Storage. It shares the exact free-space thresholds
+`podium-admin doctor` already checked (`diskPressure` in `store.js`), so the
+two never quietly disagree about what "getting full" means.
+
 ### Phase 6 — operations ✅
 
 `deploy/backup.sh`, `deploy/restore.sh`, and `podium-admin doctor`.
@@ -527,6 +534,12 @@ nobody has ever opened is a hope rather than a backup. It needs nothing on the
 box beyond `tar` and Podium's own Node, whose built-in SQLite takes the snapshot
 when `sqlite3` is not installed — which is the choice from the top of this file
 paying for itself in a place it was not chosen for.
+
+`podium-admin backup` (Issue #160) is the lighter, database-only version of the
+same `VACUUM INTO` snapshot, meant for a cron line or a container that has no
+`deploy/` checked out rather than replacing the script above — see
+`deploy/README.md#backups` for the full story, including where an off-box copy
+fits in.
 
 **Restore** stops the service, moves the current data directory *aside* rather
 than deleting it (a restore against the wrong archive happens at three in the

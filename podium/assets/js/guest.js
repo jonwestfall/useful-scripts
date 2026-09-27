@@ -40,11 +40,16 @@ function itemTitle(item) {
 // applyCommand for what each one means).
 const NAVIGABLE = new Set(['pdf', 'slides', 'web', 'deck']);
 
+// The types Play/Pause actually applies to - the same set control.js's own
+// isMedia check uses.
+const MEDIA_TYPES = new Set(['video', 'audio', 'youtube']);
+
 const LASER_COLORS = ['red', 'green', 'blue'];
 let laserColor = 'red';
 
 let bus = null;
 let state = { program: { ...BLACK }, blank: false, focus: 0, panels: [] };
+let telemetry = { time: 0, duration: 0, playing: false };
 
 function send(cmd) {
   bus?.send({ t: 'cmd', ...cmd });
@@ -79,6 +84,9 @@ function renderNow() {
   $('#guest-next').disabled = !navigable;
   $('#guest-blank').classList.toggle('is-on', !!state.blank);
   $('#guest-blank').textContent = state.blank ? 'Unblank' : 'Blank screen';
+
+  $('#guest-play-pause').disabled = !MEDIA_TYPES.has(item?.type);
+  $('#guest-play-pause').textContent = telemetry.playing ? '⏸ Pause' : '▶ Play';
 }
 
 async function connect() {
@@ -90,6 +98,7 @@ async function connect() {
     onMessage: (msg) => {
       if (msg.t !== 'state') return;
       state = { ...state, ...msg.state };
+      telemetry = msg.telemetry || telemetry;
       renderNow();
       renderConnection();
     },
@@ -101,6 +110,7 @@ async function connect() {
 $('#guest-prev').addEventListener('click', () => send({ op: 'nav', dir: 'prev', where: 'program' }));
 $('#guest-next').addEventListener('click', () => send({ op: 'nav', dir: 'next', where: 'program' }));
 $('#guest-blank').addEventListener('click', () => send({ op: 'blank' }));
+$('#guest-play-pause').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
 
 // --- laser ----------------------------------------------------------------
 //

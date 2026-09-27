@@ -1009,6 +1009,10 @@ function storageReport(ctx) {
     sessions: lectures.usage(ctx.db),
     database,
     dataDir: ctx.dataDir,
+    // The same disk-pressure thresholds `podium-admin doctor` uses, so the
+    // admin page can warn before the box is actually full rather than only
+    // once someone thinks to open this tab (Issue #160).
+    disk: store.diskPressure(ctx.dataDir),
     // Media bytes live on disk beside the database, not inside it - so a copy
     // of the database alone is not a backup, and the page says so.
     // Matches doctor.checkStorage's own validation: only a finite, positive

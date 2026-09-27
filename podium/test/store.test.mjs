@@ -7,7 +7,7 @@
 // migrations that run once, a password that cannot be read back, a session
 // that stops working when its account does. A mock would be testing itself.
 
-import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, chmodSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, chmodSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
@@ -1407,6 +1407,19 @@ ok(`an unopenable database is reported, not thrown (${seen(brokenReport, 'databa
 ok('and the checks that do not need the database still run',
   seen(brokenReport, 'node') && seen(brokenReport, 'permissions') && seen(brokenReport, 'disk'));
 
+// diskPressure (Issue #160): shared between doctor's own disk check and the
+// admin page's banner, specifically so the two thresholds cannot drift apart
+// - see checkDisk above, which now just reads this instead of measuring
+// the filesystem itself.
+ok('a real data directory reports usable disk numbers',
+  (() => {
+    const pressure = store.diskPressure(dataDir);
+    return pressure.ok && pressure.free > 0 && pressure.total > 0
+      && ['ok', 'warn', 'bad'].includes(pressure.level);
+  })());
+ok('a directory that does not exist is reported, not thrown',
+  store.diskPressure(path.join(root, 'no-such-directory-for-disk-check')).ok === false);
+
 // checkStorage reads whatever env object it is handed - the CLI's job (see
 // envFile() in podium-admin.js) is making sure that object actually has
 // LECTURE_RETENTION_DAYS on it even when the shell running `doctor` never
@@ -1522,6 +1535,44 @@ ok('and every other command still fails loudly on the same database, as it alway
   }
 })());
 rmSync(crashDir, { recursive: true, force: true });
+
+console.log('\n-- backup, from the command line --');
+
+// The lighter, database-only snapshot (Issue #160): the same VACUUM INTO the
+// admin page's own backup button takes, reachable from a shell for whoever
+// wants it on a cron line of their own rather than the full deploy/backup.sh
+// archive. Spawned, like doctor above, because this is testing main()'s own
+// argument handling and destination logic, not store.js.
+const backupOut = execFileSync(process.execPath, ['podium-admin.js', 'backup'], {
+  cwd: cliRoot, env: { ...process.env, DATA_DIR: dataDir },
+}).toString().trim();
+ok(`it prints the path it wrote (${backupOut})`,
+  backupOut === path.join(dataDir, 'backups', path.basename(backupOut)));
+ok('and the file it names is really there, non-empty', (() => {
+  try { return statSync(backupOut).size > 0; } catch { return false; }
+})());
+ok('and it really is a working SQLite database, not a partial file', (() => {
+  const { DatabaseSync } = require('node:sqlite');
+  const copy = new DatabaseSync(backupOut, { readOnly: true });
+  const row = copy.prepare('PRAGMA integrity_check').get();
+  copy.close();
+  return row.integrity_check === 'ok';
+})());
+ok('and it logged the backup as an audit event',
+  db.prepare("SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'backup_created'").get().n === 1);
+
+const explicitFile = path.join(root, 'chosen-name.db');
+execFileSync(process.execPath, ['podium-admin.js', 'backup', '--out', explicitFile], {
+  cwd: cliRoot, env: { ...process.env, DATA_DIR: dataDir },
+});
+ok('--out naming an exact file writes exactly there, not a timestamped name beside it', existsSync(explicitFile));
+
+const explicitDir = path.join(root, 'chosen-dir') + path.sep;
+const dirOut = execFileSync(process.execPath, ['podium-admin.js', 'backup', '--out', explicitDir], {
+  cwd: cliRoot, env: { ...process.env, DATA_DIR: dataDir },
+}).toString().trim();
+ok('--out naming a directory (even one that does not exist yet, by its trailing slash) gets a timestamped file inside it',
+  path.dirname(dirOut) === path.join(root, 'chosen-dir') && existsSync(dirOut));
 
 console.log('\n--- audit logs ---');
 accounts.logEvent(db, { userId: admin.id, username: admin.username, action: 'test_action', details: { foo: 'bar' }, now: 1000 });

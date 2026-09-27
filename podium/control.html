@@ -1261,6 +1261,16 @@ try {
       in Settings there: if they differ, the older device is running a cached copy and
       needs reloading.
     </p>
+    <!-- Discovery only (Issue #161): the actual hand-off is the pairing QR
+         on the display's own "Guest (Simple Mode)" option (see showPairing
+         in display.js) - that is what carries this room's passphrase. This
+         is just so a substitute's clicker is not something you can only
+         stumble onto by way of the display. -->
+    <p class="hint">
+      <a href="guest.html" target="_blank" rel="noopener">Guest (Simple Mode) →</a>
+      A substitute's clicker - Next/Previous, Blank and the laser, nothing this
+      controller has cued. Paired from the display's own pairing sheet, not from here.
+    </p>
 
     <button type="button" id="setup-close" hidden>Close</button>
   </div>
