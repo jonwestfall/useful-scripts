@@ -557,8 +557,21 @@ body.guest {
   cursor: crosshair; touch-action: none;
 }
 .guest-pad .hint { margin: 0; padding: 0 20px; }
-.admin-wrap { max-width: 56rem; margin: 18px auto; padding: 0 14px; display: grid; gap: 14px; }
-.admin-wrap .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+/* A ceiling, never a floor - max-width only ever shrinks to fit a narrower
+   viewport, so 56rem stays exactly what a phone or a normal laptop screen
+   already got. clamp() only changes anything once the viewport is wide
+   enough that 82vw clears 56rem in the first place - a genuinely large
+   monitor - letting content already built to use available width (the
+   auto-fit form grids, admin-row's own flexed title) actually get some,
+   instead of every tab being one column capped at 896px regardless of how
+   much screen is sitting unused beside it. Issue #153. */
+.admin-wrap { max-width: clamp(56rem, 82vw, 100rem); margin: 18px auto; padding: 0 14px; display: grid; gap: 14px; }
+/* The generic .card this inherits from caps max-width at 620px for the
+   narrow centered dialogs it's meant for elsewhere (login, setup sheets,
+   modals) - admin cards are grid children of the wrapper above, not
+   centered dialogs, so that cap only fights the widened .admin-wrap for no
+   reason. Issue #153. */
+.admin-wrap .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; max-width: none; }
 .admin-wrap h2 { margin: 0 0 6px; font-size: 16px; }
 .admin-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .admin-head h2 { flex: 1; }
