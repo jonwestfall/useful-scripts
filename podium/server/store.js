@@ -484,7 +484,33 @@ function dataDirFromEnv(env = process.env) {
   return env.DATA_DIR ? path.resolve(env.DATA_DIR) : null;
 }
 
+/**
+ * Whether the disk under a data directory is running out of room, on the
+ * same thresholds doctor's own disk check has always used (Issue #160) -
+ * shared here so the admin page's banner and `podium-admin doctor`'s exit
+ * code never quietly drift apart on what counts as "getting full".
+ */
+function diskPressure(dataDir) {
+  let stats;
+  try {
+    stats = fs.statfsSync(dataDir);
+  } catch (err) {
+    return { ok: false, error: err.code };
+  }
+  const free = stats.bavail * stats.bsize;
+  const total = stats.blocks * stats.bsize;
+  const share = total ? (free / total) * 100 : 0;
+  // A relay that cannot write is a relay that cannot log anybody in: SQLite
+  // fails a write before it fails a read, so the first symptom of a full
+  // disk is a login form that refuses everybody - "bad" is meant to be seen
+  // well before that.
+  const level = free < 200 * 1024 * 1024 || share < 5 ? 'bad'
+    : free < 1024 * 1024 * 1024 || share < 15 ? 'warn'
+      : 'ok';
+  return { ok: true, free, total, share, level };
+}
+
 module.exports = {
   open, migrate, dataDirFromEnv, SCHEMA_VERSION: MIGRATIONS.length,
-  getSystemSetting, setSystemSetting,
+  getSystemSetting, setSystemSetting, diskPressure,
 };

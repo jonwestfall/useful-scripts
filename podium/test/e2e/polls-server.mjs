@@ -1842,6 +1842,22 @@ ok(`the page says what the box is holding (${(await desk.textContent('#storage-n
   /Library: 2 files/.test(await desk.textContent('#storage-note'))
   && /database:/.test(await desk.textContent('#storage-note')));
 
+// Issue #160: whether this particular box counts as "under pressure" varies
+// by environment (see store.diskPressure, unit-tested with numbers this test
+// controls in test/store.test.mjs) - what belongs in an end-to-end run is
+// that the page agrees with its own API response, whatever that happens to
+// say here.
+const held = await desk.evaluate(() => fetch('/api/storage', { credentials: 'same-origin' }).then((r) => r.json()));
+const bannerHidden = await desk.isHidden('#storage-pressure');
+const shouldShow = held.disk?.ok && held.disk.level !== 'ok';
+ok(`the disk-pressure banner matches what /api/storage actually reports (level: ${held.disk?.level})`,
+  bannerHidden === !shouldShow);
+if (shouldShow) {
+  const cls = (await desk.getAttribute('#storage-pressure', 'class')) || '';
+  ok(`and is marked bad only when the level actually is (class: "${cls}")`,
+    cls.includes('is-bad') === (held.disk.level === 'bad'));
+}
+
 const backup = desk.waitForEvent('download', { timeout: 30000 });
 await desk.click('#backup-go');
 const backupFile = await backup;
@@ -2509,6 +2525,37 @@ ok('and never touches what the instructor has cued',
 await gControl.click('#take');
 await gDisplay.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-whiteboard'), null, { timeout: 5000 });
 ok('TAKE still works normally afterward - the guest device changed nothing about how freeze/cue behaves', true);
+
+// --- Play/Pause (Issue #161) -----------------------------------------------
+ok('disabled with nothing playable on screen (a whiteboard)', await gGuest.isDisabled('#guest-play-pause'));
+await gControl.click('.tile:has(.tile-title:text-is("Waiting music"))');
+await gDisplay.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] audio'), null, { timeout: 8000 });
+await gGuest.waitForFunction(() => !document.querySelector('#guest-play-pause')?.disabled, null, { timeout: 5000 });
+ok('enabled once something playable is on screen', true);
+ok('and reads Pause, since it is already playing', (await gGuest.textContent('#guest-play-pause')).includes('Pause'));
+await gGuest.click('#guest-play-pause');
+await gDisplay.waitForFunction(() => document.querySelector('.layer[data-role="program"] audio')?.paused, null, { timeout: 5000 });
+ok('Pause from the guest device actually pauses the projector', true);
+await gGuest.waitForFunction(() => document.querySelector('#guest-play-pause')?.textContent.includes('Play'), null, { timeout: 5000 });
+ok('and the button flips back to Play, reflecting real telemetry', true);
+await gGuest.click('#guest-play-pause');
+await gDisplay.waitForFunction(() => !document.querySelector('.layer[data-role="program"] audio')?.paused, null, { timeout: 5000 });
+ok('and Play from the guest device resumes it', true);
+
+// --- discovery links (Issue #161) ------------------------------------------
+await gControl.click('#open-settings');
+await gControl.waitForSelector('#setup:not([hidden])');
+ok('the controller\'s own Settings links to Guest (Simple Mode)',
+  await gControl.getAttribute('#setup a[href="guest.html"]', 'target') === '_blank');
+await gControl.click('#setup-close');
+
+const gHome = await gCtx.newPage();
+trap(gHome, 'guest landing page');
+await gHome.goto(`${BASE}/index.html`);
+await gHome.waitForSelector('#topbar-nav:not([hidden])');
+ok('the homepage lists Guest alongside the other surfaces',
+  await gHome.isVisible('#topbar-nav a[href="guest.html"]'));
+await gHome.close();
 
 await gCtx.close();
 }
