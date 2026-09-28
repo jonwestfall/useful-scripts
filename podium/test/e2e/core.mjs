@@ -1939,6 +1939,77 @@ ok('and B does the same job on the display', /index\.html$/.test(screen.url()));
 await ctx.close();
 }
 
+if (want('kiosk mode: auto-arm on load')) {
+console.log('\n-- kiosk mode: auto-arm on load --');
+
+// Configured directly via localStorage, the same shortcut every other
+// section's room config uses - this is the auto-arm behaviour itself, not
+// the setup form (that gets its own check below).
+const kioskCtx = await browser.newContext();
+await kioskCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'kiosk-room', passphrase: 'nobody is here to click', kiosk: true }));
+
+const kiosk = await kioskCtx.newPage();
+trap(kiosk, 'kiosk display');
+await kiosk.goto(`${BASE}/display.html`);
+// No click on #arm-button anywhere in this section - that is the entire
+// point of the flag.
+await kiosk.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('a kiosk-flagged display arms itself with no click', await kiosk.isHidden('#arm'));
+ok('and is actually live, not just connected',
+  await kiosk.evaluate(() => document.body.classList.contains('is-live')));
+
+// The crash/reboot/power-flicker case: a fresh load with nobody there a
+// second time either does the same thing again.
+await kiosk.reload();
+await kiosk.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('and arms itself again on a fresh load, not just the first one',
+  await kiosk.isHidden('#arm'));
+await kioskCtx.close();
+
+// An ordinary display, same room shape, no kiosk flag: the control this
+// change must not remove.
+const ordinaryCtx = await browser.newContext();
+await ordinaryCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'not-a-kiosk', passphrase: 'still needs a click' }));
+const ordinary = await ordinaryCtx.newPage();
+trap(ordinary, 'ordinary display');
+await ordinary.goto(`${BASE}/display.html`);
+await ordinary.waitForSelector('#arm:not([hidden])');
+ok('an ordinary display still waits for the click',
+  !(await ordinary.evaluate(() => document.body.classList.contains('is-live'))));
+await ordinaryCtx.close();
+
+// The setup form itself: showSetup() previously skipped every boolean field
+// outright, so a checkbox there could never be populated OR read correctly
+// even once display.html grew one. Fill the form for real, check the box,
+// submit, and confirm the saved config actually carries kiosk: true (not a
+// checkbox's default "on" string) and that the very next load auto-arms
+// from it.
+const formCtx = await browser.newContext();
+const formPage = await formCtx.newPage();
+trap(formPage, 'kiosk setup form');
+await formPage.goto(`${BASE}/display.html`);
+await formPage.waitForSelector('#setup:not([hidden])');
+ok('the checkbox starts unchecked', !(await formPage.isChecked('#d-kiosk')));
+await formPage.selectOption('#d-transport', 'ws');
+await formPage.fill('#d-wu', `ws://127.0.0.1:${PORT}/podium`);
+await formPage.fill('#d-room', 'kiosk-from-form');
+await formPage.fill('#d-pass', 'set from the form itself');
+await formPage.check('#d-kiosk');
+await Promise.all([
+  formPage.waitForNavigation({ timeout: 20000 }),
+  formPage.click('#setup-form button[type="submit"]'),
+]);
+await formPage.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('checking Kiosk mode in the setup form saves it, and the next load auto-arms',
+  await formPage.isHidden('#arm'));
+const savedKiosk = await formPage.evaluate(() => JSON.parse(localStorage.getItem('podium.config.v2')).kiosk);
+ok(`and the saved config really has kiosk: true, not a stray checkbox string (${JSON.stringify(savedKiosk)})`,
+  savedKiosk === true);
+await formCtx.close();
+}
+
 reportErrors();
 } finally {
   await teardown();

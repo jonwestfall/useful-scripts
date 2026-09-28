@@ -70,6 +70,21 @@ function getPlan(db, user, id) {
 }
 
 /**
+ * The plan doc a kiosk's schedule currently names (Issue #152), with no
+ * owner/course VISIBLE check at all - a kiosk has no user identity to check
+ * one against, and the check that matters already happened when an
+ * administrator assigned this id to the profile in the first place
+ * (server/kiosks.js's schedule and plan_id are both admin-only writes).
+ * Still never hands back a deleted plan - that is what "assigned to
+ * something gone" resolves to as far as a kiosk is concerned, same as an
+ * id nobody ever wrote.
+ */
+function getPlanForKiosk(db, id) {
+  const row = db.prepare(`${SELECT_PLANS} AND p.id = ?`).get(Number(id));
+  return row ? planRow(row, { withDoc: true }) : null;
+}
+
+/**
  * Changing or deleting a plan is the author's business, or an admin's.
  *
  * Deliberately NOT a course owner's: filing a plan under a course shares it to
@@ -157,4 +172,4 @@ function deletePlan(db, user, id) {
   return plan;
 }
 
-module.exports = { listPlans, getPlan, savePlan, updatePlan, deletePlan, mayWrite, MAX_DOC_BYTES };
+module.exports = { listPlans, getPlan, getPlanForKiosk, savePlan, updatePlan, deletePlan, mayWrite, MAX_DOC_BYTES };

@@ -21,10 +21,11 @@ import {
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { encodeToFit } from './store.js';
-import { MAX_ASSET_CHARS } from './planfile.js';
+import { MAX_ASSET_CHARS, itemForStage, readPlan } from './planfile.js';
 import { createCameraReceiver, createMicReceiver } from './rtc.js';
 import { serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
+import { deckId } from './deck.js';
 
 const HEARTBEAT_MS = 2000;
 const TELEMETRY_MS = 400;
@@ -1369,6 +1370,13 @@ function queueRecordingTransition(fn) {
 
 async function startRecording() {
   if (lectureId) return;
+  // Unattended signage (Issue #151): a kiosk auto-arms on every load - every
+  // reboot, every day, for a whole semester - and none of that is a lecture.
+  // Left unhandled, that is an endless pile of empty session records with
+  // nothing in them. This is the flag, not the auto-arm path specifically:
+  // a kiosk device that somebody manually clicks Go live on (unusual, but
+  // possible) still should not record, for the same reason.
+  if (cfg.kiosk) return;
   // Awaited rather than read off a flag the probe sets when it lands: Go live
   // can be clicked in the same second the page opened, and a lecture that went
   // unrecorded because of a race is exactly the kind of thing nobody would
@@ -2196,6 +2204,201 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) flushPersistence();
 });
 
+// --- kiosk scheduling: loading a plan with no controller (Issue #152) ------
+//
+// A kiosk has nobody running control.js to turn a plan into stage/panel/
+// layout/timer/music commands - adoptPlan() in control.js is the only place
+// that logic has ever lived, sent one bus command at a time to whichever
+// display is listening. adoptPlanLocally below is that same logic, ported to
+// apply each command to THIS display's own `state` directly (applyCommand +
+// commit, the exact pair a real bus message triggers on arrival - see the
+// bus handler above) instead of sending it anywhere. Deliberately not shared
+// code with control.js: that function is entangled with control-only state
+// (currentPlan, deckStore/assetStore under control's own eviction rules,
+// renderPlanBar, saveCurrentPlan) that has nothing to do with a kiosk, and
+// pulling it apart to share the middle was worse than porting the ~120 lines
+// that matter for a display with nobody driving it.
+async function adoptPlanLocally(plan) {
+  for (const [id, asset] of Object.entries(plan.assets || {})) assetStore.set(id, asset.data);
+
+  for (const row of plan.items) {
+    if (row.type !== 'deck' || !row.asset) continue;
+    const source = plan.assets?.[row.asset]?.data;
+    if (typeof source !== 'string') continue;
+    const id = await deckId(source);
+    deckStore.set(id, source);
+    row.deckId = id;
+    // adoptPlan() in control.js also pre-renders here to learn slideCount/
+    // fragments - a controller's own step buttons need to know how many
+    // slides a deck has before the first Next click. A kiosk has no such
+    // buttons; the renderer display.js already uses for a deck arriving over
+    // the bus works these out for itself the same way once it actually
+    // stages one, so nothing here needs to duplicate that.
+  }
+
+  const apply = (cmd) => applyCommand(state, cmd);
+
+  if (plan.layout && plan.layout !== 'single') apply({ op: 'layout', mode: plan.layout });
+  if (plan.layout === 'pip' && plan.pip) {
+    const { main, inset, corner, size } = plan.pip;
+    apply({ op: 'pip', main, inset, corner, size });
+  }
+  if (plan.timers.length) {
+    apply({ op: 'timer', action: 'define', timers: plan.timers.map((t) => ({ id: t.id, label: t.label, seconds: t.mins * 60 })) });
+  }
+
+  if (plan.autoLaunch?.enabled) {
+    const isFreeze = plan.autoLaunch.initialState === 'freeze';
+    const isBlank = plan.autoLaunch.initialState === 'blank';
+    if (isFreeze) apply({ op: 'freeze', on: true });
+
+    const count = LAYOUTS[plan.layout || 'single'] || 1;
+    const paneKeys = ['A', 'B', 'C', 'D'].slice(0, count);
+
+    for (let i = 0; i < paneKeys.length; i++) {
+      const key = paneKeys[i];
+      const p = plan.autoLaunch.panes?.[key];
+      if (!p) continue;
+
+      if (p.type === 'item' && p.itemId) {
+        const item = plan.items.find((it) => it.id === p.itemId);
+        if (item) {
+          const staged = itemForStage(item);
+          if (i === 0) apply({ op: 'stage', item: staged, where: isFreeze ? 'preview' : 'auto' });
+          else apply({ op: 'panel', index: i - 1, item: staged });
+        }
+      } else if (p.type === 'set' && Array.isArray(p.entries) && p.entries.length) {
+        const entries = [];
+        for (const e of p.entries) {
+          const item = plan.items.find((it) => it.id === e.itemId);
+          if (!item) continue;
+          entries.push({ item: itemForStage(item), seconds: e.seconds || 15 });
+        }
+        if (entries.length) {
+          const setItem = {
+            type: 'set', title: p.title || `Pane ${key} set`,
+            mode: p.mode === 'random' ? 'random' : 'sequential', entries,
+          };
+          if (i === 0) apply({ op: 'stage', item: setItem, where: isFreeze ? 'preview' : 'auto' });
+          else apply({ op: 'panel', index: i - 1, item: setItem });
+        }
+      }
+    }
+
+    const activeIndex = paneKeys.indexOf(plan.autoLaunch.activePane || 'A');
+    apply({ op: 'focus', index: activeIndex >= 0 ? activeIndex : 0 });
+
+    if (isBlank) apply({ op: 'blank', on: true });
+
+    if (plan.autoLaunch.music?.playlist) {
+      const musicConfig = plan.autoLaunch.music;
+      let targetName = musicConfig.playlist;
+      let matchedPlaylist = null;
+      let matchedAudioItem = null;
+
+      if (targetName.startsWith('item:')) {
+        matchedAudioItem = plan.items.find((it) => it.id === targetName.slice(5));
+      } else {
+        if (targetName.startsWith('playlist:')) targetName = targetName.slice(9);
+        const playlists = await loadMusicLibrary();
+        matchedPlaylist = playlists.find((l) => l.name === targetName) || playlists[Number(targetName)];
+        if (!matchedPlaylist) {
+          matchedAudioItem = plan.items.find((it) => it.type === 'audio' && (it.id === targetName || it.title === targetName));
+        }
+      }
+
+      if (matchedPlaylist) {
+        apply({
+          op: 'music', action: 'load', tracks: matchedPlaylist.tracks,
+          name: matchedPlaylist.name, play: musicConfig.autoplay !== false,
+        });
+      } else if (matchedAudioItem) {
+        apply({
+          op: 'music', action: 'load',
+          tracks: [{ src: matchedAudioItem.src, title: matchedAudioItem.title, artist: matchedAudioItem.artist }],
+          name: matchedAudioItem.title || 'Audio', play: musicConfig.autoplay !== false,
+        });
+      }
+
+      if (typeof musicConfig.volume === 'number') apply({ op: 'music', action: 'volume', value: musicConfig.volume });
+    }
+
+    if (plan.autoLaunch.timer?.timerId) {
+      const timer = plan.timers.find((t) => t.id === plan.autoLaunch.timer.timerId);
+      if (timer) apply({ op: 'timer', action: 'start', id: timer.id, seconds: timer.mins * 60, label: timer.label || '' });
+    }
+  }
+
+  commit();
+}
+
+// control.js's loadPlaylists() is control-UI-bound (populates a <select>,
+// mutates its own module-level list) - this is the plain fetch underneath
+// it, for the one thing a kiosk plan's autoLaunch.music might need: naming a
+// saved playlist by name rather than an item already sitting in the plan.
+async function loadMusicLibrary() {
+  try {
+    const res = await fetch('content/music.json', { cache: 'no-cache' });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (Array.isArray(data) ? data : data.playlists || [])
+      .filter((list) => list && Array.isArray(list.tracks) && list.tracks.length);
+  } catch {
+    return [];
+  }
+}
+
+// How often a kiosk asks "what should be showing right now" (Issue #152). A
+// schedule is minutes, not seconds, wide - see the "not a full calendar"
+// scope in the issue itself - so checking once a minute catches every
+// boundary within the same minute it crosses, which is close enough for
+// signage nobody is staring at a stopwatch in front of. Polling rather than
+// the server pushing a change was the deliberate call here (see
+// server/kiosks.js's own header comment): no new server-side bus client, and
+// a kiosk that missed one tick (a reboot, a network blip) just gets the
+// right answer on its next poll instead of needing to be told twice.
+const KIOSK_SCHEDULE_POLL_MS = 60000;
+let loadedPlanId = null;
+
+async function checkKioskSchedule() {
+  // cfg.kiosk also covers the OLDER, manually-flagged kind of kiosk (Issue
+  // #151 slice 1: a real signed-in user's own device, ticked "kiosk" on its
+  // own setup form) - that device has no podium_kiosk_hint cookie at all
+  // (see config.js's own fromKioskSession, which checks the same thing for
+  // the same reason), and asking anyway would 404 this same fetch once a
+  // minute forever rather than once.
+  if (!/(?:^|; )podium_kiosk_hint=1(?:;|$)/.test(document.cookie)) return;
+  let resolved;
+  try {
+    const res = await fetch('/api/kiosks/session-plan', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    resolved = await res.json();
+  } catch {
+    return; // offline, or between requests - next tick tries again
+  }
+  if (resolved.planId === loadedPlanId) return;
+  loadedPlanId = resolved.planId;
+  if (!resolved.plan) return; // nothing assigned, or it named something since deleted
+  try {
+    const { plan } = readPlan(JSON.stringify(resolved.plan.doc));
+    await adoptPlanLocally(plan);
+  } catch {
+    // A plan that fails to parse or adopt is the same as one not arriving -
+    // whatever was already on screen keeps showing rather than going blank.
+  }
+}
+
+function startKioskScheduling() {
+  checkKioskSchedule();
+  setInterval(checkKioskSchedule, KIOSK_SCHEDULE_POLL_MS);
+}
+
+// An e2e test forcing one poll rather than waiting up to KIOSK_SCHEDULE_POLL_MS
+// for the real interval to fire - same reasoning as window.__podiumAssetStoreSize
+// above: harmless to expose, and the only way to prove a schedule switch
+// without a real test just sitting there for a minute.
+window.__podiumCheckKioskSchedule = checkKioskSchedule;
+
 // Arming is only about the things a browser will not give a page without a
 // gesture: sound, fullscreen and the wake lock. The display is already on the
 // bus by this point, so a controller can see it - and see that it is waiting
@@ -2296,7 +2499,9 @@ function showSetup() {
   setupWired = true;
   for (const [key, value] of Object.entries(cfg)) {
     const field = form.elements[key];
-    if (field && typeof value !== 'boolean') field.value = value;
+    if (!field) continue;
+    if (field.type === 'checkbox') field.checked = !!value;
+    else if (typeof value !== 'boolean') field.value = value;
   }
   const onTransport = () => {
     const t = form.elements.transport.value;
@@ -2315,7 +2520,9 @@ function showSetup() {
     const next = { ...cfg, generated: null };
     for (const key of Object.keys(DEFAULTS)) {
       const field = form.elements[key];
-      if (field && typeof field.value === 'string') next[key] = field.value.trim();
+      if (!field) continue;
+      if (field.type === 'checkbox') next[key] = field.checked;
+      else if (typeof field.value === 'string') next[key] = field.value.trim();
     }
     if (!isConfigured(next)) { $('#setup-error').textContent = 'Fill in the fields for the transport you picked.'; return; }
     cfg = next;
@@ -2562,6 +2769,17 @@ if (!isConfigured(cfg)) {
   } catch (err) {
     setHud('error', err?.message || String(err));
   }
+  // Unattended signage (Issue #151): the one thing an ordinary display always
+  // requires a real click for is right here (see goLive's own comment on the
+  // audio-unlock gesture) - a kiosk has nobody to click it, on the very first
+  // load and again after every crash, reboot or power flicker. Run regardless
+  // of whether connect() above succeeded: a kiosk's job is to keep showing
+  // whatever it was showing, relay or no relay, not to sit on the arm screen
+  // waiting for a controller that will never come. If the browser was not
+  // actually launched with the autoplay-exempting flags the docs ask for,
+  // this fails exactly the way an early manual click already does today, and
+  // the existing self-heals-on-the-next-gesture fallback still applies.
+  if (cfg.kiosk) { goLive(); startKioskScheduling(); }
 }
 
 render();

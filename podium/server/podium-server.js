@@ -47,6 +47,7 @@ const { Worker } = require('node:worker_threads');
 const { WebSocketServer } = require('ws');
 const store = require('./store.js');
 const accounts = require('./accounts.js');
+const kiosks = require('./kiosks.js');
 const api = require('./api.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
@@ -124,6 +125,22 @@ const AUTH_OPEN_PATHS = new Set([
 // included, and still gets challenged for these two paths like every other.
 const AUTH_PUBLIC_WITH_ACCOUNTS = new Set(['/', '/index.html']);
 
+// What a provisioned kiosk (Issue #151) is let onto with its own cookie
+// instead of a signed-in user - display.html itself, plus every file it
+// actually loads to run. Deliberately NOT control.html, plan.html or
+// admin.html: a kiosk cookie is scoped to the one page a device nobody is
+// watching has any business reaching. Built from the same file list sw.js's
+// WARM keeps in sync with display.js's real imports (test/offline-shell.test.mjs
+// enforces that), so a future renderer module landing there does not silently
+// leave a kiosk stuck on the login page.
+const KIOSK_OPEN_PATHS = new Set([
+  '/display.html', '/config.json', '/manifest-display.webmanifest',
+  '/assets/vendor/marp.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
+  '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
+  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/deck.js',
+  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js',
+]);
+
 /**
  * The build this PROCESS is serving, read once at startup and reported on
  * /healthz.
@@ -178,6 +195,7 @@ const authContext = {
   isBasicAuthorized: (req) => isAuthorized(req),
   openPaths: AUTH_OPEN_PATHS,
   publicPaths: AUTH_PUBLIC_WITH_ACCOUNTS,
+  kioskOpenPaths: KIOSK_OPEN_PATHS,
 };
 
 function timingSafeEqualString(given, want) {
@@ -811,7 +829,11 @@ server.on('upgrade', (req, socket, head) => {
   // and needs a signed-in device for the same reason control.html would on
   // this one combination. Solving that is a different, larger feature
   // (anonymous room-scoped socket tokens) that #77 did not ask for.
-  if (hasAccounts() && !accounts.sessionUser(db, api.cookieToken(req))) {
+  // A provisioned kiosk (Issue #151) carries its own cookie, not a user
+  // session - checked here too, or a kiosk assigned the self-hosted ws
+  // transport would load display.html fine and then sit on a permanently
+  // rejected socket, the one combination the feature exists for.
+  if (hasAccounts() && !accounts.sessionUser(db, api.cookieToken(req)) && !kiosks.sessionKiosk(db, api.kioskCookieToken(req))) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return;

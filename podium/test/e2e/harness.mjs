@@ -438,6 +438,19 @@ const TEMPLATE_WRITE_FORBIDDEN = /403 \(Forbidden\).*\/api\/templates\/[^/]+$/;
 // same reason: a fetch()-triggered console message here carries no location
 // URL to anchor on the way a resource-tag load does.
 
+// A ninth: sw.js's own install sweep tries to warm every page in the app
+// shell (Issue #130), control.html/admin.html/plan.html and their exclusive
+// JS included, with no idea which credential is sitting in the browser
+// running it. A signed-in user's session has always covered all of them, so
+// this never surfaced before - a kiosk's own cookie (Issue #151) is the
+// first credential narrow enough that some of those warm() calls genuinely
+// 401, harmlessly (warm() already skips caching anything not ok; this is
+// only the browser's own console noise for a failed background fetch, which
+// nothing in the page can catch or silence). Text-only, the same as the
+// poll-lost and plan-conflict cases above, since these come from the
+// service worker's own fetches rather than a resource tag on the page.
+const KIOSK_OFFSCOPE_WARM = /bad HTTP response code \(40[14]\) was received when fetching the script/;
+
 // Set by the sections that deliberately provoke one of the errors above, for
 // exactly as long as that one request is in flight.
 const expecting = {
@@ -446,6 +459,7 @@ const expecting = {
   templateWriteForbidden: false,
   pollLost: false,
   planConflict: false,
+  kioskOffscopeWarm: false,
 };
 
 const trap = (page, tag) => {
@@ -494,6 +508,7 @@ const trap = (page, tag) => {
     if (expecting.recoveryConflict && RECOVERY_CONFLICT.test(where)) return;
     if (expecting.templateWriteForbidden && TEMPLATE_WRITE_FORBIDDEN.test(where)) return;
     if (expecting.planConflict && /responded with a status of 409/.test(text)) return;
+    if (expecting.kioskOffscopeWarm && KIOSK_OFFSCOPE_WARM.test(text)) return;
     // Killing and restarting a relay process (Issue #115's e2e section) is
     // its own brief burst of expected noise: a connection-refused while the
     // old process is down and the new one is not up yet, then a 404 once it

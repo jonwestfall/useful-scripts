@@ -22,7 +22,7 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
-export const BUILD = 58;
+export const BUILD = 61;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -38,7 +38,7 @@ export const BUILD = 58;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.1';
-export const COMMIT = '7d21ae2';
+export const COMMIT = 'b654ac7';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -242,6 +242,10 @@ const nextKey = () => `k${Date.now().toString(36)}${(keySeq++).toString(36)}`;
 function normalizeItem(item) {
   if (!item || typeof item !== 'object' || !item.type) return null;
   const copy = { ...item, key: nextKey() };
+  // Issue #154: cross-cutting, like the type-specific caps below - a plan
+  // item's own bookkeeping fields never reached here unfiltered before this
+  // existed, and this one is no different.
+  copy.overlayCaption = typeof copy.overlayCaption === 'string' ? copy.overlayCaption.slice(0, 500) : '';
   if (copy.type === 'text') {
     // Issue #103: headings/body, bulleted/numbered lists (miniMarkdown in
     // util.js), a background colour, a font choice, and an optional inline
@@ -415,6 +419,23 @@ function advanceSet(item) {
   }
   item.startedAt = Date.now();
   item.remainingMs = 0;
+}
+
+// Pre-scripted captions (Issue #154): whatever is actually on the program
+// layer names its own caption text, and this is the one place that gets
+// applied to the SAME bar Live Captions (#79) uses - state.overlay. Only
+// ever driven by panel A / the program layer, never B/C/D: the caption bar
+// is one strip of screen, and a multi-panel layout's secondary panes are
+// supplementary by nature, the same reason only program's own blank flag is
+// cleared on stage (see 'stage' below). Never overrides a LIVE presenter's
+// running transcript - state.overlay.live is that presenter's, and a
+// captionless item elsewhere in the plan has no business silencing it.
+function syncOverlayForProgram(state) {
+  if (state.overlay.live) return;
+  const program = state.program;
+  const active = program?.type === 'set' ? program.entries?.[program.index]?.item : program;
+  const text = typeof active?.overlayCaption === 'string' ? active.overlayCaption.slice(0, 500) : '';
+  state.overlay = { ...state.overlay, text, visible: !!text, live: false };
 }
 
 // A snapshot of the on-screen item, given a new identity so the two content
@@ -844,7 +865,7 @@ export function applyCommand(state, cmd) {
       if (!item) return false;
       state[stageTarget(state, cmd.where)] = item;
       // Putting something on the program bus is an explicit "show this".
-      if (stageTarget(state, cmd.where) === 'program') state.blank = false;
+      if (stageTarget(state, cmd.where) === 'program') { state.blank = false; syncOverlayForProgram(state); }
       return true;
     }
 
@@ -860,6 +881,7 @@ export function applyCommand(state, cmd) {
         // interrupting that for - a bare rearrangement of empty structure
         // (see below) has nothing to reveal and must not undo it by itself.
         state.blank = false;
+        syncOverlayForProgram(state);
       }
       if (state.previewLayout !== null) {
         state.layout = state.previewLayout;
@@ -873,12 +895,13 @@ export function applyCommand(state, cmd) {
     case 'swap': {
       if (!state.preview) return false;
       [state.program, state.preview] = [state.preview, state.program];
+      syncOverlayForProgram(state);
       return true;
     }
 
     case 'clear': {
       const where = cmd.where === 'program' ? 'program' : 'preview';
-      if (where === 'program') state.program = { ...BLACK };
+      if (where === 'program') { state.program = { ...BLACK }; syncOverlayForProgram(state); }
       // Abandoning the cue abandons a cued layout with it - "Clear cue"
       // means throw away everything queued up for the next TAKE, not just
       // whichever half of it happens to be content.
@@ -1101,6 +1124,7 @@ export function applyCommand(state, cmd) {
         const item = Number(cmd.panel) === 0 ? state.program : state.panels[Number(cmd.panel) - 1];
         if (!item || item.type !== 'set' || item.paused) return false;
         advanceSet(item);
+        if (item === state.program) syncOverlayForProgram(state);
         return true;
       }
       const item = state.focus === 0 ? state[cmd.where === 'preview' ? 'preview' : 'program'] : state.panels[state.focus - 1];
@@ -1114,6 +1138,7 @@ export function applyCommand(state, cmd) {
           item.startedAt = Date.now();
           item.paused = false;
           item.remainingMs = 0;
+          if (item === state.program) syncOverlayForProgram(state);
           return true;
         }
         case 'pause':
