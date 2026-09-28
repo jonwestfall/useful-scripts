@@ -32,6 +32,14 @@ export const DEFAULTS = {
   mqttUrl: 'wss://broker.emqx.io:8084/mqtt',
   wsUrl: '',                                      // wss://your-vps/podium
   manifest: 'content/manifest.json',
+  // Unattended signage (Issue #151): a display checked off as a kiosk skips
+  // the arm screen and goes live on its own on every load, and never opens a
+  // lecture record while doing it - see goLive's caller in display.js and
+  // the early return in startRecording. False for every device unless
+  // someone explicitly sets it on THIS device's own setup form; never
+  // carried by a pairing link (see pairingUrl below), since pairing hands
+  // out a second device's controller, not another display's own settings.
+  kiosk: false,
 };
 
 const KEYS = Object.keys(DEFAULTS);

@@ -2560,6 +2560,100 @@ await gHome.close();
 await gCtx.close();
 }
 
+if (want('kiosk mode: no session recording')) {
+console.log('\n-- kiosk mode: no session recording --');
+// Its own server: /api/lectures gates on a signed-in user unconditionally
+// once a database exists (see the blanket `if (!user)` in api.js), even
+// before any account is created - so, unlike the auto-arm checks above,
+// this needs a real account and a real sign-in, same as the accounts
+// section earlier in this file.
+const kioskPort = await freePort();
+const kioskBase = `http://127.0.0.1:${kioskPort}`;
+const kioskData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-kiosk-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'kioskop', '--admin', '--name', 'Kiosk Operator', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: kioskData },
+  input: 'a kiosk needs an account too\n',
+});
+const kioskServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(kioskPort), STATIC: '../', DATA_DIR: kioskData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+kioskServer.stderr.on('data', (d) => process.stderr.write(`[kiosk-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('kiosk relay did not start')), 10000);
+  let log = '';
+  kioskServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  kioskServer.on('exit', (code) => reject(new Error(`kiosk relay exited with ${code}`)));
+});
+
+// One context, signed in once on a page that needs the account - every
+// later page opened in it (the kiosk display included) inherits the same
+// cookie, the same shortcut the accounts section above relies on.
+const kioskCtx = await browser.newContext();
+await kioskCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${kioskPort}/podium`, room: 'kiosk-hall', passphrase: 'signage, not a class', kiosk: true }));
+const kioskSignIn = await kioskCtx.newPage();
+trap(kioskSignIn, 'kiosk sign-in');
+await kioskSignIn.goto(`${kioskBase}/control.html`);
+await kioskSignIn.waitForSelector('#form');
+await kioskSignIn.fill('#username', 'kioskop');
+await kioskSignIn.fill('#password', 'a kiosk needs an account too');
+await Promise.all([kioskSignIn.waitForURL(/control\.html/), kioskSignIn.click('#go')]);
+await kioskSignIn.waitForSelector('#app:not([hidden])');
+await kioskSignIn.close();
+
+const kioskDisplay = await kioskCtx.newPage();
+trap(kioskDisplay, 'kiosk no-record display');
+await kioskDisplay.goto(`${kioskBase}/display.html`);
+await kioskDisplay.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('the kiosk display auto-armed on a server that keeps sessions', await kioskDisplay.isHidden('#arm'));
+
+// Real time on screen - something worth recording, if it were going to be.
+// noteSurface's own settle-then-flush window (RECORD_MIN_GAP_MS then
+// RECORD_FLUSH_MS in display.js) is a few seconds; this clears it either way.
+await kioskDisplay.waitForTimeout(3000);
+const kioskLectures = await kioskDisplay.evaluate(() => fetch('/api/lectures', { credentials: 'same-origin' })
+  .then((r) => r.json()).then((j) => j.lectures));
+ok(`a kiosk display going live never opens a lecture record (${kioskLectures.length} found)`,
+  kioskLectures.length === 0);
+
+// The contrast: an ordinary (non-kiosk) Go Live, signed in the same way on
+// the SAME server, DOES record one - proving the flag above is what
+// suppressed it, not something wrong with this particular server or
+// account.
+const ordinaryCtx = await browser.newContext();
+await ordinaryCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${kioskPort}/podium`, room: 'a-real-class', passphrase: 'this one is a lecture' }));
+const ordinarySignIn = await ordinaryCtx.newPage();
+trap(ordinarySignIn, 'kiosk-server ordinary sign-in');
+await ordinarySignIn.goto(`${kioskBase}/control.html`);
+await ordinarySignIn.waitForSelector('#form');
+await ordinarySignIn.fill('#username', 'kioskop');
+await ordinarySignIn.fill('#password', 'a kiosk needs an account too');
+await Promise.all([ordinarySignIn.waitForURL(/control\.html/), ordinarySignIn.click('#go')]);
+await ordinarySignIn.waitForSelector('#app:not([hidden])');
+await ordinarySignIn.close();
+
+const ordinaryDisplay = await ordinaryCtx.newPage();
+trap(ordinaryDisplay, 'kiosk-server ordinary display');
+await ordinaryDisplay.goto(`${kioskBase}/display.html`);
+await ordinaryDisplay.click('#arm-button');
+await ordinaryDisplay.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+await pollUntil(ordinaryDisplay, async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.length > 0;
+}, null, { timeout: 15000 });
+const ordinaryLectures = await ordinaryDisplay.evaluate(() => fetch('/api/lectures', { credentials: 'same-origin' })
+  .then((r) => r.json()).then((j) => j.lectures));
+ok('while an ordinary Go Live on the same server does record one', ordinaryLectures.length === 1);
+
+await ordinaryCtx.close();
+await kioskCtx.close();
+kioskServer.kill();
+}
+
 reportErrors();
 } finally {
   await teardown();
