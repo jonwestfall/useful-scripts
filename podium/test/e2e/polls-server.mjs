@@ -281,8 +281,8 @@ fs.writeFileSync(autoPlanFile, JSON.stringify({
   layout: '2h',
   timers: [{ id: 't-intro', label: 'Intro Countdown', mins: 3 }],
   items: [
-    { id: 'i-welcome', type: 'text', title: 'Welcome sign', body: 'Welcome to Class' },
-    { id: 'i-note', type: 'text', title: 'Panel B note', body: 'Group work starts now' },
+    { id: 'i-welcome', type: 'text', title: 'Welcome sign', body: 'Welcome to Class', overlayCaption: 'Welcome, please find a seat' },
+    { id: 'i-note', type: 'text', title: 'Panel B note', body: 'Group work starts now', overlayCaption: 'Should never reach the caption bar' },
   ],
   autoLaunch: {
     enabled: true,
@@ -319,6 +319,16 @@ await pad.waitForFunction(() => {
   return btns[1]?.classList.contains('is-on');
 }, null, { timeout: 5000 });
 ok('the plan chose panel B to focus on load, not the default A (Issue #109)', true);
+
+// Issue #154: pre-scripted captions ride live with whichever item lands on
+// panel A - never panel B's, even though it carries one too.
+await screen.waitForFunction(() => {
+  const bar = document.querySelector('#overlay');
+  return bar?.classList.contains('is-on') && /Welcome, please find a seat/.test(bar.textContent);
+}, null, { timeout: 10000 });
+ok('the caption bar picks up panel A\'s own pre-scripted caption on auto-launch', true);
+ok('and not panel B\'s, even though it has one too',
+  !/Should never reach the caption bar/.test(await screen.textContent('#overlay')));
 
 // Issue #131: a plan can start in picture-in-picture, naming which pane fills
 // the screen, which is the inset, and where the inset sits - here all four

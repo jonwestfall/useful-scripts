@@ -415,6 +415,16 @@ function renderEditor() {
     oninput: (ev) => { item.note = ev.target.value; afterEdit({ label: true }); },
   }, item.note || ''), 'Appears on the tile during class — “ask about the confound”, “only 3 minutes”.'));
 
+  // Issue #154: pre-written for whoever cannot hear the room or read the
+  // screen alone - a kiosk running unattended, or a live lecture between
+  // sentences. Rides the same bottom bar Live Captions (#79) already owns;
+  // see syncOverlayForProgram in protocol.js for exactly when it takes over.
+  fields.append(field('Caption', el('textarea', {
+    rows: '2', placeholder: 'Shown on the caption bar while this item is live.',
+    oninput: (ev) => { item.overlayCaption = ev.target.value; afterEdit({ label: true }); },
+  }, item.overlayCaption || ''),
+  'Optional. Pre-scripted captions or audio description for a kiosk display, or any lecture, between spoken words.'));
+
   renderPreview({ remount: true });
 }
 

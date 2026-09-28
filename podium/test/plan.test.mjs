@@ -179,6 +179,23 @@ chk('a poll item carries no pollId or token - a plan cannot pre-create one on a 
 chk('emptyPlan defaults targetDuration to 50', plan.targetDuration === 50);
 chk('newItem defaults durationMins to 0', newItem('text').durationMins === 0);
 
+// Issue #154: pre-scripted captions - cross-cutting like durationMins above,
+// carried through to what a display actually stages (unlike `note`, which
+// itemForStage strips as planner-only bookkeeping).
+chk('newItem defaults overlayCaption to empty', newItem('text').overlayCaption === '');
+const captionPlan = readPlan(JSON.stringify({
+  podium: 'plan', v: 1,
+  items: [{ id: 'i1', type: 'text', body: 'hi', overlayCaption: 'Read this aloud' }],
+})).plan;
+chk('a caption round-trips through a plan file', captionPlan.items[0].overlayCaption === 'Read this aloud');
+chk('and survives itemForStage, unlike the planner-only note',
+  itemForStage(captionPlan.items[0]).overlayCaption === 'Read this aloud' && !('note' in itemForStage(captionPlan.items[0])));
+chk('an oversized caption is capped, not silently kept in full',
+  readPlan(JSON.stringify({
+    podium: 'plan', v: 1,
+    items: [{ id: 'i1', type: 'text', body: 'hi', overlayCaption: 'x'.repeat(2000) }],
+  })).plan.items[0].overlayCaption.length === 500);
+
 const pacingPlan = readPlan(JSON.stringify({
   podium: 'plan', v: 1,
   targetDuration: 75,
