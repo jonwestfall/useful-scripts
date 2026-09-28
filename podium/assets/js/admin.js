@@ -1308,6 +1308,87 @@ function renderKioskQr(kiosk) {
   return box;
 }
 
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+const minToClock = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+const clockToMin = (clock) => {
+  const [h, m] = String(clock || '').split(':').map(Number);
+  return Number.isInteger(h) && Number.isInteger(m) ? h * 60 + m : null;
+};
+
+/**
+ * Time-based programming (Issue #152): a day-of-week/time-range list, each
+ * row naming which plan should be showing during it. Deliberately a flat
+ * list an admin reads top to bottom, not a calendar grid - a v1 the issue
+ * itself asked for ("a simple day-of-week/time-range list is probably
+ * enough"), not a recurrence engine. The kiosk's own "Should be showing"
+ * plan above is what a device falls back to whenever none of these rows'
+ * windows contains the current moment.
+ */
+function renderKioskSchedule(kiosk) {
+  const rows = el('div', {});
+  const status = el('span', { class: 'hint', role: 'status' });
+
+  function addRow(entry = {}) {
+    const dayPick = el('select', {},
+      el('option', { value: '' }, 'Every day'),
+      ...WEEKDAY_NAMES.map((name, i) => el('option', { value: String(i) }, name)));
+    dayPick.value = entry.day === null || entry.day === undefined ? '' : String(entry.day);
+    const startInput = el('input', { type: 'time', value: minToClock(entry.startMin ?? 9 * 60) });
+    const endInput = el('input', { type: 'time', value: minToClock(entry.endMin ?? 17 * 60) });
+    const planPick = el('select', {}, ...kioskPlans.map(planOption));
+    if (entry.planId) planPick.value = String(entry.planId);
+    const remove = el('button', {
+      class: 'admin-small', type: 'button', title: 'Remove this time window',
+      onclick: () => row.remove(),
+    }, 'Remove');
+    const row = el('div', { class: 'admin-form', style: 'align-items:end' },
+      el('label', { class: 'field' }, el('span', {}, 'Day'), dayPick),
+      el('label', { class: 'field' }, el('span', {}, 'From'), startInput),
+      el('label', { class: 'field' }, el('span', {}, 'Until'), endInput),
+      el('label', { class: 'field' }, el('span', {}, 'Show'), planPick),
+      remove);
+    row.__entry = () => ({
+      day: dayPick.value === '' ? null : Number(dayPick.value),
+      startMin: clockToMin(startInput.value),
+      endMin: clockToMin(endInput.value),
+      planId: planPick.value ? Number(planPick.value) : null,
+    });
+    rows.append(row);
+  }
+
+  for (const entry of kiosk.schedule) addRow(entry);
+
+  const add = el('button', {
+    class: 'admin-small', type: 'button',
+    onclick: () => addRow(),
+  }, 'Add a time window');
+
+  const save = el('button', {
+    class: 'admin-small', type: 'button',
+    onclick: async () => {
+      const schedule = [...rows.children].map((row) => row.__entry());
+      save.disabled = true;
+      status.textContent = 'Saving…';
+      try {
+        const { kiosk: saved } = await kioskApi(`/${kiosk.id}`, { method: 'PATCH', body: JSON.stringify({ schedule }) });
+        kiosk.schedule = saved.schedule;
+        status.textContent = 'Saved.';
+      } catch (err) {
+        status.textContent = err.message;
+      } finally {
+        save.disabled = false;
+      }
+    },
+  }, 'Save schedule');
+
+  return el('div', {},
+    el('p', { class: 'hint' },
+      'Optional: show something different at different times. The plan above is what plays whenever none of these windows applies.'),
+    rows,
+    el('div', { class: 'admin-actions' }, add, save, status));
+}
+
 function renderKioskSettings(kiosk) {
   const form = el('div', { class: 'admin-form' });
   for (const [key, label, placeholder] of KIOSK_SETTING_FIELDS) {
@@ -1366,6 +1447,8 @@ function renderKioskSettings(kiosk) {
       el('label', { class: 'field' }, el('span', {}, 'Should be showing'), planPick)),
     form,
     el('div', { class: 'admin-actions' }, save, rotate, status),
+    el('hr', { style: 'border:0;border-top:1px solid var(--line);margin:14px 0' }),
+    renderKioskSchedule(kiosk),
     el('hr', { style: 'border:0;border-top:1px solid var(--line);margin:14px 0' }),
     renderKioskQr(kiosk));
 }

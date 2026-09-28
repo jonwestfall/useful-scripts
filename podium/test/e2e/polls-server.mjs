@@ -2768,6 +2768,127 @@ await kpAdminCtx.close();
 kpServer.kill();
 }
 
+if (want('kiosk profiles: scheduled programming')) {
+console.log('\n-- kiosk profiles: scheduled programming --');
+// Its own server, same shape as the provisioning section above. This one
+// proves the harder half of #152: a kiosk with nobody running control.js
+// still loads and drives a real plan on its own (Issue #152's real
+// prerequisite), and a schedule entry covering the current moment overrides
+// its default plan without a controller or a reload forcing it.
+const spPort = await freePort();
+const spBase = `http://127.0.0.1:${spPort}`;
+const spData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-kioskschedule-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'scheduleadmin', '--admin', '--name', 'Schedule Admin', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: spData },
+  input: 'a schedule is not a controller\n',
+});
+const spServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(spPort), STATIC: '../', DATA_DIR: spData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+spServer.stderr.on('data', (d) => process.stderr.write(`[kiosk-schedule-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('kiosk-schedule relay did not start')), 10000);
+  let log = '';
+  spServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  spServer.on('exit', (code) => reject(new Error(`kiosk-schedule relay exited with ${code}`)));
+});
+
+const spAdminCtx = await browser.newContext();
+await spAdminCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${spPort}/podium`, room: 'sp-admin-desk', passphrase: 'not actually used' }));
+const spSignIn = await spAdminCtx.newPage();
+trap(spSignIn, 'kiosk-schedule admin sign-in');
+await spSignIn.goto(`${spBase}/control.html`);
+await spSignIn.waitForSelector('#form');
+await spSignIn.fill('#username', 'scheduleadmin');
+await spSignIn.fill('#password', 'a schedule is not a controller');
+await Promise.all([spSignIn.waitForURL(/control\.html/), spSignIn.click('#go')]);
+await spSignIn.waitForSelector('#app:not([hidden])');
+
+// Two plans, straight into the server library with no course and no file
+// upload - a signed-in admin's own fetch is all POST /api/plans needs.
+const dayPlanDoc = {
+  podium: 'plan', v: 1, title: 'Daytime announcements', layout: 'single',
+  items: [{ id: 'i-day', type: 'text', title: 'Day', body: 'Open during the day' }],
+  autoLaunch: { enabled: true, initialState: 'live', activePane: 'A', panes: { A: { type: 'item', itemId: 'i-day' } } },
+};
+const eventPlanDoc = {
+  podium: 'plan', v: 1, title: 'Evening event', layout: 'single',
+  items: [{ id: 'i-evening', type: 'text', title: 'Evening', body: 'Evening event starts now' }],
+  autoLaunch: { enabled: true, initialState: 'live', activePane: 'A', panes: { A: { type: 'item', itemId: 'i-evening' } } },
+};
+const { id: dayPlanId } = await spSignIn.evaluate((doc) => fetch('/api/plans', {
+  method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ title: doc.title, doc }),
+}).then((r) => r.json()).then((j) => j.plan), dayPlanDoc);
+const { id: eventPlanId } = await spSignIn.evaluate((doc) => fetch('/api/plans', {
+  method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ title: doc.title, doc }),
+}).then((r) => r.json()).then((j) => j.plan), eventPlanDoc);
+await spSignIn.close();
+
+const spDesk = await spAdminCtx.newPage();
+trap(spDesk, 'kiosk-schedule admin');
+await spDesk.goto(`${spBase}/admin.html`);
+await spDesk.waitForSelector('#admin:not([hidden])');
+await spDesk.click('#tab-kiosks');
+await spDesk.waitForSelector('#panel-kiosks:not([hidden])');
+await spDesk.fill('#new-kiosk-name', 'Hallway sign');
+await spDesk.fill('#new-kiosk-room', 'hallway-kiosk');
+await spDesk.fill('#new-kiosk-wu', `ws://127.0.0.1:${spPort}/podium`);
+await spDesk.click('#new-kiosk-go');
+await spDesk.waitForSelector('#kiosks .admin-title:has-text("Hallway sign")');
+// The default plan, set through the same "Should be showing" picker the
+// kiosk profile section already covers - here just so there is a fallback
+// to prove the schedule overrides.
+const kioskId = await spDesk.evaluate(() => fetch('/api/kiosks', { credentials: 'same-origin' })
+  .then((r) => r.json()).then((j) => j.kiosks.find((k) => k.name === 'Hallway sign').id));
+await spDesk.locator('#kiosks label:has-text("Should be showing") select').selectOption(String(dayPlanId));
+await spDesk.waitForTimeout(500);
+
+const spProvisionUrl = (await spDesk.textContent('#kiosks .hint.mono')).trim();
+
+const spDeviceCtx = await browser.newContext();
+const spDevice = await spDeviceCtx.newPage();
+trap(spDevice, 'kiosk device: scheduled programming');
+expecting.kioskOffscopeWarm = true;
+await spDevice.goto(spProvisionUrl);
+await spDevice.waitForFunction(() => {
+  const t = document.querySelector('.layer[data-role="program"] .r-text');
+  return t && /Open during the day/.test(t.textContent);
+}, null, { timeout: 15000 });
+expecting.kioskOffscopeWarm = false;
+ok('a kiosk with nobody running control.js loads and drives its default plan on its own', true);
+
+// Now give it a schedule that covers the current moment with a different
+// plan, and force the poll it would otherwise wait up to a minute for (see
+// KIOSK_SCHEDULE_POLL_MS's own comment in display.js).
+const now = new Date();
+const nowMin = now.getHours() * 60 + now.getMinutes();
+const startMin = Math.max(0, nowMin - 5);
+const endMin = Math.min(1439, nowMin + 30);
+await spDesk.evaluate(({ id, day, startMin, endMin, planId }) => fetch(`/api/kiosks/${id}`, {
+  method: 'PATCH', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ schedule: [{ day, startMin, endMin, planId }] }),
+}), { id: kioskId, day: now.getDay(), startMin, endMin, planId: eventPlanId });
+
+await spDevice.evaluate(() => window.__podiumCheckKioskSchedule());
+await spDevice.waitForFunction(() => {
+  const t = document.querySelector('.layer[data-role="program"] .r-text');
+  return t && /Evening event starts now/.test(t.textContent);
+}, null, { timeout: 15000 });
+ok('a schedule window covering right now switches the display to a different plan, with no reload and no controller',
+  true);
+
+await spDevice.close();
+await spDeviceCtx.close();
+await spAdminCtx.close();
+spServer.kill();
+}
+
 reportErrors();
 } finally {
   await teardown();

@@ -647,6 +647,69 @@ ok('updating a kiosk that does not exist is reported, not a silent no-op', /no s
 ok('an untitled kiosk still gets a real name rather than an empty one',
   kiosks.create(db, admin, { name: '  ', settings: {} }).name === 'Untitled kiosk');
 
+console.log('\n-- kiosk schedules: time-based programming --');
+
+kiosks.update(db, admin, kiosk.id, { planId: kioskPlan.id });
+const eveningPlan = plans.savePlan(db, owner, { title: 'Evening event slideshow', doc: { v: 1, items: [] } });
+
+const mkTime = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d; };
+const morning = mkTime(10, 0);
+const evening = mkTime(19, 30);
+const overnight = mkTime(2, 0);
+
+const scheduled = kiosks.update(db, admin, kiosk.id, {
+  schedule: [
+    { day: null, startMin: 9 * 60, endMin: 17 * 60, planId: kioskPlan.id },
+    { day: evening.getDay(), startMin: 18 * 60, endMin: 22 * 60, planId: eveningPlan.id },
+  ],
+});
+ok('saving a schedule hands back real entries, each with an id of its own',
+  scheduled.schedule.length === 2 && scheduled.schedule.every((e) => typeof e.id === 'string' && e.id.length > 0));
+
+ok('during business hours, the all-day entry wins', kiosks.resolvePlanId(scheduled, morning.getTime()) === kioskPlan.id);
+ok("in the evening, today's own entry overrides it", kiosks.resolvePlanId(scheduled, evening.getTime()) === eveningPlan.id);
+ok('overnight, neither entry matches, so it falls back to the kiosk default plan',
+  kiosks.resolvePlanId(scheduled, overnight.getTime()) === kioskPlan.id);
+
+let refusedSchedule = '';
+try { kiosks.update(db, admin, kiosk.id, { schedule: [{ day: 7, startMin: 0, endMin: 60, planId: kioskPlan.id }] }); }
+catch (err) { refusedSchedule = err.message; }
+ok('day outside 0-6 is refused, not silently clamped', /day must be 0-6/.test(refusedSchedule));
+
+refusedSchedule = '';
+try { kiosks.update(db, admin, kiosk.id, { schedule: [{ day: null, startMin: 600, endMin: 600, planId: kioskPlan.id }] }); }
+catch (err) { refusedSchedule = err.message; }
+ok('a window that does not actually span any time is refused',
+  /end must be after start/.test(refusedSchedule));
+
+refusedSchedule = '';
+try { kiosks.update(db, admin, kiosk.id, { schedule: [{ day: null, startMin: 0, endMin: 60 }] }); }
+catch (err) { refusedSchedule = err.message; }
+ok('an entry naming no plan is refused rather than showing nothing forever',
+  /needs a plan/.test(refusedSchedule));
+
+ok('the schedule saved before those three refused attempts is untouched',
+  kiosks.get(db, kiosk.id).schedule.length === 2);
+
+const sessionPlanNow = kiosks.sessionPlan(db, provisioned.sessionToken, { now: morning.getTime() });
+ok("sessionPlan resolves the same way resolvePlanId does, plus the plan's real document",
+  sessionPlanNow.planId === kioskPlan.id && sessionPlanNow.plan?.doc?.v === 1 && sessionPlanNow.plan?.title === 'Department announcements');
+ok('an unknown session token answers the same as no kiosk at all', kiosks.sessionPlan(db, 'not-a-real-session') === null);
+
+const orphanPlan = plans.savePlan(db, owner, { title: 'About to be deleted', doc: { v: 1, items: [] } });
+plans.deletePlan(db, owner, orphanPlan.id);
+const withOrphan = kiosks.update(db, admin, kiosk.id, {
+  schedule: [{ day: null, startMin: 0, endMin: 24 * 60 - 1, planId: orphanPlan.id }],
+});
+ok('a schedule entry naming a since-deleted plan resolves an id nothing answers for',
+  kiosks.resolvePlanId(withOrphan, morning.getTime()) === orphanPlan.id);
+const orphanSession = kiosks.sessionPlan(db, provisioned.sessionToken, { now: morning.getTime() });
+ok('and sessionPlan reports that honestly - no id, no document - rather than pretending nothing changed',
+  orphanSession.planId === null && orphanSession.plan === null);
+
+kiosks.update(db, admin, kiosk.id, { schedule: [] });
+ok('an empty schedule is a real, savable state, not "leave it as it was"', kiosks.get(db, kiosk.id).schedule.length === 0);
+
 console.log('\n-- what happened in the room --');
 
 // The room name is psy415's, which is how a lecture finds its course: the

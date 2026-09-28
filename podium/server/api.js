@@ -313,6 +313,21 @@ async function handleApi(req, res, url, ctx) {
     return true;
   }
 
+  // What a kiosk polls (Issue #152) to find out which plan it should be
+  // showing right now - resolved from its schedule against this moment,
+  // server-side, so a device's own clock (or lack of a battery-backed one
+  // after a power cut) is never what a schedule boundary is judged against.
+  // Same public-by-cookie reasoning as session-config above.
+  if (route === 'kiosks/session-plan' && req.method === 'GET') {
+    if (!ctx.db) { json(res, 404, { error: 'this server stores nothing' }); return true; }
+    const kioskToken = kioskCookieToken(req);
+    const onSlide = () => res.setHeader('set-cookie', setKioskCookies(req, kioskToken, Math.floor(kiosks.SESSION_MS / 1000)));
+    const resolved = kiosks.sessionPlan(ctx.db, kioskToken, { onSlide });
+    if (!resolved) { json(res, 404, { error: 'not a provisioned kiosk' }); return true; }
+    json(res, 200, resolved);
+    return true;
+  }
+
   // --- everything past here needs to know who is asking -------------------
   if (!ctx.db) { json(res, 404, { error: 'this server stores nothing' }); return true; }
   if (!user) { json(res, 401, { error: 'not signed in' }); return true; }
@@ -418,7 +433,7 @@ async function handleApi(req, res, url, ctx) {
       if (rest.length === 1 && req.method === 'PATCH') {
         const body = await readJson(req, 8 * 1024);
         const kiosk = kiosks.update(ctx.db, user, rest[0], {
-          name: body.name, settings: body.settings, planId: body.planId, revoked: body.revoked,
+          name: body.name, settings: body.settings, planId: body.planId, revoked: body.revoked, schedule: body.schedule,
         });
         auditLog(ctx, req, user, 'kiosk_modified', { kioskId: kiosk.id, name: kiosk.name, revoked: kiosk.revoked });
         json(res, 200, { kiosk });

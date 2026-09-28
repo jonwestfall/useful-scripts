@@ -7,21 +7,23 @@
 // owner" concept, and a device nobody is watching is exactly the wrong place
 // to let membership decide who can repoint it.
 //
-// What this deliberately does NOT do: push the assigned plan onto the live
-// room. That would need something that connects to the room's own encrypted
-// bus and stages a command - a real client, the same as control.js is - and
-// nothing server-side does that today (the passphrase a room is encrypted
-// under is derived and held client-side; a Node-side bus client would be new
-// infrastructure, not a small addition). `planId` here is admin-visible
-// bookkeeping - what SHOULD be showing - left for a device, or whoever sets
-// one up, to actually load once via the ordinary planner. Issue #152's
-// scheduling work will need the same "what should be showing right now"
-// question answered for real; better to design that once, there, than twice.
+// What this still does NOT do: push a plan onto the live room over the bus
+// itself - that would need a real bus client running server-side (the
+// passphrase a room is encrypted under is derived and held client-side; a
+// Node-side bus client would be new infrastructure, not a small addition).
+// What it DOES do (Issue #152) is answer "what should be showing right now"
+// for a device that asks: resolvePlanId below evaluates a kiosk's schedule
+// against the current moment, and sessionPlan hands back the actual plan
+// document that names - the device (display.js's own adoptPlanLocally, not
+// a controller) is what turns that into pixels, by polling and loading it
+// itself. See KIOSK_SCHEDULE_POLL_MS's own comment in display.js for why
+// polling rather than a push was the right call here.
 
 'use strict';
 
 const crypto = require('node:crypto');
 const settings = require('./settings.js');
+const plans = require('./plans.js');
 
 function provisionToken() {
   return crypto.randomBytes(18).toString('base64url');
@@ -35,11 +37,48 @@ function row(r) {
     provisionToken: r.provision_token,
     planId: r.plan_id,
     planTitle: r.plan_title || null,
+    schedule: JSON.parse(r.schedule || '[]'),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     revoked: !!r.revoked_at,
     revokedAt: r.revoked_at,
   };
+}
+
+// A day-of-week/time-range list, deliberately no more than that (Issue #152:
+// "a simple day-of-week/time-range list is probably enough for v1, not a
+// full calendar/recurrence engine"). Capped the same way a course's settings
+// values are - an allow-list of shape, not a place for anything a browser
+// didn't put there on purpose to survive.
+const MAX_SCHEDULE_ENTRIES = 50;
+
+function cleanSchedule(raw) {
+  if (raw === undefined) return undefined;
+  const list = Array.isArray(raw) ? raw : [];
+  if (list.length > MAX_SCHEDULE_ENTRIES) {
+    throw Object.assign(new Error(`a schedule may not hold more than ${MAX_SCHEDULE_ENTRIES} entries`), { status: 400 });
+  }
+  return list.map((entry, i) => {
+    const day = entry?.day === null || entry?.day === undefined ? null : Number(entry.day);
+    if (day !== null && (!Number.isInteger(day) || day < 0 || day > 6)) {
+      throw Object.assign(new Error(`entry ${i + 1}: day must be 0-6 (Sunday-Saturday) or left blank for every day`), { status: 400 });
+    }
+    const startMin = Number(entry?.startMin);
+    const endMin = Number(entry?.endMin);
+    if (!Number.isInteger(startMin) || startMin < 0 || startMin > 1439
+      || !Number.isInteger(endMin) || endMin < 0 || endMin > 1439) {
+      throw Object.assign(new Error(`entry ${i + 1}: start and end must be real times of day`), { status: 400 });
+    }
+    if (startMin >= endMin) {
+      throw Object.assign(new Error(`entry ${i + 1}: end must be after start - a window cannot cross midnight in v1`), { status: 400 });
+    }
+    const planId = Number(entry?.planId);
+    if (!Number.isInteger(planId) || planId <= 0) {
+      throw Object.assign(new Error(`entry ${i + 1}: needs a plan to show`), { status: 400 });
+    }
+    const id = typeof entry?.id === 'string' && entry.id ? entry.id.slice(0, 40) : crypto.randomBytes(6).toString('base64url');
+    return { id, day, startMin, endMin, planId };
+  });
 }
 
 const SELECT = 'SELECT k.*, p.title AS plan_title FROM kiosks k LEFT JOIN plans p ON p.id = k.plan_id';
@@ -57,14 +96,15 @@ function cleanName(name) {
   return String(name || '').trim().slice(0, 200) || 'Untitled kiosk';
 }
 
-function create(db, user, { name, settings: raw, planId } = {}) {
+function create(db, user, { name, settings: raw, planId, schedule } = {}) {
   const clean = settings.cleanSettings(raw);
+  const cleanedSchedule = cleanSchedule(schedule) ?? [];
   const now = Date.now();
   const { lastInsertRowid } = db.prepare(`INSERT INTO kiosks
-      (name, settings, provision_token, plan_id, created_at, updated_at, updated_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      (name, settings, provision_token, plan_id, schedule, created_at, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(cleanName(name), JSON.stringify(clean), provisionToken(),
-      planId ? Number(planId) : null, now, now, user?.id ?? null);
+      planId ? Number(planId) : null, JSON.stringify(cleanedSchedule), now, now, user?.id ?? null);
   return get(db, lastInsertRowid);
 }
 
@@ -80,7 +120,7 @@ function create(db, user, { name, settings: raw, planId } = {}) {
  * either direction - an admin working out "which of these devices is the
  * one that walked off" needs it to still be there, revoked or not.
  */
-function update(db, user, id, { name, settings: raw, planId, revoked } = {}) {
+function update(db, user, id, { name, settings: raw, planId, revoked, schedule } = {}) {
   const existing = db.prepare('SELECT id FROM kiosks WHERE id = ?').get(Number(id));
   if (!existing) throw Object.assign(new Error('no such kiosk'), { status: 404 });
   const sets = ['updated_at = ?', 'updated_by = ?'];
@@ -89,6 +129,7 @@ function update(db, user, id, { name, settings: raw, planId, revoked } = {}) {
   if (raw !== undefined) { sets.push('settings = ?'); values.push(JSON.stringify(settings.cleanSettings(raw))); }
   if (planId !== undefined) { sets.push('plan_id = ?'); values.push(planId ? Number(planId) : null); }
   if (revoked !== undefined) { sets.push('revoked_at = ?'); values.push(revoked ? Date.now() : null); }
+  if (schedule !== undefined) { sets.push('schedule = ?'); values.push(JSON.stringify(cleanSchedule(schedule))); }
   values.push(Number(id));
   db.prepare(`UPDATE kiosks SET ${sets.join(', ')} WHERE id = ?`).run(...values);
   return get(db, id);
@@ -174,7 +215,44 @@ function sessionConfig(db, token, opts) {
   return { ...JSON.parse(r.settings || '{}'), kiosk: true };
 }
 
+/**
+ * Which plan should be showing on this kiosk right now (Issue #152) - the
+ * first schedule entry whose day and time window contains `now`, list order
+ * deciding ties the same an admin would read them top to bottom; the
+ * kiosk's own plan_id if none match or no schedule is set at all, same as
+ * before #152 existed. `now` is a real parameter (not always Date.now())
+ * purely so a test can pin it rather than racing the clock.
+ */
+function resolvePlanId(kiosk, now = Date.now()) {
+  // now travels as an epoch number everywhere else in this file (sessionKiosk,
+  // startKioskSession) - accepting that same shape here, not a Date, is what
+  // lets sessionPlan below hand its own `now` straight through to both.
+  const d = new Date(now);
+  const minuteOfDay = d.getHours() * 60 + d.getMinutes();
+  const day = d.getDay();
+  const hit = kiosk.schedule.find((e) => (e.day === null || e.day === day) && minuteOfDay >= e.startMin && minuteOfDay < e.endMin);
+  return hit ? hit.planId : kiosk.planId;
+}
+
+/**
+ * What display.js's own poll asks for (Issue #152): the kiosk behind this
+ * session, which plan resolvePlanId says it should be showing right now, and
+ * that plan's actual document - null throughout if the cookie does not name
+ * a live kiosk, and a null `plan` specifically if nothing is assigned or
+ * whatever was resolved has since been deleted (getPlanForKiosk already
+ * treats a deleted plan as gone). The device is what decides whether that
+ * differs from what it already has loaded and is worth reloading for.
+ */
+function sessionPlan(db, token, opts) {
+  const session = sessionKiosk(db, token, opts);
+  if (!session) return null;
+  const kiosk = get(db, session.id);
+  const planId = resolvePlanId(kiosk, opts?.now);
+  const plan = planId ? plans.getPlanForKiosk(db, planId) : null;
+  return { planId: plan ? planId : null, plan };
+}
+
 module.exports = {
-  list, get, create, update, provision, sessionKiosk, sessionConfig,
+  list, get, create, update, provision, sessionKiosk, sessionConfig, resolvePlanId, sessionPlan,
   SESSION_MS,
 };

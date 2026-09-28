@@ -426,6 +426,29 @@ const MIGRATIONS = [
       CREATE INDEX kiosk_sessions_by_kiosk ON kiosk_sessions(kiosk_id);
     `);
   },
+
+  (db) => {
+    db.exec(`
+      -- Time-based programming for a kiosk (Issue #152): a JSON array of
+      -- {id, day, startMin, endMin, planId} entries, kept the same
+      -- store-it-as-JSON shape 'settings' above already uses rather than a
+      -- second table - there is nothing here anything else needs to query by,
+      -- the way kiosks_by_plan's index exists for plan_id. day is 0-6
+      -- (Sunday-Saturday) or null for every day; startMin/endMin are minutes
+      -- since midnight, IN THE SERVER'S OWN LOCAL TIME - a v1 simplification
+      -- named directly in the issue ("a simple day-of-week/time-range list is
+      -- probably enough"), not a timezone-aware calendar. A self-hosted
+      -- instance signage actually depends on sets its host's TZ to match the
+      -- venue, same as any cron-driven schedule would.
+      --
+      -- plan_id here is NOT a foreign key, unlike kiosks.plan_id above: an
+      -- entry naming a plan that is later deleted should not need every
+      -- schedule touched to clean it up, and resolving one that no longer
+      -- exists is already handled the same way an unassigned kiosk is - fall
+      -- through to the next entry, or to the kiosk's own default plan_id.
+      ALTER TABLE kiosks ADD COLUMN schedule TEXT NOT NULL DEFAULT '[]';
+    `);
+  },
 ];
 
 function migrate(db) {
