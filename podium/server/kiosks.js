@@ -18,6 +18,13 @@
 // a controller) is what turns that into pixels, by polling and loading it
 // itself. See KIOSK_SCHEDULE_POLL_MS's own comment in display.js for why
 // polling rather than a push was the right call here.
+//
+// Issue #155's "last seen" reuses that same poll rather than adding a
+// dedicated heartbeat call: every hit on session-config/session-plan already
+// runs sessionKiosk, which already slides kiosk_sessions.last_seen_at
+// forward (throttled to once an hour, same as the cookie refresh it was
+// built for - see sessionKiosk's own comment). A kiosk that has gone dark
+// simply stops sliding it, which is exactly what "last seen" needs to mean.
 
 'use strict';
 
@@ -29,7 +36,16 @@ function provisionToken() {
   return crypto.randomBytes(18).toString('base64url');
 }
 
+// How long a kiosk can go quiet before the admin list calls it out (Issue
+// #155). Comfortably past SESSION_TOUCH_MS's own one-hour write throttle -
+// otherwise a perfectly healthy kiosk, merely between throttled writes,
+// would read as stale through no fault of its own. Twice that leaves a
+// margin for network jitter and a slow poll cycle while still catching a
+// genuinely dark device well within the same day.
+const HEARTBEAT_STALE_MS = 2 * 60 * 60 * 1000;
+
 function row(r) {
+  const revoked = !!r.revoked_at;
   return {
     id: r.id,
     name: r.name,
@@ -40,8 +56,14 @@ function row(r) {
     schedule: JSON.parse(r.schedule || '[]'),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
-    revoked: !!r.revoked_at,
+    revoked,
     revokedAt: r.revoked_at,
+    lastSeenAt: r.last_seen_at ?? null,
+    // Never true for a revoked kiosk - going quiet is the whole point of
+    // revoking one, not a surprise worth flagging the same way. Never true
+    // for one that has never been provisioned at all either: nothing has
+    // gone dark that was ever lit.
+    stale: !revoked && r.last_seen_at != null && (Date.now() - r.last_seen_at) > HEARTBEAT_STALE_MS,
   };
 }
 
@@ -81,7 +103,15 @@ function cleanSchedule(raw) {
   });
 }
 
-const SELECT = 'SELECT k.*, p.title AS plan_title FROM kiosks k LEFT JOIN plans p ON p.id = k.plan_id';
+// A correlated subquery rather than a LEFT JOIN on kiosk_sessions: a kiosk
+// can hold more than one session (re-provisioned devices, or more than one
+// screen sharing a profile), and joining that in directly would multiply
+// this query's own row - one kiosk becoming one row per session instead of
+// one. MAX() across all of them is "the most recently active device using
+// this profile", which is the one number worth showing per kiosk.
+const SELECT = `SELECT k.*, p.title AS plan_title,
+    (SELECT MAX(last_seen_at) FROM kiosk_sessions s WHERE s.kiosk_id = k.id) AS last_seen_at
+  FROM kiosks k LEFT JOIN plans p ON p.id = k.plan_id`;
 
 function list(db) {
   return db.prepare(`${SELECT} ORDER BY k.name`).all().map(row);

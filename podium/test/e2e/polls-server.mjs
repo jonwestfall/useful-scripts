@@ -2761,6 +2761,16 @@ expecting.kioskOffscopeWarm = false;
 ok('a later reload with no token in the URL still gets in - the cookie is what is carrying it now, not the one-time link',
   await device.isHidden('#arm') && new URL(device.url()).pathname === '/display.html');
 
+// Issue #155: the same poll that just proved the cookie works (the reload
+// above) is what a real device's own heartbeat rides - reloading the admin
+// list should now say so, instead of "never provisioned".
+await kpDesk.goto(`${kpBase}/admin.html`);
+await kpDesk.waitForSelector('#admin:not([hidden])');
+await kpDesk.click('#tab-kiosks');
+await kpDesk.waitForSelector('#kiosks .admin-title:has-text("Lobby screen")');
+ok('a provisioned device\'s own poll shows up as "last seen" in the admin list',
+  /last seen/.test(await kpDesk.textContent('#kiosks')) && !/never provisioned/.test(await kpDesk.textContent('#kiosks')));
+
 // Revoke, from the same admin session used to create it.
 await kpDesk.click('#kiosks button:has-text("Revoke")');
 await kpDesk.waitForSelector('#kiosks button:has-text("Un-revoke")');

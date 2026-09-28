@@ -710,6 +710,35 @@ ok('and sessionPlan reports that honestly - no id, no document - rather than pre
 kiosks.update(db, admin, kiosk.id, { schedule: [] });
 ok('an empty schedule is a real, savable state, not "leave it as it was"', kiosks.get(db, kiosk.id).schedule.length === 0);
 
+console.log('\n-- kiosk heartbeat: last seen (Issue #155) --');
+
+const heartbeatKiosk = kiosks.create(db, admin, { name: 'Heartbeat test kiosk', settings: { transport: 'ws', room: 'hb-kiosk', passphrase: 'x' } });
+ok('a kiosk with no session yet reports no last-seen, and is not stale for it',
+  heartbeatKiosk.lastSeenAt === null && heartbeatKiosk.stale === false);
+
+const heartbeatProvisioned = kiosks.provision(db, heartbeatKiosk.provisionToken);
+ok('redeeming its link immediately counts as being seen',
+  kiosks.get(db, heartbeatKiosk.id).lastSeenAt !== null && kiosks.get(db, heartbeatKiosk.id).stale === false);
+
+db.prepare('UPDATE kiosk_sessions SET last_seen_at = ? WHERE kiosk_id = ?').run(Date.now() - 3 * 60 * 60 * 1000, heartbeatKiosk.id);
+ok('gone quiet for three hours - comfortably past the one-hour touch throttle\'s own margin - reads as stale',
+  kiosks.get(db, heartbeatKiosk.id).stale === true);
+
+db.prepare('UPDATE kiosk_sessions SET last_seen_at = ? WHERE kiosk_id = ?').run(Date.now() - 30 * 60 * 1000, heartbeatKiosk.id);
+ok('thirty minutes ago - well within a healthy kiosk\'s own throttled write window - is not stale',
+  kiosks.get(db, heartbeatKiosk.id).stale === false);
+
+db.prepare('UPDATE kiosk_sessions SET last_seen_at = ? WHERE kiosk_id = ?').run(Date.now() - 3 * 60 * 60 * 1000, heartbeatKiosk.id);
+kiosks.update(db, admin, heartbeatKiosk.id, { revoked: true });
+ok('a revoked kiosk never reads as stale, however long ago it was last seen - going quiet is the point of revoking it',
+  kiosks.get(db, heartbeatKiosk.id).stale === false && kiosks.get(db, heartbeatKiosk.id).lastSeenAt !== null);
+
+kiosks.update(db, admin, heartbeatKiosk.id, { revoked: false });
+db.prepare('UPDATE kiosk_sessions SET last_seen_at = ? WHERE kiosk_id = ?').run(Date.now() - 2 * 60 * 60 * 1000, heartbeatKiosk.id);
+ok('a real poll (sessionConfig, past the one-hour touch throttle) is what actually slides last_seen_at forward',
+  kiosks.sessionConfig(db, heartbeatProvisioned.sessionToken, { now: Date.now() })?.room === 'hb-kiosk'
+  && kiosks.get(db, heartbeatKiosk.id).lastSeenAt > Date.now() - 60 * 1000);
+
 console.log('\n-- what happened in the room --');
 
 // The room name is psy415's, which is how a lecture finds its course: the

@@ -1473,11 +1473,22 @@ function renderKiosks() {
   }
 
   for (const kiosk of kiosksList) {
+    // Issue #155: reuses the same last_seen_at a device's own poll already
+    // slides forward (see sessionKiosk's comment in server/kiosks.js) - no
+    // separate heartbeat exists, or needs to. A never-provisioned kiosk says
+    // nothing here rather than "never seen", which would read as a problem
+    // for a profile an admin simply has not handed to a device yet.
+    const seenText = kiosk.lastSeenAt === null
+      ? (kiosk.revoked ? '' : 'never provisioned')
+      : `last seen ${dayAndTime(kiosk.lastSeenAt)}`;
+    const seenSpan = el('span', { class: 'admin-meta' }, seenText);
+    seenSpan.classList.toggle('is-bad', kiosk.stale);
     const row = el('div', { class: 'admin-row' },
       el('span', { class: 'admin-title' }, kiosk.name),
       el('span', { class: 'admin-meta' },
         [kiosk.settings.room || '(no room set)', kiosk.planTitle || 'nothing assigned',
           kiosk.revoked ? 'revoked' : ''].filter(Boolean).join(' · ')),
+      seenText ? seenSpan : null,
       el('button', {
         class: 'admin-small', type: 'button',
         onclick: () => { openKiosk = openKiosk === kiosk.id ? null : kiosk.id; renderKiosks(); },

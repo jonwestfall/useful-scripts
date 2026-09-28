@@ -589,6 +589,9 @@ body.guest {
 }
 .admin-title { flex: 1; color: var(--ink); }
 .admin-meta { color: var(--dim); font-size: 12px; }
+/* Issue #155: a kiosk gone quiet longer than its own heartbeat should ever
+   allow, in the same red every other .is-bad status already uses. */
+.admin-meta.is-bad { color: #ffb3b3; }
 .admin-del { min-height: 32px; padding: 0 10px; font-size: 12px; }
 .admin-del[data-armed='yes'] { background: var(--live); border-color: var(--live); color: #fff; }
 .admin-row.is-busy { opacity: 0.55; pointer-events: none; }
