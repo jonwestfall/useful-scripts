@@ -255,7 +255,7 @@ export function emptyPlan(title = 'Untitled lecture') {
 export function newItem(type) {
   const spec = PLAN_TYPES[type];
   if (!spec) throw new Error(`unknown item type: ${type}`);
-  const item = { id: uid(8), type, title: '', note: '', durationMins: 0 };
+  const item = { id: uid(8), type, title: '', note: '', durationMins: 0, overlayCaption: '' };
   for (const field of spec.fields) {
     if (field.def !== undefined) item[field.key] = field.def;
   }
@@ -411,6 +411,13 @@ export function readPlan(raw) {
       title: str(raw2.title, 200),
       note: str(raw2.note, 2000),
       durationMins: num(raw2.durationMins ?? raw2.duration, 0, 0, 360),
+      // Issue #154: pre-written caption/audio-description text, shown on the
+      // same bar Live Captions (#79) uses while THIS item is what's live -
+      // see applyCommand's stage/take/set handling in protocol.js for when
+      // that actually happens. Cross-cutting like title/note above, not a
+      // per-type field, since any item can carry one regardless of what it
+      // shows.
+      overlayCaption: str(raw2.overlayCaption, 500),
     };
     for (const field of spec.fields) {
       const value = raw2[field.key];

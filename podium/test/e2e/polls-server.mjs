@@ -281,8 +281,8 @@ fs.writeFileSync(autoPlanFile, JSON.stringify({
   layout: '2h',
   timers: [{ id: 't-intro', label: 'Intro Countdown', mins: 3 }],
   items: [
-    { id: 'i-welcome', type: 'text', title: 'Welcome sign', body: 'Welcome to Class' },
-    { id: 'i-note', type: 'text', title: 'Panel B note', body: 'Group work starts now' },
+    { id: 'i-welcome', type: 'text', title: 'Welcome sign', body: 'Welcome to Class', overlayCaption: 'Welcome, please find a seat' },
+    { id: 'i-note', type: 'text', title: 'Panel B note', body: 'Group work starts now', overlayCaption: 'Should never reach the caption bar' },
   ],
   autoLaunch: {
     enabled: true,
@@ -319,6 +319,16 @@ await pad.waitForFunction(() => {
   return btns[1]?.classList.contains('is-on');
 }, null, { timeout: 5000 });
 ok('the plan chose panel B to focus on load, not the default A (Issue #109)', true);
+
+// Issue #154: pre-scripted captions ride live with whichever item lands on
+// panel A - never panel B's, even though it carries one too.
+await screen.waitForFunction(() => {
+  const bar = document.querySelector('#overlay');
+  return bar?.classList.contains('is-on') && /Welcome, please find a seat/.test(bar.textContent);
+}, null, { timeout: 10000 });
+ok('the caption bar picks up panel A\'s own pre-scripted caption on auto-launch', true);
+ok('and not panel B\'s, even though it has one too',
+  !/Should never reach the caption bar/.test(await screen.textContent('#overlay')));
 
 // Issue #131: a plan can start in picture-in-picture, naming which pane fills
 // the screen, which is the inset, and where the inset sits - here all four
@@ -2652,6 +2662,251 @@ ok('while an ordinary Go Live on the same server does record one', ordinaryLectu
 await ordinaryCtx.close();
 await kioskCtx.close();
 kioskServer.kill();
+}
+
+if (want('kiosk profiles: admin-managed provisioning')) {
+console.log('\n-- kiosk profiles: admin-managed provisioning --');
+// Its own server, accounts included: this is the flow #151 actually added -
+// an administrator creates a kiosk profile from admin.html, a blank device
+// (no account, no cookie, nothing) redeems the QR/link it hands out, and
+// that device keeps working across a reload with no re-provisioning. Then
+// the stronger thing the kiosk-cookie design specifically bought over an
+// ordinary pairing link: revoking the profile locks that SAME
+// already-provisioned device out on its very next visit, not just future
+// ones (see kiosk_sessions' migration comment in store.js).
+const kpPort = await freePort();
+const kpBase = `http://127.0.0.1:${kpPort}`;
+const kpData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-kioskprofile-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'kioskadmin', '--admin', '--name', 'Kiosk Admin', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: kpData },
+  input: 'provisioning is not the same as pairing\n',
+});
+const kpServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(kpPort), STATIC: '../', DATA_DIR: kpData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+kpServer.stderr.on('data', (d) => process.stderr.write(`[kiosk-profile-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('kiosk-profile relay did not start')), 10000);
+  let log = '';
+  kpServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  kpServer.on('exit', (code) => reject(new Error(`kiosk-profile relay exited with ${code}`)));
+});
+
+// control.js's own startup wants a config in localStorage before it will
+// finish initializing (every other section that signs in here seeds one the
+// same way) - this admin never actually uses it, since the whole visit is to
+// admin.html, not this room.
+const kpAdminCtx = await browser.newContext();
+await kpAdminCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${kpPort}/podium`, room: 'kp-admin-desk', passphrase: 'not actually used' }));
+const kpSignIn = await kpAdminCtx.newPage();
+trap(kpSignIn, 'kiosk-profile admin sign-in');
+await kpSignIn.goto(`${kpBase}/control.html`);
+await kpSignIn.waitForSelector('#form');
+await kpSignIn.fill('#username', 'kioskadmin');
+await kpSignIn.fill('#password', 'provisioning is not the same as pairing');
+await Promise.all([kpSignIn.waitForURL(/control\.html/), kpSignIn.click('#go')]);
+await kpSignIn.waitForSelector('#app:not([hidden])');
+await kpSignIn.close();
+
+const kpDesk = await kpAdminCtx.newPage();
+trap(kpDesk, 'kiosk-profile admin');
+await kpDesk.goto(`${kpBase}/admin.html`);
+await kpDesk.waitForSelector('#admin:not([hidden])');
+await kpDesk.click('#tab-kiosks');
+await kpDesk.waitForSelector('#panel-kiosks:not([hidden])');
+ok('the Kiosks tab is offered to an administrator', await kpDesk.isVisible('#new-kiosk-go'));
+
+await kpDesk.fill('#new-kiosk-name', 'Lobby screen');
+await kpDesk.fill('#new-kiosk-room', 'lobby-kiosk');
+await kpDesk.fill('#new-kiosk-wu', `ws://127.0.0.1:${kpPort}/podium`);
+await kpDesk.click('#new-kiosk-go');
+await kpDesk.waitForSelector('#kiosks .admin-title:has-text("Lobby screen")');
+ok('creating it opens its settings right away, provisioning link included',
+  await kpDesk.isVisible('#kiosks .hint.mono'));
+
+const provisionUrl = (await kpDesk.textContent('#kiosks .hint.mono')).trim();
+ok(`the provisioning link redeems straight through the API, not room/passphrase sitting in a URL (${provisionUrl.replace(/^https?:\/\/[^/]+/, '')})`,
+  /\/api\/kiosks\/provision\//.test(provisionUrl) && !provisionUrl.includes('passphrase'));
+
+// A device that has never been near this server: no account, no cookie, no
+// stored config - all it has is the link above, same as scanning a QR cold.
+// Navigating it hits the redemption route directly, which mints the cookie
+// and redirects on to display.html - never the other way around, since
+// display.html itself stays behind gate() even for a kiosk.
+const deviceCtx = await browser.newContext();
+const device = await deviceCtx.newPage();
+trap(device, 'kiosk device, first boot');
+// installOfflineShell()'s service worker (Issue #130) warms every page in
+// the app shell on install, control.html/admin.html/plan.html included, with
+// no idea a kiosk cookie is narrower than a signed-in user's - those few
+// warm() calls 401 harmlessly (nothing here ever reads their result) but the
+// browser logs each one regardless. See KIOSK_OFFSCOPE_WARM in harness.mjs.
+expecting.kioskOffscopeWarm = true;
+await device.goto(provisionUrl);
+await device.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('redeeming the link lands on display.html and auto-arms with no prompt',
+  new URL(device.url()).pathname === '/display.html' && await device.isHidden('#arm'));
+
+const cookiesAfterProvision = await deviceCtx.cookies(kpBase);
+ok('provisioning issued the device its own kiosk cookie, separate from a user session',
+  cookiesAfterProvision.some((c) => c.name === 'podium_kiosk' && c.httpOnly));
+
+await device.goto(`${kpBase}/display.html`);
+await device.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+expecting.kioskOffscopeWarm = false;
+ok('a later reload with no token in the URL still gets in - the cookie is what is carrying it now, not the one-time link',
+  await device.isHidden('#arm') && new URL(device.url()).pathname === '/display.html');
+
+// Issue #155: the same poll that just proved the cookie works (the reload
+// above) is what a real device's own heartbeat rides - reloading the admin
+// list should now say so, instead of "never provisioned".
+await kpDesk.goto(`${kpBase}/admin.html`);
+await kpDesk.waitForSelector('#admin:not([hidden])');
+await kpDesk.click('#tab-kiosks');
+await kpDesk.waitForSelector('#kiosks .admin-title:has-text("Lobby screen")');
+ok('a provisioned device\'s own poll shows up as "last seen" in the admin list',
+  /last seen/.test(await kpDesk.textContent('#kiosks')) && !/never provisioned/.test(await kpDesk.textContent('#kiosks')));
+
+// Revoke, from the same admin session used to create it.
+await kpDesk.click('#kiosks button:has-text("Revoke")');
+await kpDesk.waitForSelector('#kiosks button:has-text("Un-revoke")');
+ok('the profile stays listed as revoked, not removed', await kpDesk.textContent('#kiosks .admin-meta') !== null
+  && (await kpDesk.textContent('#kiosks .admin-meta')).includes('revoked'));
+
+await device.goto(`${kpBase}/display.html`);
+await device.waitForSelector('#form', { timeout: 10000 });
+ok(`revoking kicks that already-provisioned device to sign-in on its very next visit, not just future links (${new URL(device.url()).pathname})`,
+  new URL(device.url()).pathname === '/login.html');
+
+await device.close();
+await deviceCtx.close();
+await kpAdminCtx.close();
+kpServer.kill();
+}
+
+if (want('kiosk profiles: scheduled programming')) {
+console.log('\n-- kiosk profiles: scheduled programming --');
+// Its own server, same shape as the provisioning section above. This one
+// proves the harder half of #152: a kiosk with nobody running control.js
+// still loads and drives a real plan on its own (Issue #152's real
+// prerequisite), and a schedule entry covering the current moment overrides
+// its default plan without a controller or a reload forcing it.
+const spPort = await freePort();
+const spBase = `http://127.0.0.1:${spPort}`;
+const spData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-kioskschedule-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'scheduleadmin', '--admin', '--name', 'Schedule Admin', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: spData },
+  input: 'a schedule is not a controller\n',
+});
+const spServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(spPort), STATIC: '../', DATA_DIR: spData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+spServer.stderr.on('data', (d) => process.stderr.write(`[kiosk-schedule-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('kiosk-schedule relay did not start')), 10000);
+  let log = '';
+  spServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  spServer.on('exit', (code) => reject(new Error(`kiosk-schedule relay exited with ${code}`)));
+});
+
+const spAdminCtx = await browser.newContext();
+await spAdminCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${spPort}/podium`, room: 'sp-admin-desk', passphrase: 'not actually used' }));
+const spSignIn = await spAdminCtx.newPage();
+trap(spSignIn, 'kiosk-schedule admin sign-in');
+await spSignIn.goto(`${spBase}/control.html`);
+await spSignIn.waitForSelector('#form');
+await spSignIn.fill('#username', 'scheduleadmin');
+await spSignIn.fill('#password', 'a schedule is not a controller');
+await Promise.all([spSignIn.waitForURL(/control\.html/), spSignIn.click('#go')]);
+await spSignIn.waitForSelector('#app:not([hidden])');
+
+// Two plans, straight into the server library with no course and no file
+// upload - a signed-in admin's own fetch is all POST /api/plans needs.
+const dayPlanDoc = {
+  podium: 'plan', v: 1, title: 'Daytime announcements', layout: 'single',
+  items: [{ id: 'i-day', type: 'text', title: 'Day', body: 'Open during the day' }],
+  autoLaunch: { enabled: true, initialState: 'live', activePane: 'A', panes: { A: { type: 'item', itemId: 'i-day' } } },
+};
+const eventPlanDoc = {
+  podium: 'plan', v: 1, title: 'Evening event', layout: 'single',
+  items: [{ id: 'i-evening', type: 'text', title: 'Evening', body: 'Evening event starts now' }],
+  autoLaunch: { enabled: true, initialState: 'live', activePane: 'A', panes: { A: { type: 'item', itemId: 'i-evening' } } },
+};
+const { id: dayPlanId } = await spSignIn.evaluate((doc) => fetch('/api/plans', {
+  method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ title: doc.title, doc }),
+}).then((r) => r.json()).then((j) => j.plan), dayPlanDoc);
+const { id: eventPlanId } = await spSignIn.evaluate((doc) => fetch('/api/plans', {
+  method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ title: doc.title, doc }),
+}).then((r) => r.json()).then((j) => j.plan), eventPlanDoc);
+await spSignIn.close();
+
+const spDesk = await spAdminCtx.newPage();
+trap(spDesk, 'kiosk-schedule admin');
+await spDesk.goto(`${spBase}/admin.html`);
+await spDesk.waitForSelector('#admin:not([hidden])');
+await spDesk.click('#tab-kiosks');
+await spDesk.waitForSelector('#panel-kiosks:not([hidden])');
+await spDesk.fill('#new-kiosk-name', 'Hallway sign');
+await spDesk.fill('#new-kiosk-room', 'hallway-kiosk');
+await spDesk.fill('#new-kiosk-wu', `ws://127.0.0.1:${spPort}/podium`);
+await spDesk.click('#new-kiosk-go');
+await spDesk.waitForSelector('#kiosks .admin-title:has-text("Hallway sign")');
+// The default plan, set through the same "Should be showing" picker the
+// kiosk profile section already covers - here just so there is a fallback
+// to prove the schedule overrides.
+const kioskId = await spDesk.evaluate(() => fetch('/api/kiosks', { credentials: 'same-origin' })
+  .then((r) => r.json()).then((j) => j.kiosks.find((k) => k.name === 'Hallway sign').id));
+await spDesk.locator('#kiosks label:has-text("Should be showing") select').selectOption(String(dayPlanId));
+await spDesk.waitForTimeout(500);
+
+const spProvisionUrl = (await spDesk.textContent('#kiosks .hint.mono')).trim();
+
+const spDeviceCtx = await browser.newContext();
+const spDevice = await spDeviceCtx.newPage();
+trap(spDevice, 'kiosk device: scheduled programming');
+expecting.kioskOffscopeWarm = true;
+await spDevice.goto(spProvisionUrl);
+await spDevice.waitForFunction(() => {
+  const t = document.querySelector('.layer[data-role="program"] .r-text');
+  return t && /Open during the day/.test(t.textContent);
+}, null, { timeout: 15000 });
+expecting.kioskOffscopeWarm = false;
+ok('a kiosk with nobody running control.js loads and drives its default plan on its own', true);
+
+// Now give it a schedule that covers the current moment with a different
+// plan, and force the poll it would otherwise wait up to a minute for (see
+// KIOSK_SCHEDULE_POLL_MS's own comment in display.js).
+const now = new Date();
+const nowMin = now.getHours() * 60 + now.getMinutes();
+const startMin = Math.max(0, nowMin - 5);
+const endMin = Math.min(1439, nowMin + 30);
+await spDesk.evaluate(({ id, day, startMin, endMin, planId }) => fetch(`/api/kiosks/${id}`, {
+  method: 'PATCH', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ schedule: [{ day, startMin, endMin, planId }] }),
+}), { id: kioskId, day: now.getDay(), startMin, endMin, planId: eventPlanId });
+
+await spDevice.evaluate(() => window.__podiumCheckKioskSchedule());
+await spDevice.waitForFunction(() => {
+  const t = document.querySelector('.layer[data-role="program"] .r-text');
+  return t && /Evening event starts now/.test(t.textContent);
+}, null, { timeout: 15000 });
+ok('a schedule window covering right now switches the display to a different plan, with no reload and no controller',
+  true);
+
+await spDevice.close();
+await spDeviceCtx.close();
+await spAdminCtx.close();
+spServer.kill();
 }
 
 reportErrors();

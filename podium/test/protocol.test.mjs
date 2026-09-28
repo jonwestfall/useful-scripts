@@ -697,5 +697,61 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
   chk('an empty picture deck is harmless: slide 0, nothing to show', d.program.slide === 0 && d.program.images.length === 0);
 }
 
+{
+  // Issue #154: pre-scripted captions ride the same overlay bar Live
+  // Captions (#79) uses, synced whenever the PROGRAM layer's own content
+  // changes - never a secondary panel, and never over a live presenter's
+  // running transcript.
+  console.log('\n-- pre-scripted captions (Issue #154) --');
+  const c = initialState();
+  applyCommand(c, { op:'stage', item:{ type:'text', body:'Hello', overlayCaption:'Welcome to the lobby' } });
+  chk('staging an item with a caption puts it on the overlay bar, visible',
+    c.overlay.text === 'Welcome to the lobby' && c.overlay.visible === true && c.overlay.live === false);
+
+  applyCommand(c, { op:'stage', item:{ type:'text', body:'Bye' } });
+  chk('staging a captionless item over it clears the bar rather than leaving the old one showing',
+    c.overlay.text === '' && c.overlay.visible === false);
+
+  applyCommand(c, { op:'panel', index:0, item:{ type:'text', body:'side', overlayCaption:'Should never appear' } });
+  chk('a secondary panel (B/C/D) never drives the caption bar - only panel A does',
+    c.overlay.text === '');
+
+  applyCommand(c, { op:'freeze', on:true });
+  applyCommand(c, { op:'stage', item:{ type:'text', body:'cued', overlayCaption:'Cued caption' } });
+  chk('a cued (frozen) stage does not touch the bar yet - nothing is actually on screen', c.overlay.text === '');
+  applyCommand(c, { op:'take' });
+  chk('TAKE is what actually puts the cued item live, and that is when its caption takes over',
+    c.overlay.text === 'Cued caption' && c.overlay.visible === true);
+
+  applyCommand(c, { op:'clear', where:'program' });
+  chk('clearing program to black clears its caption too', c.overlay.text === '' && c.overlay.visible === false);
+
+  applyCommand(c, { op:'caption', on:true });
+  applyCommand(c, { op:'caption', text:'Live transcript running' });
+  applyCommand(c, { op:'stage', item:{ type:'text', body:'slide', overlayCaption:'Should not interrupt live captions' } });
+  chk('a live presenter\'s running transcript is never overwritten by a pre-scripted caption elsewhere in the plan',
+    c.overlay.text === 'Live transcript running' && c.overlay.live === true);
+  applyCommand(c, { op:'caption', on:false });
+
+  applyCommand(c, {
+    op:'stage',
+    item:{
+      type:'set', title:'Announcements', mode:'sequential',
+      entries:[
+        { item:{ type:'text', body:'one', overlayCaption:'First announcement' }, seconds:15 },
+        { item:{ type:'text', body:'two', overlayCaption:'Second announcement' }, seconds:15 },
+      ],
+    },
+  });
+  chk('staging an Automated Set applies the FIRST entry\'s own caption',
+    c.overlay.text === 'First announcement');
+  applyCommand(c, { op:'set', action:'advance', panel:0 });
+  chk('advancing the set to its next entry switches the caption with it, riding the same clock as the slide',
+    c.overlay.text === 'Second announcement');
+  applyCommand(c, { op:'set', action:'select', index:0 });
+  chk('jumping to a specific entry (the panel picker\'s own controls) syncs the caption the same way',
+    c.overlay.text === 'First announcement');
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);
