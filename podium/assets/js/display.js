@@ -1369,6 +1369,13 @@ function queueRecordingTransition(fn) {
 
 async function startRecording() {
   if (lectureId) return;
+  // Unattended signage (Issue #151): a kiosk auto-arms on every load - every
+  // reboot, every day, for a whole semester - and none of that is a lecture.
+  // Left unhandled, that is an endless pile of empty session records with
+  // nothing in them. This is the flag, not the auto-arm path specifically:
+  // a kiosk device that somebody manually clicks Go live on (unusual, but
+  // possible) still should not record, for the same reason.
+  if (cfg.kiosk) return;
   // Awaited rather than read off a flag the probe sets when it lands: Go live
   // can be clicked in the same second the page opened, and a lecture that went
   // unrecorded because of a race is exactly the kind of thing nobody would
@@ -2296,7 +2303,9 @@ function showSetup() {
   setupWired = true;
   for (const [key, value] of Object.entries(cfg)) {
     const field = form.elements[key];
-    if (field && typeof value !== 'boolean') field.value = value;
+    if (!field) continue;
+    if (field.type === 'checkbox') field.checked = !!value;
+    else if (typeof value !== 'boolean') field.value = value;
   }
   const onTransport = () => {
     const t = form.elements.transport.value;
@@ -2315,7 +2324,9 @@ function showSetup() {
     const next = { ...cfg, generated: null };
     for (const key of Object.keys(DEFAULTS)) {
       const field = form.elements[key];
-      if (field && typeof field.value === 'string') next[key] = field.value.trim();
+      if (!field) continue;
+      if (field.type === 'checkbox') next[key] = field.checked;
+      else if (typeof field.value === 'string') next[key] = field.value.trim();
     }
     if (!isConfigured(next)) { $('#setup-error').textContent = 'Fill in the fields for the transport you picked.'; return; }
     cfg = next;
@@ -2562,6 +2573,17 @@ if (!isConfigured(cfg)) {
   } catch (err) {
     setHud('error', err?.message || String(err));
   }
+  // Unattended signage (Issue #151): the one thing an ordinary display always
+  // requires a real click for is right here (see goLive's own comment on the
+  // audio-unlock gesture) - a kiosk has nobody to click it, on the very first
+  // load and again after every crash, reboot or power flicker. Run regardless
+  // of whether connect() above succeeded: a kiosk's job is to keep showing
+  // whatever it was showing, relay or no relay, not to sit on the arm screen
+  // waiting for a controller that will never come. If the browser was not
+  // actually launched with the autoplay-exempting flags the docs ask for,
+  // this fails exactly the way an early manual click already does today, and
+  // the existing self-heals-on-the-next-gesture fallback still applies.
+  if (cfg.kiosk) goLive();
 }
 
 render();
