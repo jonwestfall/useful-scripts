@@ -163,6 +163,19 @@
         <label for="d-pass">Passphrase (encrypts everything; must match on every device)</label>
         <input id="d-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
       </div>
+      <div class="field">
+        <!-- Issue #151: a device checked off here skips the arm screen and
+             goes live on its own on every load (crash, reboot, power
+             flicker) instead of waiting for a click, and never opens a
+             lecture record while doing it - see goLive's caller and
+             startRecording in display.js. -->
+        <label class="check"><input id="d-kiosk" name="kiosk" type="checkbox"> Kiosk mode</label>
+        <p class="hint">
+          For unattended signage only - a lobby screen or hallway display with nobody
+          running it. Arms itself on load, and never records a session while doing it.
+          Leave this off for an ordinary classroom display.
+        </p>
+      </div>
       <p class="error" id="setup-error"></p>
       <div class="row">
         <button type="submit" class="big-button">Save</button>

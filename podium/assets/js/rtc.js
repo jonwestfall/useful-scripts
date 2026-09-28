@@ -132,3 +132,124 @@ export function createCameraSender({ bus, onState, onLocalStream }) {
 
   return { start, stop, handle, get active() { return !!pc; } };
 }
+
+// A controller's own mic (Issue #147): amplified through the display and/or
+// recorded to the session (the recording half needs none of this - see
+// control.js - it runs entirely off the controller's own local stream).
+//
+// Distinct message kinds (mic-offer/mic-ice/mic-answer/mic-stop rather than
+// the camera's offer/ice/answer/stop) so the two features' signalling can
+// share the same 't: rtc' envelope and the same relay without either one's
+// handler mistaking the other's message for its own.
+//
+// The display side is the one real difference from camera: MULTIPLE
+// controllers can have a live mic at once (co-presenters, a panel, a
+// student replying from their own device), so this holds one connection
+// per sender rather than camera's single slot torn down and replaced by
+// whichever offer arrives next.
+
+// Display side.
+export function createMicReceiver({ bus, onTrack, onGone }) {
+  const peers = new Map();   // peerId -> { pc, timeout }
+
+  function teardownPeer(peerId, notify = true) {
+    const entry = peers.get(peerId);
+    if (!entry) return;
+    clearTimeout(entry.timeout);
+    try { entry.pc.close(); } catch { /* noop */ }
+    peers.delete(peerId);
+    if (notify) onGone(peerId);
+  }
+
+  async function handle(msg) {
+    if (msg.t !== 'rtc') return;
+
+    if (msg.kind === 'mic-offer') {
+      const peerId = msg.from;
+      teardownPeer(peerId, false);   // a stale connection from the same sender, if any
+      const pc = new RTCPeerConnection(ICE);
+      pc.ontrack = (ev) => onTrack(peerId, ev.streams[0]);
+      pc.onicecandidate = (ev) => {
+        if (ev.candidate) bus.send({ t: 'rtc', kind: 'mic-ice', to: peerId, candidate: ev.candidate.toJSON() });
+      };
+      pc.onconnectionstatechange = () => {
+        if (peers.get(peerId)?.pc !== pc) return;
+        if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) teardownPeer(peerId);
+      };
+      const timeout = setTimeout(() => {
+        if (peers.get(peerId)?.pc === pc && pc.connectionState !== 'connected') teardownPeer(peerId);
+      }, CONNECT_TIMEOUT_MS);
+      peers.set(peerId, { pc, timeout });
+      await pc.setRemoteDescription(msg.sdp);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      bus.send({ t: 'rtc', kind: 'mic-answer', to: peerId, sdp: { type: answer.type, sdp: answer.sdp } });
+      return;
+    }
+
+    if (msg.kind === 'mic-ice') {
+      const entry = peers.get(msg.from);
+      if (!entry) return;
+      try { await entry.pc.addIceCandidate(msg.candidate); } catch { /* candidate arrived too early or too late */ }
+      return;
+    }
+
+    if (msg.kind === 'mic-stop') teardownPeer(msg.from);
+  }
+
+  return { handle, stopAll: () => { for (const peerId of [...peers.keys()]) teardownPeer(peerId); } };
+}
+
+// Controller side. Takes an already-acquired MediaStream rather than
+// requesting its own the way createCameraSender does - Issue #147's
+// recording half needs the same microphone grant, not a second one, so
+// control.js acquires it once and hands it to whichever of the two (or
+// both) are actually turned on.
+export function createMicSender({ bus, onState }) {
+  let pc = null;
+  let displayId = null;
+  let timeout = null;
+
+  async function start(stream) {
+    await stop();
+    pc = new RTCPeerConnection(ICE);
+    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    pc.onicecandidate = (ev) => {
+      if (ev.candidate) bus.send({ t: 'rtc', kind: 'mic-ice', to: displayId || undefined, candidate: ev.candidate.toJSON() });
+    };
+    pc.onconnectionstatechange = () => {
+      if (!pc) return;
+      if (pc.connectionState === 'connected') { clearTimeout(timeout); onState('live'); }
+      if (pc.connectionState === 'failed') onState('failed');
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    bus.send({ t: 'rtc', kind: 'mic-offer', sdp: { type: offer.type, sdp: offer.sdp } });
+    onState('connecting');
+    clearTimeout(timeout);
+    timeout = setTimeout(() => { if (pc && pc.connectionState !== 'connected') onState('failed'); }, CONNECT_TIMEOUT_MS);
+  }
+
+  async function handle(msg) {
+    if (msg.t !== 'rtc' || !pc) return;
+    if (msg.kind === 'mic-answer') {
+      displayId = msg.from;
+      try { await pc.setRemoteDescription(msg.sdp); } catch { onState('failed'); }
+      return;
+    }
+    if (msg.kind === 'mic-ice') {
+      try { await pc.addIceCandidate(msg.candidate); } catch { /* ignore */ }
+    }
+  }
+
+  async function stop() {
+    clearTimeout(timeout);
+    if (pc) { bus.send({ t: 'rtc', kind: 'mic-stop' }); try { pc.close(); } catch { /* noop */ } }
+    pc = null;
+    displayId = null;
+    onState('idle');
+  }
+
+  return { start, stop, handle, get active() { return !!pc; } };
+}

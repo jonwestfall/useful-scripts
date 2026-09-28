@@ -332,8 +332,8 @@ await ctx.close();
 }
 }
 
-if (want('the audio mixer: three faders, one meaning each')) {
-console.log('\n-- the audio mixer: three faders, one meaning each --');
+if (want('the audio mixer: four faders, one meaning each')) {
+console.log('\n-- the audio mixer: four faders, one meaning each --');
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'mixer-room', passphrase: 'two channels one master' }));
@@ -355,8 +355,9 @@ const setSlider = (page, sel, value) => page.evaluate(([s, v]) => {
 }, [sel, value]);
 
 await pad.click('.tab[data-tab="mixer"]');
-ok('the Mixer tab shows three separate faders', await pad.evaluate(() =>
-  !!document.querySelector('#mixer-master') && !!document.querySelector('#mixer-content') && !!document.querySelector('#mixer-music')));
+ok('the Mixer tab shows four separate faders', await pad.evaluate(() =>
+  !!document.querySelector('#mixer-master') && !!document.querySelector('#mixer-content')
+  && !!document.querySelector('#mixer-music') && !!document.querySelector('#mixer-mic')));
 
 // Content channel: master and the channel's own level multiply together.
 // #url-input lives on the Library tab, not the Mixer.
@@ -400,6 +401,97 @@ await pad.click('#mute');
 await screen.waitForFunction(() => document.querySelector('audio#music').volume < 0.01, null, { timeout: 5000 });
 ok('mute silences the music channel regardless of its own fader', true);
 await pad.click('#mute');
+
+await ctx.close();
+}
+
+if (want('controller mic amplification: more than one live at once, and it ducks the music')) {
+console.log('\n-- controller mic amplification: more than one live at once, and it ducks the music --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.grantPermissions(['microphone']);
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'mic-amp-room', passphrase: 'two mics at once' }));
+
+const screen = await ctx.newPage();
+trap(screen, 'mic-amp display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+
+const padA = await ctx.newPage();
+trap(padA, 'mic-amp control A');
+await padA.goto(`${BASE}/control.html`);
+await padA.waitForSelector('.tile');
+await padA.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const padB = await ctx.newPage();
+trap(padB, 'mic-amp control B');
+await padB.goto(`${BASE}/control.html`);
+await padB.waitForSelector('.tile');
+await padB.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const liveMicCount = () => screen.evaluate(() => document.querySelectorAll('audio.mic-relay').length);
+const amplifyOn = async (pad) => {
+  await pad.click('.tab[data-tab="say"]');
+  await pad.click('#mic-start');
+  await pad.waitForFunction(() => document.querySelector('#mic-status')?.textContent === 'Live', null, { timeout: 8000 });
+  await pad.check('#mic-amplify');
+  await pad.waitForFunction(() => document.querySelector('#mic-amplify-status')?.textContent === 'live on the display', null, { timeout: 10000 });
+};
+
+// Amplification defaults off (unlike Record, which defaults on) - the risk
+// of feedback is real enough that turning it on should be a deliberate act.
+await padA.click('.tab[data-tab="say"]');
+ok('amplification defaults off, unlike recording', !(await padA.isChecked('#mic-amplify')));
+
+await amplifyOn(padA);
+await screen.waitForFunction((n) => document.querySelectorAll('audio.mic-relay').length === n, 1, { timeout: 8000 });
+ok('a controller amplifying its mic reaches the display as real audio, not just a flag', true);
+
+// The Mixer's own mic channel, same relationship as content and music: the
+// master and the channel's own level multiply together.
+const setSlider = (page, sel, value) => page.evaluate(([s, v]) => {
+  const input = document.querySelector(s);
+  input.value = String(v);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}, [sel, value]);
+await padA.click('.tab[data-tab="mixer"]');
+await setSlider(padA, '#mixer-master', 0.5);
+await setSlider(padA, '#mixer-mic', 0.4);
+await screen.waitForFunction(() => Math.abs(document.querySelector('audio.mic-relay').volume - 0.2) < 0.02, null, { timeout: 5000 });
+ok('the mic channel follows the master the same way content and music do (0.5 x 0.4 -> 0.2)', true);
+await setSlider(padA, '#mixer-master', 1);
+await setSlider(padA, '#mixer-mic', 1);
+
+// A second controller's mic does NOT evict the first - unlike the
+// phone-camera feature's single slot, Issue #147 supports more than one
+// presenter live at once.
+await amplifyOn(padB);
+await screen.waitForFunction((n) => document.querySelectorAll('audio.mic-relay').length === n, 2, { timeout: 8000 });
+ok('a second controller amplifying its own mic joins the first rather than replacing it', true);
+
+// Stopping the first leaves the second alone.
+await padA.click('.tab[data-tab="say"]');
+await padA.click('#mic-start');
+await screen.waitForFunction((n) => document.querySelectorAll('audio.mic-relay').length === n, 1, { timeout: 8000 });
+ok('stopping one mic does not touch the other', true);
+await padB.click('#mic-start');
+await screen.waitForFunction((n) => document.querySelectorAll('audio.mic-relay').length === n, 0, { timeout: 8000 });
+ok(`and stopping the other leaves none (${await liveMicCount()})`, (await liveMicCount()) === 0);
+
+// It ducks background music the same way on-screen content with sound does.
+await padA.click('.tab[data-tab="music"]');
+await padA.fill('#music-url', 'content/audio/waiting-music.wav');
+await padA.click('#music-url-form button[type="submit"]');
+await padA.click('#music-play');
+await screen.waitForFunction(() => { const el = document.querySelector('audio#music'); return el && !el.paused && el.currentTime > 0; }, null, { timeout: 15000 });
+await padA.waitForTimeout(1200);   // past the fade-in, onto a settled level
+const unducked = await screen.evaluate(() => document.querySelector('audio#music').volume);
+
+await amplifyOn(padB);
+await screen.waitForFunction((before) => document.querySelector('audio#music').volume < before, unducked, { timeout: 5000 })
+  .then(() => ok(`an amplified mic ducks the music the same way on-screen content does (was ${unducked.toFixed(2)})`, true))
+  .catch(() => ok(`an amplified mic ducks the music the same way on-screen content does (was ${unducked.toFixed(2)})`, false));
 
 await ctx.close();
 }
@@ -627,6 +719,60 @@ await screen.waitForFunction(() => {
   return a && !a.paused && a.currentTime > 0.1;
 }, null, { timeout: 3000 });
 ok('one unrelated keypress afterward is enough to self-heal it - no need to find the "exit fullscreen" trick', true);
+await ctx.close();
+}
+
+if (want('a background-music play() blocked after Go live shows up as an error, not silence')) {
+console.log('\n-- a background-music play() blocked after Go live shows up as an error, not silence --');
+// Distinct from the Waiting Music cases above: this is state.music (#music,
+// driven from display.js's syncMusic()), not a program-layer renderer. Before
+// Go live a rejection is expected and stays quiet - see the comment in
+// syncMusic(). This blocks play() only for #music and only once armed, so it
+// simulates the rarer case where the browser is still refusing sound on an
+// already-live screen (a revoked site permission, say) - which Issue #143
+// reported as Play simply not working, with nothing to say why.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'music-blocked-room', passphrase: 'still blocked' }));
+await ctx.addInitScript(() => {
+  window.__blockMusic = true;
+  const nativePlay = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () {
+    if (!window.__blockMusic || this.id !== 'music') return nativePlay.call(this);
+    return Promise.reject(new DOMException('simulated autoplay block', 'NotAllowedError'));
+  };
+});
+const screen = await ctx.newPage();
+trap(screen, 'music-blocked display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'music-blocked control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="music"]');
+await pad.fill('#music-url', 'content/audio/waiting-music.wav');
+await pad.click('#music-url-form button[type="submit"]');
+await pad.click('#music-play');
+
+await pad.waitForFunction(() => /blocking sound/.test(document.querySelector('#music-sub').textContent), null, { timeout: 8000 })
+  .then(() => ok('a play() rejected after Go live tells the controller, rather than leaving Play looking broken', true))
+  .catch(() => ok('a play() rejected after Go live tells the controller, rather than leaving Play looking broken', false));
+ok('and it is shown as a warning, not a grey hint',
+  await pad.evaluate(() => document.querySelector('#music-sub').classList.contains('is-warning')));
+
+await screen.evaluate(() => { window.__blockMusic = false; });
+// The next Play toggle (pause, then play again) is a real controller action,
+// not a hidden internal - it round-trips through state.music.playing exactly
+// as a person retrying the button would.
+await pad.click('#music-play');
+await pad.click('#music-play');
+await pad.waitForFunction(() => !/blocking sound/.test(document.querySelector('#music-sub').textContent), null, { timeout: 8000 })
+  .then(() => ok('and clears once the track actually plays', true))
+  .catch(() => ok('and clears once the track actually plays', false));
 await ctx.close();
 }
 

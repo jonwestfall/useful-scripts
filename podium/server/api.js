@@ -20,6 +20,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { Readable } = require('node:stream');
 
 const accounts = require('./accounts.js');
 const courses = require('./courses.js');
@@ -30,9 +31,13 @@ const settings = require('./settings.js');
 const templates = require('./templates.js');
 const content = require('./content.js');
 const store = require('./store.js');
+const kiosks = require('./kiosks.js');
+const pptxConvert = require('./pptx-convert.js');
 const zipImport = require('./zip-import.js');
+const zipStaging = require('./zip-staging.js');
 
 const COOKIE = 'podium_session';
+const KIOSK_COOKIE = 'podium_kiosk';
 const API_VERSION = 1;
 
 function readJson(req, limit = 64 * 1024) {
@@ -98,16 +103,36 @@ function parseCookies(header) {
 const isSecureRequest = (req) =>
   !!req.socket?.encrypted || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
 
-const setCookie = (req, value, maxAgeSeconds) => [
-  `${COOKIE}=${encodeURIComponent(value)}`,
+const setCookie = (req, value, maxAgeSeconds, name = COOKIE, httpOnly = true) => [
+  `${name}=${encodeURIComponent(value)}`,
   'Path=/',
-  'HttpOnly',
+  ...(httpOnly ? ['HttpOnly'] : []),
   'SameSite=Lax',
   `Max-Age=${maxAgeSeconds}`,
   ...(isSecureRequest(req) ? ['Secure'] : []),
 ].join('; ');
 
 const cookieToken = (req) => parseCookies(req.headers.cookie)[COOKIE] || '';
+
+// A kiosk's cookie is deliberately its own name, not a variant of
+// podium_session - the two credentials mean different things (a person vs. a
+// device nobody is watching) and gate() below needs to be able to tell them
+// apart, not just accept whichever one shows up.
+const kioskCookieToken = (req) => parseCookies(req.headers.cookie)[KIOSK_COOKIE] || '';
+
+// A second, readable cookie riding alongside the real one - not HttpOnly, and
+// carrying no secret, just a "yes" a kiosk's own JS can see. Without it,
+// config.js's fromKioskSession would have no way to tell "worth asking" from
+// "definitely not a kiosk" ahead of time, since the real cookie is
+// deliberately invisible to script; asking anyway on every device that is not
+// one - which is most of them - would 404 on every single load. Set and
+// refreshed in lockstep with the real cookie everywhere that mints or slides
+// one, so it is never more stale than the session it is a hint about.
+const KIOSK_HINT_COOKIE = 'podium_kiosk_hint';
+const setKioskCookies = (req, value, maxAgeSeconds) => [
+  setCookie(req, value, maxAgeSeconds, KIOSK_COOKIE),
+  setCookie(req, '1', maxAgeSeconds, KIOSK_HINT_COOKIE, false),
+];
 
 /**
  * A relative, same-origin path is the only thing worth honouring after a
@@ -154,7 +179,7 @@ function capabilities(ctx, user) {
   // every request answers 401 - a feature announced before it can be used.
   const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
   const features = ctx.db && ctx.hasAccounts()
-    ? ['auth', 'library', 'plans', 'templates', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content'] : [])]
+    ? ['auth', 'library', 'plans', 'templates', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content', 'kiosks'] : [])]
     : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
@@ -239,6 +264,70 @@ async function handleApi(req, res, url, ctx) {
     return true;
   }
 
+  // A blank kiosk device redeeming a provisioning link (Issue #151) has no
+  // session and never will until this very request hands it something to
+  // save - so, like capabilities/login/logout above, this has to answer
+  // before the "must be signed in" gate right below, not after it. The token
+  // itself is the only credential a device in this position can possibly
+  // hold; see kiosks.provision's own comment for why that is enough.
+  //
+  // This is navigated to directly - the QR and the link admin.js hands out
+  // both point straight here, not at display.html - because display.html
+  // itself stays behind gate() even for a kiosk (see KIOSK_OPEN_PATHS in
+  // podium-server.js): a page nobody has to sign in for on the FIRST visit
+  // and stays reachable after a profile is revoked would defeat the whole
+  // reason a kiosk cookie exists. So the cookie has to be minted and stored
+  // in the browser BEFORE display.html is ever asked for, which a redirect
+  // does and a JSON response the page's own JS would have to fetch does not
+  // - there would be nothing there yet to run that fetch. The settings
+  // themselves never ride along here or on display.html's own URL, even
+  // fleetingly: see kiosks/session-config below, which display.html asks
+  // itself once it has the cookie this hands it.
+  if (route.startsWith('kiosks/provision/') && req.method === 'GET') {
+    if (!ctx.db) { json(res, 404, { error: 'this server stores nothing' }); return true; }
+    const provisioned = kiosks.provision(ctx.db, decodeURIComponent(route.slice('kiosks/provision/'.length)),
+      req.headers['user-agent'] || '');
+    if (!provisioned) { json(res, 404, { error: 'no such kiosk, or it has been revoked' }); return true; }
+    res.writeHead(302, {
+      'set-cookie': setKioskCookies(req, provisioned.sessionToken, Math.floor(kiosks.SESSION_MS / 1000)),
+      location: '/display.html',
+      'cache-control': 'no-store',
+    });
+    res.end();
+    return true;
+  }
+
+  // What display.html asks on every load (see fromKioskSession in config.js)
+  // to learn what it is - the counterpart to provisioning above, but keyed
+  // by the cookie a device already holds rather than a one-time token, so a
+  // reboot with no token left in any URL still works. Public for the same
+  // reason the route above is: the cookie itself, checked inside
+  // sessionConfig, is the only credential involved.
+  if (route === 'kiosks/session-config' && req.method === 'GET') {
+    if (!ctx.db) { json(res, 404, { error: 'this server stores nothing' }); return true; }
+    const kioskToken = kioskCookieToken(req);
+    const onSlide = () => res.setHeader('set-cookie', setKioskCookies(req, kioskToken, Math.floor(kiosks.SESSION_MS / 1000)));
+    const config = kiosks.sessionConfig(ctx.db, kioskToken, { onSlide });
+    if (!config) { json(res, 404, { error: 'not a provisioned kiosk' }); return true; }
+    json(res, 200, { config });
+    return true;
+  }
+
+  // What a kiosk polls (Issue #152) to find out which plan it should be
+  // showing right now - resolved from its schedule against this moment,
+  // server-side, so a device's own clock (or lack of a battery-backed one
+  // after a power cut) is never what a schedule boundary is judged against.
+  // Same public-by-cookie reasoning as session-config above.
+  if (route === 'kiosks/session-plan' && req.method === 'GET') {
+    if (!ctx.db) { json(res, 404, { error: 'this server stores nothing' }); return true; }
+    const kioskToken = kioskCookieToken(req);
+    const onSlide = () => res.setHeader('set-cookie', setKioskCookies(req, kioskToken, Math.floor(kiosks.SESSION_MS / 1000)));
+    const resolved = kiosks.sessionPlan(ctx.db, kioskToken, { onSlide });
+    if (!resolved) { json(res, 404, { error: 'not a provisioned kiosk' }); return true; }
+    json(res, 200, resolved);
+    return true;
+  }
+
   // --- everything past here needs to know who is asking -------------------
   if (!ctx.db) { json(res, 404, { error: 'this server stores nothing' }); return true; }
   if (!user) { json(res, 401, { error: 'not signed in' }); return true; }
@@ -313,6 +402,41 @@ async function handleApi(req, res, url, ctx) {
 
       if (rest.length === 1 && req.method === 'PATCH') {
         json(res, 200, { person: await changePerson(ctx, req, user, decodeURIComponent(rest[0]), await readJson(req, 8 * 1024)) });
+        return true;
+      }
+    }
+
+    // --- kiosk profiles (Issue #151) ----------------------------------------
+    //
+    // Administrators only, the same as accounts - a device nobody is
+    // physically watching is exactly the wrong thing to let course
+    // membership decide who can repoint. The one exception, redeeming a
+    // provisioning link, is public on purpose and lives before the auth gate
+    // above, not here.
+
+    if (head === 'kiosks') {
+      if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can manage kiosks' }); return true; }
+
+      if (!rest.length && req.method === 'GET') {
+        json(res, 200, { kiosks: kiosks.list(ctx.db), plans: plans.listPlans(ctx.db, user) });
+        return true;
+      }
+
+      if (!rest.length && req.method === 'POST') {
+        const body = await readJson(req, 8 * 1024);
+        const kiosk = kiosks.create(ctx.db, user, { name: body.name, settings: body.settings, planId: body.planId });
+        auditLog(ctx, req, user, 'kiosk_created', { kioskId: kiosk.id, name: kiosk.name });
+        json(res, 200, { kiosk });
+        return true;
+      }
+
+      if (rest.length === 1 && req.method === 'PATCH') {
+        const body = await readJson(req, 8 * 1024);
+        const kiosk = kiosks.update(ctx.db, user, rest[0], {
+          name: body.name, settings: body.settings, planId: body.planId, revoked: body.revoked, schedule: body.schedule,
+        });
+        auditLog(ctx, req, user, 'kiosk_modified', { kioskId: kiosk.id, name: kiosk.name, revoked: kiosk.revoked });
+        json(res, 200, { kiosk });
         return true;
       }
     }
@@ -589,6 +713,65 @@ async function handleApi(req, res, url, ctx) {
       return true;
     }
 
+    // --- ZIP imports (Issue #106) ------------------------------------------
+    //
+    // Upload stages and inspects; the review screen then commits or cancels.
+    // Every step after the upload is the uploader's alone (see loadJob).
+
+    if (head === 'import' && rest[0] === 'zip') {
+      const id = rest[1];
+      if (rest.length === 1 && req.method === 'POST') {
+        const surface = url.searchParams.get('surface') === 'admin' ? 'admin' : 'planner';
+        if (surface === 'admin' && !user.isAdmin) {
+          json(res, 403, { error: 'only an administrator can import into the content folders' });
+          return true;
+        }
+        const uploadMb = zipImport.uploadMbSetting(ctx.db, store);
+        // Refused before a byte is read when the browser says up front how
+        // big it is, which it does for a file.
+        const declared = Number(req.headers['content-length'] || 0);
+        if (declared > uploadMb * 1024 * 1024) {
+          json(res, 413, { error: `This ZIP is ${Math.round(declared / 1024 / 1024)} MB; the most this server takes is ${uploadMb} MB.` });
+          return true;
+        }
+        const job = await zipStaging.stage({
+          db: ctx.db, dataDir: ctx.dataDir, user, surface, stream: req, uploadMb,
+          archiveName: url.searchParams.get('filename') || 'Import.zip',
+          contentDir: content.resolveRoots(ctx).contentDir,
+        });
+        json(res, 200, { job });
+        return true;
+      }
+      if (rest.length === 2 && req.method === 'GET') {
+        json(res, 200, { job: await zipStaging.getJob(ctx.dataDir, user, id) });
+        return true;
+      }
+      if (rest.length === 2 && req.method === 'DELETE') {
+        json(res, 200, await zipStaging.cancel(ctx.dataDir, user, id));
+        return true;
+      }
+      if (rest.length === 3 && rest[2] === 'preview' && req.method === 'GET') {
+        const { type, body } = await zipStaging.preview(ctx.dataDir, user, id, url.searchParams.get('path') || '');
+        res.writeHead(200, {
+          'content-type': type,
+          'x-content-type-options': 'nosniff',
+          'content-security-policy': "default-src 'none'; sandbox",
+          'cache-control': 'private, no-store',
+        });
+        res.end(body);
+        return true;
+      }
+      if (rest.length === 3 && rest[2] === 'commit' && req.method === 'POST') {
+        const body = await readJson(req, 512 * 1024);
+        const result = await zipStaging.commit(ctx, user, id, body);
+        auditLog(ctx, req, user, 'zip_imported', {
+          surface: result.surface, imported: result.imported.length, skipped: result.skipped.length, failed: result.failed.length,
+        });
+        json(res, 200, result);
+        return true;
+      }
+    }
+
     // --- system settings (Issue #72) --------------------------------------
     if (head === 'system' && rest[0] === 'settings') {
       const current = () => ({
@@ -703,7 +886,7 @@ async function handleApi(req, res, url, ctx) {
 
         if (rest.length === 2 && req.method === 'POST') {
           const category = rest[1];
-          const filename = url.searchParams.get('filename') || '';
+          let filename = url.searchParams.get('filename') || '';
           if (!filename) {
             json(res, 400, { error: 'filename required in query parameter (?filename=...)' });
             return true;
@@ -713,7 +896,16 @@ async function handleApi(req, res, url, ctx) {
             json(res, 400, { error: `invalid category: ${category}` });
             return true;
           }
-          const buf = await readBuffer(req, spec.maxBytes);
+          let buf = await readBuffer(req, spec.maxBytes);
+          // A PowerPoint file into the PDFs category becomes a PDF on the way
+          // in (Issue #107), read up to that category's own limit since that
+          // is what it is about to be - the rest of this route never learns
+          // the upload was anything else.
+          const ext = path.extname(filename).toLowerCase();
+          if (category === 'pdfs' && pptxConvert.CONVERTIBLE_EXTS.has(ext)) {
+            buf = await pptxConvert.convertToPdf(buf, ext);
+            filename = `${filename.slice(0, -ext.length)}.pdf`;
+          }
           json(res, 200, { saved: content.saveContentFile(ctx, category, filename, buf) });
           return true;
         }
@@ -808,8 +1000,10 @@ async function handleApi(req, res, url, ctx) {
  * whole client side of it.
  */
 async function receiveUpload(req, url, ctx, user) {
-  const filename = String(url.searchParams.get('filename') || '').split(/[\\/]/).pop().slice(0, 200);
-  const allowed = library.uploadKindFor(filename);
+  let filename = String(url.searchParams.get('filename') || '').split(/[\\/]/).pop().slice(0, 200);
+  const ext = path.extname(filename).toLowerCase();
+  const converts = pptxConvert.CONVERTIBLE_EXTS.has(ext);
+  const allowed = converts ? { type: 'application/pdf', kind: 'pdf' } : library.uploadKindFor(filename);
   if (!allowed) {
     throw Object.assign(new Error(
       `Podium does not take ${filename.includes('.') ? `${filename.split('.').pop()} files` : 'files without an extension'}`,
@@ -823,12 +1017,24 @@ async function receiveUpload(req, url, ctx, user) {
   const courseCode = url.searchParams.get('course') || '';
   library.courseIdFor(ctx.db, user, courseCode);
 
+  // A PowerPoint file becomes a PDF on the way in (Issue #107) - read up to
+  // the same limit an ordinary PDF upload already has, since that is what it
+  // is about to become, then hand it to LibreOffice before anything is
+  // stored. Everything after this point never learns the upload was
+  // anything but a plain PDF.
+  let body = req;
+  if (converts) {
+    const raw = await readBuffer(req, library.MAX_UPLOAD_BYTES);
+    body = Readable.from(await pptxConvert.convertToPdf(raw, ext));
+    filename = `${filename.slice(0, -ext.length)}.pdf`;
+  }
+
   // The declared content type is ignored in favour of the extension's: these
   // bytes come back from this origin later, and what a browser is told they
   // are must not be something an uploader chose. The KIND comes from the same
   // mapping for the same reason - `week.md&type=web` would otherwise hand
   // markdown to the web-page renderer.
-  const { sha256, bytes } = await library.storeUpload(ctx.dataDir, req);
+  const { sha256, bytes } = await library.storeUpload(ctx.dataDir, body);
   let mediaId;
   try {
     mediaId = library.rememberMedia(ctx.db, user, { sha256, bytes, contentType: allowed.type });
@@ -924,6 +1130,10 @@ function storageReport(ctx) {
     sessions: lectures.usage(ctx.db),
     database,
     dataDir: ctx.dataDir,
+    // The same disk-pressure thresholds `podium-admin doctor` uses, so the
+    // admin page can warn before the box is actually full rather than only
+    // once someone thinks to open this tab (Issue #160).
+    disk: store.diskPressure(ctx.dataDir),
     // Media bytes live on disk beside the database, not inside it - so a copy
     // of the database alone is not a backup, and the page says so.
     // Matches doctor.checkStorage's own validation: only a finite, positive
@@ -1016,6 +1226,17 @@ function gate(req, res, pathname, ctx) {
     // own headers and knows nothing about sessions.
     const onSlide = () => res.setHeader('set-cookie', setCookie(req, token, Math.floor(accounts.SESSION_MS / 1000)));
     if (accounts.sessionUser(ctx.db, token, { onSlide })) return true;
+    // A kiosk carries its own cookie, not a user session, and is only ever
+    // let through for the narrow set of paths display.html actually needs
+    // (see KIOSK_OPEN_PATHS in podium-server.js) - never control.html,
+    // admin.html, or the authenticated API surface a stolen kiosk cookie
+    // would otherwise unlock.
+    if (ctx.kioskOpenPaths?.has(pathname)) {
+      const kioskToken = kioskCookieToken(req);
+      const kioskOnSlide = () =>
+        res.setHeader('set-cookie', setKioskCookies(req, kioskToken, Math.floor(kiosks.SESSION_MS / 1000)));
+      if (kiosks.sessionKiosk(ctx.db, kioskToken, { onSlide: kioskOnSlide })) return true;
+    }
     if (looksLikePage(req, pathname)) {
       const next = encodeURIComponent(pathname + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''));
       res.writeHead(302, { location: `/login.html?next=${next}`, 'cache-control': 'no-store' });
@@ -1035,4 +1256,6 @@ function gate(req, res, pathname, ctx) {
   return true;
 }
 
-module.exports = { handleApi, gate, readJson, json, parseCookies, safeNext, cookieToken, clientIp, COOKIE, API_VERSION };
+module.exports = {
+  handleApi, gate, readJson, json, parseCookies, safeNext, cookieToken, kioskCookieToken, clientIp, COOKIE, API_VERSION,
+};

@@ -338,6 +338,117 @@ const MIGRATIONS = [
       );
     `);
   },
+
+  (db) => {
+    db.exec(`
+      -- The files behind a library item that is more than one file (Issue
+      -- #106): a picture deck is one item made of N slide images. media_id on
+      -- library_items still covers every one-file item; this is only the
+      -- extra files, in order, and it is what mayReadMedia and
+      -- forgetMediaIfUnused consult so that "may read" and "still in use" see
+      -- them too.
+      CREATE TABLE library_item_files (
+        item_id  INTEGER NOT NULL REFERENCES library_items(id) ON DELETE CASCADE,
+        media_id INTEGER NOT NULL REFERENCES media(id),
+        position INTEGER NOT NULL,
+        PRIMARY KEY (item_id, position)
+      );
+      CREATE INDEX library_item_files_by_media ON library_item_files(media_id);
+    `);
+  },
+
+  (db) => {
+    db.exec(`
+      -- Unattended signage, admin-managed (Issue #151). A kiosk profile is a
+      -- room an administrator has set aside for a display nobody is running -
+      -- a lobby screen, hallway signage - together with the connection
+      -- settings (transport/room/passphrase/URLs) a device provisioned into
+      -- it needs, kept the same shape course_settings already keeps them in
+      -- rather than exploded into columns.
+      --
+      -- provision_token is what a QR/link scanned on a blank device actually
+      -- carries - never the passphrase itself. Unlike an ordinary pairing
+      -- link (which bakes room+passphrase straight into the URL with no
+      -- server involved at all, see pairingUrl in config.js), a device
+      -- redeems this token in one request, is handed the settings back, AND
+      -- is issued its own long-lived credential (see kiosk_sessions below).
+      -- That round trip, and the credential it hands out, is what lets
+      -- revoking a profile do more than an ordinary passphrase rotation
+      -- ever could: revoked_at is checked live, on every request, so it
+      -- stops both a not-yet-used link from provisioning anything AND an
+      -- already-provisioned device from reaching display.html the next time
+      -- it asks - not just future provisioning, the device itself. What it
+      -- still cannot do is reach into a connection that device already has
+      -- open on the room's encrypted bus and close it - the same limit
+      -- rotating a course's passphrase already has (see settings.js's own
+      -- note on that); it only ever governs the next request that arrives.
+      --
+      -- plan_id is which plan this kiosk is meant to be showing, kept as
+      -- admin-visible bookkeeping only for now: nothing here pushes it onto
+      -- the live room automatically (that would need a server-side bus
+      -- client, which does not exist) - see the PR that added this table for
+      -- the reasoning. ON DELETE SET NULL rather than CASCADE: deleting the
+      -- plan should not delete the kiosk profile, just leave it unassigned.
+      CREATE TABLE kiosks (
+        id              INTEGER PRIMARY KEY,
+        name            TEXT    NOT NULL,
+        settings        TEXT    NOT NULL DEFAULT '{}',
+        provision_token TEXT    NOT NULL UNIQUE,
+        plan_id         INTEGER REFERENCES plans(id) ON DELETE SET NULL,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL,
+        updated_by      INTEGER REFERENCES users(id),
+        revoked_at      INTEGER
+      );
+      CREATE INDEX kiosks_by_plan ON kiosks(plan_id);
+    `);
+  },
+
+  (db) => {
+    db.exec(`
+      -- A kiosk's own long-lived credential (Issue #151) - what actually gets
+      -- a provisioned device past the accounts gate on display.html, forever,
+      -- with no account of its own. Deliberately NOT shaped like
+      -- auth_sessions: there is no expires_at, because a kiosk device does
+      -- not "log out" - it reboots, on its own, with nobody there to sign it
+      -- back in, and should keep working until an administrator revokes the
+      -- PROFILE (kiosks.revoked_at), not until some timer nobody thought to
+      -- renew. Bound to the kiosk it was minted for, not a user account -
+      -- see gate() in api.js for what it is actually allowed to reach, which
+      -- is no more than the room's own passphrase already would grant.
+      CREATE TABLE kiosk_sessions (
+        token_sha256 TEXT    PRIMARY KEY,
+        kiosk_id     INTEGER NOT NULL REFERENCES kiosks(id) ON DELETE CASCADE,
+        created_at   INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        user_agent   TEXT    NOT NULL DEFAULT ''
+      );
+      CREATE INDEX kiosk_sessions_by_kiosk ON kiosk_sessions(kiosk_id);
+    `);
+  },
+
+  (db) => {
+    db.exec(`
+      -- Time-based programming for a kiosk (Issue #152): a JSON array of
+      -- {id, day, startMin, endMin, planId} entries, kept the same
+      -- store-it-as-JSON shape 'settings' above already uses rather than a
+      -- second table - there is nothing here anything else needs to query by,
+      -- the way kiosks_by_plan's index exists for plan_id. day is 0-6
+      -- (Sunday-Saturday) or null for every day; startMin/endMin are minutes
+      -- since midnight, IN THE SERVER'S OWN LOCAL TIME - a v1 simplification
+      -- named directly in the issue ("a simple day-of-week/time-range list is
+      -- probably enough"), not a timezone-aware calendar. A self-hosted
+      -- instance signage actually depends on sets its host's TZ to match the
+      -- venue, same as any cron-driven schedule would.
+      --
+      -- plan_id here is NOT a foreign key, unlike kiosks.plan_id above: an
+      -- entry naming a plan that is later deleted should not need every
+      -- schedule touched to clean it up, and resolving one that no longer
+      -- exists is already handled the same way an unassigned kiosk is - fall
+      -- through to the next entry, or to the kiosk's own default plan_id.
+      ALTER TABLE kiosks ADD COLUMN schedule TEXT NOT NULL DEFAULT '[]';
+    `);
+  },
 ];
 
 function migrate(db) {
@@ -466,7 +577,33 @@ function dataDirFromEnv(env = process.env) {
   return env.DATA_DIR ? path.resolve(env.DATA_DIR) : null;
 }
 
+/**
+ * Whether the disk under a data directory is running out of room, on the
+ * same thresholds doctor's own disk check has always used (Issue #160) -
+ * shared here so the admin page's banner and `podium-admin doctor`'s exit
+ * code never quietly drift apart on what counts as "getting full".
+ */
+function diskPressure(dataDir) {
+  let stats;
+  try {
+    stats = fs.statfsSync(dataDir);
+  } catch (err) {
+    return { ok: false, error: err.code };
+  }
+  const free = stats.bavail * stats.bsize;
+  const total = stats.blocks * stats.bsize;
+  const share = total ? (free / total) * 100 : 0;
+  // A relay that cannot write is a relay that cannot log anybody in: SQLite
+  // fails a write before it fails a read, so the first symptom of a full
+  // disk is a login form that refuses everybody - "bad" is meant to be seen
+  // well before that.
+  const level = free < 200 * 1024 * 1024 || share < 5 ? 'bad'
+    : free < 1024 * 1024 * 1024 || share < 15 ? 'warn'
+      : 'ok';
+  return { ok: true, free, total, share, level };
+}
+
 module.exports = {
   open, migrate, dataDirFromEnv, SCHEMA_VERSION: MIGRATIONS.length,
-  getSystemSetting, setSystemSetting,
+  getSystemSetting, setSystemSetting, diskPressure,
 };

@@ -7,7 +7,7 @@
 // migrations that run once, a password that cannot be read back, a session
 // that stops working when its account does. A mock would be testing itself.
 
-import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, chmodSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, chmodSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
@@ -572,6 +572,172 @@ const archivedPsy415 = settings.forUser(db, admin, { includeArchived: true }).fi
 ok('but includeArchived finds it with everything still there, not just the field about to be changed',
   archivedPsy415?.settings.room === 'psy415-room' && archivedPsy415.settings.passphrase === 'rotated');
 courses.update(db, admin, 'psy415', { archived: false });
+
+console.log('\n-- kiosks: unattended signage --');
+
+const kiosks = require('../server/kiosks.js');
+
+const kioskPlan = plans.savePlan(db, owner, { title: 'Department announcements', doc: { v: 1, items: [] } });
+
+const kiosk = kiosks.create(db, admin, {
+  name: 'Lobby screen',
+  settings: { transport: 'ws', room: 'lobby-kiosk', passphrase: 'a lobby key', wsUrl: 'ws://localhost/podium' },
+  planId: kioskPlan.id,
+});
+ok('creating a kiosk profile hands back a real row', kiosk.name === 'Lobby screen' && kiosk.settings.room === 'lobby-kiosk');
+ok('with the plan it was assigned, by title - not just an id nobody wants to look up',
+  kiosk.planTitle === 'Department announcements');
+ok('and a real provisioning token', typeof kiosk.provisionToken === 'string' && kiosk.provisionToken.length > 10);
+ok('never revoked to start', kiosk.revoked === false);
+
+let refusedKiosk = '';
+try { kiosks.create(db, admin, { name: 'Bad', settings: { transport: 'carrier-pigeon' } }); }
+catch (err) { refusedKiosk = err.message; }
+ok('the same allow-list settings.js already enforces applies here too, not a second copy of the rule',
+  /transport must be one of/.test(refusedKiosk));
+
+ok('it shows up in the list', kiosks.list(db).some((k) => k.id === kiosk.id));
+
+const provisioned = kiosks.provision(db, kiosk.provisionToken, 'kiosk-browser/1.0');
+ok('redeeming its token hands back the connection settings, with kiosk:true set for it',
+  JSON.stringify(provisioned.config) === JSON.stringify({
+    transport: 'ws', room: 'lobby-kiosk', passphrase: 'a lobby key', wsUrl: 'ws://localhost/podium', kiosk: true,
+  }));
+ok('never the id, name or plan - a device has no use for any of it',
+  !('id' in provisioned.config) && !('name' in provisioned.config) && !('planId' in provisioned.config));
+ok('and a fresh session token, the credential that gets it past the accounts gate next time',
+  typeof provisioned.sessionToken === 'string' && provisioned.sessionToken.length > 10);
+ok('an unknown token answers the same as no kiosk at all existing', kiosks.provision(db, 'not-a-real-token') === null);
+
+ok('that session token resolves back to the kiosk', kiosks.sessionKiosk(db, provisioned.sessionToken)?.id === kiosk.id);
+ok('an unknown session token resolves to nothing', kiosks.sessionKiosk(db, 'not-a-real-session') === null);
+ok('no token at all resolves to nothing either', kiosks.sessionKiosk(db, '') === null);
+
+ok('the same session token also answers what a rebooted device asks on every load',
+  JSON.stringify(kiosks.sessionConfig(db, provisioned.sessionToken)) === JSON.stringify(provisioned.config));
+ok('an unknown session token answers the same way sessionKiosk does - nothing',
+  kiosks.sessionConfig(db, 'not-a-real-session') === null);
+
+kiosks.update(db, admin, kiosk.id, { revoked: true });
+ok('revoking stops that same token from provisioning anything further',
+  kiosks.provision(db, kiosk.provisionToken) === null);
+ok('but the profile stays listed, revoked rather than gone - so an admin can still find it',
+  kiosks.list(db).find((k) => k.id === kiosk.id)?.revoked === true);
+ok('and kicks a device already holding a session from before the revoke - checked live, not just at mint time',
+  kiosks.sessionKiosk(db, provisioned.sessionToken) === null);
+
+kiosks.update(db, admin, kiosk.id, { revoked: false });
+ok('un-revoking hands the very same token back out, not a freshly minted one',
+  kiosks.provision(db, kiosk.provisionToken)?.config.room === 'lobby-kiosk');
+ok('and lets that same old session back in too, with no re-provisioning needed',
+  kiosks.sessionKiosk(db, provisioned.sessionToken)?.id === kiosk.id);
+
+const renamed = kiosks.update(db, admin, kiosk.id, { name: 'Front lobby' });
+ok('renaming touches neither the settings nor the token',
+  renamed.settings.room === 'lobby-kiosk' && renamed.provisionToken === kiosk.provisionToken);
+
+kiosks.update(db, admin, kiosk.id, { planId: null });
+ok('a kiosk can be unassigned again',
+  kiosks.get(db, kiosk.id).planId === null && kiosks.get(db, kiosk.id).planTitle === null);
+
+refusedKiosk = '';
+try { kiosks.update(db, admin, 999999, { name: 'nope' }); } catch (err) { refusedKiosk = err.message; }
+ok('updating a kiosk that does not exist is reported, not a silent no-op', /no such kiosk/.test(refusedKiosk));
+
+ok('an untitled kiosk still gets a real name rather than an empty one',
+  kiosks.create(db, admin, { name: '  ', settings: {} }).name === 'Untitled kiosk');
+
+console.log('\n-- kiosk schedules: time-based programming --');
+
+kiosks.update(db, admin, kiosk.id, { planId: kioskPlan.id });
+const eveningPlan = plans.savePlan(db, owner, { title: 'Evening event slideshow', doc: { v: 1, items: [] } });
+
+const mkTime = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d; };
+const morning = mkTime(10, 0);
+const evening = mkTime(19, 30);
+const overnight = mkTime(2, 0);
+
+const scheduled = kiosks.update(db, admin, kiosk.id, {
+  schedule: [
+    { day: null, startMin: 9 * 60, endMin: 17 * 60, planId: kioskPlan.id },
+    { day: evening.getDay(), startMin: 18 * 60, endMin: 22 * 60, planId: eveningPlan.id },
+  ],
+});
+ok('saving a schedule hands back real entries, each with an id of its own',
+  scheduled.schedule.length === 2 && scheduled.schedule.every((e) => typeof e.id === 'string' && e.id.length > 0));
+
+ok('during business hours, the all-day entry wins', kiosks.resolvePlanId(scheduled, morning.getTime()) === kioskPlan.id);
+ok("in the evening, today's own entry overrides it", kiosks.resolvePlanId(scheduled, evening.getTime()) === eveningPlan.id);
+ok('overnight, neither entry matches, so it falls back to the kiosk default plan',
+  kiosks.resolvePlanId(scheduled, overnight.getTime()) === kioskPlan.id);
+
+let refusedSchedule = '';
+try { kiosks.update(db, admin, kiosk.id, { schedule: [{ day: 7, startMin: 0, endMin: 60, planId: kioskPlan.id }] }); }
+catch (err) { refusedSchedule = err.message; }
+ok('day outside 0-6 is refused, not silently clamped', /day must be 0-6/.test(refusedSchedule));
+
+refusedSchedule = '';
+try { kiosks.update(db, admin, kiosk.id, { schedule: [{ day: null, startMin: 600, endMin: 600, planId: kioskPlan.id }] }); }
+catch (err) { refusedSchedule = err.message; }
+ok('a window that does not actually span any time is refused',
+  /end must be after start/.test(refusedSchedule));
+
+refusedSchedule = '';
+try { kiosks.update(db, admin, kiosk.id, { schedule: [{ day: null, startMin: 0, endMin: 60 }] }); }
+catch (err) { refusedSchedule = err.message; }
+ok('an entry naming no plan is refused rather than showing nothing forever',
+  /needs a plan/.test(refusedSchedule));
+
+ok('the schedule saved before those three refused attempts is untouched',
+  kiosks.get(db, kiosk.id).schedule.length === 2);
+
+const sessionPlanNow = kiosks.sessionPlan(db, provisioned.sessionToken, { now: morning.getTime() });
+ok("sessionPlan resolves the same way resolvePlanId does, plus the plan's real document",
+  sessionPlanNow.planId === kioskPlan.id && sessionPlanNow.plan?.doc?.v === 1 && sessionPlanNow.plan?.title === 'Department announcements');
+ok('an unknown session token answers the same as no kiosk at all', kiosks.sessionPlan(db, 'not-a-real-session') === null);
+
+const orphanPlan = plans.savePlan(db, owner, { title: 'About to be deleted', doc: { v: 1, items: [] } });
+plans.deletePlan(db, owner, orphanPlan.id);
+const withOrphan = kiosks.update(db, admin, kiosk.id, {
+  schedule: [{ day: null, startMin: 0, endMin: 24 * 60 - 1, planId: orphanPlan.id }],
+});
+ok('a schedule entry naming a since-deleted plan resolves an id nothing answers for',
+  kiosks.resolvePlanId(withOrphan, morning.getTime()) === orphanPlan.id);
+const orphanSession = kiosks.sessionPlan(db, provisioned.sessionToken, { now: morning.getTime() });
+ok('and sessionPlan reports that honestly - no id, no document - rather than pretending nothing changed',
+  orphanSession.planId === null && orphanSession.plan === null);
+
+kiosks.update(db, admin, kiosk.id, { schedule: [] });
+ok('an empty schedule is a real, savable state, not "leave it as it was"', kiosks.get(db, kiosk.id).schedule.length === 0);
+
+console.log('\n-- kiosk heartbeat: last seen (Issue #155) --');
+
+const heartbeatKiosk = kiosks.create(db, admin, { name: 'Heartbeat test kiosk', settings: { transport: 'ws', room: 'hb-kiosk', passphrase: 'x' } });
+ok('a kiosk with no session yet reports no last-seen, and is not stale for it',
+  heartbeatKiosk.lastSeenAt === null && heartbeatKiosk.stale === false);
+
+const heartbeatProvisioned = kiosks.provision(db, heartbeatKiosk.provisionToken);
+ok('redeeming its link immediately counts as being seen',
+  kiosks.get(db, heartbeatKiosk.id).lastSeenAt !== null && kiosks.get(db, heartbeatKiosk.id).stale === false);
+
+db.prepare('UPDATE kiosk_sessions SET last_seen_at = ? WHERE kiosk_id = ?').run(Date.now() - 3 * 60 * 60 * 1000, heartbeatKiosk.id);
+ok('gone quiet for three hours - comfortably past the one-hour touch throttle\'s own margin - reads as stale',
+  kiosks.get(db, heartbeatKiosk.id).stale === true);
+
+db.prepare('UPDATE kiosk_sessions SET last_seen_at = ? WHERE kiosk_id = ?').run(Date.now() - 30 * 60 * 1000, heartbeatKiosk.id);
+ok('thirty minutes ago - well within a healthy kiosk\'s own throttled write window - is not stale',
+  kiosks.get(db, heartbeatKiosk.id).stale === false);
+
+db.prepare('UPDATE kiosk_sessions SET last_seen_at = ? WHERE kiosk_id = ?').run(Date.now() - 3 * 60 * 60 * 1000, heartbeatKiosk.id);
+kiosks.update(db, admin, heartbeatKiosk.id, { revoked: true });
+ok('a revoked kiosk never reads as stale, however long ago it was last seen - going quiet is the point of revoking it',
+  kiosks.get(db, heartbeatKiosk.id).stale === false && kiosks.get(db, heartbeatKiosk.id).lastSeenAt !== null);
+
+kiosks.update(db, admin, heartbeatKiosk.id, { revoked: false });
+db.prepare('UPDATE kiosk_sessions SET last_seen_at = ? WHERE kiosk_id = ?').run(Date.now() - 2 * 60 * 60 * 1000, heartbeatKiosk.id);
+ok('a real poll (sessionConfig, past the one-hour touch throttle) is what actually slides last_seen_at forward',
+  kiosks.sessionConfig(db, heartbeatProvisioned.sessionToken, { now: Date.now() })?.room === 'hb-kiosk'
+  && kiosks.get(db, heartbeatKiosk.id).lastSeenAt > Date.now() - 60 * 1000);
 
 console.log('\n-- what happened in the room --');
 
@@ -1407,6 +1573,19 @@ ok(`an unopenable database is reported, not thrown (${seen(brokenReport, 'databa
 ok('and the checks that do not need the database still run',
   seen(brokenReport, 'node') && seen(brokenReport, 'permissions') && seen(brokenReport, 'disk'));
 
+// diskPressure (Issue #160): shared between doctor's own disk check and the
+// admin page's banner, specifically so the two thresholds cannot drift apart
+// - see checkDisk above, which now just reads this instead of measuring
+// the filesystem itself.
+ok('a real data directory reports usable disk numbers',
+  (() => {
+    const pressure = store.diskPressure(dataDir);
+    return pressure.ok && pressure.free > 0 && pressure.total > 0
+      && ['ok', 'warn', 'bad'].includes(pressure.level);
+  })());
+ok('a directory that does not exist is reported, not thrown',
+  store.diskPressure(path.join(root, 'no-such-directory-for-disk-check')).ok === false);
+
 // checkStorage reads whatever env object it is handed - the CLI's job (see
 // envFile() in podium-admin.js) is making sure that object actually has
 // LECTURE_RETENTION_DAYS on it even when the shell running `doctor` never
@@ -1522,6 +1701,44 @@ ok('and every other command still fails loudly on the same database, as it alway
   }
 })());
 rmSync(crashDir, { recursive: true, force: true });
+
+console.log('\n-- backup, from the command line --');
+
+// The lighter, database-only snapshot (Issue #160): the same VACUUM INTO the
+// admin page's own backup button takes, reachable from a shell for whoever
+// wants it on a cron line of their own rather than the full deploy/backup.sh
+// archive. Spawned, like doctor above, because this is testing main()'s own
+// argument handling and destination logic, not store.js.
+const backupOut = execFileSync(process.execPath, ['podium-admin.js', 'backup'], {
+  cwd: cliRoot, env: { ...process.env, DATA_DIR: dataDir },
+}).toString().trim();
+ok(`it prints the path it wrote (${backupOut})`,
+  backupOut === path.join(dataDir, 'backups', path.basename(backupOut)));
+ok('and the file it names is really there, non-empty', (() => {
+  try { return statSync(backupOut).size > 0; } catch { return false; }
+})());
+ok('and it really is a working SQLite database, not a partial file', (() => {
+  const { DatabaseSync } = require('node:sqlite');
+  const copy = new DatabaseSync(backupOut, { readOnly: true });
+  const row = copy.prepare('PRAGMA integrity_check').get();
+  copy.close();
+  return row.integrity_check === 'ok';
+})());
+ok('and it logged the backup as an audit event',
+  db.prepare("SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'backup_created'").get().n === 1);
+
+const explicitFile = path.join(root, 'chosen-name.db');
+execFileSync(process.execPath, ['podium-admin.js', 'backup', '--out', explicitFile], {
+  cwd: cliRoot, env: { ...process.env, DATA_DIR: dataDir },
+});
+ok('--out naming an exact file writes exactly there, not a timestamped name beside it', existsSync(explicitFile));
+
+const explicitDir = path.join(root, 'chosen-dir') + path.sep;
+const dirOut = execFileSync(process.execPath, ['podium-admin.js', 'backup', '--out', explicitDir], {
+  cwd: cliRoot, env: { ...process.env, DATA_DIR: dataDir },
+}).toString().trim();
+ok('--out naming a directory (even one that does not exist yet, by its trailing slash) gets a timestamped file inside it',
+  path.dirname(dirOut) === path.join(root, 'chosen-dir') && existsSync(dirOut));
 
 console.log('\n--- audit logs ---');
 accounts.logEvent(db, { userId: admin.id, username: admin.username, action: 'test_action', details: { foo: 'bar' }, now: 1000 });

@@ -36,6 +36,12 @@
       <button id="guest-next" type="button" class="big-button" aria-label="Next">Next ▶</button>
     </div>
 
+    <!-- Only meaningful for whatever's actually playing (video, audio,
+         YouTube) - disabled rather than hidden the same way Previous/Next
+         already are, so the layout does not jump around as the item on
+         screen changes. Issue #161. -->
+    <button id="guest-play-pause" type="button" class="big-button">▶ Play</button>
+
     <button id="guest-blank" type="button" class="big-button">Blank screen</button>
 
     <div class="guest-laser-block">

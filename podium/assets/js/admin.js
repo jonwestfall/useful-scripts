@@ -10,6 +10,7 @@ import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg, loadImage } from './pdf-writer.js';
 import { versionStamp } from './protocol.js';
 import { TYPES } from './renderers.js';
+import { mountZipImport } from './zip-review.js';
 
 mountSessionBadge($('#session-badge'));
 const stampEl = $('#admin-version-stamp');
@@ -463,10 +464,12 @@ function renderSessionBody(detail) {
   if (detail.files.length) {
     const photos = detail.files.filter((f) => f.kind === 'photo').length;
     const ink = detail.files.some((f) => f.kind === 'ink');
+    const audio = detail.files.filter((f) => f.kind === 'audio').length;
     body.append(el('p', { class: 'hint' },
       [`${detail.files.length} file${detail.files.length === 1 ? '' : 's'} kept`,
         photos ? `${photos} photo${photos === 1 ? '' : 's'}` : '',
-        ink ? 'the ink' : ''].filter(Boolean).join(' · ')));
+        ink ? 'the ink' : '',
+        audio ? `${audio} mic segment${audio === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')));
   }
 
   if (detail.truncated) {
@@ -601,6 +604,116 @@ async function refreshSessions() {
   lectures = data.lectures || [];
   sessionUsage = data.usage || null;
   renderSessions();
+}
+
+const PURGE_LABEL = 'Delete sessions older than this';
+
+// Two taps, the same as a single session's own Remove: nothing here can be
+// got back, and a whole batch of it is a worse place to fat-finger than one.
+async function purgeOldSessions() {
+  const button = $('#sess-purge-go');
+  const note = $('#sess-purge-note');
+  const days = Math.max(1, Math.round(Number($('#sess-purge-days').value)) || 15);
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  // The same permission this list already enforces per row (see the Remove
+  // button in renderSessions): a course owner or plain member sweeping their
+  // own old sessions only ever reaches what they could delete one at a time.
+  const targets = lectures.filter((l) => mayEditLecture(l) && l.startedAt < cutoff);
+
+  note.textContent = '';
+  if (!targets.length) {
+    note.textContent = `Nothing recorded is older than ${days} day${days === 1 ? '' : 's'}.`;
+    return;
+  }
+
+  if (button.dataset.armed !== 'yes') {
+    button.dataset.armed = 'yes';
+    button.textContent = `Really delete ${targets.length} session${targets.length === 1 ? '' : 's'}?`;
+    setTimeout(() => {
+      if (!button.isConnected) return;
+      button.dataset.armed = '';
+      button.textContent = PURGE_LABEL;
+    }, 4000);
+    return;
+  }
+
+  button.dataset.armed = '';
+  button.disabled = true;
+  button.textContent = 'Deleting…';
+
+  const removed = new Set();
+  for (const lecture of targets) {
+    try {
+      const res = await fetch(`/api/lectures/${lecture.id}`, { method: 'DELETE', credentials: 'same-origin' });
+      if (res.ok) removed.add(lecture.id);
+    } catch { /* left in place; the note below says how many were not reached */ }
+  }
+  lectures = lectures.filter((l) => !removed.has(l.id));
+  if (openLecture && removed.has(openLecture.id)) openLecture = null;
+  renderSessions();
+
+  button.disabled = false;
+  button.textContent = PURGE_LABEL;
+  note.textContent = removed.size === targets.length
+    ? `Removed ${removed.size} session${removed.size === 1 ? '' : 's'}.`
+    : `Removed ${removed.size} of ${targets.length} — the rest could not be reached; try again.`;
+}
+
+/**
+ * Every session this account can see, each under its own folder in one zip -
+ * the same files downloadSessionZip hands you one at a time, rebuilt in bulk.
+ * A session with nothing kept (no files) contributes no folder rather than an
+ * empty one.
+ */
+async function downloadAllSessions() {
+  const button = $('#sess-download-all');
+  const note = $('#sess-download-all-note');
+  note.textContent = '';
+  if (!lectures.length) { note.textContent = 'Nothing recorded yet.'; return; }
+
+  button.disabled = true;
+  const was = button.textContent;
+  try {
+    const files = [];
+    let packed = 0;
+    for (let i = 0; i < lectures.length; i++) {
+      const lecture = lectures[i];
+      button.textContent = `Reading session ${i + 1} of ${lectures.length}…`;
+      const res = await fetch(`/api/lectures/${lecture.id}`, { credentials: 'same-origin' });
+      if (!res.ok) continue;
+      const { lecture: detail } = await res.json();
+      const sourceFiles = (detail.files || []).filter((f) => f.kind !== 'ink');
+      if (!sourceFiles.length) continue;
+
+      const stamp = new Date(detail.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, '-');
+      const folder = `${safeName(detail)}-${stamp}`;
+      let got = 0;
+      for (const file of sourceFiles) {
+        const fres = await fetch(file.url, { credentials: 'same-origin' });
+        if (!fres.ok) continue;
+        files.push({ name: `${folder}/${file.name}`, data: new Uint8Array(await fres.arrayBuffer()) });
+        got++;
+      }
+      if (got) packed++;
+    }
+    if (!files.length) { button.textContent = 'Nothing could be fetched'; return; }
+
+    button.textContent = 'Building the zip…';
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const blob = await createZip(files);
+    const a = el('a', { href: URL.createObjectURL(blob), download: `podium-all-sessions-${stamp}.zip` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+    note.textContent = `Packed ${packed} of ${lectures.length} session${lectures.length === 1 ? '' : 's'}.`;
+  } catch {
+    button.textContent = 'That did not work';
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  button.textContent = was;
 }
 
 // --- people ------------------------------------------------------------------
@@ -1078,6 +1191,23 @@ async function refreshStorage() {
       ? `session files are kept for ${held.retentionDays} days`
       : 'session files are kept indefinitely',
   ].join(' · ') + `. All of it under ${held.dataDir}.`;
+  renderStoragePressure(held.disk);
+}
+
+// A top-level banner, not tucked inside the Storage tab an admin has no
+// reason to open until something already went wrong (Issue #160) - same
+// disk-pressure thresholds podium-admin doctor uses (see diskPressure in
+// store.js), so the two never quietly disagree about what "getting full"
+// means.
+function renderStoragePressure(disk) {
+  const banner = $('#storage-pressure');
+  if (!disk?.ok || disk.level === 'ok') { banner.hidden = true; return; }
+  banner.classList.toggle('is-bad', disk.level === 'bad');
+  const share = disk.share.toFixed(0);
+  banner.textContent = disk.level === 'bad'
+    ? `Low disk space: only ${bytes(disk.free)} free (${share}%) on this box. Free some up soon - a full disk stops logins before anything else.`
+    : `Disk space is getting tight: ${bytes(disk.free)} free (${share}%) on this box. Worth a look before it becomes urgent.`;
+  banner.hidden = false;
 }
 
 function downloadBackup() {
@@ -1087,6 +1217,339 @@ function downloadBackup() {
   $('#backup-note').textContent = 'Taking a snapshot…';
   location.href = '/api/backup';
   setTimeout(() => { $('#backup-note').textContent = ''; }, 6000);
+}
+
+// --- kiosks: unattended signage (Issue #151) -----------------------------------
+//
+// A kiosk profile is a room set aside for a display nobody is running. What
+// makes it a KIOSK rather than just another course room is the provisioning
+// link: unlike every other pairing QR in Podium, which bakes the room and
+// passphrase straight into the URL with no server involved at all (see
+// pairingUrl in config.js), this one carries a one-time token that a blank
+// device's browser redeems by navigating straight to it - see
+// /api/kiosks/provision/:token in server/api.js, which mints the device its
+// own long-lived cookie and only then sends it on to display.html. That
+// round trip, and the cookie it leaves behind, is the whole point: it is
+// what lets revoking a profile stop not just a leaked or retired link, but a
+// device that has already been running for months, on the very next thing
+// it asks for - not just future provisioning, the device itself. The
+// passphrase never sits in a URL for even one request, unlike a hash would.
+
+let kiosksList = [];
+let kioskPlans = [];
+let openKiosk = null;
+
+function sayKiosks(text, bad = false) {
+  const note = $('#kiosks-note');
+  note.textContent = text;
+  note.classList.toggle('is-bad', bad);
+}
+
+async function kioskApi(path, options = {}) {
+  const res = await fetch(`/api/kiosks${path}`, {
+    credentials: 'same-origin',
+    headers: options.body ? { 'content-type': 'application/json' } : undefined,
+    ...options,
+  });
+  const answer = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(answer.error || 'that did not work');
+  return answer;
+}
+
+// Same alphabet and the same crypto.getRandomValues source renderCourseSettings'
+// own rotate button already uses - a kiosk's passphrase deserves no less
+// randomness than a course's, and matching it exactly means one thing to
+// audit instead of two.
+function randomSecret(length) {
+  return [...crypto.getRandomValues(new Uint8Array(length))]
+    .map((n) => 'abcdefghijkmnopqrstuvwxyz23456789'[n % 33]).join('');
+}
+
+// Straight to the redemption route itself, not display.html - that route is
+// what mints the device's kiosk cookie and only then redirects it on to
+// display.html (see the comment on this route in server/api.js for why the
+// order has to be that way around: display.html stays behind gate() for a
+// kiosk too, so nothing served from it can run before the cookie exists).
+function provisionUrl(token) {
+  return new URL(`api/kiosks/provision/${encodeURIComponent(token)}`, location.href).toString();
+}
+
+const KIOSK_SETTING_FIELDS = [
+  ['transport', 'Connection', 'ws / mqtt / supabase'],
+  ['room', 'Room', 'lobby-kiosk'],
+  ['passphrase', 'Passphrase', ''],
+  ['wsUrl', 'WebSocket URL', 'wss://podium.example.com/podium'],
+  ['mqttUrl', 'Broker URL', ''],
+  ['supabaseUrl', 'Supabase URL', ''],
+  ['supabaseKey', 'Supabase key', ''],
+];
+
+function planOption(plan) {
+  return el('option', { value: String(plan.id) }, `${plan.title}${plan.course ? ` (${plan.course})` : ''}`);
+}
+
+function renderKioskQr(kiosk) {
+  const box = el('div', { style: 'text-align:center' });
+  const url = provisionUrl(kiosk.provisionToken);
+  const holder = el('div');
+  if (typeof window.qrcode === 'function') {
+    const qr = window.qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    holder.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2, scalable: true });
+    holder.style.maxWidth = '180px';
+    holder.style.margin = '0 auto';
+  }
+  box.append(
+    holder,
+    el('p', { class: 'hint mono', style: 'word-break:break-all' }, url),
+    el('p', { class: 'hint' }, 'Open this on the device itself, or scan it - one visit configures it as this kiosk and nothing else needs typing.'),
+  );
+  return box;
+}
+
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+const minToClock = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+const clockToMin = (clock) => {
+  const [h, m] = String(clock || '').split(':').map(Number);
+  return Number.isInteger(h) && Number.isInteger(m) ? h * 60 + m : null;
+};
+
+/**
+ * Time-based programming (Issue #152): a day-of-week/time-range list, each
+ * row naming which plan should be showing during it. Deliberately a flat
+ * list an admin reads top to bottom, not a calendar grid - a v1 the issue
+ * itself asked for ("a simple day-of-week/time-range list is probably
+ * enough"), not a recurrence engine. The kiosk's own "Should be showing"
+ * plan above is what a device falls back to whenever none of these rows'
+ * windows contains the current moment.
+ */
+function renderKioskSchedule(kiosk) {
+  const rows = el('div', {});
+  const status = el('span', { class: 'hint', role: 'status' });
+
+  function addRow(entry = {}) {
+    const dayPick = el('select', {},
+      el('option', { value: '' }, 'Every day'),
+      ...WEEKDAY_NAMES.map((name, i) => el('option', { value: String(i) }, name)));
+    dayPick.value = entry.day === null || entry.day === undefined ? '' : String(entry.day);
+    const startInput = el('input', { type: 'time', value: minToClock(entry.startMin ?? 9 * 60) });
+    const endInput = el('input', { type: 'time', value: minToClock(entry.endMin ?? 17 * 60) });
+    const planPick = el('select', {}, ...kioskPlans.map(planOption));
+    if (entry.planId) planPick.value = String(entry.planId);
+    const remove = el('button', {
+      class: 'admin-small', type: 'button', title: 'Remove this time window',
+      onclick: () => row.remove(),
+    }, 'Remove');
+    const row = el('div', { class: 'admin-form', style: 'align-items:end' },
+      el('label', { class: 'field' }, el('span', {}, 'Day'), dayPick),
+      el('label', { class: 'field' }, el('span', {}, 'From'), startInput),
+      el('label', { class: 'field' }, el('span', {}, 'Until'), endInput),
+      el('label', { class: 'field' }, el('span', {}, 'Show'), planPick),
+      remove);
+    row.__entry = () => ({
+      day: dayPick.value === '' ? null : Number(dayPick.value),
+      startMin: clockToMin(startInput.value),
+      endMin: clockToMin(endInput.value),
+      planId: planPick.value ? Number(planPick.value) : null,
+    });
+    rows.append(row);
+  }
+
+  for (const entry of kiosk.schedule) addRow(entry);
+
+  const add = el('button', {
+    class: 'admin-small', type: 'button',
+    onclick: () => addRow(),
+  }, 'Add a time window');
+
+  const save = el('button', {
+    class: 'admin-small', type: 'button',
+    onclick: async () => {
+      const schedule = [...rows.children].map((row) => row.__entry());
+      save.disabled = true;
+      status.textContent = 'Saving…';
+      try {
+        const { kiosk: saved } = await kioskApi(`/${kiosk.id}`, { method: 'PATCH', body: JSON.stringify({ schedule }) });
+        kiosk.schedule = saved.schedule;
+        status.textContent = 'Saved.';
+      } catch (err) {
+        status.textContent = err.message;
+      } finally {
+        save.disabled = false;
+      }
+    },
+  }, 'Save schedule');
+
+  return el('div', {},
+    el('p', { class: 'hint' },
+      'Optional: show something different at different times. The plan above is what plays whenever none of these windows applies.'),
+    rows,
+    el('div', { class: 'admin-actions' }, add, save, status));
+}
+
+function renderKioskSettings(kiosk) {
+  const form = el('div', { class: 'admin-form' });
+  for (const [key, label, placeholder] of KIOSK_SETTING_FIELDS) {
+    form.append(el('label', { class: 'field' },
+      el('span', {}, label),
+      el('input', {
+        type: 'text', 'data-setting': key, value: kiosk.settings[key] || '',
+        placeholder, autocomplete: 'off', spellcheck: 'false',
+      })));
+  }
+  const planPick = el('select', {}, el('option', { value: '' }, 'Nothing assigned yet'), ...kioskPlans.map(planOption));
+  planPick.value = kiosk.planId ? String(kiosk.planId) : '';
+  const status = el('span', { class: 'hint', role: 'status' });
+
+  async function saveKiosk(savingText, savedText, extra = {}) {
+    const wanted = {};
+    for (const input of form.querySelectorAll('[data-setting]')) {
+      if (input.value.trim()) wanted[input.dataset.setting] = input.value.trim();
+    }
+    save.disabled = true;
+    rotate.disabled = true;
+    status.textContent = savingText;
+    try {
+      await kioskApi(`/${kiosk.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ settings: wanted, planId: planPick.value ? Number(planPick.value) : null, ...extra }),
+      });
+      kiosk.settings = wanted;
+      status.textContent = savedText;
+    } catch (err) {
+      status.textContent = err.message;
+    } finally {
+      save.disabled = false;
+      rotate.disabled = false;
+    }
+  }
+
+  const save = el('button', {
+    class: 'admin-small', type: 'button',
+    onclick: () => saveKiosk('Saving…', 'Saved — a device already provisioned keeps what it has until re-provisioned.'),
+  }, 'Save');
+
+  const rotate = el('button', {
+    class: 'admin-small', type: 'button',
+    title: 'A new passphrase, which is how you take the room back from a device that has left',
+    onclick: () => {
+      form.querySelector('[data-setting="passphrase"]').value = randomSecret(8);
+      saveKiosk('Saving the new passphrase…', 'New passphrase saved — re-provision every device that should use it.');
+    },
+  }, 'New passphrase');
+
+  planPick.addEventListener('change', () => saveKiosk('Saving…', 'Saved.'));
+
+  return el('div', {},
+    el('div', { class: 'admin-form' },
+      el('label', { class: 'field' }, el('span', {}, 'Should be showing'), planPick)),
+    form,
+    el('div', { class: 'admin-actions' }, save, rotate, status),
+    el('hr', { style: 'border:0;border-top:1px solid var(--line);margin:14px 0' }),
+    renderKioskSchedule(kiosk),
+    el('hr', { style: 'border:0;border-top:1px solid var(--line);margin:14px 0' }),
+    renderKioskQr(kiosk));
+}
+
+async function withKiosk(work) {
+  try {
+    await work();
+    sayKiosks('');
+    await refreshKiosks();
+  } catch (err) {
+    sayKiosks(err.message, true);
+  }
+}
+
+function renderKiosks() {
+  const holder = $('#kiosks');
+  holder.replaceChildren();
+
+  if (!kiosksList.length) {
+    holder.append(el('p', { class: 'hint' }, 'No kiosks yet. Create one below and scan its QR on the device.'));
+    return;
+  }
+
+  for (const kiosk of kiosksList) {
+    // Issue #155: reuses the same last_seen_at a device's own poll already
+    // slides forward (see sessionKiosk's comment in server/kiosks.js) - no
+    // separate heartbeat exists, or needs to. A never-provisioned kiosk says
+    // nothing here rather than "never seen", which would read as a problem
+    // for a profile an admin simply has not handed to a device yet.
+    const seenText = kiosk.lastSeenAt === null
+      ? (kiosk.revoked ? '' : 'never provisioned')
+      : `last seen ${dayAndTime(kiosk.lastSeenAt)}`;
+    const seenSpan = el('span', { class: 'admin-meta' }, seenText);
+    seenSpan.classList.toggle('is-bad', kiosk.stale);
+    const row = el('div', { class: 'admin-row' },
+      el('span', { class: 'admin-title' }, kiosk.name),
+      el('span', { class: 'admin-meta' },
+        [kiosk.settings.room || '(no room set)', kiosk.planTitle || 'nothing assigned',
+          kiosk.revoked ? 'revoked' : ''].filter(Boolean).join(' · ')),
+      seenText ? seenSpan : null,
+      el('button', {
+        class: 'admin-small', type: 'button',
+        onclick: () => { openKiosk = openKiosk === kiosk.id ? null : kiosk.id; renderKiosks(); },
+      }, openKiosk === kiosk.id ? 'Close' : 'Open'),
+      el('button', {
+        class: 'admin-small', type: 'button',
+        title: kiosk.revoked
+          ? 'Hands the same link back out - anyone still holding it can provision a device with it again'
+          : 'Stops this kiosk\'s link from provisioning any device that has not already used it',
+        onclick: () => withKiosk(() => kioskApi(`/${kiosk.id}`,
+          { method: 'PATCH', body: JSON.stringify({ revoked: !kiosk.revoked }) })),
+      }, kiosk.revoked ? 'Un-revoke' : 'Revoke'));
+    holder.append(row);
+    if (openKiosk === kiosk.id) holder.append(renderKioskSettings(kiosk));
+  }
+}
+
+function updateNewKioskTransportFields() {
+  const t = $('#new-kiosk-transport').value;
+  $('#new-kiosk-wu-row').hidden = t !== 'ws';
+  $('#new-kiosk-su-row').hidden = t !== 'supabase';
+  $('#new-kiosk-sk-row').hidden = t !== 'supabase';
+  $('#new-kiosk-mu-row').hidden = t !== 'mqtt';
+}
+
+async function addKiosk() {
+  const name = $('#new-kiosk-name').value.trim();
+  if (!name) { sayKiosks('A kiosk needs a name.', true); return; }
+  $('#new-kiosk-go').disabled = true;
+  try {
+    const settings = {
+      transport: $('#new-kiosk-transport').value,
+      room: $('#new-kiosk-room').value.trim(),
+      passphrase: randomSecret(10),
+      wsUrl: $('#new-kiosk-wu').value.trim(),
+      supabaseUrl: $('#new-kiosk-su').value.trim(),
+      supabaseKey: $('#new-kiosk-sk').value.trim(),
+      mqttUrl: $('#new-kiosk-mu').value.trim(),
+    };
+    const planId = $('#new-kiosk-plan').value ? Number($('#new-kiosk-plan').value) : null;
+    const { kiosk } = await kioskApi('', { method: 'POST', body: JSON.stringify({ name, settings, planId }) });
+    $('#new-kiosk-name').value = '';
+    $('#new-kiosk-room').value = '';
+    $('#new-kiosk-wu').value = '';
+    openKiosk = kiosk.id;
+    sayKiosks(`Created ${name}.`);
+    await refreshKiosks();
+  } catch (err) {
+    sayKiosks(err.message, true);
+  } finally {
+    $('#new-kiosk-go').disabled = false;
+  }
+}
+
+async function refreshKiosks() {
+  const { kiosks, plans } = await kioskApi('');
+  kiosksList = kiosks || [];
+  kioskPlans = plans || [];
+  const picker = $('#new-kiosk-plan');
+  picker.replaceChildren(el('option', { value: '' }, 'Nothing assigned yet'), ...kioskPlans.map(planOption));
+  renderKiosks();
 }
 
 // --- content management (Issue #54) -------------------------------------------
@@ -1159,7 +1622,8 @@ function renderManifestItems() {
       el('span', { class: 'admin-title' },
         el('strong', {}, item.title || '(untitled)'),
         el('span', { class: 'admin-meta', style: 'margin-left:8px;' },
-          [typeSpec.label, item.group, item.order !== undefined ? `#${item.order}` : '', item.src || ''].filter(Boolean).join(' · '))
+          [typeSpec.label, item.group, item.order !== undefined ? `#${item.order}` : '',
+            item.src || (Array.isArray(item.images) ? `${item.images.length} slides` : '')].filter(Boolean).join(' · '))
       ),
       el('button', {
         type: 'button',
@@ -1254,7 +1718,9 @@ function saveManifestItemFromForm() {
   };
 
   if (editingManifestIndex >= 0) {
-    manifestData.items[editingManifestIndex] = item;
+    // Merged over what was there: the form only has the common fields, and a
+    // picture deck's slide list or a text sign's body must survive an edit.
+    manifestData.items[editingManifestIndex] = { ...manifestData.items[editingManifestIndex], ...item };
   } else {
     manifestData.items.push(item);
   }
@@ -1693,7 +2159,13 @@ async function uploadContentFile() {
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error || 'upload failed');
-    status.textContent = `Uploaded ${file.name} to ${cat}.`;
+    // A PowerPoint upload is saved under a renamed .pdf (Issue #107) - said
+    // here, since "Uploaded Talk.pptx" next to a Talk.pdf in the list below
+    // would read like the upload silently went somewhere else.
+    const savedName = body.saved?.filename || file.name;
+    status.textContent = savedName === file.name
+      ? `Uploaded ${file.name} to ${cat}.`
+      : `Uploaded ${file.name} to ${cat}, converted to ${savedName}.`;
     input.value = '';
     await refreshContentFiles();
     setTimeout(() => { if (status.textContent.includes('Uploaded')) status.textContent = ''; }, 4000);
@@ -1916,6 +2388,12 @@ function sayContent(msg, isBad = false) {
 function setupContentManagement() {
   setupSubtabs();
 
+  // Issue #106: import a whole folder into the category folders.
+  mountZipImport($('#content-zip-import'), {
+    surface: 'admin',
+    onImported: () => { refreshContentFiles(); refreshManifest(); },
+  });
+
   // 1. Manifest
   $('#manifest-add-btn').addEventListener('click', () => openManifestForm(-1));
   $('#m-save-item-btn').addEventListener('click', saveManifestItemFromForm);
@@ -2015,6 +2493,8 @@ if (!info.features.includes('library')) {
   if (info.features.includes('sessions')) {
     $('#tab-sessions').hidden = false;
     $('#sess-search').addEventListener('input', renderSessions);
+    $('#sess-download-all').addEventListener('click', downloadAllSessions);
+    $('#sess-purge-go').addEventListener('click', purgeOldSessions);
     await refreshSessions();
   }
 
@@ -2034,6 +2514,17 @@ if (!info.features.includes('library')) {
       await Promise.all([refreshPeople(), refreshStorage(), refreshSystemSettings()]);
     }
     await refreshCourses();
+  }
+
+  // Kiosks, like content management, are for administrators only - a device
+  // nobody is physically watching is exactly the wrong thing to let course
+  // membership decide who can repoint.
+  if (info.features.includes('kiosks') && me?.isAdmin) {
+    $('#tab-kiosks').hidden = false;
+    $('#new-kiosk-go').addEventListener('click', addKiosk);
+    $('#new-kiosk-transport').addEventListener('change', updateNewKioskTransportFields);
+    updateNewKioskTransportFields();
+    await refreshKiosks();
   }
 
   // Content management is for administrators only

@@ -82,21 +82,13 @@ function checkIntegrity(db) {
 }
 
 function checkDisk(dataDir) {
-  let stats;
-  try { stats = fs.statfsSync(dataDir); } catch (err) {
-    return say('warn', 'disk', `could not measure ${dataDir} (${err.code})`);
-  }
-  const free = stats.bavail * stats.bsize;
-  const total = stats.blocks * stats.bsize;
-  const share = total ? (free / total) * 100 : 0;
-  const line = `${mb(free)} free of ${mb(total)} (${share.toFixed(0)}%) on ${dataDir}`;
-  // A relay that cannot write is a relay that cannot log anybody in: SQLite
-  // fails a write before it fails a read, so the first symptom of a full disk
-  // is a login form that refuses everybody.
-  if (free < 200 * 1024 * 1024 || share < 5) {
+  const pressure = store.diskPressure(dataDir);
+  if (!pressure.ok) return say('warn', 'disk', `could not measure ${dataDir} (${pressure.error})`);
+  const line = `${mb(pressure.free)} free of ${mb(pressure.total)} (${pressure.share.toFixed(0)}%) on ${dataDir}`;
+  if (pressure.level === 'bad') {
     return say('bad', 'disk', line, 'Free some space now - a full disk stops logins before it stops anything else.');
   }
-  if (free < 1024 * 1024 * 1024 || share < 15) {
+  if (pressure.level === 'warn') {
     return say('warn', 'disk', line, 'Consider LECTURE_RETENTION_DAYS, or a bigger disk.');
   }
   return say('ok', 'disk', line);
@@ -185,13 +177,15 @@ function checkMedia(db, dataDir) {
     }
   }
 
-  // A media row neither table claims: forgetMediaIfUnused checks exactly
-  // these same two tables to decide "nothing wants this any more", so a row
+  // A media row no table claims: forgetMediaIfUnused checks exactly these
+  // same three tables to decide "nothing wants this any more", so a row
   // that never got as far as either one is invisible to it and would
   // otherwise sit there forever, correct-looking (its bytes ARE on disk) but
   // pointing at nothing.
   const orphanRows = db.prepare(`SELECT COUNT(*) AS n FROM media m
       WHERE NOT EXISTS (SELECT 1 FROM library_items li WHERE li.media_id = m.id AND li.deleted_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM library_item_files lif JOIN library_items li ON li.id = lif.item_id
+                         WHERE lif.media_id = m.id AND li.deleted_at IS NULL)
         AND NOT EXISTS (SELECT 1 FROM lecture_files lf WHERE lf.media_id = m.id)`).get().n;
 
   if (missing.length) {

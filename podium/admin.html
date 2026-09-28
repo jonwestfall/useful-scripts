@@ -50,6 +50,11 @@
 </div>
 
 <div id="admin" class="admin-wrap" hidden>
+  <!-- Disk pressure, an administrator's problem regardless of which tab they
+       land on - see refreshStorage in admin.js. Populated only once the
+       People/Storage block below is reached (that request is admin-only),
+       same as everything else this banner would need to say anything about. -->
+  <p class="warn" id="storage-pressure" style="grid-column: 1 / -1;" hidden></p>
   <div class="tabs admin-tabs" id="admin-tabs" style="grid-column: 1 / -1; margin-bottom: 0;">
     <button type="button" class="tab" id="tab-people" data-target="panel-people" hidden>People</button>
     <button type="button" class="tab" id="tab-courses" data-target="panel-courses" hidden>Courses</button>
@@ -57,6 +62,7 @@
     <button type="button" class="tab" id="tab-content" data-target="panel-content" hidden>Global Content</button>
     <button type="button" class="tab" id="tab-sessions" data-target="panel-sessions" hidden>Sessions</button>
     <button type="button" class="tab" id="tab-storage" data-target="panel-storage" hidden>Storage</button>
+    <button type="button" class="tab" id="tab-kiosks" data-target="panel-kiosks" hidden>Kiosks</button>
   </div>
 
   <!-- Accounts. Administrators only; the card stays absent for everyone else
@@ -204,6 +210,22 @@
     </div>
     <p class="hint" id="sess-note"></p>
     <div id="sessions"></div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 12px 0">
+    <div class="admin-head">
+      <h2>Bulk actions</h2>
+    </div>
+    <div class="admin-actions">
+      <button type="button" id="sess-download-all" class="admin-small">Download all sessions</button>
+      <span class="hint" id="sess-download-all-note" role="status"></span>
+    </div>
+    <div class="admin-actions">
+      <label class="field" style="max-width:160px">
+        <span>Delete sessions older than (days)</span>
+        <input id="sess-purge-days" type="number" min="1" step="1" value="15">
+      </label>
+      <button type="button" id="sess-purge-go" class="admin-del">Delete sessions older than this</button>
+      <span class="hint" id="sess-purge-note" role="status"></span>
+    </div>
   </section>
   </div>
 
@@ -258,6 +280,7 @@
             <span>Type</span>
             <select id="m-type">
               <option value="deck">Marp deck</option>
+              <option value="imagedeck">Picture deck</option>
               <option value="video">Video</option>
               <option value="audio">Audio</option>
               <option value="image">Photo / Image</option>
@@ -382,7 +405,7 @@
               <option value="slides">Slides (.html, .htm, .zip — max 25MB)</option>
               <option value="video">Video (.mp4, .webm, .mov, .mkv — max 100MB)</option>
               <option value="photos">Photos (.png, .jpg, .jpeg, .gif, .webp, .svg — max 20MB)</option>
-              <option value="pdfs">PDFs (.pdf — max 25MB)</option>
+              <option value="pdfs">PDFs (.pdf, or .ppt/.pptx converted to PDF — max 25MB)</option>
             </select>
           </label>
           <label class="field">
@@ -394,6 +417,17 @@
           <button id="file-upload-btn" type="button">Upload File</button>
           <span class="hint" id="file-upload-status" role="status"></span>
         </div>
+      </div>
+
+      <!-- Issue #106: a whole folder at once. Staged on the server, reviewed
+           here, and only then written into the category folders above. -->
+      <div style="background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius); padding:12px; margin-bottom:14px;">
+        <h4 style="margin:0 0 6px; font-size:13px;">Import a ZIP</h4>
+        <p class="hint" style="margin:0 0 8px;">
+          Slide images, decks, audio, video, photos, PDFs and exported web decks, sorted into the folders above.
+          You review everything before it is imported; a name already taken gets a number added.
+        </p>
+        <div id="content-zip-import"></div>
       </div>
 
       <div class="admin-head">
@@ -459,9 +493,73 @@
   </section>
   </div>
 
+  <!-- Unattended signage (Issue #151). Administrators only: a device nobody
+       is physically watching is exactly the wrong thing to let course
+       membership decide who can repoint. -->
+  <div class="admin-panel" id="panel-kiosks" hidden>
+  <section class="card" id="kiosks-card">
+    <div class="admin-head">
+      <h2>Kiosks</h2>
+    </div>
+    <p class="hint">
+      A kiosk profile is a room set aside for a display nobody is running - a lobby screen,
+      hallway signage. Provisioning a device is one scan: the QR below carries a one-time
+      link a blank device's own browser redeems for its connection settings, never the
+      passphrase itself sitting in a URL. Revoking a profile stops that link from working on
+      any device that has not already used it - it cannot reach out and reconfigure one that
+      has.
+    </p>
+    <div id="kiosks"></div>
+    <span class="hint" id="kiosks-note" role="status"></span>
+    <hr style="border:0;border-top:1px solid var(--line);margin:12px 0">
+    <div class="admin-form">
+      <label class="field">
+        <span>Name</span>
+        <input id="new-kiosk-name" type="text" autocomplete="off" placeholder="Lobby screen">
+      </label>
+      <label class="field">
+        <span>Room</span>
+        <input id="new-kiosk-room" type="text" autocomplete="off" spellcheck="false" placeholder="lobby-kiosk">
+      </label>
+      <label class="field">
+        <span>Connection</span>
+        <select id="new-kiosk-transport">
+          <option value="ws">Self-hosted WebSocket</option>
+          <option value="supabase">Supabase Realtime</option>
+          <option value="mqtt">MQTT over WSS (public broker)</option>
+        </select>
+      </label>
+      <label class="field" id="new-kiosk-wu-row">
+        <span>WebSocket URL</span>
+        <input id="new-kiosk-wu" type="text" autocomplete="off" spellcheck="false" placeholder="wss://podium.example.com/podium">
+      </label>
+      <label class="field" id="new-kiosk-su-row" hidden>
+        <span>Supabase project URL</span>
+        <input id="new-kiosk-su" type="text" autocomplete="off">
+      </label>
+      <label class="field" id="new-kiosk-sk-row" hidden>
+        <span>Supabase anon / publishable key</span>
+        <input id="new-kiosk-sk" type="text" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field" id="new-kiosk-mu-row" hidden>
+        <span>Broker URL</span>
+        <input id="new-kiosk-mu" type="text" autocomplete="off" spellcheck="false">
+      </label>
+      <label class="field">
+        <span>Should be showing</span>
+        <select id="new-kiosk-plan"><option value="">Nothing assigned yet</option></select>
+      </label>
+    </div>
+    <div class="admin-actions">
+      <button id="new-kiosk-go" type="button">Create the kiosk</button>
+    </div>
+  </section>
+  </div>
+
   <footer id="admin-version-stamp" class="version-stamp" style="padding-bottom: 24px;"></footer>
 </div>
 
+<script src="assets/vendor/qrcode.js"></script>
 <script type="module" src="assets/js/admin.js"></script>
 </body>
 </html>

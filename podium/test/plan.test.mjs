@@ -179,6 +179,23 @@ chk('a poll item carries no pollId or token - a plan cannot pre-create one on a 
 chk('emptyPlan defaults targetDuration to 50', plan.targetDuration === 50);
 chk('newItem defaults durationMins to 0', newItem('text').durationMins === 0);
 
+// Issue #154: pre-scripted captions - cross-cutting like durationMins above,
+// carried through to what a display actually stages (unlike `note`, which
+// itemForStage strips as planner-only bookkeeping).
+chk('newItem defaults overlayCaption to empty', newItem('text').overlayCaption === '');
+const captionPlan = readPlan(JSON.stringify({
+  podium: 'plan', v: 1,
+  items: [{ id: 'i1', type: 'text', body: 'hi', overlayCaption: 'Read this aloud' }],
+})).plan;
+chk('a caption round-trips through a plan file', captionPlan.items[0].overlayCaption === 'Read this aloud');
+chk('and survives itemForStage, unlike the planner-only note',
+  itemForStage(captionPlan.items[0]).overlayCaption === 'Read this aloud' && !('note' in itemForStage(captionPlan.items[0])));
+chk('an oversized caption is capped, not silently kept in full',
+  readPlan(JSON.stringify({
+    podium: 'plan', v: 1,
+    items: [{ id: 'i1', type: 'text', body: 'hi', overlayCaption: 'x'.repeat(2000) }],
+  })).plan.items[0].overlayCaption.length === 500);
+
 const pacingPlan = readPlan(JSON.stringify({
   podium: 'plan', v: 1,
   targetDuration: 75,
@@ -292,6 +309,24 @@ chk('invalid autoLaunch fields are sanitized and warned', (() => {
     && al.timer.timerId === ''
     && parsedInvalid.warnings.length > 0;
 })());
+
+// --- starting in picture-in-picture (Issue #131) --------------------------------
+{
+  chk('a new plan carries PiP defaults: A full screen, B inset top right at 20%',
+    JSON.stringify(emptyPlan().pip) === JSON.stringify({ main: 'A', inset: 'B', corner: 'tr', size: 20 }));
+  const doc = (pip, layout = 'pip') => JSON.stringify({ podium: 'plan', v: PLAN_VERSION, layout, pip, items: [] });
+  const read = readPlan(doc({ main: 'C', inset: 'A', corner: 'bl', size: 35 })).plan;
+  chk('a plan can start in the pip layout', read.layout === 'pip');
+  chk('with its own panes, corner and size', read.pip.main === 'C' && read.pip.inset === 'A' && read.pip.corner === 'bl' && read.pip.size === 35);
+  chk('and they round-trip', JSON.stringify(readPlan(planToJson(read)).plan.pip) === JSON.stringify(read.pip));
+  const same = readPlan(doc({ main: 'B', inset: 'B' })).plan.pip;
+  chk('one pane cannot be both - the inset moves off the main pane', same.main === 'B' && same.inset === 'A');
+  const junk = readPlan(doc({ main: 'Z', inset: 7, corner: 'middle', size: 500 })).plan.pip;
+  chk('nonsense falls back to the defaults, and size is clamped to 50',
+    junk.main === 'A' && junk.inset === 'B' && junk.corner === 'tr' && junk.size === 50);
+  chk('a plan from before PiP settings existed still loads, with the defaults',
+    JSON.stringify(readPlan(doc(undefined, '2h')).plan.pip) === JSON.stringify(emptyPlan().pip));
+}
 
 // --- picture decks (Issue #106) ------------------------------------------------
 {

@@ -44,7 +44,7 @@ const WARM = [
   ...[
     'admin', 'assets', 'bus', 'config', 'control', 'crypto', 'deck', 'display',
     'index', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'renderers',
-    'rtc', 'server', 'store', 'util', 'watermark', 'zip',
+    'rtc', 'server', 'store', 'util', 'watermark', 'zip', 'zip-review',
   ].map((name) => `assets/js/${name}.js`),
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),
 ];

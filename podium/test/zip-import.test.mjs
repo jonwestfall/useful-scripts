@@ -105,8 +105,22 @@ console.log('\n-- HTML, presentations, nested ZIPs, junk --');
   chk('with a reason that says to ask an administrator', /administrator/.test(planner.needsInput[0].reason));
 }
 {
-  const r = zip.classifyEntries([f('Lecture 3.pptx')], { surface: 'admin' });
-  chk('a PowerPoint file needs a decision, with what to do instead', r.needsInput.length === 1 && /PDF/.test(r.needsInput[0].reason));
+  // Issue #107: a .ppt/.pptx is converted to a PDF at commit time, so it is
+  // an ordinary candidate item here - classification never reads bytes, so
+  // it cannot do the converting itself (see zip-staging.js).
+  const r = zip.classifyEntries([f('Lecture 3.pptx'), f('Old talk.ppt')], { surface: 'admin' });
+  chk('a PowerPoint file is a normal PDF candidate, not a decision to make',
+    r.needsInput.length === 0 && r.items.filter((i) => i.kind === 'pdf').map((i) => i.title).sort().join() === 'Lecture 3,Old talk');
+}
+{
+  const r = zip.classifyEntries([f('Talk.key'), f('Talk.odp'), f('Talk.pps'), f('Talk.ppsx')], { surface: 'admin' });
+  chk('Keynote, OpenDocument and the old "Show" formats still need a decision, not converted',
+    r.items.length === 0 && r.needsInput.length === 4 && r.needsInput.every((n) => /not converted/.test(n.reason)));
+}
+{
+  const r = zip.classifyEntries([f('Lecture 3.pptx')], { surface: 'planner' });
+  chk('and a PowerPoint file works from the planner too, sized as a PDF would be',
+    r.items.length === 1 && r.items[0].kind === 'pdf');
 }
 {
   const r = zip.classifyEntries([f('more.zip')], { surface: 'admin' });

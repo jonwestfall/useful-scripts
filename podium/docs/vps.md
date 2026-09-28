@@ -263,6 +263,63 @@ disappearing, not somebody being unable to take back the wrong upload thirty
 seconds later. A TA's own upload is theirs to remove. A member can only ever
 remove their own, and nobody below owner can touch anyone else's.
 
+**Importing a ZIP (Issue #106).** `POST /api/import/zip?surface=planner|admin`
+takes the archive the same way (raw body), refuses it up front if
+`content-length` is over the admin setting, and keeps it unextracted under
+`DATA_DIR/zip-staging/<id>/` while the review screen is open. `yauzl` reads the
+central directory only; the file count, folder depth and unpacked size are
+checked from that before a byte is inflated, and a stream that turns out
+larger than its header claimed is an error. `POST …/<id>/commit` then reads
+only the entries that were kept: into the media store and `library_items` for
+the planner (a picture deck is one item whose slides are rows in
+`library_item_files`, which `mayReadMedia` and `forgetMediaIfUnused` both
+consult), or into `content/` for an admin. The admin surface is
+administrators only, since it is the one that may bring in HTML. A staged
+upload belongs to the account that sent it, is removed on commit or cancel,
+and is swept after two hours; one account keeps at most three.
+
+**PowerPoint uploads (Issue #107).** The issue itself weighs four ways to
+read a `.ppt`/`.pptx` and recommends this one: shell out to LibreOffice for a
+PDF, then let the existing pdf.js-based `pdf` item type do the rest, rather
+than building anything that understands slide masters, layouts or embedded
+fonts. `server/pptx-convert.js` is the whole of it - one function, run
+synchronously as part of the request that uploaded the file (a queued/polled
+job would need its own staging area, status route and UI for what a single
+deck converts in a couple of seconds), in a private temp directory with its
+own LibreOffice profile (`-env:UserInstallation`), since two conversions
+sharing one profile is a documented way to deadlock them both on the same
+lock file. LibreOffice does not use its exit code to report a failed
+conversion - a corrupt file still exits 0 and says so on stdout - so success
+is judged by whether a PDF actually landed next to the input, not by the
+process's own exit code.
+
+Three call sites share it, each already accepting a plain PDF: the planner's
+upload route, the admin content route (only for the `pdfs` category), and a
+`.ppt`/`.pptx` found inside a ZIP (classified as an ordinary PDF-destined
+candidate in `zip-import.js`, converted at commit time in `zip-staging.js`,
+since classification only ever reads a ZIP's central directory and never a
+byte of the files themselves). Converting before anything is stored is what
+makes the admin/planner HTML trust split #106 drew moot here: a converted
+deck is an ordinary PDF, filed exactly where an uploaded PDF already would
+be, and nothing HTML-shaped is ever produced. A missing `soffice` binary, a
+corrupt file, or a conversion over two minutes each fail the one upload with
+a plain reason; nothing else on the server depends on LibreOffice being
+there at all.
+
+#### Installing LibreOffice for PowerPoint uploads
+
+Optional - every other upload works without it. `libreoffice-impress` is the
+one package this actually needs (Draw and its own dependencies come with
+it); the full `libreoffice` metapackage works too but installs Writer, Calc
+and the rest for nothing this feature uses:
+
+```
+apt install libreoffice-impress
+```
+
+No further configuration; the server finds `soffice` on `PATH`. Confirm it
+works with `soffice --headless --convert-to pdf --outdir /tmp yourfile.pptx`.
+
 ### Phase 3 — plans and settings ✅
 
 `plans` and `course_settings`. `plan.html` gains "send to the server" and "open
@@ -456,6 +513,13 @@ beside the database, so restoring it alone gives you every entry pointing at
 bytes that are not there. Backing up the whole data directory is what
 `deploy/` documents, and the ops script in phase 6 is where it gets automated.
 
+A disk running low is worth knowing about before it is actually full, not
+after (Issue #160): the admin page now warns on its own, at the top, on
+whichever tab an administrator happens to have open, rather than only once
+somebody thinks to visit Storage. It shares the exact free-space thresholds
+`podium-admin doctor` already checked (`diskPressure` in `store.js`), so the
+two never quietly disagree about what "getting full" means.
+
 ### Phase 6 — operations ✅
 
 `deploy/backup.sh`, `deploy/restore.sh`, and `podium-admin doctor`.
@@ -470,6 +534,12 @@ nobody has ever opened is a hope rather than a backup. It needs nothing on the
 box beyond `tar` and Podium's own Node, whose built-in SQLite takes the snapshot
 when `sqlite3` is not installed — which is the choice from the top of this file
 paying for itself in a place it was not chosen for.
+
+`podium-admin backup` (Issue #160) is the lighter, database-only version of the
+same `VACUUM INTO` snapshot, meant for a cron line or a container that has no
+`deploy/` checked out rather than replacing the script above — see
+`deploy/README.md#backups` for the full story, including where an off-box copy
+fits in.
 
 **Restore** stops the service, moves the current data directory *aside* rather
 than deleting it (a restore against the wrong archive happens at three in the

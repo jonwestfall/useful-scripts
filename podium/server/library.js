@@ -130,6 +130,15 @@ function mayReadMedia(db, user, sha256) {
      WHERE m.sha256 = ?3 AND li.deleted_at IS NULL AND ${VISIBLE} LIMIT 1`)
     .get(user.id, user.isAdmin ? 1 : 0, String(sha256));
   if (row) return true;
+  // One of the slides of a picture deck you can see (Issue #106): those files
+  // hang off the item through library_item_files rather than media_id.
+  const slide = db.prepare(`SELECT 1 AS ok FROM library_item_files lif
+      JOIN media m ON m.id = lif.media_id
+      JOIN library_items li ON li.id = lif.item_id
+      LEFT JOIN courses c ON c.id = li.course_id
+     WHERE m.sha256 = ?3 AND li.deleted_at IS NULL AND ${VISIBLE} LIMIT 1`)
+    .get(user.id, user.isAdmin ? 1 : 0, String(sha256));
+  if (slide) return true;
   // The other way to be allowed at these bytes: they are a file kept by a
   // lecture you can see. The lecture's own visibility rule is the one that
   // decides (see the VISIBLE comment in server/lectures.js) - deliberately
@@ -289,6 +298,10 @@ function forgetMediaIfUnused(db, dataDir, sha256) {
   const inUse = db.prepare(
     `SELECT 1 AS ok FROM library_items WHERE media_id = ?1 AND deleted_at IS NULL
       UNION ALL
+     SELECT 1 AS ok FROM library_item_files lif
+       JOIN library_items li ON li.id = lif.item_id
+      WHERE lif.media_id = ?1 AND li.deleted_at IS NULL
+      UNION ALL
      SELECT 1 AS ok FROM lecture_files WHERE media_id = ?1
      LIMIT 1`,
   ).get(row.id);
@@ -296,6 +309,38 @@ function forgetMediaIfUnused(db, dataDir, sha256) {
   db.prepare('DELETE FROM media WHERE id = ?').run(row.id);
   try { fs.rmSync(mediaPath(dataDir, sha256), { force: true }); } catch { /* already gone */ }
   return true;
+}
+
+/**
+ * The files of a many-file item (a picture deck), in order. The item itself is
+ * made by addItem as usual; this records which stored bytes it is made of.
+ */
+function setItemFiles(db, itemId, mediaIds) {
+  const insert = db.prepare('INSERT INTO library_item_files (item_id, media_id, position) VALUES (?, ?, ?)');
+  mediaIds.forEach((mediaId, i) => insert.run(Number(itemId), mediaId, i));
+}
+
+/**
+ * An item this user can already see with exactly these bytes - what a ZIP
+ * import in the planner reports as "already in library" rather than adding a
+ * second copy. One file: same media and kind. Several (a picture deck): the
+ * same files in the same order.
+ */
+function findDuplicate(db, user, { kind, sha256s }) {
+  const visible = (sql, ...args) => db.prepare(`${SELECT_ITEMS} AND ${VISIBLE} AND ${sql}`)
+    .all(user.id, user.isAdmin ? 1 : 0, ...args);
+  if (sha256s.length === 1) {
+    const [row] = visible('li.kind = ?3 AND m.sha256 = ?4 LIMIT 1', String(kind), sha256s[0]);
+    return row ? itemRow(row) : null;
+  }
+  const wanted = sha256s.join(',');
+  const candidates = visible(`li.kind = ?3 AND li.id IN (
+      SELECT lif.item_id FROM library_item_files lif JOIN media fm ON fm.id = lif.media_id
+       WHERE lif.position = 0 AND fm.sha256 = ?4)`, String(kind), sha256s[0]);
+  const filesOf = db.prepare(`SELECT m.sha256 FROM library_item_files lif JOIN media m ON m.id = lif.media_id
+     WHERE lif.item_id = ? ORDER BY lif.position`);
+  const match = candidates.find((row) => filesOf.all(row.id).map((f) => f.sha256).join(',') === wanted);
+  return match ? itemRow(match) : null;
 }
 
 function renameItem(db, user, id, { title, group, courseCode }) {
@@ -357,13 +402,15 @@ function deleteItem(db, user, id) {
 
 function usage(db) {
   const row = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(bytes), 0) AS bytes FROM media
-     WHERE id IN (SELECT media_id FROM library_items WHERE deleted_at IS NULL AND media_id IS NOT NULL)`).get();
+     WHERE id IN (SELECT media_id FROM library_items WHERE deleted_at IS NULL AND media_id IS NOT NULL)
+        OR id IN (SELECT lif.media_id FROM library_item_files lif
+                    JOIN library_items li ON li.id = lif.item_id WHERE li.deleted_at IS NULL)`).get();
   return { files: row.files, bytes: row.bytes };
 }
 
 module.exports = {
   MAX_UPLOAD_BYTES, UPLOADABLE, uploadKindFor, mediaPath,
   listItems, getItem, listCourses, mayReadMedia, courseIdFor,
-  addItem, storeUpload, rememberMedia, forgetMediaIfUnused,
+  addItem, setItemFiles, findDuplicate, storeUpload, rememberMedia, forgetMediaIfUnused,
   renameItem, deleteItem, mayDelete, usage,
 };

@@ -26,6 +26,12 @@ function surfaceLinks(cls) {
     el('a', { href: 'display.html', class: cls }, 'Display'),
     el('a', { href: 'control.html', class: cls }, 'Controller'),
     el('a', { href: 'plan.html', class: cls }, 'Planning'),
+    // Issue #161: reachable, but only ever functional once paired from the
+    // display's own pairing sheet - see the comment beside its own link in
+    // control.html's Settings. Not gated on any server feature: Guest
+    // (Simple Mode) is pure client+relay, the same as every other surface
+    // in this list.
+    el('a', { href: 'guest.html', class: cls }, 'Guest'),
   ];
   // Same gate admin.html itself uses: present to any signed-in user on a
   // server with a library, not just administrators - a TA who can upload

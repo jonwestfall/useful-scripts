@@ -293,6 +293,9 @@ body.display #standby:not(.is-on) { display: none; }
   background: #2a1e12; border: 1px solid #6b4a22; color: #ffd9a8;
   border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 16px;
 }
+/* The same box, for a problem past "worth knowing" - matches the red already
+   used for #storage-warning and #link-help.is-mismatch. */
+.warn.is-bad { background: #2a1216; border-color: #6b2b2b; color: #ffc4c4; }
 
 kbd {
   display: inline-block; min-width: 30px; padding: 3px 8px;
@@ -557,8 +560,21 @@ body.guest {
   cursor: crosshair; touch-action: none;
 }
 .guest-pad .hint { margin: 0; padding: 0 20px; }
-.admin-wrap { max-width: 56rem; margin: 18px auto; padding: 0 14px; display: grid; gap: 14px; }
-.admin-wrap .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+/* A ceiling, never a floor - max-width only ever shrinks to fit a narrower
+   viewport, so 56rem stays exactly what a phone or a normal laptop screen
+   already got. clamp() only changes anything once the viewport is wide
+   enough that 82vw clears 56rem in the first place - a genuinely large
+   monitor - letting content already built to use available width (the
+   auto-fit form grids, admin-row's own flexed title) actually get some,
+   instead of every tab being one column capped at 896px regardless of how
+   much screen is sitting unused beside it. Issue #153. */
+.admin-wrap { max-width: clamp(56rem, 82vw, 100rem); margin: 18px auto; padding: 0 14px; display: grid; gap: 14px; }
+/* The generic .card this inherits from caps max-width at 620px for the
+   narrow centered dialogs it's meant for elsewhere (login, setup sheets,
+   modals) - admin cards are grid children of the wrapper above, not
+   centered dialogs, so that cap only fights the widened .admin-wrap for no
+   reason. Issue #153. */
+.admin-wrap .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; max-width: none; }
 .admin-wrap h2 { margin: 0 0 6px; font-size: 16px; }
 .admin-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .admin-head h2 { flex: 1; }
@@ -573,6 +589,9 @@ body.guest {
 }
 .admin-title { flex: 1; color: var(--ink); }
 .admin-meta { color: var(--dim); font-size: 12px; }
+/* Issue #155: a kiosk gone quiet longer than its own heartbeat should ever
+   allow, in the same red every other .is-bad status already uses. */
+.admin-meta.is-bad { color: #ffb3b3; }
 .admin-del { min-height: 32px; padding: 0 10px; font-size: 12px; }
 .admin-del[data-armed='yes'] { background: var(--live); border-color: var(--live); color: #fff; }
 .admin-row.is-busy { opacity: 0.55; pointer-events: none; }
@@ -1123,6 +1142,9 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 /* A track that will not play says so here, and a dim grey hint is exactly
    what the eye skips over, so the line takes the cue colour instead. */
 #music-sub.is-warning { color: var(--cue); }
+/* The feedback risk beside "Play through the display's speakers" (Issue
+   #147) is worth actually reading, the same reason as above. */
+#mic-amplify-warning { color: var(--cue); }
 .music-bar {
   height: 6px; margin-top: 10px; border-radius: 999px; overflow: hidden;
   background: #0e1216;
@@ -1714,3 +1736,26 @@ body.plan .linkish:hover { text-decoration: underline; }
   .mock-link-label { max-width: 140px; text-align: left; }
 }
 
+
+/* ZIP import review screen (Issue #106), on the admin page and the planner. */
+.zip-review { display: grid; gap: 10px; margin-top: 8px; }
+.zip-review h3, .zip-review h4 { margin: 6px 0 0; }
+.zip-items, .zip-needs { display: grid; gap: 6px; }
+.zip-row {
+  display: grid; grid-template-columns: auto 48px 1fr; gap: 10px; align-items: center;
+  padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel);
+}
+.zip-row.zip-need { grid-template-columns: 48px 1fr; }
+.zip-row.is-off { opacity: 0.55; }
+.zip-row input[type="checkbox"] { width: 20px; height: 20px; }
+.zip-row-main { display: grid; gap: 4px; min-width: 0; }
+.zip-row-main code { overflow-wrap: anywhere; font-size: 12px; }
+.zip-row-main .hint { margin: 0; }
+.zip-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--dim); }
+.zip-meta select { min-height: 28px; height: 28px; padding: 2px 6px; font-size: 12px; width: auto; }
+.zip-thumb { width: 48px; height: 36px; object-fit: cover; border-radius: 4px; background: var(--panel-2); }
+.zip-flag { color: var(--cue); font-size: 12px; }
+.zip-target { font-size: 12px; overflow-wrap: anywhere; }
+.zip-skipped summary { cursor: pointer; color: var(--dim); font-size: 13px; }
+.zip-skipped ul, .zip-result { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.zip-result .is-bad, .zip-status.is-bad { color: #ffb3b3; }

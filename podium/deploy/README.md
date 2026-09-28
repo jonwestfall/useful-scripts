@@ -184,6 +184,31 @@ disk it is on is not there anymore.
 A backup on the same disk as the thing it is backing up protects you from a
 mistake, not from the disk. Copy the archives off the box.
 
+### A lighter, database-only snapshot
+
+The script above is the complete answer — database, `media/`, and
+`podium.env`, rotated and verified. Sometimes you want just the database on
+its own terms instead: your own cron line, a container with no `deploy/`
+checked out, or a schedule different from the installed timer's.
+
+```bash
+sudo -u podium DATA_DIR=/var/lib/podium node /opt/podium/current/server/podium-admin.js backup
+sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js backup --out /srv/backups/podium/
+```
+
+The same `VACUUM INTO` snapshot the admin page's own backup button takes,
+written under `$DATA_DIR/backups/` by default and printed to stdout so a
+script can capture the path; a directory named with `--out` gets the same
+timestamped filename inside it, and a bare file path is used exactly as
+given. It is the database alone — accounts, courses, settings, library
+entries, session timelines — not the files those entries point at, the same
+caveat the admin page's own button carries; use the script above (or back up
+the whole data directory yourself) for something you can actually restore
+into a working instance. Delivering the result off-box — `scp`, an
+S3-compatible upload, whatever your own infrastructure already uses — is a
+step worth adding after this command in your own script: Podium has no
+opinion about where a downloaded backup goes, same as the button it mirrors.
+
 ## Restoring
 
 ```bash
@@ -211,6 +236,17 @@ Then check it:
 ```bash
 sudo -u podium DATA_DIR=/var/lib/podium node /opt/podium/current/server/podium-admin.js doctor
 ```
+
+Beta restores can accumulate rollback copies beside `/var/lib/podium-beta`.
+Keep the newest five and remove the rest with:
+
+```bash
+sudo ./deploy/prune-beta-backups.sh
+sudo DRY_RUN=1 ./deploy/prune-beta-backups.sh       # preview only
+```
+
+Set `KEEP_BETA_BACKUPS` to retain a different number. The live
+`/var/lib/podium-beta` directory is never touched.
 
 ## Checking up on it
 

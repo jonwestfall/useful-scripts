@@ -54,12 +54,19 @@ const KEEPABLE = new Map(Object.entries({
   '.json': 'application/json',
   '.txt': 'text/plain; charset=utf-8',
   '.csv': 'text/csv; charset=utf-8',
+  // A controller's own mic, recorded in fixed-length segments and uploaded
+  // as it goes (Issue #147) - whichever of the two a browser's MediaRecorder
+  // actually produced (see micMimeType in control.js; every engine that
+  // ships MediaRecorder at all supports one of these two).
+  '.webm': 'audio/webm',
+  '.ogg': 'audio/ogg',
 }));
 
 // What a file is FOR, which is all the server knows about it: a photo taken
-// in the room, the ink as strokes, or a page the controller rasterized when it
-// exported. Anything else is filed as a plain part of the export.
-const FILE_KINDS = new Set(['photo', 'ink', 'session']);
+// in the room, the ink as strokes, a page the controller rasterized when it
+// exported, or a segment of a controller's own recorded mic. Anything else is
+// filed as a plain part of the export.
+const FILE_KINDS = new Set(['photo', 'ink', 'session', 'audio']);
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_FILES_PER_LECTURE = 500;

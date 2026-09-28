@@ -9,7 +9,7 @@ import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIM
   inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
-import { createCameraSender } from './rtc.js';
+import { createCameraSender, createMicSender } from './rtc.js';
 import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
@@ -514,6 +514,12 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
     send({ op: 'layout', mode: plan.layout || 'single' });
   } else if (plan.layout && plan.layout !== 'single') {
     send({ op: 'layout', mode: plan.layout });
+  }
+  // Issue #131: a plan that starts in picture-in-picture says which two panes
+  // it shows and where the inset sits.
+  if (plan.layout === 'pip' && plan.pip) {
+    const { main, inset, corner, size } = plan.pip;
+    send({ op: 'pip', main, inset, corner, size });
   }
   if (plan.timers.length) {
     // Ids carried through from the plan, so its countdown items name the same
@@ -2134,6 +2140,10 @@ function renderMixer() {
     $('#mixer-music').value = String(state.music.volume);
     $('#mixer-music-pct').textContent = pct(state.music.volume);
   }
+  if (mixerSliding !== 'mic') {
+    $('#mixer-mic').value = String(state.micVolume ?? 1);
+    $('#mixer-mic-pct').textContent = pct(state.micVolume ?? 1);
+  }
 }
 
 // Audience polls: a normal item once staged, but composing and running one
@@ -2304,6 +2314,16 @@ function renderKeepPhotos() {
     finishRow.hidden = !serverKeepsSessions;
     $('#finish-session-hint').hidden = !serverKeepsSessions;
     $('#finish-session').disabled = !bus || !recordingNow();
+  }
+  // Same two things gate the mic's own "record to the session" row - see
+  // startMicRecording below. A lecture ending out from under a running
+  // recording stops it here rather than leaving it recording into a void;
+  // the segment already in flight still uploads, under the lecture it
+  // actually belongs to (see lastKnownLectureId in beginMicSegment).
+  const micRow = $('#mic-record-row');
+  if (micRow) {
+    micRow.hidden = !serverKeepsSessions;
+    if (!recordingNow() && micRecorder) stopMicRecording();
   }
 }
 
@@ -3592,6 +3612,7 @@ $('#pan-right').addEventListener('click', () => pan(-PAN_STEP, 0));
 // --- camera -----------------------------------------------------------------
 
 let cameraSender = null;
+let micSender = null;
 let facing = 'environment';
 
 function setCameraState(status) {
@@ -4552,7 +4573,7 @@ async function connect() {
           && !$('[data-panel="ink"]').hidden) redrawPad();
         return;
       }
-      if (msg.t === 'rtc') cameraSender?.handle(msg);
+      if (msg.t === 'rtc') { cameraSender?.handle(msg); micSender?.handle(msg); }
     },
   });
 
@@ -4566,6 +4587,8 @@ async function connect() {
       $('#cam-local').hidden = !stream;
     },
   });
+
+  micSender = createMicSender({ bus, onState: setMicAmplifyState });
 
   $('#fingerprint').textContent = bus.fingerprint;
   $('#room-name').textContent = cfg.room;
@@ -4702,7 +4725,7 @@ $('#clear-preview').addEventListener('click', () => send({ op: 'clear', where: '
 $('#mute').addEventListener('click', () => send({ op: 'mute' }));
 $('#volume').addEventListener('input', (ev) => send({ op: 'volume', value: Number(ev.target.value) }));
 
-// Three faders, one meaning each - see the Mixer tab's own explanation and
+// Four faders, one meaning each - see the Mixer tab's own explanation and
 // the comment on contentVolume in protocol.js. mixerSliding stops the next
 // broadcast's echo from yanking a fader out from under a still-moving thumb,
 // the same reason musicSliding and scrubbing already exist.
@@ -4721,6 +4744,11 @@ $('#mixer-music').addEventListener('input', (ev) => {
   sendMusicVolume(Number(ev.target.value));
 });
 $('#mixer-music').addEventListener('change', () => { mixerSliding = null; });
+$('#mixer-mic').addEventListener('input', (ev) => {
+  mixerSliding = 'mic';
+  send({ op: 'micVolume', value: Number(ev.target.value) });
+});
+$('#mixer-mic').addEventListener('change', () => { mixerSliding = null; });
 
 $('#play-pause').addEventListener('click', () => send({ op: 'media', action: 'toggle' }));
 $('#back10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: -10 }));
@@ -4970,7 +4998,10 @@ $('#pdf-upload').addEventListener('change', async (ev) => {
   const note = $('#pdf-upload-note');
   note.textContent = `Uploading ${file.name}…`;
   try {
-    const params = new URLSearchParams({ filename: file.name, title: file.name.replace(/\.pdf$/i, ''), course: '', group: '' });
+    // Issue #107: a .ppt/.pptx picked here is converted to a PDF by the same
+    // upload route admin.html and the planner use - .pdf$ alone would leave
+    // "Talk.pptx" as the title once it comes back named "Talk.pdf".
+    const params = new URLSearchParams({ filename: file.name, title: file.name.replace(/\.[^.]+$/, ''), course: '', group: '' });
     const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'that did not work');
@@ -5278,6 +5309,142 @@ function startCaptions() {
 }
 
 $('#caption-toggle').addEventListener('click', () => { if (recognizer) stopCaptions(); else startCaptions(); });
+
+// --- controller mic: record to the session (Issue #147) --------------------
+//
+// Independent of Live Captions above, which never touches a MediaStream at
+// all - this is the raw audio itself. Recorded in fixed-length segments,
+// each a complete, independently playable file rather than a fragment only
+// valid concatenated with the ones around it (a MediaRecorder timeslice
+// would produce exactly that), uploaded as it goes the same reason
+// chunkStrokes in display.js splits ink.json rather than holding it for one
+// save at the end: a lecture that stops early keeps whatever already
+// uploaded, not nothing. Stopping and immediately restarting the recorder
+// at each boundary costs a sub-second gap in the audio, a fair trade for
+// every segment standing on its own.
+//
+// Amplifying this same stream through the display is Issue #147's other
+// half, layered on separately - this file only ever asks for the stream
+// once (see startMic) and hands it out from here.
+
+// Overridable the same way MAX_ASSET_ENTRIES is in display.js, so a test can
+// see a chunk boundary without actually waiting two minutes for one.
+const MIC_CHUNK_MS = Number(window.__PODIUM_TEST_MIC_CHUNK_MS__) || 120000;
+
+let micStream = null;
+let micRecorder = null;
+let micChunkTimer = null;
+let micRecordSeq = 0;
+let micSessionStamp = 0;
+
+function micMimeType() {
+  for (const type of ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']) {
+    if (window.MediaRecorder?.isTypeSupported?.(type)) return type;
+  }
+  return '';
+}
+
+// Named from this device's own bus id, a session start time and a sequence
+// number - never a local count alone, since more than one controller can be
+// recording into the same lecture at once (Issue #147 supports several
+// mics live together), and lecture_files is unique by name: two devices
+// racing to file "audio/0002.webm" would have the second replace the first
+// rather than both landing.
+function micChunkName(seq) {
+  const ext = micMimeType().includes('ogg') ? 'ogg' : 'webm';
+  return `audio/${bus?.clientId || 'mic'}-${micSessionStamp}-${String(seq).padStart(4, '0')}.${ext}`;
+}
+
+function beginMicSegment() {
+  if (!micStream || !recordingNow() || !window.MediaRecorder) return;
+  const mimeType = micMimeType();
+  const recorder = mimeType ? new MediaRecorder(micStream, { mimeType }) : new MediaRecorder(micStream);
+  const seq = micRecordSeq++;
+  // Captured now, not read back off state.lectureId when the upload actually
+  // fires - the same reason the session export path takes an explicit
+  // lectureId (see fileWithLecture's own comment): this segment can easily
+  // still be uploading after standDown has already cleared it.
+  const lectureId = lastKnownLectureId;
+  const parts = [];
+  recorder.ondataavailable = (ev) => { if (ev.data.size) parts.push(ev.data); };
+  recorder.onstop = () => {
+    if (!parts.length) return;
+    fileWithLecture(micChunkName(seq), 'audio', new Blob(parts, { type: mimeType || 'audio/webm' }), mimeType || 'audio/webm', lectureId);
+  };
+  micRecorder = recorder;
+  recorder.start();
+  micChunkTimer = setTimeout(() => {
+    if (micRecorder !== recorder) return;   // already stopped from elsewhere
+    recorder.stop();
+    beginMicSegment();
+  }, MIC_CHUNK_MS);
+}
+
+function startMicRecording() {
+  if (micRecorder || !micStream || !recordingNow()) return;
+  micSessionStamp = Date.now();
+  micRecordSeq = 0;
+  beginMicSegment();
+}
+
+function stopMicRecording() {
+  clearTimeout(micChunkTimer);
+  micChunkTimer = null;
+  const recorder = micRecorder;
+  micRecorder = null;
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+}
+
+async function startMic() {
+  if (micStream) return;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    $('#mic-status').textContent = 'This browser has no microphone access.';
+    return;
+  }
+  $('#mic-status').textContent = 'Requesting…';
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (err) {
+    $('#mic-status').textContent = `Could not start: ${err.message}`;
+    return;
+  }
+  $('#mic-start').textContent = 'Stop my mic';
+  $('#mic-start').classList.add('is-on');
+  $('#mic-status').textContent = 'Live';
+  if ($('#mic-record').checked) startMicRecording();
+  if ($('#mic-amplify').checked) micSender.start(micStream);
+}
+
+function stopMic() {
+  stopMicRecording();
+  micSender.stop();
+  micStream?.getTracks().forEach((t) => t.stop());
+  micStream = null;
+  $('#mic-start').textContent = 'Start my mic';
+  $('#mic-start').classList.remove('is-on');
+  $('#mic-status').textContent = 'Off';
+}
+
+function setMicAmplifyState(status) {
+  $('#mic-amplify-status').textContent = {
+    idle: '',
+    connecting: 'connecting…',
+    live: 'live on the display',
+    failed: 'could not connect - a guest network may be blocking the two devices from reaching each other',
+  }[status] || status;
+}
+
+$('#mic-start').addEventListener('click', () => { if (micStream) stopMic(); else startMic(); });
+$('#mic-record').addEventListener('change', () => {
+  if (!micStream) return;
+  if ($('#mic-record').checked) startMicRecording();
+  else stopMicRecording();
+});
+$('#mic-amplify').addEventListener('change', () => {
+  if (!micStream) return;
+  if ($('#mic-amplify').checked) micSender.start(micStream);
+  else micSender.stop();
+});
 
 // --- watermark ---------------------------------------------------------------
 // Extracted to watermark.js (Issue #121) - a small, explicit interface, and
@@ -5596,6 +5763,32 @@ window.addEventListener('keydown', (ev) => {
   }
 });
 
+// --- the shortcut card (Issue #138) -----------------------------------------
+//
+// Same #keys/.sheet/dl.keys markup display.html's own card uses, and the
+// same '?' trigger - a keyboard user who already knows one knows both.
+
+function showShortcuts() { $('#keys').hidden = false; }
+function hideShortcuts() { $('#keys').hidden = true; }
+function toggleShortcuts() { $('#keys').hidden ? showShortcuts() : hideShortcuts(); }
+
+$('#keys-close')?.addEventListener('click', hideShortcuts);
+$('#keys')?.addEventListener('click', (ev) => { if (ev.target === $('#keys')) hideShortcuts(); });
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !$('#keys').hidden) hideShortcuts();
+});
+
+// Step through this device's own tab order (Settings > Controller tabs),
+// skipping whatever it has hidden - never a fixed list, since that
+// preference already decides what "next tab" means. Wraps at both ends.
+function cycleTab(delta) {
+  const visible = presentation.tabOrder.filter((id) => !presentation.hiddenTabs.includes(id));
+  if (visible.length < 2) return;
+  const current = document.querySelector('.tab.is-on:not(#dual-pane-toggle)')?.dataset.tab;
+  const at = visible.indexOf(current);
+  tab(visible[((at < 0 ? 0 : at) + delta + visible.length) % visible.length]);
+}
+
 const COUNTDOWN_QUEUE_KEY = 'podium.countdownQueue';
 
 function isCountdownQueue() {
@@ -5693,6 +5886,10 @@ document.addEventListener('keydown', (ev) => {
   // nothing, so a modified key is not ours.
   if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
 
+  // Shift+/ on most layouts, but not all - accept the bare key too, same as
+  // display.js's own card.
+  if (ev.key === '?' || ev.key === '/') { ev.preventDefault(); toggleShortcuts(); return; }
+
   // Blank and freeze apply to whatever is on screen, so they come first. They
   // used to sit behind the "is this paged content" guard below, which meant B
   // did nothing on a photo or a video - exactly when you reach for it.
@@ -5706,6 +5903,32 @@ document.addEventListener('keydown', (ev) => {
     ev.preventDefault();
     if (ev.shiftKey) askForShot('screen', 'the whole screen');
     else askForShot(state.focus, `panel ${PANEL_LABELS[state.focus]}`);
+    return;
+  }
+
+  // Issue #138: the rest of the bottom-dock's own action vocabulary
+  // (executeSlotAction, below) gets a bare key too, so the same actions are
+  // one tap on a touchscreen or one keystroke from an attached keyboard. T
+  // and C guard on there being anything cued, the same as the dock buttons
+  // disable themselves - a keystroke that would send a pointless "take"
+  // with nothing cued is worse than one that quietly does nothing.
+  const cued = () => !!state.preview || state.previewLayout !== null;
+  if (ev.key === 't' || ev.key === 'T') { if (cued()) { ev.preventDefault(); executeSlotAction('take'); } return; }
+  if (ev.key === 'c' || ev.key === 'C') { if (cued()) { ev.preventDefault(); executeSlotAction('clear'); } return; }
+  if (ev.key === 'w' || ev.key === 'W') { ev.preventDefault(); executeSlotAction('whiteboard'); return; }
+  if (ev.key === 'm' || ev.key === 'M') { if (state.music?.tracks?.length) { ev.preventDefault(); executeSlotAction('music'); } return; }
+  if (ev.key === 'r' || ev.key === 'R') { ev.preventDefault(); executeSlotAction('timer'); return; }
+
+  // [ and ] step through this device's own tab order, wrapping at both ends -
+  // see cycleTab for why that order is never a fixed list.
+  if (ev.key === '[' || ev.key === ']') { ev.preventDefault(); cycleTab(ev.key === ']' ? 1 : -1); return; }
+
+  // Space plays or pauses a video, audio clip or YouTube embed the same way
+  // it does in every other media player - checked here, above the "has
+  // pages" guard below, because a playable item is never a paged one.
+  if (ev.key === ' ' && ['video', 'audio', 'youtube'].includes(focusedItem(state)?.type)) {
+    ev.preventDefault();
+    executeSlotAction('play');
     return;
   }
 

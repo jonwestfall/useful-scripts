@@ -20,6 +20,7 @@ const yauzl = require('yauzl');
 
 const content = require('./content.js');
 const library = require('./library.js');
+const pptxConvert = require('./pptx-convert.js');
 
 const MB = 1024 * 1024;
 
@@ -32,6 +33,9 @@ const MAX_UPLOAD_MB = 4096;
 const MAX_FILES = 2000;
 const MAX_DEPTH = 8;
 const MIN_UNPACKED_BYTES = 1024 * MB;
+// The most slides a picture deck plays - MAX_IMAGEDECK_SLIDES in protocol.js,
+// which the browser side enforces on its own.
+const MAX_IMAGEDECK_SLIDES = 500;
 
 function limitsFor(uploadMb = DEFAULT_UPLOAD_MB) {
   const maxUploadBytes = uploadMb * MB;
@@ -60,7 +64,11 @@ class ZipLimitError extends Error {
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 const HTML_EXTS = new Set(['.html', '.htm']);
-const POWERPOINT_EXTS = new Set(['.ppt', '.pptx', '.pps', '.ppsx', '.key', '.odp']);
+// .ppt/.pptx are converted to a PDF at commit time (Issue #107, see
+// destinationFor below and zip-staging.js) and so flow through this module
+// like any other importable file. The rest of PowerPoint's neighbourhood -
+// Keynote, OpenDocument, the old "Show" variants - is not, and still says so.
+const UNSUPPORTED_PRESENTATION_EXTS = new Set(['.pps', '.ppsx', '.key', '.odp']);
 
 // Files that are never content, anywhere: OS droppings and Office lock files.
 const isJunk = (p) => {
@@ -75,6 +83,14 @@ const isJunk = (p) => {
 // category, or the planner library's kind. Null when that destination does
 // not take this type at all.
 function destinationFor(surface, ext) {
+  // Converted before it is ever written anywhere, so it lands exactly where
+  // an uploaded PDF already would - the same category (admin) or kind
+  // (planner) a .pdf gets, sized by that same limit.
+  if (pptxConvert.CONVERTIBLE_EXTS.has(ext)) {
+    return surface === 'admin'
+      ? { category: 'pdfs', maxBytes: content.CATEGORIES.pdfs.maxBytes }
+      : { category: 'pdf', maxBytes: library.MAX_UPLOAD_BYTES };
+  }
   if (surface === 'admin') {
     for (const [category, spec] of Object.entries(content.CATEGORIES)) {
       if (spec.extensions.includes(ext)) return { category, maxBytes: spec.maxBytes };
@@ -138,6 +154,9 @@ function classifyEntries(files, { surface, archiveName = 'Import' } = {}) {
       for (const m of members) claimed.add(m.path);
       items.push({
         id: id(), kind: 'webdeck', title: dir === '.' ? titleFrom(archiveName) : path.posix.basename(dir),
+        // The folder the deck lives in, so its files keep their layout under
+        // it when imported (stylesheets are linked by relative path).
+        root: dir,
         files: members.map((m) => m.path).sort(), size: members.reduce((s, m) => s + m.size, 0),
       });
     }
@@ -149,8 +168,8 @@ function classifyEntries(files, { surface, archiveName = 'Import' } = {}) {
     const ext = path.posix.extname(f.path).toLowerCase();
     if (f.encrypted) { skipped.push({ path: f.path, reason: 'It is password-protected, so it cannot be read.' }); continue; }
     if (ext === '.zip') { skipped.push({ path: f.path, reason: 'ZIPs inside a ZIP are not opened - upload that one on its own.' }); continue; }
-    if (POWERPOINT_EXTS.has(ext)) {
-      needsInput.push({ id: id(), paths: [f.path], reason: 'Presentation files are not converted yet. Export the slides as images or a PDF and upload those instead.' });
+    if (UNSUPPORTED_PRESENTATION_EXTS.has(ext)) {
+      needsInput.push({ id: id(), paths: [f.path], reason: 'This presentation format is not converted. Save it as .pptx, or export the slides as images or a PDF, and upload that instead.' });
       continue;
     }
     if (HTML_EXTS.has(ext) && surface === 'planner') {
@@ -201,6 +220,10 @@ function classifyEntries(files, { surface, archiveName = 'Import' } = {}) {
     if (new Set(numbers).size !== numbers.length) {
       // Slide3.png and Slide3.jpg: which one is slide 3 is not a guess to make.
       needsInput.push({ id: id(), paths: files, suggestedKind: 'imagedeck', title, reason: 'Some slide numbers appear more than once, so the order is not clear. Pick the files that belong, or import them as separate photos.' });
+      continue;
+    }
+    if (files.length > MAX_IMAGEDECK_SLIDES) {
+      needsInput.push({ id: id(), paths: files, title, reason: `A picture deck can have at most ${MAX_IMAGEDECK_SLIDES} slides; this one has ${files.length}. Split the folder and upload the parts separately.` });
       continue;
     }
     items.push({ id: id(), kind: 'imagedeck', title, files, size: members.reduce((s, m) => s + m.c.size, 0) });
@@ -279,6 +302,6 @@ async function inspectZip(file, { surface, archiveName, limits } = {}) {
 }
 
 module.exports = {
-  DEFAULT_UPLOAD_MB, MAX_UPLOAD_MB, MAX_FILES, MAX_DEPTH,
+  DEFAULT_UPLOAD_MB, MAX_UPLOAD_MB, MAX_FILES, MAX_DEPTH, MAX_IMAGEDECK_SLIDES,
   ZipLimitError, limitsFor, uploadMbSetting, classifyEntries, readEntries, inspectZip,
 };

@@ -124,8 +124,11 @@ export const PLAN_TYPES = {
       // plan asset has to survive traveling over the relay in one message.
       // Only shown when this Podium actually has a server with a library;
       // see serverUploadField in plan.js.
-      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.pdf,application/pdf',
-        hint: 'Stored on the server - works from any signed-in device, nothing to carry.' },
+      // Issue #107: a .ppt/.pptx is accepted here too, and converted to a
+      // PDF on the way in - the server upload route does the conversion,
+      // so this is the only planner-side change the feature needed.
+      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.pdf,.ppt,.pptx,application/pdf',
+        hint: 'Stored on the server - works from any signed-in device, nothing to carry. A PowerPoint file is converted to a PDF.' },
       { key: 'src', label: 'or a path or URL', kind: 'text', placeholder: 'content/handouts/ch4.pdf' },
       { key: 'page', label: 'Open at page', kind: 'number', def: 1, min: 1, max: 9999 },
     ],
@@ -205,6 +208,27 @@ export function emptyAutoLaunch() {
   };
 }
 
+// Which two panes picture-in-picture shows, and where the inset sits (Issue
+// #131) - the same four settings as state.pip on the display, applied when a
+// plan whose layout is 'pip' is loaded.
+const PANE_LETTERS = ['A', 'B', 'C', 'D'];
+export function emptyPip() {
+  return { main: 'A', inset: 'B', corner: 'tr', size: 20 };
+}
+function readPip(raw) {
+  const pip = emptyPip();
+  if (!raw || typeof raw !== 'object') return pip;
+  if (PANE_LETTERS.includes(raw.main)) pip.main = raw.main;
+  if (PANE_LETTERS.includes(raw.inset)) pip.inset = raw.inset;
+  // One pane cannot be both - keep the main pick and give the inset the
+  // first other letter, the same pair a fresh plan starts with.
+  if (pip.inset === pip.main) pip.inset = PANE_LETTERS.find((l) => l !== pip.main);
+  if (['tl', 'tr', 'bl', 'br'].includes(raw.corner)) pip.corner = raw.corner;
+  const size = Number(raw.size);
+  if (Number.isFinite(size)) pip.size = Math.min(50, Math.max(10, Math.round(size)));
+  return pip;
+}
+
 export function emptyPlan(title = 'Untitled lecture') {
   const now = Date.now();
   return {
@@ -218,6 +242,7 @@ export function emptyPlan(title = 'Untitled lecture') {
     created: now,
     updated: now,
     layout: 'single',
+    pip: emptyPip(),
     items: [],
     timers: [],
     assets: {},
@@ -230,7 +255,7 @@ export function emptyPlan(title = 'Untitled lecture') {
 export function newItem(type) {
   const spec = PLAN_TYPES[type];
   if (!spec) throw new Error(`unknown item type: ${type}`);
-  const item = { id: uid(8), type, title: '', note: '', durationMins: 0 };
+  const item = { id: uid(8), type, title: '', note: '', durationMins: 0, overlayCaption: '' };
   for (const field of spec.fields) {
     if (field.def !== undefined) item[field.key] = field.def;
   }
@@ -386,6 +411,13 @@ export function readPlan(raw) {
       title: str(raw2.title, 200),
       note: str(raw2.note, 2000),
       durationMins: num(raw2.durationMins ?? raw2.duration, 0, 0, 360),
+      // Issue #154: pre-written caption/audio-description text, shown on the
+      // same bar Live Captions (#79) uses while THIS item is what's live -
+      // see applyCommand's stage/take/set handling in protocol.js for when
+      // that actually happens. Cross-cutting like title/note above, not a
+      // per-type field, since any item can carry one regardless of what it
+      // shows.
+      overlayCaption: str(raw2.overlayCaption, 500),
     };
     for (const field of spec.fields) {
       const value = raw2[field.key];
@@ -511,7 +543,8 @@ export function readPlan(raw) {
     targetDuration: num(data.targetDuration, 50, 1, 360),
     created: Number(data.created) || Date.now(),
     updated: Number(data.updated) || Date.now(),
-    layout: ['single', '2h', '2v', '3', '4'].includes(data.layout) ? data.layout : 'single',
+    layout: ['single', '2h', '2v', '3', '4', 'pip'].includes(data.layout) ? data.layout : 'single',
+    pip: readPip(data.pip),
     items,
     timers,
     assets,

@@ -1471,6 +1471,148 @@ ok('and does nothing once the room is already live',
 await c.close();
 }
 
+if (want('the controller\'s own keyboard')) {
+console.log('\n-- the controller\'s own keyboard --');
+// Issue #138: the same bottom-dock action vocabulary (Take, Clear, Quick
+// whiteboard, Music, Timer - see executeSlotAction), tab cycling, and a
+// discoverable '?' card, for whoever is driving from an attached keyboard.
+const kc = await browser.newContext();
+await kc.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'keys-control', passphrase: 'a keyboard, not a mouse' }));
+const kScreen = await kc.newPage();
+trap(kScreen, 'keys control display');
+await kScreen.goto(`${BASE}/display.html`);
+await kScreen.click('#arm-button');
+await kScreen.waitForSelector('#hud[data-status="online"]');
+const kPad = await kc.newPage();
+trap(kPad, 'keys control pad');
+await kPad.goto(`${BASE}/control.html`);
+await kPad.waitForSelector('.tile');
+await kPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await kPad.keyboard.press('?');
+await kPad.waitForFunction(() => !document.querySelector('#keys').hidden, null, { timeout: 5000 });
+ok('? brings up the shortcut card', true);
+const cardText = await kPad.textContent('#keys');
+ok('and it lists the cueing keys', /TAKE/.test(cardText) && /Clear the cued preview/.test(cardText));
+ok('and the tab-cycling keys', /Previous \/ next tab/.test(cardText));
+await kPad.keyboard.press('Escape');
+await kPad.waitForFunction(() => document.querySelector('#keys').hidden, null, { timeout: 5000 });
+ok('Esc puts it away', true);
+
+// --- [ and ] cycle this device's own tab order -----------------------------
+const activeTab = () => kPad.$eval('.tab.is-on:not(#dual-pane-toggle)', (n) => n.dataset.tab);
+ok(`starts on the default first tab (${await activeTab()})`, (await activeTab()) === 'library');
+await kPad.keyboard.press(']');
+ok(`] moves to the next tab (${await activeTab()})`, (await activeTab()) === 'slides');
+await kPad.keyboard.press('[');
+await kPad.keyboard.press('[');
+ok(`[ steps back, wrapping past the start to the last tab (${await activeTab()})`, (await activeTab()) === 'polls');
+
+// Hiding a tab (Settings > Controller tabs) takes it out of the cycle too -
+// proving [ and ] read the live preference, not a fixed list.
+await kPad.evaluate(() => {
+  const saved = JSON.parse(localStorage.getItem('podium.presentation.v1') || '{}');
+  saved.hiddenTabs = ['slides'];
+  localStorage.setItem('podium.presentation.v1', JSON.stringify(saved));
+});
+await kPad.reload();
+await kPad.waitForSelector('.tile');
+await kPad.keyboard.press(']');
+ok(`with Slides hidden, ] skips straight past it (${await activeTab()})`, (await activeTab()) === 'now');
+await kPad.evaluate(() => {
+  const saved = JSON.parse(localStorage.getItem('podium.presentation.v1') || '{}');
+  saved.hiddenTabs = [];
+  localStorage.setItem('podium.presentation.v1', JSON.stringify(saved));
+});
+await kPad.reload();
+await kPad.waitForSelector('.tile');
+
+// --- W: the same quick whiteboard the bottom dock offers --------------------
+await kPad.keyboard.press('w');
+await kScreen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-whiteboard'), null, { timeout: 5000 });
+ok('W puts up a quick whiteboard, the same as the dock button', true);
+
+// --- T and C: TAKE and Clear, guarded the same way the dock buttons disable
+// themselves - nothing sent when nothing is cued ----------------------------
+const clickTile = (title) => kPad.click(`.tile:has(.tile-title:text-is("${title}"))`);
+await kPad.keyboard.press('f');
+await kScreen.waitForFunction(() => document.body.classList.contains('is-frozen'), null, { timeout: 5000 });
+await clickTile('Opening slide');
+await kPad.waitForFunction(() => document.querySelector('#preview-label')?.textContent === 'Cued', null, { timeout: 5000 });
+await kPad.keyboard.press('t');
+await kScreen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-text')
+  && !document.body.classList.contains('is-frozen'), null, { timeout: 5000 });
+ok('T takes the cued item live and releases freeze, the same as clicking TAKE', true);
+const liveAfterTake = await kScreen.$eval('.layer[data-role="program"]', (n) => n.innerHTML);
+await kPad.keyboard.press('t');
+await kPad.waitForTimeout(300);
+ok('and does nothing once nothing is cued any more - the screen never changed',
+  await kScreen.$eval('.layer[data-role="program"]', (n) => n.innerHTML) === liveAfterTake);
+
+await kPad.keyboard.press('f');
+await kScreen.waitForFunction(() => document.body.classList.contains('is-frozen'), null, { timeout: 5000 });
+const liveBeforeClear = await kScreen.$eval('.layer[data-role="program"]', (n) => n.innerHTML);
+await clickTile('Whiteboard');
+await kPad.waitForFunction(() => document.querySelector('#preview-label')?.textContent === 'Cued', null, { timeout: 5000 });
+await kPad.keyboard.press('c');
+await kPad.waitForFunction(() => document.querySelector('#preview-label')?.textContent !== 'Cued', null, { timeout: 5000 });
+ok('C clears the cue', await kPad.evaluate(() => !document.querySelector('#take').classList.contains('is-armed')));
+ok('without taking it - the screen never changed', await kScreen.$eval('.layer[data-role="program"]', (n) => n.innerHTML) === liveBeforeClear);
+ok('and freeze is still held, ready for another pick', await kScreen.evaluate(() => document.body.classList.contains('is-frozen')));
+await kPad.keyboard.press('f');
+await kScreen.waitForFunction(() => !document.body.classList.contains('is-frozen'), null, { timeout: 5000 });
+
+// --- Space: play/pause on something playable, not paging on something with
+// no pages -------------------------------------------------------------------
+await clickTile('Waiting music');
+await kScreen.waitForFunction(() => {
+  const a = document.querySelector('.layer[data-role="program"] audio');
+  return a && !a.paused && a.currentTime > 0.2;
+}, null, { timeout: 8000 });
+ok('picking an audio item plays it, same as ever', true);
+await kPad.keyboard.press(' ');
+await kScreen.waitForFunction(() => document.querySelector('.layer[data-role="program"] audio')?.paused, null, { timeout: 5000 });
+ok('Space pauses it, the same as the Play/Pause dock button', true);
+await kPad.keyboard.press(' ');
+await kScreen.waitForFunction(() => !document.querySelector('.layer[data-role="program"] audio')?.paused, null, { timeout: 5000 });
+ok('and Space again resumes it', true);
+
+// --- M and R: background music and the current timer, both guarded the same
+// way the dock buttons hide themselves with nothing to act on ---------------
+await kPad.keyboard.press('m');
+await kPad.waitForTimeout(300);
+ok('M does nothing with no background playlist loaded, same as the dock button staying hidden',
+  await kScreen.evaluate(() => !document.querySelector('audio#music') || document.querySelector('audio#music').paused));
+await kPad.click('.tab[data-tab="music"]');
+await kPad.click('#music-load');
+await kScreen.waitForFunction(() => {
+  const el = document.querySelector('audio#music');
+  return el && el.paused && (el.currentSrc || '').includes('waiting-music');
+}, null, { timeout: 15000 });
+await kPad.keyboard.press('m');
+await kScreen.waitForFunction(() => !document.querySelector('audio#music').paused, null, { timeout: 8000 });
+ok('once a playlist is loaded, M plays it', true);
+await kPad.keyboard.press('m');
+await kScreen.waitForFunction(() => document.querySelector('audio#music').paused, null, { timeout: 8000 });
+ok('and M again pauses it', true);
+
+await kPad.click('.tab[data-tab="timer"]');
+await kPad.fill('#timer-mins', '3');
+// fill() leaves the field focused, and a shortcut must not fire out of a
+// field the way B/F/P never have - so blur it first, same as a real hand
+// leaving the keyboard for the field and coming back to the keys.
+await kPad.click('.tab[data-tab="timer"]');
+await kPad.keyboard.press('r');
+await kPad.waitForFunction(() => document.querySelector('#timer-start')?.textContent === 'Pause', null, { timeout: 5000 });
+ok('R starts the current timer, the same as the Start/Pause button', true);
+await kPad.keyboard.press('r');
+await kPad.waitForFunction(() => document.querySelector('#timer-start')?.textContent === 'Resume', null, { timeout: 5000 });
+ok('and R again pauses it rather than starting a second one', true);
+
+await kc.close();
+}
+
 if (want('long presenter notes do not hijack the Slides tab scroll')) {
 console.log('\n-- long presenter notes do not hijack the Slides tab scroll --');
 // Issue #95: on an iPhone, a slide with a lot of presenter text pushed the
@@ -1795,6 +1937,77 @@ await screen.waitForSelector('#hud[data-status="online"]');
 await Promise.all([screen.waitForURL(/index\.html/), screen.keyboard.press('b')]);
 ok('and B does the same job on the display', /index\.html$/.test(screen.url()));
 await ctx.close();
+}
+
+if (want('kiosk mode: auto-arm on load')) {
+console.log('\n-- kiosk mode: auto-arm on load --');
+
+// Configured directly via localStorage, the same shortcut every other
+// section's room config uses - this is the auto-arm behaviour itself, not
+// the setup form (that gets its own check below).
+const kioskCtx = await browser.newContext();
+await kioskCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'kiosk-room', passphrase: 'nobody is here to click', kiosk: true }));
+
+const kiosk = await kioskCtx.newPage();
+trap(kiosk, 'kiosk display');
+await kiosk.goto(`${BASE}/display.html`);
+// No click on #arm-button anywhere in this section - that is the entire
+// point of the flag.
+await kiosk.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('a kiosk-flagged display arms itself with no click', await kiosk.isHidden('#arm'));
+ok('and is actually live, not just connected',
+  await kiosk.evaluate(() => document.body.classList.contains('is-live')));
+
+// The crash/reboot/power-flicker case: a fresh load with nobody there a
+// second time either does the same thing again.
+await kiosk.reload();
+await kiosk.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('and arms itself again on a fresh load, not just the first one',
+  await kiosk.isHidden('#arm'));
+await kioskCtx.close();
+
+// An ordinary display, same room shape, no kiosk flag: the control this
+// change must not remove.
+const ordinaryCtx = await browser.newContext();
+await ordinaryCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'not-a-kiosk', passphrase: 'still needs a click' }));
+const ordinary = await ordinaryCtx.newPage();
+trap(ordinary, 'ordinary display');
+await ordinary.goto(`${BASE}/display.html`);
+await ordinary.waitForSelector('#arm:not([hidden])');
+ok('an ordinary display still waits for the click',
+  !(await ordinary.evaluate(() => document.body.classList.contains('is-live'))));
+await ordinaryCtx.close();
+
+// The setup form itself: showSetup() previously skipped every boolean field
+// outright, so a checkbox there could never be populated OR read correctly
+// even once display.html grew one. Fill the form for real, check the box,
+// submit, and confirm the saved config actually carries kiosk: true (not a
+// checkbox's default "on" string) and that the very next load auto-arms
+// from it.
+const formCtx = await browser.newContext();
+const formPage = await formCtx.newPage();
+trap(formPage, 'kiosk setup form');
+await formPage.goto(`${BASE}/display.html`);
+await formPage.waitForSelector('#setup:not([hidden])');
+ok('the checkbox starts unchecked', !(await formPage.isChecked('#d-kiosk')));
+await formPage.selectOption('#d-transport', 'ws');
+await formPage.fill('#d-wu', `ws://127.0.0.1:${PORT}/podium`);
+await formPage.fill('#d-room', 'kiosk-from-form');
+await formPage.fill('#d-pass', 'set from the form itself');
+await formPage.check('#d-kiosk');
+await Promise.all([
+  formPage.waitForNavigation({ timeout: 20000 }),
+  formPage.click('#setup-form button[type="submit"]'),
+]);
+await formPage.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('checking Kiosk mode in the setup form saves it, and the next load auto-arms',
+  await formPage.isHidden('#arm'));
+const savedKiosk = await formPage.evaluate(() => JSON.parse(localStorage.getItem('podium.config.v2')).kiosk);
+ok(`and the saved config really has kiosk: true, not a stray checkbox string (${JSON.stringify(savedKiosk)})`,
+  savedKiosk === true);
+await formCtx.close();
 }
 
 reportErrors();

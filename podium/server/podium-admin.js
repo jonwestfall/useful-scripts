@@ -27,6 +27,7 @@ process.on('warning', (warning) => {
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const store = require('./store.js');
 const accounts = require('./accounts.js');
@@ -50,6 +51,7 @@ const USAGE = `podium-admin — accounts and courses for a server-backed Podium
   member remove <course-code> <username>
   sessions prune
   logs prune --days <n>
+  backup [--out <path>]
   system get <key>
   system set <key> <value>
   lectures list [--limit 20]
@@ -258,7 +260,7 @@ async function main(argv) {
       if (flags[flag] !== undefined) wanted[key] = flags[flag];
     }
     if (flags['new-passphrase']) {
-      wanted.passphrase = require('node:crypto').randomBytes(12).toString('base64url');
+      wanted.passphrase = crypto.randomBytes(12).toString('base64url');
     }
     if (!Object.keys(wanted).length) {
       say(`${course.code} has no settings stored`);
@@ -308,6 +310,49 @@ async function main(argv) {
     if (!days || days < 1) throw new Error('--days <n> is required and must be at least 1');
     const removed = accounts.pruneLogs(db, Date.now() - days * 24 * 60 * 60 * 1000);
     say(`removed ${removed} audit log(s) older than ${days} days`);
+    return 0;
+  }
+
+  // The same VACUUM INTO snapshot the admin page's own backup button takes
+  // (serveBackup in podium-server.js), reachable from a shell so a cron job
+  // can call it directly (Issue #160) - this is the database alone, not
+  // media or podium.env, same caveat the admin page's own button carries.
+  // deploy/backup.sh + podium-backup.timer already cover a full, scheduled,
+  // rotated archive of the whole data directory; this is the lighter one-
+  // file version for anyone who wants it on its own terms.
+  if (group === 'backup') {
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    let dest;
+    if (flags.out) {
+      const resolved = path.resolve(flags.out);
+      // A trailing slash says "a directory" even for one that does not exist
+      // yet - the only way to tell that apart from a bare new filename with
+      // no extension, which --out is just as entitled to be.
+      let isDir = flags.out.endsWith('/') || flags.out.endsWith(path.sep);
+      if (!isDir) {
+        try { isDir = fs.statSync(resolved).isDirectory(); } catch { /* does not exist - treated as the file path itself */ }
+      }
+      dest = isDir ? path.join(resolved, `podium-${stamp}.db`) : resolved;
+    } else {
+      dest = path.join(dataDir, 'backups', `podium-${stamp}.db`);
+    }
+    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+
+    // Written under a throwaway name first and renamed into place only once
+    // whole: VACUUM INTO refuses to overwrite an existing file outright, and
+    // a reader (or a naive `cp`) racing a partial write is exactly the
+    // failure mode a backup exists to not be part of.
+    const temp = `${dest}.partial-${crypto.randomBytes(6).toString('hex')}`;
+    try {
+      db.exec(`VACUUM INTO '${temp.replace(/'/g, "''")}'`);
+    } catch (err) {
+      try { fs.rmSync(temp, { force: true }); } catch { /* never written, or already gone */ }
+      throw new Error(`backup failed: ${err.message}`, { cause: err });
+    }
+    fs.renameSync(temp, dest);
+    const { size } = fs.statSync(dest);
+    accounts.logEvent(db, { action: 'backup_created', details: { bytes: size, path: dest } });
+    say(dest);
     return 0;
   }
 

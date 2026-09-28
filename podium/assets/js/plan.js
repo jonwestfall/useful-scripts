@@ -11,7 +11,7 @@
 import { $, $$, el, uid, guessItemFromUrl, wireDangerButton, servedBuild } from './util.js';
 import {
   PLAN_TYPES, emptyPlan, newItem, readPlan, planToJson, planFileName, planBytes,
-  itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, pruneAssets, emptyAutoLaunch,
+  itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, pruneAssets, emptyAutoLaunch, emptyPip,
   MAX_ASSET_CHARS, MAX_PLAN_BYTES,
 } from './planfile.js';
 import {
@@ -22,6 +22,7 @@ import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle } from './deck.js';
 import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS } from './protocol.js';
 import { mountSessionBadge, serverInfo } from './server.js';
+import { mountZipImport } from './zip-review.js';
 
 mountSessionBadge($('#session-badge'));
 
@@ -284,12 +285,20 @@ function renderTypePicker() {
     class: 'type-btn', type: 'button', title: spec.blurb,
     onclick: () => {
       const item = newItem(type);
-      // A countdown names one of the lecture's timers, so adding the first one
-      // has to bring a timer with it or the item is inert and the reason is
-      // two screens away.
+      // A countdown names one of the lecture's timers, so adding one brings
+      // its own fresh timer with it - not whichever one happened to be
+      // created first - or the item is inert and the reason is two screens
+      // away. Once every slot the room allows (MAX_TIMERS) is taken, there is
+      // nothing left to create, so this one has to share; the timer-pick
+      // field below asks which, rather than silently picking one.
       if (type === 'timer') {
-        if (!plan.timers.length) plan.timers.push({ id: uid(6), label: 'Countdown', mins: 5 });
-        item.timerId = plan.timers[0].id;
+        if (plan.timers.length < MAX_TIMERS) {
+          const timer = { id: uid(6), label: '', mins: 5 };
+          plan.timers.push(timer);
+          item.timerId = timer.id;
+        } else {
+          item.timerId = '';
+        }
       }
       const at = plan.items.findIndex((i) => i.id === selectedId);
       // Inserted after whatever is selected: you build a lecture by working
@@ -297,6 +306,7 @@ function renderTypePicker() {
       plan.items.splice(at < 0 ? plan.items.length : at + 1, 0, item);
       touch();
       select(item.id);
+      if (type === 'timer') renderTimers();
       renderAutoLaunch();
     },
   }, el('span', { class: 'type-icon' }, spec.icon), el('span', {}, spec.label))));
@@ -304,14 +314,39 @@ function renderTypePicker() {
 
 // --- timers ------------------------------------------------------------------
 
+// Refreshed everywhere a timer's name or length shows up somewhere other
+// than this list - the item chips in the running order, the item editor's
+// own timer-pick field, and the auto-launch panel's timer option.
+function afterTimerEdit() {
+  touch();
+  renderOrder();
+  renderEditor();
+  renderAutoLaunch();
+}
+
 function renderTimers() {
-  $('#timers').replaceChildren(...plan.timers.map((timer) => el('li', { class: 'timer-row' },
-    el('span', { class: 'grow' }, `${timer.label || 'Countdown'} · ${timer.mins}m`),
+  $('#timers').replaceChildren(...plan.timers.map((timer, i) => el('li', { class: 'timer-row' },
+    el('input', {
+      type: 'text', class: 'grow', value: timer.label, placeholder: `Timer ${i + 1}`,
+      'aria-label': `Name for timer ${i + 1}`,
+      oninput: (ev) => { timer.label = ev.target.value; afterTimerEdit(); },
+    }),
+    el('input', {
+      type: 'number', min: '1', max: '180', step: '1', style: 'width: 80px;',
+      value: String(timer.mins), 'aria-label': `Minutes for timer ${i + 1}`,
+      oninput: (ev) => {
+        const mins = Number(ev.target.value);
+        if (!Number.isFinite(mins) || mins < 1) return;
+        timer.mins = Math.min(180, Math.round(mins));
+        afterTimerEdit();
+      },
+    }),
     el('button', {
-      type: 'button', 'aria-label': `Remove ${timer.label || 'countdown'}`,
+      type: 'button', 'aria-label': `Remove ${timer.label || `timer ${i + 1}`}`,
       onclick: () => {
         plan.timers = plan.timers.filter((t) => t.id !== timer.id);
         pruneAutoLaunchTimer(timer.id);
+        pruneItemsForTimer(timer.id);
         touch();
         renderTimers();
         renderOrder();
@@ -320,6 +355,15 @@ function renderTimers() {
       },
     }, '×'))));
   if (!plan.timers.length) $('#timers').append(el('li', { class: 'empty' }, 'None yet — the iPad will show one unnamed countdown and the 1/2/5/10/15 buttons.'));
+}
+
+// A countdown item pointed at a timer that no longer exists is worse than
+// one asking again which to use - see the "Choose a timer…" placeholder in
+// fieldFor's timer-pick branch, which only shows once this is empty.
+function pruneItemsForTimer(timerId) {
+  for (const item of plan.items) {
+    if (item.type === 'timer' && item.timerId === timerId) item.timerId = '';
+  }
 }
 
 // --- the editor --------------------------------------------------------------
@@ -370,6 +414,16 @@ function renderEditor() {
     rows: '2', placeholder: 'Shown under this item on the iPad.',
     oninput: (ev) => { item.note = ev.target.value; afterEdit({ label: true }); },
   }, item.note || ''), 'Appears on the tile during class — “ask about the confound”, “only 3 minutes”.'));
+
+  // Issue #154: pre-written for whoever cannot hear the room or read the
+  // screen alone - a kiosk running unattended, or a live lecture between
+  // sentences. Rides the same bottom bar Live Captions (#79) already owns;
+  // see syncOverlayForProgram in protocol.js for exactly when it takes over.
+  fields.append(field('Caption', el('textarea', {
+    rows: '2', placeholder: 'Shown on the caption bar while this item is live.',
+    oninput: (ev) => { item.overlayCaption = ev.target.value; afterEdit({ label: true }); },
+  }, item.overlayCaption || ''),
+  'Optional. Pre-scripted captions or audio description for a kiosk display, or any lecture, between spoken words.'));
 
   renderPreview({ remount: true });
 }
@@ -472,10 +526,15 @@ function fieldFor(item, spec) {
       return field(spec.label, el('p', { class: 'hint stale-note' },
         'This lecture has no countdowns yet. Add one under Timers, below the running order.'));
     }
+    // No real answer to default to once the item's own timer is gone (the
+    // room is full of other timers, or its slot was deleted) - an honest
+    // placeholder asks, rather than quietly pointing at whichever is first.
+    const known = plan.timers.some((t) => t.id === item.timerId);
     return field(spec.label, el('select', { onchange: (ev) => set(ev.target.value, { remount: true, label: true }) },
+      ...(known ? [] : [el('option', { value: '', selected: true, disabled: true }, 'Choose a timer…')]),
       ...plan.timers.map((timer, i) => el('option', {
         value: timer.id,
-        selected: (item.timerId || plan.timers[0].id) === timer.id,
+        selected: known && item.timerId === timer.id,
       }, `${timer.label || `Timer ${i + 1}`} · ${timer.mins}m`))), spec.hint);
   }
   if (spec.kind === 'upload') return uploadField(item, spec);
@@ -571,6 +630,47 @@ function serverUploadField(item, spec) {
     },
   });
   return field(spec.label, el('div', {}, input, note));
+}
+
+// Issue #106: a ZIP of a lecture's materials, into the server library - and,
+// unless unticked, straight into this lecture's running order as well.
+function planItemFromLibrary(li) {
+  const type = { image: 'image', deck: 'deck', pdf: 'pdf', video: 'video', audio: 'audio', imagedeck: 'imagedeck' }[li.type];
+  if (!type) return null;
+  const item = newItem(type);
+  item.title = li.title;
+  if (type === 'imagedeck') item.images = (li.images || []).join('\n');
+  else item.src = li.src;
+  return item;
+}
+
+function mountPlanZipImport() {
+  $('#plan-zip-box').hidden = false;
+  let addToOrder = null;
+  mountZipImport($('#plan-zip'), {
+    surface: 'planner',
+    loadCourses: async () => {
+      const res = await fetch('/api/library', { credentials: 'same-origin' });
+      return res.ok ? (await res.json()).courses || [] : [];
+    },
+    defaultCourse: () => plan.course || '',
+    extraOptions: () => {
+      addToOrder = el('input', { type: 'checkbox', class: 'zip-add-order', checked: true });
+      return el('label', { class: 'check' }, addToOrder, ' Also add them to this lecture\u2019s running order');
+    },
+    onImported: (result) => {
+      if (!addToOrder?.checked) return;
+      // What was already in the library is still wanted in this lecture.
+      const found = [...result.imported, ...result.skipped].map((r) => r.item).filter(Boolean);
+      const items = found.map(planItemFromLibrary).filter(Boolean);
+      if (!items.length) return;
+      const at = plan.items.findIndex((i) => i.id === selectedId);
+      plan.items.splice(at < 0 ? plan.items.length : at + 1, 0, ...items);
+      touch();
+      renderOrder();
+      renderAutoLaunch();
+    },
+  });
 }
 
 function imageField(item, spec) {
@@ -732,7 +832,38 @@ function renderHeader() {
   const targetSelect = $('#plan-target-mins');
   if (targetSelect) targetSelect.value = String(plan.targetDuration || 50);
   $$('#plan-layout .layout-btn').forEach((b) => b.classList.toggle('is-on', b.dataset.layout === plan.layout));
+  renderPlanPip();
 }
+
+// Issue #131: which two panes a picture-in-picture plan starts with, and where
+// the inset sits. A plan saved before this existed has no pip yet.
+function renderPlanPip() {
+  const box = $('#plan-pip');
+  box.hidden = plan.layout !== 'pip';
+  if (box.hidden) return;
+  if (!plan.pip) plan.pip = emptyPip();
+  const letters = ['A', 'B', 'C', 'D'];
+  $('#plan-pip-main').replaceChildren(...letters.map((l) => el('option', { value: l, selected: l === plan.pip.main }, `Pane ${l}`)));
+  $('#plan-pip-inset').replaceChildren(...letters.filter((l) => l !== plan.pip.main)
+    .map((l) => el('option', { value: l, selected: l === plan.pip.inset }, `Pane ${l}`)));
+  $('#plan-pip-corner').value = plan.pip.corner;
+  $('#plan-pip-size').value = String(plan.pip.size);
+  $('#plan-pip-size-label').textContent = `${plan.pip.size}%`;
+}
+
+const setPlanPip = (change) => {
+  if (!plan.pip) plan.pip = emptyPip();
+  // Picking the pane already on the other side swaps the two - the same rule
+  // the controller's own PiP panel follows.
+  if (change.main && change.main === plan.pip.inset) plan.pip.inset = plan.pip.main;
+  Object.assign(plan.pip, change);
+  touch();
+  renderPlanPip();
+};
+$('#plan-pip-main').addEventListener('change', (ev) => setPlanPip({ main: ev.target.value }));
+$('#plan-pip-inset').addEventListener('change', (ev) => setPlanPip({ inset: ev.target.value }));
+$('#plan-pip-corner').addEventListener('change', (ev) => setPlanPip({ corner: ev.target.value }));
+$('#plan-pip-size').addEventListener('input', (ev) => setPlanPip({ size: Number(ev.target.value) }));
 
 $('#plan-target-mins')?.addEventListener('change', (ev) => {
   plan.targetDuration = Number(ev.target.value) || 50;
@@ -874,9 +1005,9 @@ function renderAutoLaunch() {
     const val = al.timer?.timerId || '';
     timerSelect.replaceChildren(
       el('option', { value: '' }, 'None'),
-      ...(plan.timers || []).map((t) => el('option', {
+      ...(plan.timers || []).map((t, i) => el('option', {
         value: t.id,
-      }, `⏱️ ${t.label ? `${t.label} (${t.mins}m)` : `${t.mins}m countdown`}`)),
+      }, `⏱️ ${t.label || `Timer ${i + 1}`} (${t.mins}m)`)),
     );
     timerSelect.value = (plan.timers || []).some((t) => t.id === val) ? val : '';
   }
@@ -1348,6 +1479,7 @@ serverInfo().then((info) => {
   if (info.features.includes('library')) {
     serverLibraryUpload = true;
     renderEditor();
+    mountPlanZipImport();
   }
   if (!info.features.includes('plans')) return;
   $('#plan-server').hidden = false;

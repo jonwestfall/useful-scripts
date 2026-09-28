@@ -15,6 +15,9 @@ import {
   spawn,
   execFileSync,
   writeImageFixture,
+  writeSlideFixtures,
+  writeMinimalPptxFixture,
+  SLIDE_COLOURS,
   freePort,
   PORT,
   BASE,
@@ -29,6 +32,7 @@ import {
   teardown,
   exitWithResult
 } from './harness.mjs';
+import { createZip } from '../../assets/js/zip.js';
 
 try {
 if (want('planning in the office, teaching from the plan')) {
@@ -277,8 +281,8 @@ fs.writeFileSync(autoPlanFile, JSON.stringify({
   layout: '2h',
   timers: [{ id: 't-intro', label: 'Intro Countdown', mins: 3 }],
   items: [
-    { id: 'i-welcome', type: 'text', title: 'Welcome sign', body: 'Welcome to Class' },
-    { id: 'i-note', type: 'text', title: 'Panel B note', body: 'Group work starts now' },
+    { id: 'i-welcome', type: 'text', title: 'Welcome sign', body: 'Welcome to Class', overlayCaption: 'Welcome, please find a seat' },
+    { id: 'i-note', type: 'text', title: 'Panel B note', body: 'Group work starts now', overlayCaption: 'Should never reach the caption bar' },
   ],
   autoLaunch: {
     enabled: true,
@@ -316,8 +320,113 @@ await pad.waitForFunction(() => {
 }, null, { timeout: 5000 });
 ok('the plan chose panel B to focus on load, not the default A (Issue #109)', true);
 
+// Issue #154: pre-scripted captions ride live with whichever item lands on
+// panel A - never panel B's, even though it carries one too.
+await screen.waitForFunction(() => {
+  const bar = document.querySelector('#overlay');
+  return bar?.classList.contains('is-on') && /Welcome, please find a seat/.test(bar.textContent);
+}, null, { timeout: 10000 });
+ok('the caption bar picks up panel A\'s own pre-scripted caption on auto-launch', true);
+ok('and not panel B\'s, even though it has one too',
+  !/Should never reach the caption bar/.test(await screen.textContent('#overlay')));
+
+// Issue #131: a plan can start in picture-in-picture, naming which pane fills
+// the screen, which is the inset, and where the inset sits - here all four
+// deliberately away from the defaults (A main, B inset, top right, 20%).
+const pipPlanFile = path.join(HERE, 'fixtures', 'e2e-autolaunch-pip.podium.json');
+fs.writeFileSync(pipPlanFile, JSON.stringify({
+  podium: 'plan',
+  v: 1,
+  title: 'PiP auto-launch demo',
+  layout: 'pip',
+  pip: { main: 'B', inset: 'A', corner: 'bl', size: 30 },
+  items: [
+    { id: 'i-cam', type: 'text', title: 'Inset', body: 'Small corner pane' },
+    { id: 'i-main', type: 'text', title: 'Main', body: 'Full screen pane' },
+  ],
+  autoLaunch: {
+    enabled: true,
+    initialState: 'live',
+    panes: {
+      A: { type: 'item', itemId: 'i-cam' },
+      B: { type: 'item', itemId: 'i-main' },
+    },
+  },
+}));
+await pad.setInputFiles('#plan-file', pipPlanFile);
+await pad.waitForFunction(() => document.querySelector('#library h3.group')?.textContent === 'PiP auto-launch demo', null, { timeout: 20000 });
+await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-pip')
+  && /Full screen pane/.test(document.querySelector('[data-panel="b"] .r-text')?.textContent || '')
+  && /Small corner pane/.test(document.querySelector('.layer[data-role="program"] .r-text')?.textContent || ''), null, { timeout: 15000 });
+ok('a plan saved in picture-in-picture starts the display in it (Issue #131)', true);
+const pipGeom = await screen.evaluate(() => {
+  const box = (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; };
+  return { stage: box(document.querySelector('#stage')), a: box(document.querySelector('[data-panel="a"]')), b: box(document.querySelector('[data-panel="b"]')) };
+});
+ok(`with the plan's pane B full screen (${pipGeom.b.w}x${pipGeom.b.h} vs stage ${pipGeom.stage.w}x${pipGeom.stage.h})`,
+  Math.abs(pipGeom.b.w - pipGeom.stage.w) < 2 && Math.abs(pipGeom.b.h - pipGeom.stage.h) < 2);
+ok(`and pane A as a ~30% inset in the bottom-left corner (${(pipGeom.a.w / pipGeom.stage.w * 100).toFixed(0)}% wide)`,
+  Math.abs(pipGeom.a.w / pipGeom.stage.w - 0.3) < 0.03
+  && pipGeom.a.x / pipGeom.stage.w < 0.08
+  && (pipGeom.stage.h - (pipGeom.a.y + pipGeom.a.h)) / pipGeom.stage.h < 0.08);
+
 await tablet.close();
 await room.close();
+}
+
+if (want('adding a Countdown item gives it its own timer, not a shared one')) {
+console.log('\n-- adding a Countdown item gives it its own timer, not a shared one --');
+// A lecture can hold up to four independent countdowns (MAX_TIMERS, see
+// protocol.js). Adding a Countdown item used to always point at whichever
+// timer was created first, so every item after the first one looked like it
+// had no real choice - "Countdown - 5m" was the only option in its picker.
+const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+const desk = await ctx.newPage();
+trap(desk, 'countdown plan');
+await desk.goto(`${BASE}/plan.html`);
+await desk.waitForSelector('#type-picker .type-btn');
+
+const addCountdown = () => desk.click('#type-picker .type-btn:has-text("Countdown")');
+const timerPickOptions = () => desk.$eval('#item-fields select', (sel) => [...sel.options].map((o) => o.textContent));
+
+await addCountdown();
+ok('the first Countdown item gets a real timer, not an inert placeholder',
+  (await desk.$$eval('#timers .timer-row', (n) => n.length)) === 1);
+ok('and its own picker shows that one timer to choose from ("' + (await timerPickOptions()).join('", "') + '")',
+  (await timerPickOptions()).length === 1);
+
+await addCountdown();
+ok('a second Countdown item brings its own second timer along, rather than reusing the first',
+  (await desk.$$eval('#timers .timer-row', (n) => n.length)) === 2);
+ok(`and its picker now offers a real choice between them (${(await timerPickOptions()).join(', ')})`,
+  (await timerPickOptions()).length === 2);
+
+await addCountdown();
+await addCountdown();
+ok('a lecture can build up to four independent countdowns this way',
+  (await desk.$$eval('#timers .timer-row', (n) => n.length)) === 4);
+
+await addCountdown();
+ok('a fifth Countdown item finds no free slot left, and asks which of the four to share rather than silently picking one',
+  (await timerPickOptions())[0] === 'Choose a timer…');
+
+// Naming and sizing a timer happens right there in the Timers list - it used
+// to be a static line, unrenamable and unresizable once created.
+await desk.fill('#timers .timer-row:nth-child(1) input[type=text]', 'Group work');
+await desk.fill('#timers .timer-row:nth-child(1) input[type=number]', '12');
+ok(`renaming and resizing a timer in place reaches every item's picker immediately (${(await timerPickOptions()).join(', ')})`,
+  (await timerPickOptions()).includes('Group work · 12m'));
+
+// Removing a timer a Countdown item was actually using leaves that item
+// honestly unassigned - not silently pointed at whatever is left. The very
+// first Countdown item above was assigned to the very first timer created,
+// still the first row in the Timers list (renaming does not reorder it).
+await desk.click('#timers .timer-row:nth-child(1) button');
+await desk.click('#order .order-row:first-child');
+ok('and its picker comes back asking again, rather than pointing at a timer that no longer exists',
+  (await timerPickOptions())[0] === 'Choose a timer…');
+
+await ctx.close();
 }
 
 if (want('audience polls: a room full of phones answering')) {
@@ -964,6 +1073,9 @@ console.log('\n-- signing in to a server with accounts --');
 const acctPort = await freePort();
 const acctBase = `http://127.0.0.1:${acctPort}`;
 const acctData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-data-'));
+// The admin ZIP import writes into the content folders; pointed somewhere
+// disposable so it never touches the repo's own content/.
+const acctContent = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-content-'));
 
 // The first account cannot come from a web form - a page that lets an
 // anonymous visitor make the first admin is a page that hands the box to
@@ -979,7 +1091,7 @@ const acctServer = spawn(process.execPath, ['podium-server.js'], {
   cwd: path.join(ROOT, 'server'),
   // AUTH_PASSWORD is set on purpose: accounts must win, and the Basic Auth
   // door must be shut while they do.
-  env: { ...process.env, PORT: String(acctPort), STATIC: '../', DATA_DIR: acctData, AUTH_PASSWORD: 'should-be-ignored' },
+  env: { ...process.env, PORT: String(acctPort), STATIC: '../', DATA_DIR: acctData, CONTENT_DIR: acctContent, AUTH_PASSWORD: 'should-be-ignored' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 acctServer.stderr.on('data', (d) => process.stderr.write(`[acct-server] ${d}`));
@@ -1740,6 +1852,22 @@ ok(`the page says what the box is holding (${(await desk.textContent('#storage-n
   /Library: 2 files/.test(await desk.textContent('#storage-note'))
   && /database:/.test(await desk.textContent('#storage-note')));
 
+// Issue #160: whether this particular box counts as "under pressure" varies
+// by environment (see store.diskPressure, unit-tested with numbers this test
+// controls in test/store.test.mjs) - what belongs in an end-to-end run is
+// that the page agrees with its own API response, whatever that happens to
+// say here.
+const held = await desk.evaluate(() => fetch('/api/storage', { credentials: 'same-origin' }).then((r) => r.json()));
+const bannerHidden = await desk.isHidden('#storage-pressure');
+const shouldShow = held.disk?.ok && held.disk.level !== 'ok';
+ok(`the disk-pressure banner matches what /api/storage actually reports (level: ${held.disk?.level})`,
+  bannerHidden === !shouldShow);
+if (shouldShow) {
+  const cls = (await desk.getAttribute('#storage-pressure', 'class')) || '';
+  ok(`and is marked bad only when the level actually is (class: "${cls}")`,
+    cls.includes('is-bad') === (held.disk.level === 'bad'));
+}
+
 const backup = desk.waitForEvent('download', { timeout: 30000 });
 await desk.click('#backup-go');
 const backupFile = await backup;
@@ -1780,6 +1908,33 @@ ok('a rejected rename reverts the field rather than leaving it looking saved', t
 await desk.unroute('**/api/lectures/*');
 expecting.lectureRenameForbidden = false;
 
+// --- Issue #144: bulk actions at the bottom of the Sessions tab -----------
+const allZip = desk.waitForEvent('download', { timeout: 30000 });
+await desk.click('#sess-download-all');
+const allZipFile = await allZip;
+ok(`downloading every session at once comes out as one zip (${allZipFile.suggestedFilename()})`,
+  /^podium-all-sessions-\d{4}-\d{2}-\d{2}.*\.zip$/.test(allZipFile.suggestedFilename()));
+
+// The one lecture here started moments ago, nowhere near 15 days old by any
+// real clock. Push Date.now() itself forward rather than waiting, so the age
+// math this exercises is the same code an actually-old session would hit.
+await desk.evaluate(() => {
+  const realNow = Date.now;
+  Date.now = () => realNow() + 30 * 24 * 60 * 60 * 1000;
+});
+await desk.fill('#sess-purge-days', '15');
+ok('the first click only arms the button - nothing is deleted yet',
+  await desk.evaluate(() => {
+    document.querySelector('#sess-purge-go').click();
+    return document.querySelector('#sess-purge-go').textContent.includes('Really delete');
+  }));
+await desk.click('#sess-purge-go');
+await desk.waitForFunction(() => /Removed 1 session/.test(document.querySelector('#sess-purge-note')?.textContent || ''),
+  null, { timeout: 8000 })
+  .then(() => ok('a second click removes what is older than the chosen number of days', true))
+  .catch(() => ok('a second click removes what is older than the chosen number of days', false));
+ok('and the row is gone from the list', await desk.evaluate(() => !document.querySelector('#sessions .admin-row')));
+
 await desk.close();
 await acctScreen.close();
 
@@ -1803,6 +1958,202 @@ const upgradeStatus = (cookie) => new Promise((resolve) => {
 ok(`the relay socket refuses a stranger who knows the room name (${await upgradeStatus('')})`,
   (await upgradeStatus('')) === 401);
 
+// --- Issue #106: a whole folder at once, reviewed before it is imported ---
+{
+  const slidePngs = writeSlideFixtures().map((rel) => fs.readFileSync(path.join(ROOT, rel)));
+  const zipFile = async (name, entries) => {
+    const file = path.join(acctData, name);
+    fs.writeFileSync(file, Buffer.from(await (await createZip(entries)).arrayBuffer()));
+    return file;
+  };
+
+  // The planner: into the server library, and this lecture's running order.
+  const pptxBytes = fs.readFileSync(await writeMinimalPptxFixture());
+  const lectureZip = await zipFile('Week 9.zip', [
+    ...slidePngs.map((data, i) => ({ name: `Memory/Slide${i + 1}.png`, data })),
+    // Not byte-identical to the sample.pdf uploaded above, which the import
+    // would rightly call "already in library".
+    { name: 'handout.pdf', data: Buffer.concat([fs.readFileSync(path.join(ROOT, 'content', 'sample.pdf')), Buffer.from('\n% zip import\n')]) },
+    // Issue #107: a real .pptx converts and imports like any other PDF now;
+    // .odp is not one of the formats this converts, so it is what still
+    // proves the "needs your input" path.
+    { name: 'Old deck.pptx', data: pptxBytes },
+    { name: 'Old talk.odp', data: 'not really an odp' },
+    { name: '__MACOSX/._Slide1.png', data: 'junk' },
+  ]);
+  const zipPlanner = await acctCtx.newPage();
+  trap(zipPlanner, 'zip planner');
+  await zipPlanner.goto(`${acctBase}/plan.html`);
+  await zipPlanner.waitForSelector('#plan-zip-box:not([hidden])', { timeout: 10000 });
+  ok('the planner offers a ZIP import once it knows there is a server library', true);
+  const orderBefore = await zipPlanner.$$eval('#order > li', (n) => n.length);
+  await zipPlanner.setInputFiles('#plan-zip .zip-file', lectureZip);
+  await zipPlanner.waitForSelector('#plan-zip .zip-review:not([hidden]) .zip-row', { timeout: 15000 });
+  const rows = await zipPlanner.$$eval('#plan-zip .zip-items .zip-row', (n) => n.map((r) => ({
+    kind: r.dataset.kind, title: r.querySelector('.zip-title').value, on: r.querySelector('input[type=checkbox]').checked,
+  })));
+  ok(`the review screen lists a picture deck, a PDF and a PowerPoint file - already shown as the PDF it will become (${rows.map((r) => `${r.kind}:${r.title}`).join(', ')})`,
+    rows.length === 3 && rows.some((r) => r.kind === 'imagedeck' && r.title === 'Memory')
+    && rows.filter((r) => r.kind === 'pdf').map((r) => r.title).sort().join() === 'Old deck,handout');
+  ok('and says the OpenDocument file needs a decision rather than dropping it',
+    /1 needs your input/.test(await zipPlanner.textContent('#plan-zip .zip-needs-head'))
+    && /not converted/.test(await zipPlanner.textContent('#plan-zip .zip-needs')));
+  ok('the course picker offers this account\'s course', (await zipPlanner.$$eval('#plan-zip .zip-course option', (o) => o.map((x) => x.value))).includes('psy415'));
+  const thumbLoaded = await zipPlanner.waitForFunction(() => {
+    const img = document.querySelector('#plan-zip .zip-row[data-kind="imagedeck"] img.zip-thumb');
+    return img?.complete && img.naturalWidth === 320;
+  }, null, { timeout: 10000 }).then(() => true, () => false);
+  ok('the deck shows a thumbnail of its first slide, read from the staged upload', thumbLoaded);
+  ok(`the button counts what will be imported ("${await zipPlanner.textContent('#plan-zip .zip-commit')}")`,
+    (await zipPlanner.textContent('#plan-zip .zip-commit')) === 'Import 3 items');
+  await zipPlanner.fill('#plan-zip .zip-row[data-kind="imagedeck"] .zip-title', 'Memory systems');
+  await zipPlanner.selectOption('#plan-zip .zip-course', 'psy415');
+  await zipPlanner.click('#plan-zip .zip-commit');
+  await zipPlanner.waitForSelector('#plan-zip .zip-result', { timeout: 30000 });
+  const importResultText = await zipPlanner.textContent('#plan-zip .zip-result');
+  ok(`importing reports what arrived (${importResultText.replace(/\s+/g, ' ').slice(0, 100)}…)`,
+    /Imported Memory systems/.test(importResultText) && /Imported handout/.test(importResultText));
+  // Whether the PowerPoint file actually converts depends on this machine
+  // having LibreOffice's Impress component installed, not just the bare
+  // `soffice` binary (see docs/vps.md) - a real conversion is proven,
+  // everywhere, by pptx-convert.test.mjs (which skips gracefully without
+  // it) and the deterministic failure path by zip-staging.test.mjs (which
+  // needs no LibreOffice at all). Here, on whatever machine this actually
+  // runs on, it is either a real success or a clean, reported failure -
+  // never silently dropped, and never something that crashes the import.
+  const pptxConverted = /Imported Old deck/.test(importResultText);
+  ok(pptxConverted ? 'and the PowerPoint file, actually converted rather than just renamed'
+    : 'or, without Impress installed here, fails cleanly and says so rather than crashing the whole import',
+  pptxConverted || /Failed: Old deck/.test(importResultText));
+  const importedCount = pptxConverted ? 3 : 2;
+  await zipPlanner.waitForFunction((n) => document.querySelectorAll('#order > li').length === n, orderBefore + importedCount, { timeout: 5000 });
+  ok(`and the ${importedCount} successfully imported item(s) join this lecture's running order`, true);
+  const libDeck = await zipPlanner.evaluate(async () => {
+    const { items } = await (await fetch('/api/library', { credentials: 'same-origin' })).json();
+    const deck = items.find((i) => i.type === 'imagedeck' && i.title === 'Memory systems');
+    if (!deck) return null;
+    const slide = await fetch(deck.images[0], { credentials: 'same-origin' });
+    return { course: deck.course, slides: deck.images.length, served: slide.status, type: slide.headers.get('content-type') };
+  });
+  ok(`the picture deck is in the library under the chosen course, its slides served (${JSON.stringify(libDeck)})`,
+    libDeck?.course === 'psy415' && libDeck.slides === 3 && libDeck.served === 200 && libDeck.type === 'image/png');
+  if (pptxConverted) {
+    const pptxItem = await zipPlanner.evaluate(async () => {
+      const { items } = await (await fetch('/api/library', { credentials: 'same-origin' })).json();
+      const item = items.find((i) => i.title === 'Old deck');
+      if (!item) return null;
+      const media = await fetch(item.src, { credentials: 'same-origin' });
+      const bytes = new Uint8Array(await media.arrayBuffer());
+      return { type: item.type, filename: item.filename, status: media.status, contentType: media.headers.get('content-type'), magic: String.fromCharCode(...bytes.slice(0, 5)) };
+    });
+    ok(`the PowerPoint file landed in the library as a real, served PDF, not the original bytes under a new name (${JSON.stringify(pptxItem)})`,
+      pptxItem?.type === 'pdf' && pptxItem.filename === 'Old deck.pdf' && pptxItem.status === 200 && pptxItem.contentType === 'application/pdf' && pptxItem.magic === '%PDF-');
+  }
+  await zipPlanner.click('#plan-zip .zip-done');
+
+  // And it plays: picked from the controller's Library, served from /media.
+  const zipScreen = await acctCtx.newPage();
+  trap(zipScreen, 'zip display');
+  await zipScreen.goto(`${acctBase}/display.html`);
+  await zipScreen.click('#arm-button');
+  await zipScreen.waitForSelector('#hud[data-status="online"]');
+  await pad.reload();
+  await pad.waitForSelector('#library .tile');
+  await pad.fill('#lib-filter', 'Memory systems');
+  await pad.click('#library .tile:not([hidden]):has(.tile-title:text-is("Memory systems"))');
+  const firstSlide = await zipScreen.waitForFunction((rgb) => {
+    const img = document.querySelector('.layer[data-role="program"] .r-image');
+    if (!img || !img.complete || !img.naturalWidth) return false;
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    c.getContext('2d').drawImage(img, 0, 0);
+    const px = c.getContext('2d').getImageData(c.width >> 1, c.height >> 1, 1, 1).data;
+    return Math.abs(px[0] - rgb[0]) < 12 && Math.abs(px[1] - rgb[1]) < 12 && Math.abs(px[2] - rgb[2]) < 12;
+  }, SLIDE_COLOURS[0], { timeout: 10000 }).then(() => true, () => false);
+  ok('the imported picture deck plays from the controller\'s Library, first slide first', firstSlide);
+  await pad.fill('#lib-filter', '');
+  await zipScreen.close();
+
+  // The same ZIP again: what is already there is said so, and left unticked -
+  // except the PowerPoint file, which is never hash-checked for this (see
+  // zip-staging.js's stage()) and so is offered again rather than flagged.
+  await zipPlanner.setInputFiles('#plan-zip .zip-file', lectureZip);
+  await zipPlanner.waitForSelector('#plan-zip .zip-review:not([hidden]) .zip-row', { timeout: 15000 });
+  const deckRow = '#plan-zip .zip-row[data-kind="imagedeck"]';
+  ok(`uploading it again flags the deck as already in the library ("${(await zipPlanner.textContent(`${deckRow} .zip-flag`)).trim()}")`,
+    /Already in library as “Memory systems”/.test(await zipPlanner.textContent(`${deckRow} .zip-flag`))
+    && !(await zipPlanner.isChecked(`${deckRow} input[type=checkbox]`)));
+  const pdfRows = await zipPlanner.$$eval('#plan-zip .zip-row[data-kind="pdf"]', (rows) => rows.map((r) => ({
+    title: r.querySelector('.zip-title').value, on: r.querySelector('input[type=checkbox]').checked,
+  })));
+  ok('but the PowerPoint file is offered again, a known gap rather than a silent duplicate',
+    pdfRows.find((r) => r.title === 'Old deck')?.on === true);
+  ok('so it is the only thing left to import', (await zipPlanner.textContent('#plan-zip .zip-commit')) === 'Import 1 item');
+  await zipPlanner.click('#plan-zip .zip-cancel');
+  ok('Cancel puts the upload button back', await zipPlanner.isVisible('#plan-zip .zip-pick'));
+  // The DELETE goes out after the screen resets, so give it a moment.
+  const stagedNow = () => (fs.existsSync(path.join(acctData, 'zip-staging')) ? fs.readdirSync(path.join(acctData, 'zip-staging')).length : 0);
+  for (let i = 0; i < 50 && stagedNow(); i++) await zipPlanner.waitForTimeout(100);
+  ok('and nothing is left staged on the server', stagedNow() === 0);
+  await zipPlanner.close();
+
+  // The admin page: into the content folders, with a clash numbered.
+  fs.mkdirSync(path.join(acctContent, 'photos'), { recursive: true });
+  fs.writeFileSync(path.join(acctContent, 'photos', 'campus.png'), 'already here');
+  const contentZip = await zipFile('Unit 4.zip', [
+    { name: 'campus.png', data: slidePngs[0] },
+    { name: 'Talk/index.html', data: '<link rel="stylesheet" href="css/talk.css"><h1>Talk</h1>' },
+    { name: 'Talk/css/talk.css', data: 'h1 { color: red; }' },
+    { name: 'Deck/Slide1.png', data: slidePngs[1] },
+    { name: 'Deck/Slide2.png', data: slidePngs[2] },
+  ]);
+  const zipDesk = await acctCtx.newPage();
+  trap(zipDesk, 'zip admin');
+  await zipDesk.goto(`${acctBase}/admin.html`);
+  await zipDesk.waitForSelector('#admin:not([hidden])');
+  await zipDesk.click('#tab-content');
+  await zipDesk.click('.content-subtab[data-pane="tab-pane-files"]');
+  await zipDesk.setInputFiles('#content-zip-import .zip-file', contentZip);
+  await zipDesk.waitForSelector('#content-zip-import .zip-review:not([hidden]) .zip-row', { timeout: 15000 });
+  const campusRow = '#content-zip-import .zip-row[data-kind="photo"]';
+  ok(`the admin review shows a taken name with its new number before import ("${(await zipDesk.textContent(`${campusRow} .zip-flag`)).trim()}")`,
+    /content\/photos\/campus-2\.png/.test(await zipDesk.textContent(`${campusRow} .zip-flag`)));
+  ok('an exported web deck is one row, not a stylesheet and a page',
+    (await zipDesk.$$eval('#content-zip-import .zip-row[data-kind="webdeck"]', (n) => n.length)) === 1);
+  // Split the picture deck into separate photos, to prove the choice is honoured.
+  await zipDesk.selectOption('#content-zip-import .zip-row[data-kind="imagedeck"] .zip-kind', 'photo');
+  ok(`splitting the deck into photos changes the count ("${await zipDesk.textContent('#content-zip-import .zip-commit')}")`,
+    (await zipDesk.textContent('#content-zip-import .zip-commit')) === 'Import 4 items');
+  await zipDesk.click('#content-zip-import .zip-commit');
+  await zipDesk.waitForSelector('#content-zip-import .zip-result', { timeout: 20000 });
+  ok('the clash was numbered, and the original left alone',
+    fs.readFileSync(path.join(acctContent, 'photos', 'campus.png'), 'utf8') === 'already here'
+    && fs.existsSync(path.join(acctContent, 'photos', 'campus-2.png')));
+  ok('the web deck kept its folder layout',
+    fs.existsSync(path.join(acctContent, 'slides', 'Talk', 'index.html')) && fs.existsSync(path.join(acctContent, 'slides', 'Talk', 'css', 'talk.css')));
+  ok('and the split deck became two photos',
+    fs.existsSync(path.join(acctContent, 'photos', 'Slide1.png')) && fs.existsSync(path.join(acctContent, 'photos', 'Slide2.png')));
+  const manifestItems = JSON.parse(fs.readFileSync(path.join(acctContent, 'manifest.json'), 'utf8')).items;
+  ok(`each import was added to the Library manifest under the ZIP's name (${manifestItems.map((i) => i.type).join(', ')})`,
+    manifestItems.length === 4 && manifestItems.every((i) => i.group === 'Unit 4'));
+  await zipDesk.click('.content-subtab[data-pane="tab-pane-manifest"]');
+  await zipDesk.waitForFunction(() => /Talk/.test(document.querySelector('#manifest-items-list')?.textContent || ''), null, { timeout: 5000 });
+  ok('and the manifest list on the page shows them without a reload', true);
+
+  // Only an administrator writes into the content folders.
+  // From here rather than a page: the 403 is the point, not console noise.
+  const taLogin = await fetch(`${acctBase}/api/login`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'ta', password: 'a good long password too' }),
+  });
+  const taCookie = (taLogin.headers.get('set-cookie') || '').split(';')[0];
+  const memberPost = (await fetch(`${acctBase}/api/import/zip?surface=admin&filename=x.zip`, {
+    method: 'POST', headers: { cookie: taCookie }, body: 'PK',
+  })).status;
+  ok(`a non-admin account cannot import into the content folders (${memberPost})`, memberPost === 403);
+  await zipDesk.close();
+}
+
 const signedInCookie = (await acctCtx.cookies())
   .filter((c) => c.name === 'podium_session').map((c) => `${c.name}=${c.value}`).join('; ');
 ok('the session cookie is HttpOnly, so no page script can read or leak it',
@@ -1820,10 +2171,91 @@ ok('signing out goes back to the login page', /login\.html/.test(pad.url()));
 ok('and the controller is behind the gate again',
   (await fetch(`${acctBase}/control.html`)).status === 401);
 
+// --- a controller's own mic, recorded to the session (Issue #147) ---------
+//
+// Its own fresh context and pages rather than reusing pad/acctCtx above,
+// which by this point in the section have been through a long run of
+// uploads, decks and camera use - not something worth risking a flaky mic
+// test on. A lecture with no course is still a record of its own teaching
+// (see the VISIBLE comment in lectures.js), so no course setup is needed.
+{
+const micCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await micCtx.grantPermissions(['microphone']);
+// So a chunk boundary shows up without waiting two real minutes for one -
+// see MIC_CHUNK_MS in control.js. Set before either page ever loads it.
+await micCtx.addInitScript(() => { window.__PODIUM_TEST_MIC_CHUNK_MS__ = 1500; });
+
+const micRoomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${acctPort}/podium`, room: 'mic-room', passphrase: 'say it loud' });
+await micCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), micRoomCfg);
+
+const micScreen = await micCtx.newPage();
+trap(micScreen, 'mic display');
+await micScreen.goto(`${acctBase}/display.html`);
+await micScreen.waitForSelector('#username');
+await micScreen.fill('#username', 'jon');
+await micScreen.fill('#password', 'a good long password');
+await Promise.all([micScreen.waitForURL(/display\.html/), micScreen.click('#go')]);
+await micScreen.click('#arm-button');
+await micScreen.waitForSelector('#hud[data-status="online"]');
+
+// Signing in on the display above already covers this whole context - one
+// cookie jar, shared by every page in it, same as a real person's browser.
+const micPad = await micCtx.newPage();
+trap(micPad, 'mic control');
+await micPad.goto(`${acctBase}/control.html`);
+await micPad.waitForSelector('.tile');
+await micPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Recording defaults ON (per device) - the opposite of Keep photos above,
+// which defaults off because a photo is usually somebody else's picture. A
+// presenter's own mic is exactly that: theirs.
+await micPad.click('.tab[data-tab="say"]');
+await micPad.waitForSelector('#mic-record-row:not([hidden])');
+ok('a server-backed controller offers to record its own mic to the session, on by default',
+  await micPad.isChecked('#mic-record'));
+
+await micPad.click('#mic-start');
+await micPad.waitForFunction(() => document.querySelector('#mic-status')?.textContent === 'Live', null, { timeout: 8000 });
+ok('starting it actually acquires the microphone', true);
+
+await pollUntil(micPad, async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  if (!lectures.length) return false;
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' })
+    .then((r) => r.json());
+  return (lecture.files || []).some((f) => f.kind === 'audio');
+}, null, { timeout: 15000 });
+ok('and a recorded segment reaches the session on its own - no export needed, unlike a photo', true);
+
+// Unchecking mid-recording stops it; the segment already in flight still
+// uploads, but no new one should start after this.
+await micPad.uncheck('#mic-record');
+const segmentsAtUncheck = await micPad.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' }).then((r) => r.json());
+  return (lecture.files || []).filter((f) => f.kind === 'audio').length;
+});
+await micPad.waitForTimeout(2000);
+const segmentsAfterWait = await micPad.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' }).then((r) => r.json());
+  return (lecture.files || []).filter((f) => f.kind === 'audio').length;
+});
+ok(`unchecking Record stops new segments from starting (${segmentsAtUncheck} then ${segmentsAfterWait}, at most one more in flight)`,
+  segmentsAfterWait <= segmentsAtUncheck + 1);
+
+await micPad.click('#mic-start');
+ok('stopping the mic leaves the button and status back where they started',
+  await micPad.textContent('#mic-status') === 'Off' && !(await micPad.evaluate(() => document.querySelector('#mic-start').classList.contains('is-on'))));
+
+await micCtx.close();
+}
+
 await acctCtx.close();
 acctServer.kill();
 await new Promise((resolve) => acctServer.on('exit', resolve));
 fs.rmSync(acctData, { recursive: true, force: true });
+fs.rmSync(acctContent, { recursive: true, force: true });
 }
 
 if (want('multiple displays and multiple controllers share one room')) {
@@ -2104,7 +2536,377 @@ await gControl.click('#take');
 await gDisplay.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-whiteboard'), null, { timeout: 5000 });
 ok('TAKE still works normally afterward - the guest device changed nothing about how freeze/cue behaves', true);
 
+// --- Play/Pause (Issue #161) -----------------------------------------------
+ok('disabled with nothing playable on screen (a whiteboard)', await gGuest.isDisabled('#guest-play-pause'));
+await gControl.click('.tile:has(.tile-title:text-is("Waiting music"))');
+await gDisplay.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] audio'), null, { timeout: 8000 });
+await gGuest.waitForFunction(() => !document.querySelector('#guest-play-pause')?.disabled, null, { timeout: 5000 });
+ok('enabled once something playable is on screen', true);
+ok('and reads Pause, since it is already playing', (await gGuest.textContent('#guest-play-pause')).includes('Pause'));
+await gGuest.click('#guest-play-pause');
+await gDisplay.waitForFunction(() => document.querySelector('.layer[data-role="program"] audio')?.paused, null, { timeout: 5000 });
+ok('Pause from the guest device actually pauses the projector', true);
+await gGuest.waitForFunction(() => document.querySelector('#guest-play-pause')?.textContent.includes('Play'), null, { timeout: 5000 });
+ok('and the button flips back to Play, reflecting real telemetry', true);
+await gGuest.click('#guest-play-pause');
+await gDisplay.waitForFunction(() => !document.querySelector('.layer[data-role="program"] audio')?.paused, null, { timeout: 5000 });
+ok('and Play from the guest device resumes it', true);
+
+// --- discovery links (Issue #161) ------------------------------------------
+await gControl.click('#open-settings');
+await gControl.waitForSelector('#setup:not([hidden])');
+ok('the controller\'s own Settings links to Guest (Simple Mode)',
+  await gControl.getAttribute('#setup a[href="guest.html"]', 'target') === '_blank');
+await gControl.click('#setup-close');
+
+const gHome = await gCtx.newPage();
+trap(gHome, 'guest landing page');
+await gHome.goto(`${BASE}/index.html`);
+await gHome.waitForSelector('#topbar-nav:not([hidden])');
+ok('the homepage lists Guest alongside the other surfaces',
+  await gHome.isVisible('#topbar-nav a[href="guest.html"]'));
+await gHome.close();
+
 await gCtx.close();
+}
+
+if (want('kiosk mode: no session recording')) {
+console.log('\n-- kiosk mode: no session recording --');
+// Its own server: /api/lectures gates on a signed-in user unconditionally
+// once a database exists (see the blanket `if (!user)` in api.js), even
+// before any account is created - so, unlike the auto-arm checks above,
+// this needs a real account and a real sign-in, same as the accounts
+// section earlier in this file.
+const kioskPort = await freePort();
+const kioskBase = `http://127.0.0.1:${kioskPort}`;
+const kioskData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-kiosk-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'kioskop', '--admin', '--name', 'Kiosk Operator', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: kioskData },
+  input: 'a kiosk needs an account too\n',
+});
+const kioskServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(kioskPort), STATIC: '../', DATA_DIR: kioskData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+kioskServer.stderr.on('data', (d) => process.stderr.write(`[kiosk-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('kiosk relay did not start')), 10000);
+  let log = '';
+  kioskServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  kioskServer.on('exit', (code) => reject(new Error(`kiosk relay exited with ${code}`)));
+});
+
+// One context, signed in once on a page that needs the account - every
+// later page opened in it (the kiosk display included) inherits the same
+// cookie, the same shortcut the accounts section above relies on.
+const kioskCtx = await browser.newContext();
+await kioskCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${kioskPort}/podium`, room: 'kiosk-hall', passphrase: 'signage, not a class', kiosk: true }));
+const kioskSignIn = await kioskCtx.newPage();
+trap(kioskSignIn, 'kiosk sign-in');
+await kioskSignIn.goto(`${kioskBase}/control.html`);
+await kioskSignIn.waitForSelector('#form');
+await kioskSignIn.fill('#username', 'kioskop');
+await kioskSignIn.fill('#password', 'a kiosk needs an account too');
+await Promise.all([kioskSignIn.waitForURL(/control\.html/), kioskSignIn.click('#go')]);
+await kioskSignIn.waitForSelector('#app:not([hidden])');
+await kioskSignIn.close();
+
+const kioskDisplay = await kioskCtx.newPage();
+trap(kioskDisplay, 'kiosk no-record display');
+await kioskDisplay.goto(`${kioskBase}/display.html`);
+await kioskDisplay.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('the kiosk display auto-armed on a server that keeps sessions', await kioskDisplay.isHidden('#arm'));
+
+// Real time on screen - something worth recording, if it were going to be.
+// noteSurface's own settle-then-flush window (RECORD_MIN_GAP_MS then
+// RECORD_FLUSH_MS in display.js) is a few seconds; this clears it either way.
+await kioskDisplay.waitForTimeout(3000);
+const kioskLectures = await kioskDisplay.evaluate(() => fetch('/api/lectures', { credentials: 'same-origin' })
+  .then((r) => r.json()).then((j) => j.lectures));
+ok(`a kiosk display going live never opens a lecture record (${kioskLectures.length} found)`,
+  kioskLectures.length === 0);
+
+// The contrast: an ordinary (non-kiosk) Go Live, signed in the same way on
+// the SAME server, DOES record one - proving the flag above is what
+// suppressed it, not something wrong with this particular server or
+// account.
+const ordinaryCtx = await browser.newContext();
+await ordinaryCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${kioskPort}/podium`, room: 'a-real-class', passphrase: 'this one is a lecture' }));
+const ordinarySignIn = await ordinaryCtx.newPage();
+trap(ordinarySignIn, 'kiosk-server ordinary sign-in');
+await ordinarySignIn.goto(`${kioskBase}/control.html`);
+await ordinarySignIn.waitForSelector('#form');
+await ordinarySignIn.fill('#username', 'kioskop');
+await ordinarySignIn.fill('#password', 'a kiosk needs an account too');
+await Promise.all([ordinarySignIn.waitForURL(/control\.html/), ordinarySignIn.click('#go')]);
+await ordinarySignIn.waitForSelector('#app:not([hidden])');
+await ordinarySignIn.close();
+
+const ordinaryDisplay = await ordinaryCtx.newPage();
+trap(ordinaryDisplay, 'kiosk-server ordinary display');
+await ordinaryDisplay.goto(`${kioskBase}/display.html`);
+await ordinaryDisplay.click('#arm-button');
+await ordinaryDisplay.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+await pollUntil(ordinaryDisplay, async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  return lectures.length > 0;
+}, null, { timeout: 15000 });
+const ordinaryLectures = await ordinaryDisplay.evaluate(() => fetch('/api/lectures', { credentials: 'same-origin' })
+  .then((r) => r.json()).then((j) => j.lectures));
+ok('while an ordinary Go Live on the same server does record one', ordinaryLectures.length === 1);
+
+await ordinaryCtx.close();
+await kioskCtx.close();
+kioskServer.kill();
+}
+
+if (want('kiosk profiles: admin-managed provisioning')) {
+console.log('\n-- kiosk profiles: admin-managed provisioning --');
+// Its own server, accounts included: this is the flow #151 actually added -
+// an administrator creates a kiosk profile from admin.html, a blank device
+// (no account, no cookie, nothing) redeems the QR/link it hands out, and
+// that device keeps working across a reload with no re-provisioning. Then
+// the stronger thing the kiosk-cookie design specifically bought over an
+// ordinary pairing link: revoking the profile locks that SAME
+// already-provisioned device out on its very next visit, not just future
+// ones (see kiosk_sessions' migration comment in store.js).
+const kpPort = await freePort();
+const kpBase = `http://127.0.0.1:${kpPort}`;
+const kpData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-kioskprofile-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'kioskadmin', '--admin', '--name', 'Kiosk Admin', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: kpData },
+  input: 'provisioning is not the same as pairing\n',
+});
+const kpServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(kpPort), STATIC: '../', DATA_DIR: kpData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+kpServer.stderr.on('data', (d) => process.stderr.write(`[kiosk-profile-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('kiosk-profile relay did not start')), 10000);
+  let log = '';
+  kpServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  kpServer.on('exit', (code) => reject(new Error(`kiosk-profile relay exited with ${code}`)));
+});
+
+// control.js's own startup wants a config in localStorage before it will
+// finish initializing (every other section that signs in here seeds one the
+// same way) - this admin never actually uses it, since the whole visit is to
+// admin.html, not this room.
+const kpAdminCtx = await browser.newContext();
+await kpAdminCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${kpPort}/podium`, room: 'kp-admin-desk', passphrase: 'not actually used' }));
+const kpSignIn = await kpAdminCtx.newPage();
+trap(kpSignIn, 'kiosk-profile admin sign-in');
+await kpSignIn.goto(`${kpBase}/control.html`);
+await kpSignIn.waitForSelector('#form');
+await kpSignIn.fill('#username', 'kioskadmin');
+await kpSignIn.fill('#password', 'provisioning is not the same as pairing');
+await Promise.all([kpSignIn.waitForURL(/control\.html/), kpSignIn.click('#go')]);
+await kpSignIn.waitForSelector('#app:not([hidden])');
+await kpSignIn.close();
+
+const kpDesk = await kpAdminCtx.newPage();
+trap(kpDesk, 'kiosk-profile admin');
+await kpDesk.goto(`${kpBase}/admin.html`);
+await kpDesk.waitForSelector('#admin:not([hidden])');
+await kpDesk.click('#tab-kiosks');
+await kpDesk.waitForSelector('#panel-kiosks:not([hidden])');
+ok('the Kiosks tab is offered to an administrator', await kpDesk.isVisible('#new-kiosk-go'));
+
+await kpDesk.fill('#new-kiosk-name', 'Lobby screen');
+await kpDesk.fill('#new-kiosk-room', 'lobby-kiosk');
+await kpDesk.fill('#new-kiosk-wu', `ws://127.0.0.1:${kpPort}/podium`);
+await kpDesk.click('#new-kiosk-go');
+await kpDesk.waitForSelector('#kiosks .admin-title:has-text("Lobby screen")');
+ok('creating it opens its settings right away, provisioning link included',
+  await kpDesk.isVisible('#kiosks .hint.mono'));
+
+const provisionUrl = (await kpDesk.textContent('#kiosks .hint.mono')).trim();
+ok(`the provisioning link redeems straight through the API, not room/passphrase sitting in a URL (${provisionUrl.replace(/^https?:\/\/[^/]+/, '')})`,
+  /\/api\/kiosks\/provision\//.test(provisionUrl) && !provisionUrl.includes('passphrase'));
+
+// A device that has never been near this server: no account, no cookie, no
+// stored config - all it has is the link above, same as scanning a QR cold.
+// Navigating it hits the redemption route directly, which mints the cookie
+// and redirects on to display.html - never the other way around, since
+// display.html itself stays behind gate() even for a kiosk.
+const deviceCtx = await browser.newContext();
+const device = await deviceCtx.newPage();
+trap(device, 'kiosk device, first boot');
+// installOfflineShell()'s service worker (Issue #130) warms every page in
+// the app shell on install, control.html/admin.html/plan.html included, with
+// no idea a kiosk cookie is narrower than a signed-in user's - those few
+// warm() calls 401 harmlessly (nothing here ever reads their result) but the
+// browser logs each one regardless. See KIOSK_OFFSCOPE_WARM in harness.mjs.
+expecting.kioskOffscopeWarm = true;
+await device.goto(provisionUrl);
+await device.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('redeeming the link lands on display.html and auto-arms with no prompt',
+  new URL(device.url()).pathname === '/display.html' && await device.isHidden('#arm'));
+
+const cookiesAfterProvision = await deviceCtx.cookies(kpBase);
+ok('provisioning issued the device its own kiosk cookie, separate from a user session',
+  cookiesAfterProvision.some((c) => c.name === 'podium_kiosk' && c.httpOnly));
+
+await device.goto(`${kpBase}/display.html`);
+await device.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+expecting.kioskOffscopeWarm = false;
+ok('a later reload with no token in the URL still gets in - the cookie is what is carrying it now, not the one-time link',
+  await device.isHidden('#arm') && new URL(device.url()).pathname === '/display.html');
+
+// Issue #155: the same poll that just proved the cookie works (the reload
+// above) is what a real device's own heartbeat rides - reloading the admin
+// list should now say so, instead of "never provisioned".
+await kpDesk.goto(`${kpBase}/admin.html`);
+await kpDesk.waitForSelector('#admin:not([hidden])');
+await kpDesk.click('#tab-kiosks');
+await kpDesk.waitForSelector('#kiosks .admin-title:has-text("Lobby screen")');
+ok('a provisioned device\'s own poll shows up as "last seen" in the admin list',
+  /last seen/.test(await kpDesk.textContent('#kiosks')) && !/never provisioned/.test(await kpDesk.textContent('#kiosks')));
+
+// Revoke, from the same admin session used to create it.
+await kpDesk.click('#kiosks button:has-text("Revoke")');
+await kpDesk.waitForSelector('#kiosks button:has-text("Un-revoke")');
+ok('the profile stays listed as revoked, not removed', await kpDesk.textContent('#kiosks .admin-meta') !== null
+  && (await kpDesk.textContent('#kiosks .admin-meta')).includes('revoked'));
+
+await device.goto(`${kpBase}/display.html`);
+await device.waitForSelector('#form', { timeout: 10000 });
+ok(`revoking kicks that already-provisioned device to sign-in on its very next visit, not just future links (${new URL(device.url()).pathname})`,
+  new URL(device.url()).pathname === '/login.html');
+
+await device.close();
+await deviceCtx.close();
+await kpAdminCtx.close();
+kpServer.kill();
+}
+
+if (want('kiosk profiles: scheduled programming')) {
+console.log('\n-- kiosk profiles: scheduled programming --');
+// Its own server, same shape as the provisioning section above. This one
+// proves the harder half of #152: a kiosk with nobody running control.js
+// still loads and drives a real plan on its own (Issue #152's real
+// prerequisite), and a schedule entry covering the current moment overrides
+// its default plan without a controller or a reload forcing it.
+const spPort = await freePort();
+const spBase = `http://127.0.0.1:${spPort}`;
+const spData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-kioskschedule-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'scheduleadmin', '--admin', '--name', 'Schedule Admin', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: spData },
+  input: 'a schedule is not a controller\n',
+});
+const spServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(spPort), STATIC: '../', DATA_DIR: spData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+spServer.stderr.on('data', (d) => process.stderr.write(`[kiosk-schedule-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('kiosk-schedule relay did not start')), 10000);
+  let log = '';
+  spServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  spServer.on('exit', (code) => reject(new Error(`kiosk-schedule relay exited with ${code}`)));
+});
+
+const spAdminCtx = await browser.newContext();
+await spAdminCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${spPort}/podium`, room: 'sp-admin-desk', passphrase: 'not actually used' }));
+const spSignIn = await spAdminCtx.newPage();
+trap(spSignIn, 'kiosk-schedule admin sign-in');
+await spSignIn.goto(`${spBase}/control.html`);
+await spSignIn.waitForSelector('#form');
+await spSignIn.fill('#username', 'scheduleadmin');
+await spSignIn.fill('#password', 'a schedule is not a controller');
+await Promise.all([spSignIn.waitForURL(/control\.html/), spSignIn.click('#go')]);
+await spSignIn.waitForSelector('#app:not([hidden])');
+
+// Two plans, straight into the server library with no course and no file
+// upload - a signed-in admin's own fetch is all POST /api/plans needs.
+const dayPlanDoc = {
+  podium: 'plan', v: 1, title: 'Daytime announcements', layout: 'single',
+  items: [{ id: 'i-day', type: 'text', title: 'Day', body: 'Open during the day' }],
+  autoLaunch: { enabled: true, initialState: 'live', activePane: 'A', panes: { A: { type: 'item', itemId: 'i-day' } } },
+};
+const eventPlanDoc = {
+  podium: 'plan', v: 1, title: 'Evening event', layout: 'single',
+  items: [{ id: 'i-evening', type: 'text', title: 'Evening', body: 'Evening event starts now' }],
+  autoLaunch: { enabled: true, initialState: 'live', activePane: 'A', panes: { A: { type: 'item', itemId: 'i-evening' } } },
+};
+const { id: dayPlanId } = await spSignIn.evaluate((doc) => fetch('/api/plans', {
+  method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ title: doc.title, doc }),
+}).then((r) => r.json()).then((j) => j.plan), dayPlanDoc);
+const { id: eventPlanId } = await spSignIn.evaluate((doc) => fetch('/api/plans', {
+  method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ title: doc.title, doc }),
+}).then((r) => r.json()).then((j) => j.plan), eventPlanDoc);
+await spSignIn.close();
+
+const spDesk = await spAdminCtx.newPage();
+trap(spDesk, 'kiosk-schedule admin');
+await spDesk.goto(`${spBase}/admin.html`);
+await spDesk.waitForSelector('#admin:not([hidden])');
+await spDesk.click('#tab-kiosks');
+await spDesk.waitForSelector('#panel-kiosks:not([hidden])');
+await spDesk.fill('#new-kiosk-name', 'Hallway sign');
+await spDesk.fill('#new-kiosk-room', 'hallway-kiosk');
+await spDesk.fill('#new-kiosk-wu', `ws://127.0.0.1:${spPort}/podium`);
+await spDesk.click('#new-kiosk-go');
+await spDesk.waitForSelector('#kiosks .admin-title:has-text("Hallway sign")');
+// The default plan, set through the same "Should be showing" picker the
+// kiosk profile section already covers - here just so there is a fallback
+// to prove the schedule overrides.
+const kioskId = await spDesk.evaluate(() => fetch('/api/kiosks', { credentials: 'same-origin' })
+  .then((r) => r.json()).then((j) => j.kiosks.find((k) => k.name === 'Hallway sign').id));
+await spDesk.locator('#kiosks label:has-text("Should be showing") select').selectOption(String(dayPlanId));
+await spDesk.waitForTimeout(500);
+
+const spProvisionUrl = (await spDesk.textContent('#kiosks .hint.mono')).trim();
+
+const spDeviceCtx = await browser.newContext();
+const spDevice = await spDeviceCtx.newPage();
+trap(spDevice, 'kiosk device: scheduled programming');
+expecting.kioskOffscopeWarm = true;
+await spDevice.goto(spProvisionUrl);
+await spDevice.waitForFunction(() => {
+  const t = document.querySelector('.layer[data-role="program"] .r-text');
+  return t && /Open during the day/.test(t.textContent);
+}, null, { timeout: 15000 });
+expecting.kioskOffscopeWarm = false;
+ok('a kiosk with nobody running control.js loads and drives its default plan on its own', true);
+
+// Now give it a schedule that covers the current moment with a different
+// plan, and force the poll it would otherwise wait up to a minute for (see
+// KIOSK_SCHEDULE_POLL_MS's own comment in display.js).
+const now = new Date();
+const nowMin = now.getHours() * 60 + now.getMinutes();
+const startMin = Math.max(0, nowMin - 5);
+const endMin = Math.min(1439, nowMin + 30);
+await spDesk.evaluate(({ id, day, startMin, endMin, planId }) => fetch(`/api/kiosks/${id}`, {
+  method: 'PATCH', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ schedule: [{ day, startMin, endMin, planId }] }),
+}), { id: kioskId, day: now.getDay(), startMin, endMin, planId: eventPlanId });
+
+await spDevice.evaluate(() => window.__podiumCheckKioskSchedule());
+await spDevice.waitForFunction(() => {
+  const t = document.querySelector('.layer[data-role="program"] .r-text');
+  return t && /Evening event starts now/.test(t.textContent);
+}, null, { timeout: 15000 });
+ok('a schedule window covering right now switches the display to a different plan, with no reload and no controller',
+  true);
+
+await spDevice.close();
+await spDeviceCtx.close();
+await spAdminCtx.close();
+spServer.kill();
 }
 
 reportErrors();
