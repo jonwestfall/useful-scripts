@@ -68,12 +68,16 @@ async function fromFile() {
  * behaving exactly as it always has.
  *
  * Asked only when the capabilities probe says the feature is there, so a
- * static host is never sent a request that would 404.
+ * static host is never sent a request that would 404 - and only when it also
+ * says somebody is signed in: the route behind this needs a real account
+ * whenever there is a database at all (Issue #151's kiosk device is exactly
+ * this case, with only its own cookie and no account), so asking anyway
+ * would just trade one console 401 for the 404 this already avoids.
  */
 async function fromServer() {
   try {
     const info = await serverInfo();
-    if (!info.features.includes('settings')) return [];
+    if (!info.features.includes('settings') || !info.user) return [];
     const res = await fetch('/api/settings', { credentials: 'same-origin' });
     if (!res.ok) return [];
     const { courses } = await res.json();
@@ -99,6 +103,34 @@ function fromHash() {
   return out;
 }
 
+/**
+ * A device already carrying a kiosk cookie (Issue #151) asking what it is.
+ * The provisioning link itself (see admin.js's provisionUrl) never lands
+ * here at all - it goes straight to /api/kiosks/provision/:token, which
+ * mints that cookie and redirects to display.html, so by the time this file
+ * ever runs on a kiosk the cookie already exists.
+ *
+ * The real cookie is HttpOnly, on purpose - this file has no business
+ * reading it. podium_kiosk_hint is what stands in for it here: a second,
+ * secret-free cookie the server sets and slides alongside the real one
+ * (see setKioskCookies in server/api.js) purely so this can tell "worth
+ * asking" from "definitely not a kiosk" without a round trip. Skipping the
+ * fetch when it is absent is what keeps every ordinary signed-in load of
+ * display.html - ordinary users load it too - from 404ing this on every
+ * single visit.
+ */
+async function fromKioskSession() {
+  if (!/(?:^|; )podium_kiosk_hint=1(?:;|$)/.test(document.cookie)) return {};
+  try {
+    const res = await fetch('/api/kiosks/session-config', { credentials: 'same-origin' });
+    if (!res.ok) return {};
+    const { config } = await res.json();
+    return config && typeof config === 'object' ? config : {};
+  } catch {
+    return {};
+  }
+}
+
 function clean(obj) {
   const out = {};
   for (const k of KEYS) if (obj[k] !== undefined && obj[k] !== '') out[k] = obj[k];
@@ -106,7 +138,7 @@ function clean(obj) {
 }
 
 export async function loadConfig() {
-  const [file, courses] = await Promise.all([fromFile(), fromServer()]);
+  const [file, courses, kioskSession] = await Promise.all([fromFile(), fromServer(), fromKioskSession()]);
   // Exactly one course's settings are adopted without asking: that is the
   // "log in and go" case, and there is nothing to choose between. Several and
   // nothing is adopted - the setup form shows them as buttons instead (see
@@ -121,6 +153,10 @@ export async function loadConfig() {
     ...clean(fromCourse),
     ...clean(stored),
     ...clean(fromHash()),
+    // Last, and unconditional the same way scanning any pairing link already
+    // is: a kiosk profile's whole point is one scan fully configures the
+    // device, overriding whatever was there before on purpose.
+    ...clean(kioskSession),
   };
   // Carried for the setup form, never stored: clean() drops it on the way to
   // localStorage, the same as `generated` below.
@@ -151,6 +187,11 @@ export async function loadConfig() {
     saveConfig(cfg);
     history.replaceState(null, '', location.pathname + location.search);
   }
+  // A kiosk's settings the same way: stored so a reboot with no network (and
+  // so no fromKioskSession answer) still has the last-known config to fall
+  // back on, the same reasoning as `adopting` above - offline is the one
+  // case this file exists to survive.
+  if (Object.keys(clean(kioskSession)).length) saveConfig(cfg);
   return cfg;
 }
 

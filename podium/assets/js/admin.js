@@ -1219,6 +1219,245 @@ function downloadBackup() {
   setTimeout(() => { $('#backup-note').textContent = ''; }, 6000);
 }
 
+// --- kiosks: unattended signage (Issue #151) -----------------------------------
+//
+// A kiosk profile is a room set aside for a display nobody is running. What
+// makes it a KIOSK rather than just another course room is the provisioning
+// link: unlike every other pairing QR in Podium, which bakes the room and
+// passphrase straight into the URL with no server involved at all (see
+// pairingUrl in config.js), this one carries a one-time token that a blank
+// device's browser redeems by navigating straight to it - see
+// /api/kiosks/provision/:token in server/api.js, which mints the device its
+// own long-lived cookie and only then sends it on to display.html. That
+// round trip, and the cookie it leaves behind, is the whole point: it is
+// what lets revoking a profile stop not just a leaked or retired link, but a
+// device that has already been running for months, on the very next thing
+// it asks for - not just future provisioning, the device itself. The
+// passphrase never sits in a URL for even one request, unlike a hash would.
+
+let kiosksList = [];
+let kioskPlans = [];
+let openKiosk = null;
+
+function sayKiosks(text, bad = false) {
+  const note = $('#kiosks-note');
+  note.textContent = text;
+  note.classList.toggle('is-bad', bad);
+}
+
+async function kioskApi(path, options = {}) {
+  const res = await fetch(`/api/kiosks${path}`, {
+    credentials: 'same-origin',
+    headers: options.body ? { 'content-type': 'application/json' } : undefined,
+    ...options,
+  });
+  const answer = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(answer.error || 'that did not work');
+  return answer;
+}
+
+// Same alphabet and the same crypto.getRandomValues source renderCourseSettings'
+// own rotate button already uses - a kiosk's passphrase deserves no less
+// randomness than a course's, and matching it exactly means one thing to
+// audit instead of two.
+function randomSecret(length) {
+  return [...crypto.getRandomValues(new Uint8Array(length))]
+    .map((n) => 'abcdefghijkmnopqrstuvwxyz23456789'[n % 33]).join('');
+}
+
+// Straight to the redemption route itself, not display.html - that route is
+// what mints the device's kiosk cookie and only then redirects it on to
+// display.html (see the comment on this route in server/api.js for why the
+// order has to be that way around: display.html stays behind gate() for a
+// kiosk too, so nothing served from it can run before the cookie exists).
+function provisionUrl(token) {
+  return new URL(`api/kiosks/provision/${encodeURIComponent(token)}`, location.href).toString();
+}
+
+const KIOSK_SETTING_FIELDS = [
+  ['transport', 'Connection', 'ws / mqtt / supabase'],
+  ['room', 'Room', 'lobby-kiosk'],
+  ['passphrase', 'Passphrase', ''],
+  ['wsUrl', 'WebSocket URL', 'wss://podium.example.com/podium'],
+  ['mqttUrl', 'Broker URL', ''],
+  ['supabaseUrl', 'Supabase URL', ''],
+  ['supabaseKey', 'Supabase key', ''],
+];
+
+function planOption(plan) {
+  return el('option', { value: String(plan.id) }, `${plan.title}${plan.course ? ` (${plan.course})` : ''}`);
+}
+
+function renderKioskQr(kiosk) {
+  const box = el('div', { style: 'text-align:center' });
+  const url = provisionUrl(kiosk.provisionToken);
+  const holder = el('div');
+  if (typeof window.qrcode === 'function') {
+    const qr = window.qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    holder.innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2, scalable: true });
+    holder.style.maxWidth = '180px';
+    holder.style.margin = '0 auto';
+  }
+  box.append(
+    holder,
+    el('p', { class: 'hint mono', style: 'word-break:break-all' }, url),
+    el('p', { class: 'hint' }, 'Open this on the device itself, or scan it - one visit configures it as this kiosk and nothing else needs typing.'),
+  );
+  return box;
+}
+
+function renderKioskSettings(kiosk) {
+  const form = el('div', { class: 'admin-form' });
+  for (const [key, label, placeholder] of KIOSK_SETTING_FIELDS) {
+    form.append(el('label', { class: 'field' },
+      el('span', {}, label),
+      el('input', {
+        type: 'text', 'data-setting': key, value: kiosk.settings[key] || '',
+        placeholder, autocomplete: 'off', spellcheck: 'false',
+      })));
+  }
+  const planPick = el('select', {}, el('option', { value: '' }, 'Nothing assigned yet'), ...kioskPlans.map(planOption));
+  planPick.value = kiosk.planId ? String(kiosk.planId) : '';
+  const status = el('span', { class: 'hint', role: 'status' });
+
+  async function saveKiosk(savingText, savedText, extra = {}) {
+    const wanted = {};
+    for (const input of form.querySelectorAll('[data-setting]')) {
+      if (input.value.trim()) wanted[input.dataset.setting] = input.value.trim();
+    }
+    save.disabled = true;
+    rotate.disabled = true;
+    status.textContent = savingText;
+    try {
+      await kioskApi(`/${kiosk.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ settings: wanted, planId: planPick.value ? Number(planPick.value) : null, ...extra }),
+      });
+      kiosk.settings = wanted;
+      status.textContent = savedText;
+    } catch (err) {
+      status.textContent = err.message;
+    } finally {
+      save.disabled = false;
+      rotate.disabled = false;
+    }
+  }
+
+  const save = el('button', {
+    class: 'admin-small', type: 'button',
+    onclick: () => saveKiosk('Saving…', 'Saved — a device already provisioned keeps what it has until re-provisioned.'),
+  }, 'Save');
+
+  const rotate = el('button', {
+    class: 'admin-small', type: 'button',
+    title: 'A new passphrase, which is how you take the room back from a device that has left',
+    onclick: () => {
+      form.querySelector('[data-setting="passphrase"]').value = randomSecret(8);
+      saveKiosk('Saving the new passphrase…', 'New passphrase saved — re-provision every device that should use it.');
+    },
+  }, 'New passphrase');
+
+  planPick.addEventListener('change', () => saveKiosk('Saving…', 'Saved.'));
+
+  return el('div', {},
+    el('div', { class: 'admin-form' },
+      el('label', { class: 'field' }, el('span', {}, 'Should be showing'), planPick)),
+    form,
+    el('div', { class: 'admin-actions' }, save, rotate, status),
+    el('hr', { style: 'border:0;border-top:1px solid var(--line);margin:14px 0' }),
+    renderKioskQr(kiosk));
+}
+
+async function withKiosk(work) {
+  try {
+    await work();
+    sayKiosks('');
+    await refreshKiosks();
+  } catch (err) {
+    sayKiosks(err.message, true);
+  }
+}
+
+function renderKiosks() {
+  const holder = $('#kiosks');
+  holder.replaceChildren();
+
+  if (!kiosksList.length) {
+    holder.append(el('p', { class: 'hint' }, 'No kiosks yet. Create one below and scan its QR on the device.'));
+    return;
+  }
+
+  for (const kiosk of kiosksList) {
+    const row = el('div', { class: 'admin-row' },
+      el('span', { class: 'admin-title' }, kiosk.name),
+      el('span', { class: 'admin-meta' },
+        [kiosk.settings.room || '(no room set)', kiosk.planTitle || 'nothing assigned',
+          kiosk.revoked ? 'revoked' : ''].filter(Boolean).join(' · ')),
+      el('button', {
+        class: 'admin-small', type: 'button',
+        onclick: () => { openKiosk = openKiosk === kiosk.id ? null : kiosk.id; renderKiosks(); },
+      }, openKiosk === kiosk.id ? 'Close' : 'Open'),
+      el('button', {
+        class: 'admin-small', type: 'button',
+        title: kiosk.revoked
+          ? 'Hands the same link back out - anyone still holding it can provision a device with it again'
+          : 'Stops this kiosk\'s link from provisioning any device that has not already used it',
+        onclick: () => withKiosk(() => kioskApi(`/${kiosk.id}`,
+          { method: 'PATCH', body: JSON.stringify({ revoked: !kiosk.revoked }) })),
+      }, kiosk.revoked ? 'Un-revoke' : 'Revoke'));
+    holder.append(row);
+    if (openKiosk === kiosk.id) holder.append(renderKioskSettings(kiosk));
+  }
+}
+
+function updateNewKioskTransportFields() {
+  const t = $('#new-kiosk-transport').value;
+  $('#new-kiosk-wu-row').hidden = t !== 'ws';
+  $('#new-kiosk-su-row').hidden = t !== 'supabase';
+  $('#new-kiosk-sk-row').hidden = t !== 'supabase';
+  $('#new-kiosk-mu-row').hidden = t !== 'mqtt';
+}
+
+async function addKiosk() {
+  const name = $('#new-kiosk-name').value.trim();
+  if (!name) { sayKiosks('A kiosk needs a name.', true); return; }
+  $('#new-kiosk-go').disabled = true;
+  try {
+    const settings = {
+      transport: $('#new-kiosk-transport').value,
+      room: $('#new-kiosk-room').value.trim(),
+      passphrase: randomSecret(10),
+      wsUrl: $('#new-kiosk-wu').value.trim(),
+      supabaseUrl: $('#new-kiosk-su').value.trim(),
+      supabaseKey: $('#new-kiosk-sk').value.trim(),
+      mqttUrl: $('#new-kiosk-mu').value.trim(),
+    };
+    const planId = $('#new-kiosk-plan').value ? Number($('#new-kiosk-plan').value) : null;
+    const { kiosk } = await kioskApi('', { method: 'POST', body: JSON.stringify({ name, settings, planId }) });
+    $('#new-kiosk-name').value = '';
+    $('#new-kiosk-room').value = '';
+    $('#new-kiosk-wu').value = '';
+    openKiosk = kiosk.id;
+    sayKiosks(`Created ${name}.`);
+    await refreshKiosks();
+  } catch (err) {
+    sayKiosks(err.message, true);
+  } finally {
+    $('#new-kiosk-go').disabled = false;
+  }
+}
+
+async function refreshKiosks() {
+  const { kiosks, plans } = await kioskApi('');
+  kiosksList = kiosks || [];
+  kioskPlans = plans || [];
+  const picker = $('#new-kiosk-plan');
+  picker.replaceChildren(el('option', { value: '' }, 'Nothing assigned yet'), ...kioskPlans.map(planOption));
+  renderKiosks();
+}
+
 // --- content management (Issue #54) -------------------------------------------
 
 let manifestData = { examplesEnabled: true, builtIns: {}, items: [] };
@@ -2181,6 +2420,17 @@ if (!info.features.includes('library')) {
       await Promise.all([refreshPeople(), refreshStorage(), refreshSystemSettings()]);
     }
     await refreshCourses();
+  }
+
+  // Kiosks, like content management, are for administrators only - a device
+  // nobody is physically watching is exactly the wrong thing to let course
+  // membership decide who can repoint.
+  if (info.features.includes('kiosks') && me?.isAdmin) {
+    $('#tab-kiosks').hidden = false;
+    $('#new-kiosk-go').addEventListener('click', addKiosk);
+    $('#new-kiosk-transport').addEventListener('change', updateNewKioskTransportFields);
+    updateNewKioskTransportFields();
+    await refreshKiosks();
   }
 
   // Content management is for administrators only

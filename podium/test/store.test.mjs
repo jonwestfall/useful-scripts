@@ -573,6 +573,80 @@ ok('but includeArchived finds it with everything still there, not just the field
   archivedPsy415?.settings.room === 'psy415-room' && archivedPsy415.settings.passphrase === 'rotated');
 courses.update(db, admin, 'psy415', { archived: false });
 
+console.log('\n-- kiosks: unattended signage --');
+
+const kiosks = require('../server/kiosks.js');
+
+const kioskPlan = plans.savePlan(db, owner, { title: 'Department announcements', doc: { v: 1, items: [] } });
+
+const kiosk = kiosks.create(db, admin, {
+  name: 'Lobby screen',
+  settings: { transport: 'ws', room: 'lobby-kiosk', passphrase: 'a lobby key', wsUrl: 'ws://localhost/podium' },
+  planId: kioskPlan.id,
+});
+ok('creating a kiosk profile hands back a real row', kiosk.name === 'Lobby screen' && kiosk.settings.room === 'lobby-kiosk');
+ok('with the plan it was assigned, by title - not just an id nobody wants to look up',
+  kiosk.planTitle === 'Department announcements');
+ok('and a real provisioning token', typeof kiosk.provisionToken === 'string' && kiosk.provisionToken.length > 10);
+ok('never revoked to start', kiosk.revoked === false);
+
+let refusedKiosk = '';
+try { kiosks.create(db, admin, { name: 'Bad', settings: { transport: 'carrier-pigeon' } }); }
+catch (err) { refusedKiosk = err.message; }
+ok('the same allow-list settings.js already enforces applies here too, not a second copy of the rule',
+  /transport must be one of/.test(refusedKiosk));
+
+ok('it shows up in the list', kiosks.list(db).some((k) => k.id === kiosk.id));
+
+const provisioned = kiosks.provision(db, kiosk.provisionToken, 'kiosk-browser/1.0');
+ok('redeeming its token hands back the connection settings, with kiosk:true set for it',
+  JSON.stringify(provisioned.config) === JSON.stringify({
+    transport: 'ws', room: 'lobby-kiosk', passphrase: 'a lobby key', wsUrl: 'ws://localhost/podium', kiosk: true,
+  }));
+ok('never the id, name or plan - a device has no use for any of it',
+  !('id' in provisioned.config) && !('name' in provisioned.config) && !('planId' in provisioned.config));
+ok('and a fresh session token, the credential that gets it past the accounts gate next time',
+  typeof provisioned.sessionToken === 'string' && provisioned.sessionToken.length > 10);
+ok('an unknown token answers the same as no kiosk at all existing', kiosks.provision(db, 'not-a-real-token') === null);
+
+ok('that session token resolves back to the kiosk', kiosks.sessionKiosk(db, provisioned.sessionToken)?.id === kiosk.id);
+ok('an unknown session token resolves to nothing', kiosks.sessionKiosk(db, 'not-a-real-session') === null);
+ok('no token at all resolves to nothing either', kiosks.sessionKiosk(db, '') === null);
+
+ok('the same session token also answers what a rebooted device asks on every load',
+  JSON.stringify(kiosks.sessionConfig(db, provisioned.sessionToken)) === JSON.stringify(provisioned.config));
+ok('an unknown session token answers the same way sessionKiosk does - nothing',
+  kiosks.sessionConfig(db, 'not-a-real-session') === null);
+
+kiosks.update(db, admin, kiosk.id, { revoked: true });
+ok('revoking stops that same token from provisioning anything further',
+  kiosks.provision(db, kiosk.provisionToken) === null);
+ok('but the profile stays listed, revoked rather than gone - so an admin can still find it',
+  kiosks.list(db).find((k) => k.id === kiosk.id)?.revoked === true);
+ok('and kicks a device already holding a session from before the revoke - checked live, not just at mint time',
+  kiosks.sessionKiosk(db, provisioned.sessionToken) === null);
+
+kiosks.update(db, admin, kiosk.id, { revoked: false });
+ok('un-revoking hands the very same token back out, not a freshly minted one',
+  kiosks.provision(db, kiosk.provisionToken)?.config.room === 'lobby-kiosk');
+ok('and lets that same old session back in too, with no re-provisioning needed',
+  kiosks.sessionKiosk(db, provisioned.sessionToken)?.id === kiosk.id);
+
+const renamed = kiosks.update(db, admin, kiosk.id, { name: 'Front lobby' });
+ok('renaming touches neither the settings nor the token',
+  renamed.settings.room === 'lobby-kiosk' && renamed.provisionToken === kiosk.provisionToken);
+
+kiosks.update(db, admin, kiosk.id, { planId: null });
+ok('a kiosk can be unassigned again',
+  kiosks.get(db, kiosk.id).planId === null && kiosks.get(db, kiosk.id).planTitle === null);
+
+refusedKiosk = '';
+try { kiosks.update(db, admin, 999999, { name: 'nope' }); } catch (err) { refusedKiosk = err.message; }
+ok('updating a kiosk that does not exist is reported, not a silent no-op', /no such kiosk/.test(refusedKiosk));
+
+ok('an untitled kiosk still gets a real name rather than an empty one',
+  kiosks.create(db, admin, { name: '  ', settings: {} }).name === 'Untitled kiosk');
+
 console.log('\n-- what happened in the room --');
 
 // The room name is psy415's, which is how a lecture finds its course: the

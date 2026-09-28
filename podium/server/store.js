@@ -356,6 +356,76 @@ const MIGRATIONS = [
       CREATE INDEX library_item_files_by_media ON library_item_files(media_id);
     `);
   },
+
+  (db) => {
+    db.exec(`
+      -- Unattended signage, admin-managed (Issue #151). A kiosk profile is a
+      -- room an administrator has set aside for a display nobody is running -
+      -- a lobby screen, hallway signage - together with the connection
+      -- settings (transport/room/passphrase/URLs) a device provisioned into
+      -- it needs, kept the same shape course_settings already keeps them in
+      -- rather than exploded into columns.
+      --
+      -- provision_token is what a QR/link scanned on a blank device actually
+      -- carries - never the passphrase itself. Unlike an ordinary pairing
+      -- link (which bakes room+passphrase straight into the URL with no
+      -- server involved at all, see pairingUrl in config.js), a device
+      -- redeems this token in one request, is handed the settings back, AND
+      -- is issued its own long-lived credential (see kiosk_sessions below).
+      -- That round trip, and the credential it hands out, is what lets
+      -- revoking a profile do more than an ordinary passphrase rotation
+      -- ever could: revoked_at is checked live, on every request, so it
+      -- stops both a not-yet-used link from provisioning anything AND an
+      -- already-provisioned device from reaching display.html the next time
+      -- it asks - not just future provisioning, the device itself. What it
+      -- still cannot do is reach into a connection that device already has
+      -- open on the room's encrypted bus and close it - the same limit
+      -- rotating a course's passphrase already has (see settings.js's own
+      -- note on that); it only ever governs the next request that arrives.
+      --
+      -- plan_id is which plan this kiosk is meant to be showing, kept as
+      -- admin-visible bookkeeping only for now: nothing here pushes it onto
+      -- the live room automatically (that would need a server-side bus
+      -- client, which does not exist) - see the PR that added this table for
+      -- the reasoning. ON DELETE SET NULL rather than CASCADE: deleting the
+      -- plan should not delete the kiosk profile, just leave it unassigned.
+      CREATE TABLE kiosks (
+        id              INTEGER PRIMARY KEY,
+        name            TEXT    NOT NULL,
+        settings        TEXT    NOT NULL DEFAULT '{}',
+        provision_token TEXT    NOT NULL UNIQUE,
+        plan_id         INTEGER REFERENCES plans(id) ON DELETE SET NULL,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL,
+        updated_by      INTEGER REFERENCES users(id),
+        revoked_at      INTEGER
+      );
+      CREATE INDEX kiosks_by_plan ON kiosks(plan_id);
+    `);
+  },
+
+  (db) => {
+    db.exec(`
+      -- A kiosk's own long-lived credential (Issue #151) - what actually gets
+      -- a provisioned device past the accounts gate on display.html, forever,
+      -- with no account of its own. Deliberately NOT shaped like
+      -- auth_sessions: there is no expires_at, because a kiosk device does
+      -- not "log out" - it reboots, on its own, with nobody there to sign it
+      -- back in, and should keep working until an administrator revokes the
+      -- PROFILE (kiosks.revoked_at), not until some timer nobody thought to
+      -- renew. Bound to the kiosk it was minted for, not a user account -
+      -- see gate() in api.js for what it is actually allowed to reach, which
+      -- is no more than the room's own passphrase already would grant.
+      CREATE TABLE kiosk_sessions (
+        token_sha256 TEXT    PRIMARY KEY,
+        kiosk_id     INTEGER NOT NULL REFERENCES kiosks(id) ON DELETE CASCADE,
+        created_at   INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        user_agent   TEXT    NOT NULL DEFAULT ''
+      );
+      CREATE INDEX kiosk_sessions_by_kiosk ON kiosk_sessions(kiosk_id);
+    `);
+  },
 ];
 
 function migrate(db) {

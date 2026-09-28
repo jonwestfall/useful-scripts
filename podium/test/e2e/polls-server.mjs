@@ -2654,6 +2654,120 @@ await kioskCtx.close();
 kioskServer.kill();
 }
 
+if (want('kiosk profiles: admin-managed provisioning')) {
+console.log('\n-- kiosk profiles: admin-managed provisioning --');
+// Its own server, accounts included: this is the flow #151 actually added -
+// an administrator creates a kiosk profile from admin.html, a blank device
+// (no account, no cookie, nothing) redeems the QR/link it hands out, and
+// that device keeps working across a reload with no re-provisioning. Then
+// the stronger thing the kiosk-cookie design specifically bought over an
+// ordinary pairing link: revoking the profile locks that SAME
+// already-provisioned device out on its very next visit, not just future
+// ones (see kiosk_sessions' migration comment in store.js).
+const kpPort = await freePort();
+const kpBase = `http://127.0.0.1:${kpPort}`;
+const kpData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-kioskprofile-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'kioskadmin', '--admin', '--name', 'Kiosk Admin', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, DATA_DIR: kpData },
+  input: 'provisioning is not the same as pairing\n',
+});
+const kpServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(kpPort), STATIC: '../', DATA_DIR: kpData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+kpServer.stderr.on('data', (d) => process.stderr.write(`[kiosk-profile-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('kiosk-profile relay did not start')), 10000);
+  let log = '';
+  kpServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  kpServer.on('exit', (code) => reject(new Error(`kiosk-profile relay exited with ${code}`)));
+});
+
+// control.js's own startup wants a config in localStorage before it will
+// finish initializing (every other section that signs in here seeds one the
+// same way) - this admin never actually uses it, since the whole visit is to
+// admin.html, not this room.
+const kpAdminCtx = await browser.newContext();
+await kpAdminCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${kpPort}/podium`, room: 'kp-admin-desk', passphrase: 'not actually used' }));
+const kpSignIn = await kpAdminCtx.newPage();
+trap(kpSignIn, 'kiosk-profile admin sign-in');
+await kpSignIn.goto(`${kpBase}/control.html`);
+await kpSignIn.waitForSelector('#form');
+await kpSignIn.fill('#username', 'kioskadmin');
+await kpSignIn.fill('#password', 'provisioning is not the same as pairing');
+await Promise.all([kpSignIn.waitForURL(/control\.html/), kpSignIn.click('#go')]);
+await kpSignIn.waitForSelector('#app:not([hidden])');
+await kpSignIn.close();
+
+const kpDesk = await kpAdminCtx.newPage();
+trap(kpDesk, 'kiosk-profile admin');
+await kpDesk.goto(`${kpBase}/admin.html`);
+await kpDesk.waitForSelector('#admin:not([hidden])');
+await kpDesk.click('#tab-kiosks');
+await kpDesk.waitForSelector('#panel-kiosks:not([hidden])');
+ok('the Kiosks tab is offered to an administrator', await kpDesk.isVisible('#new-kiosk-go'));
+
+await kpDesk.fill('#new-kiosk-name', 'Lobby screen');
+await kpDesk.fill('#new-kiosk-room', 'lobby-kiosk');
+await kpDesk.fill('#new-kiosk-wu', `ws://127.0.0.1:${kpPort}/podium`);
+await kpDesk.click('#new-kiosk-go');
+await kpDesk.waitForSelector('#kiosks .admin-title:has-text("Lobby screen")');
+ok('creating it opens its settings right away, provisioning link included',
+  await kpDesk.isVisible('#kiosks .hint.mono'));
+
+const provisionUrl = (await kpDesk.textContent('#kiosks .hint.mono')).trim();
+ok(`the provisioning link redeems straight through the API, not room/passphrase sitting in a URL (${provisionUrl.replace(/^https?:\/\/[^/]+/, '')})`,
+  /\/api\/kiosks\/provision\//.test(provisionUrl) && !provisionUrl.includes('passphrase'));
+
+// A device that has never been near this server: no account, no cookie, no
+// stored config - all it has is the link above, same as scanning a QR cold.
+// Navigating it hits the redemption route directly, which mints the cookie
+// and redirects on to display.html - never the other way around, since
+// display.html itself stays behind gate() even for a kiosk.
+const deviceCtx = await browser.newContext();
+const device = await deviceCtx.newPage();
+trap(device, 'kiosk device, first boot');
+// installOfflineShell()'s service worker (Issue #130) warms every page in
+// the app shell on install, control.html/admin.html/plan.html included, with
+// no idea a kiosk cookie is narrower than a signed-in user's - those few
+// warm() calls 401 harmlessly (nothing here ever reads their result) but the
+// browser logs each one regardless. See KIOSK_OFFSCOPE_WARM in harness.mjs.
+expecting.kioskOffscopeWarm = true;
+await device.goto(provisionUrl);
+await device.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+ok('redeeming the link lands on display.html and auto-arms with no prompt',
+  new URL(device.url()).pathname === '/display.html' && await device.isHidden('#arm'));
+
+const cookiesAfterProvision = await deviceCtx.cookies(kpBase);
+ok('provisioning issued the device its own kiosk cookie, separate from a user session',
+  cookiesAfterProvision.some((c) => c.name === 'podium_kiosk' && c.httpOnly));
+
+await device.goto(`${kpBase}/display.html`);
+await device.waitForSelector('#hud[data-status="online"]', { timeout: 10000 });
+expecting.kioskOffscopeWarm = false;
+ok('a later reload with no token in the URL still gets in - the cookie is what is carrying it now, not the one-time link',
+  await device.isHidden('#arm') && new URL(device.url()).pathname === '/display.html');
+
+// Revoke, from the same admin session used to create it.
+await kpDesk.click('#kiosks button:has-text("Revoke")');
+await kpDesk.waitForSelector('#kiosks button:has-text("Un-revoke")');
+ok('the profile stays listed as revoked, not removed', await kpDesk.textContent('#kiosks .admin-meta') !== null
+  && (await kpDesk.textContent('#kiosks .admin-meta')).includes('revoked'));
+
+await device.goto(`${kpBase}/display.html`);
+await device.waitForSelector('#form', { timeout: 10000 });
+ok(`revoking kicks that already-provisioned device to sign-in on its very next visit, not just future links (${new URL(device.url()).pathname})`,
+  new URL(device.url()).pathname === '/login.html');
+
+await device.close();
+await deviceCtx.close();
+await kpAdminCtx.close();
+kpServer.kill();
+}
+
 reportErrors();
 } finally {
   await teardown();

@@ -31,11 +31,13 @@ const settings = require('./settings.js');
 const templates = require('./templates.js');
 const content = require('./content.js');
 const store = require('./store.js');
+const kiosks = require('./kiosks.js');
 const pptxConvert = require('./pptx-convert.js');
 const zipImport = require('./zip-import.js');
 const zipStaging = require('./zip-staging.js');
 
 const COOKIE = 'podium_session';
+const KIOSK_COOKIE = 'podium_kiosk';
 const API_VERSION = 1;
 
 function readJson(req, limit = 64 * 1024) {
@@ -101,16 +103,36 @@ function parseCookies(header) {
 const isSecureRequest = (req) =>
   !!req.socket?.encrypted || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
 
-const setCookie = (req, value, maxAgeSeconds) => [
-  `${COOKIE}=${encodeURIComponent(value)}`,
+const setCookie = (req, value, maxAgeSeconds, name = COOKIE, httpOnly = true) => [
+  `${name}=${encodeURIComponent(value)}`,
   'Path=/',
-  'HttpOnly',
+  ...(httpOnly ? ['HttpOnly'] : []),
   'SameSite=Lax',
   `Max-Age=${maxAgeSeconds}`,
   ...(isSecureRequest(req) ? ['Secure'] : []),
 ].join('; ');
 
 const cookieToken = (req) => parseCookies(req.headers.cookie)[COOKIE] || '';
+
+// A kiosk's cookie is deliberately its own name, not a variant of
+// podium_session - the two credentials mean different things (a person vs. a
+// device nobody is watching) and gate() below needs to be able to tell them
+// apart, not just accept whichever one shows up.
+const kioskCookieToken = (req) => parseCookies(req.headers.cookie)[KIOSK_COOKIE] || '';
+
+// A second, readable cookie riding alongside the real one - not HttpOnly, and
+// carrying no secret, just a "yes" a kiosk's own JS can see. Without it,
+// config.js's fromKioskSession would have no way to tell "worth asking" from
+// "definitely not a kiosk" ahead of time, since the real cookie is
+// deliberately invisible to script; asking anyway on every device that is not
+// one - which is most of them - would 404 on every single load. Set and
+// refreshed in lockstep with the real cookie everywhere that mints or slides
+// one, so it is never more stale than the session it is a hint about.
+const KIOSK_HINT_COOKIE = 'podium_kiosk_hint';
+const setKioskCookies = (req, value, maxAgeSeconds) => [
+  setCookie(req, value, maxAgeSeconds, KIOSK_COOKIE),
+  setCookie(req, '1', maxAgeSeconds, KIOSK_HINT_COOKIE, false),
+];
 
 /**
  * A relative, same-origin path is the only thing worth honouring after a
@@ -157,7 +179,7 @@ function capabilities(ctx, user) {
   // every request answers 401 - a feature announced before it can be used.
   const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
   const features = ctx.db && ctx.hasAccounts()
-    ? ['auth', 'library', 'plans', 'templates', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content'] : [])]
+    ? ['auth', 'library', 'plans', 'templates', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content', 'kiosks'] : [])]
     : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
@@ -242,6 +264,55 @@ async function handleApi(req, res, url, ctx) {
     return true;
   }
 
+  // A blank kiosk device redeeming a provisioning link (Issue #151) has no
+  // session and never will until this very request hands it something to
+  // save - so, like capabilities/login/logout above, this has to answer
+  // before the "must be signed in" gate right below, not after it. The token
+  // itself is the only credential a device in this position can possibly
+  // hold; see kiosks.provision's own comment for why that is enough.
+  //
+  // This is navigated to directly - the QR and the link admin.js hands out
+  // both point straight here, not at display.html - because display.html
+  // itself stays behind gate() even for a kiosk (see KIOSK_OPEN_PATHS in
+  // podium-server.js): a page nobody has to sign in for on the FIRST visit
+  // and stays reachable after a profile is revoked would defeat the whole
+  // reason a kiosk cookie exists. So the cookie has to be minted and stored
+  // in the browser BEFORE display.html is ever asked for, which a redirect
+  // does and a JSON response the page's own JS would have to fetch does not
+  // - there would be nothing there yet to run that fetch. The settings
+  // themselves never ride along here or on display.html's own URL, even
+  // fleetingly: see kiosks/session-config below, which display.html asks
+  // itself once it has the cookie this hands it.
+  if (route.startsWith('kiosks/provision/') && req.method === 'GET') {
+    if (!ctx.db) { json(res, 404, { error: 'this server stores nothing' }); return true; }
+    const provisioned = kiosks.provision(ctx.db, decodeURIComponent(route.slice('kiosks/provision/'.length)),
+      req.headers['user-agent'] || '');
+    if (!provisioned) { json(res, 404, { error: 'no such kiosk, or it has been revoked' }); return true; }
+    res.writeHead(302, {
+      'set-cookie': setKioskCookies(req, provisioned.sessionToken, Math.floor(kiosks.SESSION_MS / 1000)),
+      location: '/display.html',
+      'cache-control': 'no-store',
+    });
+    res.end();
+    return true;
+  }
+
+  // What display.html asks on every load (see fromKioskSession in config.js)
+  // to learn what it is - the counterpart to provisioning above, but keyed
+  // by the cookie a device already holds rather than a one-time token, so a
+  // reboot with no token left in any URL still works. Public for the same
+  // reason the route above is: the cookie itself, checked inside
+  // sessionConfig, is the only credential involved.
+  if (route === 'kiosks/session-config' && req.method === 'GET') {
+    if (!ctx.db) { json(res, 404, { error: 'this server stores nothing' }); return true; }
+    const kioskToken = kioskCookieToken(req);
+    const onSlide = () => res.setHeader('set-cookie', setKioskCookies(req, kioskToken, Math.floor(kiosks.SESSION_MS / 1000)));
+    const config = kiosks.sessionConfig(ctx.db, kioskToken, { onSlide });
+    if (!config) { json(res, 404, { error: 'not a provisioned kiosk' }); return true; }
+    json(res, 200, { config });
+    return true;
+  }
+
   // --- everything past here needs to know who is asking -------------------
   if (!ctx.db) { json(res, 404, { error: 'this server stores nothing' }); return true; }
   if (!user) { json(res, 401, { error: 'not signed in' }); return true; }
@@ -316,6 +387,41 @@ async function handleApi(req, res, url, ctx) {
 
       if (rest.length === 1 && req.method === 'PATCH') {
         json(res, 200, { person: await changePerson(ctx, req, user, decodeURIComponent(rest[0]), await readJson(req, 8 * 1024)) });
+        return true;
+      }
+    }
+
+    // --- kiosk profiles (Issue #151) ----------------------------------------
+    //
+    // Administrators only, the same as accounts - a device nobody is
+    // physically watching is exactly the wrong thing to let course
+    // membership decide who can repoint. The one exception, redeeming a
+    // provisioning link, is public on purpose and lives before the auth gate
+    // above, not here.
+
+    if (head === 'kiosks') {
+      if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can manage kiosks' }); return true; }
+
+      if (!rest.length && req.method === 'GET') {
+        json(res, 200, { kiosks: kiosks.list(ctx.db), plans: plans.listPlans(ctx.db, user) });
+        return true;
+      }
+
+      if (!rest.length && req.method === 'POST') {
+        const body = await readJson(req, 8 * 1024);
+        const kiosk = kiosks.create(ctx.db, user, { name: body.name, settings: body.settings, planId: body.planId });
+        auditLog(ctx, req, user, 'kiosk_created', { kioskId: kiosk.id, name: kiosk.name });
+        json(res, 200, { kiosk });
+        return true;
+      }
+
+      if (rest.length === 1 && req.method === 'PATCH') {
+        const body = await readJson(req, 8 * 1024);
+        const kiosk = kiosks.update(ctx.db, user, rest[0], {
+          name: body.name, settings: body.settings, planId: body.planId, revoked: body.revoked,
+        });
+        auditLog(ctx, req, user, 'kiosk_modified', { kioskId: kiosk.id, name: kiosk.name, revoked: kiosk.revoked });
+        json(res, 200, { kiosk });
         return true;
       }
     }
@@ -1105,6 +1211,17 @@ function gate(req, res, pathname, ctx) {
     // own headers and knows nothing about sessions.
     const onSlide = () => res.setHeader('set-cookie', setCookie(req, token, Math.floor(accounts.SESSION_MS / 1000)));
     if (accounts.sessionUser(ctx.db, token, { onSlide })) return true;
+    // A kiosk carries its own cookie, not a user session, and is only ever
+    // let through for the narrow set of paths display.html actually needs
+    // (see KIOSK_OPEN_PATHS in podium-server.js) - never control.html,
+    // admin.html, or the authenticated API surface a stolen kiosk cookie
+    // would otherwise unlock.
+    if (ctx.kioskOpenPaths?.has(pathname)) {
+      const kioskToken = kioskCookieToken(req);
+      const kioskOnSlide = () =>
+        res.setHeader('set-cookie', setKioskCookies(req, kioskToken, Math.floor(kiosks.SESSION_MS / 1000)));
+      if (kiosks.sessionKiosk(ctx.db, kioskToken, { onSlide: kioskOnSlide })) return true;
+    }
     if (looksLikePage(req, pathname)) {
       const next = encodeURIComponent(pathname + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''));
       res.writeHead(302, { location: `/login.html?next=${next}`, 'cache-control': 'no-store' });
@@ -1124,4 +1241,6 @@ function gate(req, res, pathname, ctx) {
   return true;
 }
 
-module.exports = { handleApi, gate, readJson, json, parseCookies, safeNext, cookieToken, clientIp, COOKIE, API_VERSION };
+module.exports = {
+  handleApi, gate, readJson, json, parseCookies, safeNext, cookieToken, kioskCookieToken, clientIp, COOKIE, API_VERSION,
+};
