@@ -114,6 +114,19 @@ export const PLAN_TYPES = {
       { key: 'startAt', label: 'Start at (seconds)', kind: 'number', def: 0, min: 0, max: 86400 },
     ],
   },
+  // Issue #175: a live Twitch channel or YouTube broadcast. The link is read
+  // into platform + channel/video id when it is staged (see parseStreamSource
+  // in protocol.js), so any of the usual link shapes can be pasted.
+  stream: {
+    label: 'Live stream', icon: '\u{1F4E1}',
+    blurb: 'A Twitch channel or a YouTube live broadcast, with video and sound, video only, or sound only. It plays only while the stream is actually live.',
+    fields: [
+      { key: 'url', label: 'Twitch or YouTube Live link', kind: 'text', placeholder: 'https://twitch.tv/nasa',
+        hint: 'twitch.tv/<channel>, youtube.com/live/<id>, a YouTube watch link, or youtube.com/channel/<UC… id>. A YouTube @handle does not embed; use the channel id.' },
+      { key: 'show', label: 'The room gets', kind: 'select', def: 'both',
+        options: [['both', 'Video and sound'], ['video', 'Video only (muted)'], ['audio', 'Sound only']] },
+    ],
+  },
   pdf: {
     label: 'PDF', icon: '\u{1F4C4}',
     blurb: 'A handout or a figure, by path on your server - or upload one straight in (Issue #108).',

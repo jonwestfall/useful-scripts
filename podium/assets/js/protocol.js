@@ -229,6 +229,63 @@ export function focusedItem(state) {
   return state.panels[state.focus - 1] || null;
 }
 
+// What the controller's own views and tools address (Issue #174): the cued
+// item while panel A is frozen with something cued, otherwise whatever has
+// focus. Freeze is "hold what the room sees", not "stop working" - the Slides
+// tab, deck navigation and the ink pad follow the cue so a deck opened while
+// frozen can actually be looked at, paged through and marked up before TAKE.
+// Media transport deliberately keeps using focusedItem: the room already hears
+// whatever is playing, frozen or not (see resolveVisualTarget).
+export function workingItem(state) {
+  if (state.focus === 0 && state.frozen && state.preview) return state.preview;
+  return focusedItem(state);
+}
+
+// --- held ink (Issue #174) ---------------------------------------------------
+//
+// Ink drawn on panel A while frozen is held like the cue: kept on a surface of
+// its own, keyed HELD_INK_PREFIX + the real surface, which nothing on the
+// display ever renders (the projector, a second display and Guest View all
+// draw inkSurfaceKey(item), never a held key). TAKE merges every held surface
+// into its real one, so the room sees it all at once; Clear cue throws it
+// away. Unfreezing without TAKE leaves it waiting, exactly like a cued item.
+// B/C/D are never frozen (see 'panel' below), so their ink stays live.
+export const HELD_INK_PREFIX = 'held:';
+export const isHeldInkKey = (key) => typeof key === 'string' && key.startsWith(HELD_INK_PREFIX);
+
+/** The ink surface the next stroke lands on. */
+export function inkTargetKey(state) {
+  const key = inkSurfaceKey(workingItem(state));
+  return state.focus === 0 && state.frozen ? HELD_INK_PREFIX + key : key;
+}
+
+/** How many held surfaces actually have strokes waiting on them. */
+export function heldInkCount(ink) {
+  let n = 0;
+  for (const [key, surface] of Object.entries(ink?.bySurface || {})) {
+    if (isHeldInkKey(key) && surface?.strokes?.length) n += 1;
+  }
+  return n;
+}
+
+function commitHeldInk(ink) {
+  for (const key of Object.keys(ink.bySurface)) {
+    if (!isHeldInkKey(key)) continue;
+    const held = ink.bySurface[key];
+    delete ink.bySurface[key];
+    if (!held?.strokes?.length) continue;
+    const surface = touchSurface(ink, key.slice(HELD_INK_PREFIX.length));
+    surface.strokes.push(...held.strokes);
+    if (surface.strokes.length > MAX_STROKES_PER_SURFACE) {
+      surface.strokes.splice(0, surface.strokes.length - MAX_STROKES_PER_SURFACE);
+    }
+  }
+}
+
+function discardHeldInk(ink) {
+  for (const key of Object.keys(ink.bySurface)) if (isHeldInkKey(key)) delete ink.bySurface[key];
+}
+
 // Where a newly picked item should land.
 export function stageTarget(state, where = 'auto') {
   if (where === 'program' || where === 'preview') return where;
@@ -243,6 +300,46 @@ const clamp01 = (v) => Math.min(1, Math.max(0, Number(v) || 0));
 // keeps the exact scroll position and playhead you set up in preview.
 let keySeq = 0;
 const nextKey = () => `k${Date.now().toString(36)}${(keySeq++).toString(36)}`;
+
+// --- live streams (Issue #175) -----------------------------------------------
+//
+// A stream item names a Twitch channel or a YouTube live broadcast (a video
+// id, or a channel id whose current broadcast is shown), and how much of it
+// the room gets: 'both', 'video' (always muted) or 'audio' (the player keeps
+// playing behind a card that says what is on). Anything a presenter might
+// paste is accepted and read here, once, so a plan item, a manifest tile and
+// a pasted link all end up as the same few fields.
+export const STREAM_SHOWS = ['both', 'video', 'audio'];
+const TWITCH_RESERVED = new Set(['videos', 'directory', 'p', 'settings', 'downloads', 'jobs', 'search', 'login', 'signup', 'subscriptions', 'inventory', 'wallet']);
+
+/**
+ * Read a stream out of whatever was typed or pasted.
+ * @param {string} raw - a URL, or a bare Twitch channel / YouTube id
+ * @param {string} [platform] - 'twitch' | 'youtube', to read a bare name
+ * @returns {{platform: string, channel?: string, videoId?: string}|null}
+ */
+export function parseStreamSource(raw, platform = '') {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const twitch = text.match(/^(?:https?:\/\/)?(?:www\.|m\.|player\.)?twitch\.tv\/(?:popout\/)?([A-Za-z0-9_]{2,25})(?:[/?#]|$)/i);
+  if (twitch && !TWITCH_RESERVED.has(twitch[1].toLowerCase())) return { platform: 'twitch', channel: twitch[1].toLowerCase() };
+  const channelParam = text.match(/^(?:https?:\/\/)?player\.twitch\.tv\/\?(?:.*&)?channel=([A-Za-z0-9_]{2,25})/i);
+  if (channelParam) return { platform: 'twitch', channel: channelParam[1].toLowerCase() };
+  const ytChannel = text.match(/youtube\.com\/(?:channel\/|embed\/live_stream\?channel=)(UC[\w-]{22})/);
+  if (ytChannel) return { platform: 'youtube', channel: ytChannel[1] };
+  const ytVideo = text.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|live\/|embed\/)|youtu\.be\/)([\w-]{11})(?![\w-])/);
+  if (ytVideo) return { platform: 'youtube', videoId: ytVideo[1] };
+  if (/^UC[\w-]{22}$/.test(text)) return { platform: 'youtube', channel: text };
+  if (platform === 'youtube' && /^[\w-]{11}$/.test(text)) return { platform: 'youtube', videoId: text };
+  if (platform !== 'youtube' && /^[A-Za-z0-9_]{2,25}$/.test(text)) return { platform: 'twitch', channel: text.toLowerCase() };
+  return null;
+}
+
+/** "twitch.tv/name" or "YouTube Live", for titles and cards. */
+export function streamLabel(item) {
+  if (item?.platform === 'twitch') return `twitch.tv/${item.channel || '?'}`;
+  return 'YouTube Live';
+}
 
 function normalizeItem(item) {
   if (!item || typeof item !== 'object' || !item.type) return null;
@@ -266,9 +363,24 @@ function normalizeItem(item) {
     copy.font = ['serif', 'mono', 'rounded', 'display'].includes(copy.font) ? copy.font : 'sans';
     copy.caption = String(copy.caption || '').slice(0, 200);
   }
-  if (copy.type === 'video' || copy.type === 'audio' || copy.type === 'youtube') {
+  if (copy.type === 'video' || copy.type === 'audio' || copy.type === 'youtube' || copy.type === 'stream') {
     copy.playing = copy.playing ?? true;
     copy.startAt = Number(copy.startAt) || 0;
+  }
+  if (copy.type === 'stream') {
+    // Issue #175: read whatever was given - a planner's `url`, a manifest
+    // tile's `src`, or fields already split out - into platform + one id.
+    const parsed = (copy.channel || copy.videoId)
+      ? parseStreamSource(copy.platform === 'youtube' ? (copy.videoId || copy.channel) : copy.channel, copy.platform)
+      : parseStreamSource(copy.url || copy.src, copy.platform);
+    if (!parsed) return null;
+    copy.platform = parsed.platform;
+    copy.channel = parsed.channel || '';
+    copy.videoId = parsed.videoId || '';
+    delete copy.url;
+    delete copy.src;
+    copy.show = STREAM_SHOWS.includes(copy.show) ? copy.show : 'both';
+    copy.title = String(copy.title || streamLabel(copy)).slice(0, 120);
   }
   // Issue #113: every field PLAN_TYPES declares for these types used to pass
   // through normalizeItem completely unvalidated - unlike text.body/caption
@@ -1024,7 +1136,12 @@ export function applyCommand(state, cmd) {
       // A cued layout can arrive with no cued content at all (you only
       // changed panels while frozen), so this can no longer refuse just
       // because state.preview is empty - only when NEITHER is pending.
-      if (!state.preview && state.previewLayout === null) return false;
+      // Held ink (Issue #174) is part of the cue too: marking up what is
+      // already on screen while frozen, then TAKE, reveals just the ink.
+      const heldInk = heldInkCount(state.ink) > 0;
+      if (!state.preview && state.previewLayout === null && !heldInk) return false;
+      if (heldInk) commitHeldInk(state.ink);
+      else discardHeldInk(state.ink);
       if (state.preview) {
         state.program = state.preview;
         state.preview = null;
@@ -1056,7 +1173,7 @@ export function applyCommand(state, cmd) {
       // Abandoning the cue abandons a cued layout with it - "Clear cue"
       // means throw away everything queued up for the next TAKE, not just
       // whichever half of it happens to be content.
-      else { state.preview = null; state.previewLayout = null; }
+      else { state.preview = null; state.previewLayout = null; discardHeldInk(state.ink); }
       return true;
     }
 
@@ -1154,6 +1271,9 @@ export function applyCommand(state, cmd) {
       // move where it is paused.
       else if (cmd.action === 'restart') { item.seekTo = 0; item.seekNonce = (item.seekNonce || 0) + 1; item.playing = true; }
       else if (cmd.action === 'setLoop') item.loop = !!cmd.value;
+      // Issue #175: how much of a live stream the room gets - switched on the
+      // live player, never by restaging it (which would reload the stream).
+      else if (cmd.action === 'show' && item.type === 'stream' && STREAM_SHOWS.includes(cmd.value)) item.show = cmd.value;
       else return false;
       return true;
     }
@@ -1455,11 +1575,11 @@ export function applyCommand(state, cmd) {
       const ink = state.ink;
       if (cmd.color) ink.color = cmd.color;
       if (cmd.width) ink.width = Number(cmd.width) || ink.width;
-      // Every ink action applies to whatever is on screen right now - never to
-      // a frozen preview. Annotating is "mark up what the class is looking
-      // at", and freeze is orthogonal to that. In a split layout that means
-      // whichever panel has focus (A never means the preview here either).
-      const surface = touchSurface(ink, inkSurfaceKey(focusedItem(state)));
+      // Every ink action applies to whichever panel has focus. On panel A
+      // while frozen it lands on a held surface instead (Issue #174 - see
+      // inkTargetKey): the cued item if one is cued, otherwise what is on
+      // screen, and either way invisible to the room until TAKE.
+      const surface = touchSurface(ink, inkTargetKey(state));
       // Note 'clear' empties the CURRENT surface only - the chalkboard you are
       // looking at, or this one slide - never every board you have ever drawn on.
       //

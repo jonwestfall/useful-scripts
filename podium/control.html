@@ -197,7 +197,7 @@ try {
           </div>
           <form id="url-form" class="inline">
             <input id="url-input" aria-label="Link to show" class="grow" type="text" inputmode="url" autocomplete="off"
-                   autocapitalize="off" spellcheck="false" placeholder="Paste a link — YouTube, image, video, PDF, any page">
+                   autocapitalize="off" spellcheck="false" placeholder="Paste a link — YouTube, Twitch, image, video, PDF, any page">
             <button type="submit">Show</button>
             <label class="check"><input id="url-save" type="checkbox"> Save</label>
           </form>
@@ -256,6 +256,9 @@ try {
             <div class="deck-head">
               <div>
                 <div id="deck-title"></div>
+                <!-- Issue #174: frozen with a deck cued, this tab works on the
+                     cue - paging and ink both land there until TAKE. -->
+                <div id="deck-cued-note" class="hint is-cued-note" hidden>Cued, not on screen yet. Paging here moves the cued copy; TAKE puts it up.</div>
                 <div id="deck-theme" class="hint"></div>
               </div>
               <div class="deck-head-right">
@@ -271,7 +274,7 @@ try {
 
             <div class="confidence-row">
               <div class="confidence-box">
-                <div class="confidence-label">Now</div>
+                <div id="deck-now-label" class="confidence-label">Now</div>
                 <div id="deck-now-preview" class="confidence-preview"></div>
                 <div class="inline">
                   <button id="deck-markup" type="button">✎ Markup</button>
@@ -325,6 +328,10 @@ try {
             <div id="now-title">Nothing</div>
             <div id="now-type"></div>
           </div>
+          <!-- Issue #174: always what the focused pane is showing the room
+               right now - never the cue, frozen or not. -->
+          <div id="now-preview" class="confidence-preview now-preview" aria-label="What is on screen now"></div>
+          <div id="now-cued-note" class="hint is-cued-note" hidden></div>
           <div id="transport" class="stack" hidden>
             <div class="inline">
               <button id="restart-media" type="button" title="Back to the start">⏮ Restart</button>
@@ -338,6 +345,13 @@ try {
                  there and stays stopped (see handleMediaEnded in display.js) -
                  looping is something you opt into per item, not a surprise. -->
             <label class="check"><input id="media-loop" type="checkbox"> Loop when it ends</label>
+          </div>
+          <!-- Issue #175: how much of a live stream the room gets, switched on
+               the playing stream rather than by reloading it. -->
+          <div id="stream-show" class="inline" role="group" aria-label="What the room gets from this stream" hidden>
+            <button type="button" data-show="both" aria-pressed="false">Video + sound</button>
+            <button type="button" data-show="video" aria-pressed="false">Video only</button>
+            <button type="button" data-show="audio" aria-pressed="false">Sound only</button>
           </div>
           <div id="paging" class="inline" hidden>
             <button id="prev-page" type="button">◀ Back</button>
@@ -421,6 +435,7 @@ try {
               <label class="check"><input id="ink-pen-only" type="checkbox"> Apple Pencil only</label>
             </div>
           </div>
+          <p id="ink-held-note" class="hint is-cued-note" role="status" hidden></p>
           <p class="hint">
             Ink draws over whatever is on screen and is shaped to match it, so the pad above
             <i>is</i> the slide, edge to edge. Pick “Whiteboard” in the library for a blank
@@ -1103,6 +1118,101 @@ try {
         Pausing briefly (450ms) at the end of a stroke snaps freehand lines, arrows, rectangles, and circles into clean shapes.
       </p>
 
+      <!-- Issue #173: see assets/js/defaults.js for exactly when these apply. -->
+      <div class="field defaults-block" style="margin-top:16px;">
+        <label>Start every lecture with</label>
+        <p class="hint" style="margin-bottom:10px;">
+          Applied when you open the controller in a new tab and it first finds the display, and
+          again whenever a lecture plan loads, so these win over a plan's own music settings.
+          Anything left on <i>Plan / as is</i>, empty or unticked changes nothing.
+        </p>
+
+        <div class="def-group">
+          <div class="def-group-head"><b>Music</b> <button id="def-music-capture" type="button">Use the Music tab's current switches</button></div>
+          <div class="field def-row">
+            <label for="def-autoplay">Auto-play</label>
+            <select id="def-autoplay">
+              <option value="">Plan / as is</option>
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+          <div class="field def-row">
+            <label for="def-pause-queue">Pause Queue</label>
+            <select id="def-pause-queue">
+              <option value="">Plan / as is</option>
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+          <div class="field def-row">
+            <label for="def-until-queue">“We begin in…” counts to the end of the queue</label>
+            <select id="def-until-queue">
+              <option value="">Plan / as is</option>
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+          <div class="field def-row">
+            <label for="def-countdown-text">Countdown text</label>
+            <input id="def-countdown-text" type="text" maxlength="80" autocomplete="off" placeholder="We begin in…">
+          </div>
+        </div>
+
+        <div class="def-group">
+          <div class="def-group-head"><label class="check"><input id="def-mixer-on" type="checkbox"> <b>Mixer levels</b></label> <button id="def-mixer-capture" type="button">Use the Mixer's current levels</button></div>
+          <div class="field def-row">
+            <label for="def-mix-master">Master <span id="def-mix-master-pct" class="mono"></span></label>
+            <input id="def-mix-master" type="range" min="0" max="1" step="0.01">
+          </div>
+          <div class="field def-row">
+            <label for="def-mix-content">Loaded audio / video <span id="def-mix-content-pct" class="mono"></span></label>
+            <input id="def-mix-content" type="range" min="0" max="1" step="0.01">
+          </div>
+          <div class="field def-row">
+            <label for="def-mix-music">Background music <span id="def-mix-music-pct" class="mono"></span></label>
+            <input id="def-mix-music" type="range" min="0" max="1" step="0.01">
+          </div>
+          <div class="field def-row">
+            <label for="def-mix-mic">Controller mics <span id="def-mix-mic-pct" class="mono"></span></label>
+            <input id="def-mix-mic" type="range" min="0" max="1" step="0.01">
+          </div>
+        </div>
+
+        <div class="def-group">
+          <div class="def-group-head"><b>Say tab</b></div>
+          <div class="field def-row">
+            <label for="def-caption">Caption along the bottom, ready to show</label>
+            <input id="def-caption" type="text" maxlength="200" autocomplete="off" placeholder="Chapter 4 · Working memory">
+          </div>
+          <p class="hint">Only fills in the box. Nothing is shown until you press Show.</p>
+          <label class="check" style="margin-top:10px;"><input id="def-wm-on" type="checkbox"> Put up my watermark</label>
+          <p class="hint">Unless you've already set a watermark of your own in this lecture. It replaces a course's default watermark.</p>
+          <div class="field def-row">
+            <label for="def-wm-text">Watermark text</label>
+            <input id="def-wm-text" type="text" maxlength="120" autocomplete="off" placeholder="Your name · COURSE 101">
+          </div>
+          <div class="field def-row">
+            <label for="def-wm-position">Corner</label>
+            <select id="def-wm-position">
+              <option value="br">Bottom right</option>
+              <option value="tl">Top left</option>
+            </select>
+          </div>
+          <div class="inline def-row">
+            <label class="filebtn" for="def-wm-image">Choose a logo…</label>
+            <input id="def-wm-image" type="file" accept="image/*" hidden>
+            <img id="def-wm-thumb" class="def-wm-thumb" alt="Default watermark logo" hidden>
+            <button id="def-wm-image-clear" type="button" hidden>Remove logo</button>
+          </div>
+        </div>
+
+        <div class="inline" style="margin-top:10px;">
+          <button id="def-clear-all" type="button">Clear all defaults</button>
+          <span id="def-note" class="hint" role="status"></span>
+        </div>
+      </div>
+
       <div class="field" style="margin-top:16px;">
         <label>Controller tabs</label>
         <p class="hint" style="margin-bottom:10px;">
@@ -1396,6 +1506,20 @@ try {
         <button id="message-editor-cancel" type="button">Cancel</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Issue #174: hold a thumbnail on the Slides tab to read that slide at a
+     useful size - never sent to the display, so it is safe mid-lecture. -->
+<div id="slide-popout" class="sheet" hidden>
+  <div class="card slide-popout-card" role="dialog" aria-modal="true" aria-labelledby="slide-popout-title">
+    <h1 id="slide-popout-title">Slide</h1>
+    <div id="slide-popout-preview" class="confidence-preview"></div>
+    <div id="slide-popout-notes" class="notes"></div>
+    <div class="row" style="margin-top: 14px;">
+      <button id="slide-popout-go" type="button" class="is-on">Go to this slide</button>
+      <button id="slide-popout-close" type="button">Close</button>
+    </div>
   </div>
 </div>
 

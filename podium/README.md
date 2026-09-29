@@ -60,11 +60,11 @@ The devices never talk to each other directly. They all check in with a small **
 Features marked **🖥️** need Podium's own self-hosted server. Everything else works on every setup, including free GitHub Pages hosting. Each heading links to the full details.
 
 ### 🎬 [Presenting](docs/features.md#part-1--presenting)
-- **Freeze is a cue.** Freeze holds the projector while you flip ahead, scrub a video or find a PDF page. **TAKE** cuts it live, **Swap** trades live and cued, and **Blank** blacks out the room with everything still loaded.
-- **Now / Next / Notes.** A confidence monitor on your device, with a searchable thumbnail grid for jumping to any slide.
+- **Freeze is a cue.** Freeze holds the projector while you open and page through a deck, scrub a video, find a PDF page, or mark something up. **TAKE** cuts it live (ink and all), **Swap** trades live and cued, and **Blank** blacks out the room with everything still loaded.
+- **Now / Next / Notes.** A confidence monitor on your device, with a searchable thumbnail grid. Hold a thumbnail for a pop-out preview.
 - **Marp slides in Markdown**, with KaTeX math, progressive builds, presenter notes and custom CSS themes.
 - **PDFs, with projector zoom and pan.** PowerPoint uploads are converted to PDF automatically 🖥️.
-- **A library of anything:** decks, picture decks, HTML slides, video, audio, YouTube, photos, web pages, text signs, QR codes, whiteboards, chalkboards and timers. You can also paste any link or upload a photo.
+- **A library of anything:** decks, picture decks, HTML slides, video, audio, YouTube, live streams, photos, web pages, text signs, QR codes, whiteboards, chalkboards and timers. You can also paste any link or upload a photo.
 - **Split screen and picture-in-picture** (single, side-by-side, stacked, 3-up, quad, or a PiP inset). Each panel keeps its own item, zoom and ink.
 - **"Back to" strip:** go look at a photo, then return to the exact slide you left.
 
@@ -75,6 +75,7 @@ Features marked **🖥️** need Podium's own self-hosted server. Everything els
 
 ### 🎵 [Media & sound](docs/features.md#part-3--media--sound)
 - **Remote transport for video, audio and YouTube**: scrub, skip ±10s and loop, without YouTube's site ever reaching the projector.
+- **Live streams from Twitch or YouTube Live**, as video and sound, video only, or sound only, switched live from the Now tab.
 - **Background music** that ducks under lecture video, fades out on cue, and can put up a "We begin in…" countdown.
 - **A four-channel mixer** (master, content, music, microphones) with a master fader on every tab.
 - **Controller microphone**, amplified through the room's speakers and optionally recorded with the lecture 🖥️.
@@ -108,6 +109,7 @@ Features marked **🖥️** need Podium's own self-hosted server. Everything els
 
 ### 🧩 [Make it yours](docs/features.md#part-9--making-the-controller-yours)
 - Reorder or hide the controller's twelve tabs, and customize up to eight bottom-bar shortcuts.
+- **Saved defaults** for music, mixer levels, caption and watermark, applied at the start of every lecture and winning over a plan's own music settings.
 - Keyboard and Bluetooth clicker support, a **pacing clock** for your lecture budget, haptics, keep-awake, split view on a wide iPad, and optional blackout on connect.
 
 ### 🗃️ [After class](docs/features.md#part-10--after-class)

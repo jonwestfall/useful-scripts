@@ -34,9 +34,12 @@ In standard presentation software, freezing the screen holds a static frame. In 
   - You can flip ahead through slides to check upcoming material.
   - You can load a YouTube video, scrub past ads, and queue it to the exact timestamp (e.g. 3:15).
   - You can open a PDF document and navigate to page 42.
-- **TAKE**: Cuts the cued item live to the projector and unfreezes. The switch is instantaneous because both content layers are already loaded in memory.
+  - You can open a deck you never loaded before class. The **Slides** tab switches to the cued deck (marked **Cued, not on screen yet**), so you can read its notes, page through it and check the thumbnails while the room still sees what it saw.
+  - You can **mark it up**. Ink drawn on panel A while frozen is held back from the room: on the cued item if one is cued, otherwise on what is already on screen. Your pad shows it over the live ink, and the Ink tab says it's being held.
+- **TAKE**: Cuts the cued item live to the projector and unfreezes. The switch is instantaneous because both content layers are already loaded in memory. Any held ink is revealed at the same moment, so a marked-up slide appears finished. Held ink on its own is enough to arm TAKE: the cue bar reads **Ink cued**.
+- **Unfreeze** without TAKE leaves the cue (and any held ink) waiting for a later TAKE.
 - **Swap**: Swaps the on-screen item and the cued item without unfreezing, allowing you to preview both before showing the room.
-- **Clear Cue**: Abandons whatever is queued and leaves the live screen untouched.
+- **Clear Cue**: Abandons whatever is queued, held ink included, and leaves the live screen untouched.
 - **Blank**: The panic button. Instantly blacks out the projector while keeping everything loaded underneath. One tap restores the display.
 
 ### The Library: What You Can Show
@@ -51,6 +54,7 @@ The **Library** tab is where everything starts: tap a tile and it goes to the pr
 | **PDF** | Paged, zoomable and pannable on the projector (see below). |
 | **Video / Audio** | Local or linked files, with full remote transport. |
 | **YouTube** | Embedded with remote transport, so the room never sees the YouTube site. |
+| **Live stream** | A live Twitch channel or YouTube broadcast, with video and sound, video only, or sound only (see [Live Streams](#live-streams-twitch--youtube-live)). |
 | **Photo / Image** | Any picture. Upload one from the iPad's Photos or Files with **Upload a photo…**. |
 | **Web page** | Any page that allows embedding. |
 | **Text sign** | A simple card of text. |
@@ -59,7 +63,7 @@ The **Library** tab is where everything starts: tap a tile and it goes to the pr
 
 **Built-in quick tools** are always there (an administrator can toggle them on a server): **Black**, **Whiteboard**, **Chalkboard**, **Phone camera**, **Timer** and **We begin in…**.
 
-- **Paste a link** (YouTube, image, video, PDF, any page) and press **Show**, or **Save** it to this device's library.
+- **Paste a link** (YouTube, Twitch, image, video, PDF, any page) and press **Show**, or **Save** it to this device's library.
 - **Open a Marp deck…** loads a `.md` file straight from the device.
 - **Back to** remembers where you were, including the slide. Wander off to a photo mid-deck, and one tap returns you to the exact slide you left rather than restarting the deck in front of everyone.
 
@@ -81,6 +85,10 @@ The **Slides** tab provides an integrated confidence monitor:
 - **Presenter Notes**: Scrollable, readable notes corresponding to the active slide.
 - **Confidence Split Toggle**: Tap to cycle the Now/Next pane split between 50/50, 75/25, and 25/75.
 - **Jump to Slide Grid**: Tap "Jump to a slide" to view thumbnails of the entire presentation with captions. Slides that have ink drawings display an indicator badge.
+- **Pop-out Preview**: **press and hold** a thumbnail to open that slide large, fully built, with its notes. Nothing is sent to the display, so it's safe mid-lecture. **Go to this slide** jumps there; **Close** (or Escape, or a tap outside) doesn't.
+- **While frozen**, this tab works on the cue (see [Freeze is a Cue](#the-core-model-freeze-is-a-cue)). The Now box is relabelled **Cued**, and Laser and Spotlight are put away, since they point at what the room sees.
+
+The **Now** tab always opens with a large live view of what the focused pane is showing the room. It never shows the cue, frozen or not. Below it are the transport controls for media, and paging and PDF zoom for documents. While frozen, a note says those controls are working on the cue.
 
 ### PDFs: Zoom and Pan on the Projector
 
@@ -156,6 +164,7 @@ A real transport and a real mixer, operated from across the room.
 Podium gives you dedicated remote transport controls for all media:
 - **Videos & Audio Files**: Play, pause, scrub timeline, restart, and toggle looping.
 - **YouTube Embeds**: Full playback control and scrubbing directly from the iPad without ever exposing the YouTube website or recommendations to the room.
+- **Live streams**: a Twitch channel or a YouTube live broadcast. See [Live Streams](#live-streams-twitch--youtube-live) below.
 - **Master Audio Mixer**:
   - Top bar / bottom bar master volume slider scales all classroom audio together.
   - Master Mute button silences the room immediately.
@@ -163,6 +172,23 @@ Podium gives you dedicated remote transport controls for all media:
 - **Pre-Class Background Music**:
   - Queue playlists to play music as students enter the room.
   - Automatically ducks under lecture video when content media is played.
+
+#### Live Streams (Twitch & YouTube Live)
+
+Show a live stream on any pane, and choose how much of it the room gets:
+
+- **Adding one:** paste a Twitch link (`twitch.tv/<channel>`) or a YouTube live link (`youtube.com/live/<id>`, or a channel page `youtube.com/channel/<UC… id>`) into the Library's link box. An ordinary YouTube *watch* link stays a normal YouTube video. In the planner, add a **Live stream** item. On a server, the admin page's library manifest has a **Live stream** type too.
+- **Video + sound, Video only, Sound only:** switch on the **Now** tab while it plays. The stream is never reloaded. *Video only* is always muted, whatever the faders say. *Sound only* keeps the stream playing behind a card that says what is on, which suits a radio-style broadcast or a talk you only need to hear. The planner sets which one it starts with.
+- **Play/pause and volume** work like any other media: the Now tab, Space, the dock's Play slot, the Mixer's content fader, the Master and mute all reach it. There is nothing to scrub or loop, so those controls are hidden. A stream that is heard (not video only) ducks background music.
+- **Behind a freeze** a stream is loaded, paused and silent in the cue, and starts the moment you TAKE it.
+- **On the controller** a stream shows as a card in the cue and the Now/Next boxes. Your iPad never pulls a second copy of the video just for a thumbnail.
+
+Good to know:
+- Twitch is played through **Twitch's own player script**, loaded from `player.twitch.tv` only when a Twitch stream is actually shown. It's what lets Podium's faders and play/pause control it. A network that blocks twitch.tv blocks this too, and the display says so.
+- Twitch only plays inside a page served from a web address: GitHub Pages, your own server, or `localhost`. It won't play from a page opened as a file, and it checks the address, so it must be HTTPS in practice.
+- A YouTube `@handle` link can't be embedded. Use the channel's `UC…` id, or the broadcast's own link.
+- A channel that isn't live shows the platform's own "offline" screen.
+- Streams can't be photographed (a browser won't let a page read pixels out of another site's player).
 
 #### Background music in detail
 
@@ -427,6 +453,20 @@ All in **Settings → Presentation**, saved on that device only:
 - **Keep this device's screen awake** while the controller is open.
 - **Haptic feedback**: a physical tick when you advance, freeze, blank or TAKE, so you know a tap registered without looking down (on devices that support vibration).
 - **Always cue first**: every pick waits in the cue, even when not frozen.
+
+### Start Every Lecture With… (Saved Defaults)
+
+Settings → Presentation → **Start every lecture with** remembers the controls you set the same way every class, on this device:
+
+| Default | What it does |
+| :--- | :--- |
+| **Music: Auto-play, Pause Queue, "We begin in…" counts to the end of the queue** | Each is *Plan / as is*, *On* or *Off*. Auto-play also decides whether a plan's auto-launched music starts playing. |
+| **Music: Countdown text** | The words on the "We begin in…" panel. |
+| **Mixer levels** | Master, loaded audio/video, background music and controller mics. **Use the Mixer's current levels** copies them from the Mixer tab. |
+| **Caption along the bottom** | Fills in the Say tab's caption box, ready to show. Nothing goes on screen until you press **Show**. |
+| **Watermark** | Text, corner and an optional logo. It goes up automatically unless you've already put up a watermark of your own in this lecture, and it replaces a course's default watermark. |
+
+**When they apply:** once when you open the controller in a new tab and it first finds the display (the same moment as *Black out the screen when this controller connects*: never on a reconnect, a reload, or closing Settings), and again every time a lecture plan loads, so they win over the plan's own music settings. The watermark is only applied on opening, so one you took down mid-lecture stays down when you load a plan. Anything left on *Plan / as is*, empty, or unticked changes nothing. **Clear all defaults** puts everything back to that.
 
 ### Lecture Pacing Clock
 

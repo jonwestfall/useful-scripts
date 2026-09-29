@@ -1497,6 +1497,116 @@ ok('and TAKE still applies content with no layout change involved', true);
 await ctx.close();
 }
 
+if (want('freeze works on the cue: slides, now, ink and the pop-out (#174)')) {
+console.log('\n-- freeze works on the cue: slides, now, ink and the pop-out (#174) --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'freeze-cue-room', passphrase: 'hold the room not me' }));
+const screen = await ctx.newPage();
+trap(screen, 'freeze-cue display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'freeze-cue pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const inkPixels = () => screen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n;
+});
+const scribble = async () => {
+  const box = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+  await pad.mouse.move(box.x + box.w * 0.2, box.y + box.h * 0.3);
+  await pad.mouse.down();
+  for (let i = 1; i <= 12; i++) await pad.mouse.move(box.x + box.w * (0.2 + i * 0.04), box.y + box.h * (0.3 + i * 0.03));
+  await pad.mouse.up();
+};
+
+// A whiteboard live, then freeze and open a deck: it must land in the cue
+// AND be what the Slides tab shows, so it can be read and paged.
+await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await screen.waitForSelector('.layer[data-role="program"] .r-whiteboard', { timeout: 8000 });
+await pad.click('#freeze');
+await screen.waitForFunction(() => document.body.classList.contains('is-frozen'));
+await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await pad.waitForFunction(() => document.querySelector('#preview-label').textContent === 'Cued', null, { timeout: 25000 });
+await pad.click('.tab[data-tab="slides"]');
+await pad.waitForFunction(() => !document.querySelector('#deck-live').hidden, null, { timeout: 25000 })
+  .then(() => ok('the Slides tab shows a deck opened while frozen', true))
+  .catch(() => ok('the Slides tab shows a deck opened while frozen', false));
+ok('and says it is the cue, not the screen', await pad.isVisible('#deck-cued-note') && (await pad.textContent('#deck-now-label')) === 'Cued');
+ok('the laser is put away while showing the cue', await pad.$eval('#deck-laser', (b) => b.disabled));
+await pad.waitForFunction(() => /Slide 1 \//.test(document.querySelector('#deck-count').textContent), null, { timeout: 25000 });
+await pad.click('#deck-next');
+await pad.waitForFunction(() => /Slide 2 \//.test(document.querySelector('#deck-count').textContent), null, { timeout: 8000 })
+  .then(() => ok('paging while frozen moves the cued deck, and the Slides tab follows it', true))
+  .catch(() => ok('paging while frozen moves the cued deck, and the Slides tab follows it', false));
+ok('the room still sees the whiteboard', await screen.evaluate(() => !!document.querySelector('.layer[data-role="program"] .r-whiteboard')));
+
+// Hold a thumbnail: a pop-out preview, and nothing sent.
+const cell = pad.locator('#deck-grid').locator('.cell[data-index="2"]');
+await cell.waitFor({ timeout: 25000 });
+// Clear of the bottom bar, which sits over the foot of a long Slides tab.
+await cell.evaluate((n) => n.scrollIntoView({ block: 'center' }));
+const cellBox = await cell.boundingBox();
+await pad.mouse.move(cellBox.x + cellBox.width / 2, cellBox.y + cellBox.height / 3);
+await pad.mouse.down();
+await pad.waitForTimeout(700);
+await pad.mouse.up();
+await pad.waitForSelector('#slide-popout:not([hidden])', { timeout: 3000 })
+  .then(() => ok('holding a thumbnail pops that slide out', true))
+  .catch(() => ok('holding a thumbnail pops that slide out', false));
+ok('titled with the slide it shows', /^3[.]|Slide 3/.test(await pad.textContent('#slide-popout-title')));
+await pad.waitForTimeout(400);
+ok('and the hold did not also jump to it', /Slide 2 \//.test(await pad.textContent('#deck-count')));
+await pad.click('#slide-popout-close');
+ok('the pop-out closes', await pad.isHidden('#slide-popout'));
+
+// Ink while frozen, on the cued slide: held until TAKE.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad');
+await pad.waitForTimeout(400);
+ok('the Ink tab says ink is being held', await pad.isVisible('#ink-held-note'));
+await scribble();
+await pad.waitForTimeout(800);
+ok(`ink drawn while frozen does not reach the room (${await inkPixels()} px)`, (await inkPixels()) === 0);
+ok('the preview pane still shows a cue', /Cued/.test(await pad.textContent('#preview-label')));
+await pad.click('#take');
+await screen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-deck'), null, { timeout: 25000 });
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 })
+  .then(() => ok('TAKE puts the cued deck up with its held ink, all at once', true))
+  .catch(() => ok('TAKE puts the cued deck up with its held ink, all at once', false));
+const afterTake = await inkPixels();
+ok(`and the ink is really on screen (${afterTake} px)`, afterTake > 200);
+
+// Frozen with nothing cued: ink on what is on screen is held too, and
+// Clear cue throws it away.
+await pad.click('#freeze');
+await screen.waitForFunction(() => document.body.classList.contains('is-frozen'));
+await pad.waitForTimeout(400);
+await scribble();
+await pad.waitForTimeout(800);
+ok('ink on the live slide while frozen is held back too', (await inkPixels()) === afterTake);
+ok('the preview pane says ink is cued', /Ink cued/.test(await pad.textContent('#preview-label')));
+ok('TAKE is armed by held ink alone', !(await pad.$eval('#take', (b) => b.disabled)));
+await pad.click('#clear-preview');
+await pad.waitForTimeout(600);
+ok('Clear cue throws held ink away', (await inkPixels()) === afterTake && (await pad.$eval('#take', (b) => b.disabled)));
+
+// The Now tab: a large view of what the room sees, never the cue.
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForFunction(() => !!document.querySelector('#now-preview .mirror-frame > *'), null, { timeout: 8000 })
+  .then(() => ok('the Now tab shows what is on screen, large', true))
+  .catch(() => ok('the Now tab shows what is on screen, large', false));
+
+await ctx.close();
+}
+
 if (want('drawing on an untouched panel and promoting it does not go black')) {
 console.log('\n-- drawing on an untouched panel and promoting it does not go black --');
 // The exact class report: a deck on A, split to side-by-side, focus B

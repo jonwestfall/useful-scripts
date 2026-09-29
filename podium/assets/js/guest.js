@@ -26,7 +26,7 @@ const cfg = await loadConfig();
 // pulls in the deck/PDF rendering machinery this page has no use for, and
 // guest.js is meant to stay small enough to read start to finish.
 const TYPE_LABELS = {
-  black: 'Black', image: 'Image', video: 'Video', audio: 'Audio', youtube: 'YouTube',
+  black: 'Black', image: 'Image', video: 'Video', audio: 'Audio', youtube: 'YouTube', stream: 'Live stream',
   web: 'Web page', slides: 'Slides', deck: 'Marp deck', pdf: 'PDF', text: 'Big text',
   qr: 'QR code', timer: 'Timer', whiteboard: 'Whiteboard', camera: 'Camera', poll: 'Poll',
 };
@@ -42,7 +42,7 @@ const NAVIGABLE = new Set(['pdf', 'slides', 'web', 'deck']);
 
 // The types Play/Pause actually applies to - the same set control.js's own
 // isMedia check uses.
-const MEDIA_TYPES = new Set(['video', 'audio', 'youtube']);
+const MEDIA_TYPES = new Set(['video', 'audio', 'youtube', 'stream']);
 
 const LASER_COLORS = ['red', 'green', 'blue'];
 let laserColor = 'red';
