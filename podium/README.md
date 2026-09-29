@@ -60,8 +60,8 @@ The devices never talk to each other directly. They all check in with a small **
 Features marked **🖥️** need Podium's own self-hosted server. Everything else works on every setup, including free GitHub Pages hosting. Each heading links to the full details.
 
 ### 🎬 [Presenting](docs/features.md#part-1--presenting)
-- **Freeze is a cue.** Freeze holds the projector while you flip ahead, scrub a video or find a PDF page. **TAKE** cuts it live, **Swap** trades live and cued, and **Blank** blacks out the room with everything still loaded.
-- **Now / Next / Notes.** A confidence monitor on your device, with a searchable thumbnail grid for jumping to any slide.
+- **Freeze is a cue.** Freeze holds the projector while you open and page through a deck, scrub a video, find a PDF page, or mark something up. **TAKE** cuts it live (ink and all), **Swap** trades live and cued, and **Blank** blacks out the room with everything still loaded.
+- **Now / Next / Notes.** A confidence monitor on your device, with a searchable thumbnail grid. Hold a thumbnail for a pop-out preview.
 - **Marp slides in Markdown**, with KaTeX math, progressive builds, presenter notes and custom CSS themes.
 - **PDFs, with projector zoom and pan.** PowerPoint uploads are converted to PDF automatically 🖥️.
 - **A library of anything:** decks, picture decks, HTML slides, video, audio, YouTube, photos, web pages, text signs, QR codes, whiteboards, chalkboards and timers. You can also paste any link or upload a photo.
@@ -108,6 +108,7 @@ Features marked **🖥️** need Podium's own self-hosted server. Everything els
 
 ### 🧩 [Make it yours](docs/features.md#part-9--making-the-controller-yours)
 - Reorder or hide the controller's twelve tabs, and customize up to eight bottom-bar shortcuts.
+- **Saved defaults** for music, mixer levels, caption and watermark, applied at the start of every lecture and winning over a plan's own music settings.
 - Keyboard and Bluetooth clicker support, a **pacing clock** for your lecture budget, haptics, keep-awake, split view on a wide iPad, and optional blackout on connect.
 
 ### 🗃️ [After class](docs/features.md#part-10--after-class)

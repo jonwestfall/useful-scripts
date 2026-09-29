@@ -5,7 +5,7 @@
 import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem,
+import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, workingItem,
   inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
@@ -18,6 +18,7 @@ import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downs
 import { mountSessionBadge, serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
 import { createWatermarkPanel } from './watermark.js';
+import { loadDefaults, defaultCommands, createDefaultsPanel, DEFAULTS_KEY } from './defaults.js';
 import { createPipPanel } from './pip.js';
 
 const LIB_KEY = 'podium.library.v1';
@@ -98,6 +99,14 @@ const send = (cmd) => {
   triggerCommandHaptic(cmd);
   return bus?.send({ t: 'cmd', ...cmd });
 };
+
+// Issue #174: what this device's own views and tools address - the cue while
+// panel A is frozen, otherwise whatever has focus (see workingItem in
+// protocol.js). And whether anything at all is waiting for TAKE: cued
+// content, a cued layout, or ink held back from the room.
+const workItem = () => workingItem(state);
+const hasCue = () => !!state.preview || state.previewLayout !== null || (state.ink?.held || 0) > 0;
+const heldInkOnly = () => !state.preview && state.previewLayout === null && (state.ink?.held || 0) > 0;
 
 // Decks this controller holds the markdown for. An uploaded deck lives only
 // here and on whichever display asked for it; a deck with a src is fetched
@@ -635,7 +644,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
             action: 'load',
             tracks: matchedPlaylist.tracks,
             name: matchedPlaylist.name,
-            play: musicConfig.autoplay !== false,
+            play: planAutoplay(musicConfig),
           });
         } else if (matchedAudioItem) {
           send({
@@ -643,7 +652,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
             action: 'load',
             tracks: [{ src: matchedAudioItem.src, title: matchedAudioItem.title, artist: matchedAudioItem.artist }],
             name: matchedAudioItem.title || 'Audio',
-            play: musicConfig.autoplay !== false,
+            play: planAutoplay(musicConfig),
           });
         }
 
@@ -668,6 +677,53 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
       suppressHaptics = false;
     }
   }
+  // Issue #173: this device's saved defaults win over the plan's own.
+  applyDefaults({ afterPlan: true });
+}
+
+// A plan's auto-launched music plays or not as the plan says - unless this
+// device has a saved Auto-play default (Issue #173), which wins.
+function planAutoplay(musicConfig) {
+  return defaults.music.autoplay ?? (musicConfig.autoplay !== false);
+}
+
+// --- saved defaults (Issue #173) ----------------------------------------------
+//
+// See assets/js/defaults.js for what each one does and when. The controls it
+// sets on this device (Auto-play, End of queue, countdown text, the caption
+// box) are set directly; the rest goes to the room as ordinary commands.
+let defaults = loadDefaults();
+
+function applyDefaults({ afterPlan = false } = {}) {
+  const d = defaults;
+  if (d.music.autoplay !== null && $('#music-autoplay')) $('#music-autoplay').checked = d.music.autoplay;
+  if (d.music.untilQueue !== null && $('#music-countdown-queue')) {
+    $('#music-countdown-queue').checked = d.music.untilQueue;
+    setCountdownQueue(d.music.untilQueue);
+  }
+  if (d.music.countdownText) {
+    safeStorageSet(localStorage, COUNTDOWN_TEXT_KEY, d.music.countdownText);
+    updateCountdownButton();
+  }
+  const caption = $('#overlay-text');
+  if (d.caption && caption && document.activeElement !== caption && !caption.value) caption.value = d.caption;
+  if (d.watermark.imageId && d.watermark.imageData) {
+    assetStore.set(d.watermark.imageId, d.watermark.imageData);
+    pushAssetIfHeld(assetRef(d.watermark.imageId));
+  }
+  for (const cmd of defaultCommands(d, state, { assetRef, afterPlan })) send(cmd);
+}
+
+// Once per tab per room, like blank-on-connect below (Issue #170): a reload,
+// closing Settings, or iOS reviving the tab is not "opening the controller".
+let defaultsSentThisLoad = false;
+let stateHeard = false;
+const defaultsKey = () => `podium.defaults-applied.${cfg.room || ''}`;
+function defaultsAppliedHere() {
+  try { return sessionStorage.getItem(defaultsKey()) === '1'; } catch { return false; }
+}
+function noteDefaultsAppliedHere() {
+  try { sessionStorage.setItem(defaultsKey(), '1'); } catch { /* private mode: applied again on reload, at worst */ }
 }
 
 // --- where you just were -----------------------------------------------------
@@ -939,9 +995,11 @@ function renderPreview() {
     previewRenderer.reconcile({ ...item, playing: false }, { volume: 0, muted: true });
   }
 
-  $('#preview-label').textContent = state.preview ? 'Cued' : (state.previewLayout !== null ? 'Layout cued' : 'On screen');
+  $('#preview-label').textContent = state.preview ? 'Cued'
+    : state.previewLayout !== null ? 'Layout cued'
+      : heldInkOnly() ? 'Ink cued' : 'On screen';
   $('#preview-title').textContent = itemTitle(item);
-  $('#preview-pane').classList.toggle('is-cued', !!state.preview || state.previewLayout !== null);
+  $('#preview-pane').classList.toggle('is-cued', hasCue());
 }
 
 // --- Marp deck panel --------------------------------------------------------
@@ -1170,6 +1228,9 @@ async function buildGridNow(deck) {
     cap.textContent = title;
     cell.append(thumb, cap);
     cell.addEventListener('click', () => send({ op: 'nav', dir: 'goto', value: i }));
+    // Hold for a closer look without going anywhere (Issue #174). The tap
+    // that ends the hold is swallowed, so it does not also jump.
+    onLongPress(cell, SLIDE_POPOUT_HOLD_MS, () => openSlidePopout(i));
     grid.append(cell);
   });
   renderSectionChips(deck);
@@ -1208,7 +1269,7 @@ function filterGrid() {
   $('#deck-grid-empty').hidden = shown > 0;
 }
 
-function highlightGrid(index, deckId = (deckView.id || (focusedItem(state)?.type === 'deck' ? focusedItem(state)?.deckId : null))) {
+function highlightGrid(index, deckId = (deckView.id || (workItem()?.type === 'deck' ? workItem()?.deckId : null))) {
   if (!gridShadow) return;
   const cells = gridShadow.querySelectorAll('.cell');
   const surfacesWithInk = new Set(state.ink?.surfaces || []);
@@ -1277,13 +1338,66 @@ async function ensureDeckView(item) {
   }
 }
 
+// --- slide pop-out (Issue #174) -----------------------------------------------
+//
+// Hold a thumbnail and that slide opens large, finished (every build step
+// shown) with its notes - "what does slide 14 actually say" answered without
+// paging to it, which would move the room or the cue. Only "Go to this slide"
+// sends anything.
+const SLIDE_POPOUT_HOLD_MS = 450;
+let slidePopoutMirror = null;
+let slidePopoutIndex = null;
+
+function openSlidePopout(index) {
+  const item = workItem();
+  const deck = deckView.deck;
+  if (item?.type !== 'deck' || !deck || deckView.id !== item.deckId) return;
+  slidePopoutIndex = index;
+  const sheet = $('#slide-popout');
+  sheet.hidden = false;
+  $('#slide-popout-title').textContent = deck.titles?.[index] ? `${index + 1}. ${deck.titles[index]}` : `Slide ${index + 1}`;
+  slidePopoutMirror ||= createLiveMirror($('#slide-popout-preview'));
+  const frags = (item.fragments && item.fragments[index]) || (deck.fragments && deck.fragments[index]) || 0;
+  slidePopoutMirror.update({ ...item, slide: index, step: frags });
+  const note = deck.notes?.[index] || '';
+  const notesEl = $('#slide-popout-notes');
+  if (note) notesEl.innerHTML = miniMarkdown(note);
+  else notesEl.textContent = 'No notes on this slide.';
+  notesEl.classList.toggle('is-empty', !note);
+  $('#slide-popout-close').focus();
+}
+
+function closeSlidePopout() {
+  $('#slide-popout').hidden = true;
+  slidePopoutIndex = null;
+}
+
+$('#slide-popout-close').addEventListener('click', closeSlidePopout);
+$('#slide-popout-go').addEventListener('click', () => {
+  if (slidePopoutIndex !== null) send({ op: 'nav', dir: 'goto', value: slidePopoutIndex });
+  closeSlidePopout();
+});
+$('#slide-popout').addEventListener('click', (ev) => { if (ev.target === $('#slide-popout')) closeSlidePopout(); });
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !$('#slide-popout').hidden) closeSlidePopout();
+});
+
 function renderSlides() {
-  const item = focusedItem(state)?.type === 'deck' ? focusedItem(state) : null;
+  const item = workItem()?.type === 'deck' ? workItem() : null;
   $('#deck-none').hidden = !!item;
   $('#deck-live').hidden = !item;
   if (!item) return;
 
   $('#deck-title').textContent = itemTitle(item);
+  // Working on the cue (Issue #174): say so, and put the pointers away - the
+  // laser and spotlight point at what the room sees, which this is not.
+  const onCue = item === state.preview;
+  $('#deck-cued-note').hidden = !onCue;
+  $('#deck-now-label').textContent = onCue ? 'Cued' : 'Now';
+  $('#deck-laser').disabled = onCue;
+  $('#deck-spotlight').disabled = onCue;
+  if (onCue && laserActive) setLaserActive(false);
+  if (onCue && spotlightActive) setSpotlightActive(false);
   const deck = deckView.id === item.deckId ? deckView.deck : null;
   const total = deck?.count || item.slideCount || 1;
   const index = Math.min(total - 1, Math.max(0, item.slide || 0));
@@ -1880,7 +1994,7 @@ async function reconcileExportFiles(lectureId, keptNames, reconcilePhotos) {
 }
 
 async function exportDeck() {
-  const item = focusedItem(state);
+  const item = workItem();
   if (!item || item.type !== 'deck') return;
   const btn = $('#deck-export');
   const status = $('#deck-export-status');
@@ -1937,7 +2051,7 @@ async function exportDeck() {
   } catch (err) {
     status.textContent = `Export failed: ${err.message}`;
   } finally {
-    btn.disabled = !(deckView.deck && focusedItem(state)?.type === 'deck');
+    btn.disabled = !(deckView.deck && workItem()?.type === 'deck');
   }
 }
 
@@ -1949,8 +2063,26 @@ function currentTime() {
   return telemetry.time + (Date.now() - telemetryAt) / 1000;
 }
 
+// The Now tab's large "what the room sees" (Issue #174), made on first use
+// and only kept current while the tab is open - a video or a web page
+// mirrored into a hidden panel is work nobody is looking at.
+let nowTabMirror = null;
+function renderNowPreview() {
+  if ($('[data-panel="now"]').hidden) return;
+  nowTabMirror ||= createLiveMirror($('#now-preview'));
+  const live = focusedItem(state);
+  nowTabMirror.update(live);
+  const work = workItem();
+  const note = $('#now-cued-note');
+  note.hidden = work === live;
+  if (work !== live) note.textContent = `Frozen. The controls below work on the cue: ${itemTitle(work)}.`;
+}
+
 function renderNow() {
-  const item = focusedItem(state);
+  renderNowPreview();
+  // Paging and PDF zoom follow the cue while frozen (Issue #174), the same
+  // as the Slides tab; transport stays on what is actually playing.
+  const item = ['video', 'audio', 'youtube'].includes(focusedItem(state)?.type) ? focusedItem(state) : workItem();
   const type = item?.type;
   const isMedia = ['video', 'audio', 'youtube'].includes(type);
   const isPaged = ['pdf', 'slides', 'web', 'deck', 'imagedeck'].includes(type);
@@ -1988,7 +2120,7 @@ function renderNow() {
     if (document.activeElement !== $('#media-loop')) $('#media-loop').checked = !!item.loop;
   }
 
-  const cued = !!state.preview || state.previewLayout !== null;
+  const cued = hasCue();
   $('#take').disabled = !cued;
   $('#take').classList.toggle('is-armed', cued);
   $('#swap').disabled = !state.preview;
@@ -2880,7 +3012,7 @@ function renderAll() {
   renderTimers();
   renderSlides();
   renderLayoutBar();
-  ensureDeckView(focusedItem(state));
+  ensureDeckView(workItem());
 }
 
 // --- ink pad ----------------------------------------------------------------
@@ -2933,6 +3065,10 @@ const ink = {
   strokes: [],
 };
 let inkSurface = null;
+// See syncInkBase below (Issue #174). Declared up here with inkSurface since
+// redrawPad, which can run at startup, reads it.
+let inkBase = { surface: null, strokes: [] };
+let basePull = { surface: null, at: 0, parts: [] };
 let zoom = 1;
 let panX = 0;
 let panY = 0;
@@ -2966,7 +3102,7 @@ function contentAspectFor(item) {
   return state.stageAspect || 16 / 9;
 }
 
-const computeContentAspect = () => contentAspectFor(focusedItem(state));
+const computeContentAspect = () => contentAspectFor(workItem());
 
 // The "contain" fit math the display itself uses to letterbox a slide: sizes
 // and centers `frame` inside `viewport` to the given aspect ratio. Shared by
@@ -3012,7 +3148,7 @@ function deckAspectPending(panel, item) {
 }
 
 function fitFrame() {
-  const pending = deckAspectPending(state.focus, focusedItem(state));
+  const pending = deckAspectPending(state.focus, workItem());
   pad.classList.toggle('is-pending', pending);
   if (pending) return;
   const { w, h } = fitBox(padViewport, padFrame, computeContentAspect());
@@ -3127,7 +3263,7 @@ function sizePad() {
   // certainly resolved, corrects the pad to the page's actual shape instead
   // of leaving it letterboxed wrong until some unrelated redraw happens to
   // call sizePad() again.
-  const item = focusedItem(state);
+  const item = workItem();
   if (item?.type === 'pdf' && item.src && !pdfAspectFor(item.src) && !pendingPdfAspectRetry) {
     pendingPdfAspectRetry = setTimeout(() => {
       pendingPdfAspectRetry = null;
@@ -3144,7 +3280,7 @@ let padMirrorKey = null;
 let showMirror = true;
 
 function updatePadMirror() {
-  const item = focusedItem(state);
+  const item = workItem();
   const key = item ? `${item.type}:${item.deckId || item.src || ''}` : null;
   if (key !== padMirrorKey) {
     padMirrorRenderer?.destroy();
@@ -3161,7 +3297,10 @@ function redrawPad() {
   const w = pad.clientWidth;
   const h = pad.clientHeight;
   padCtx.clearRect(0, 0, w, h);
-  for (const stroke of ink.strokes) {
+  // Held ink (Issue #174) is drawn over what is already on the real surface,
+  // which it is headed for - so marking up while frozen looks like what the
+  // room will see after TAKE.
+  for (const stroke of [...(inkBase.surface ? inkBase.strokes : []), ...ink.strokes]) {
     if (stroke.pts.length < 2) continue;
     padCtx.save();
     if (stroke.highlighter) {
@@ -3200,7 +3339,7 @@ function holdInk(surface, strokes) {
   inkCache.set(surface, strokes);
   while (inkCache.size > INK_CACHE_MAX) inkCache.delete(inkCache.keys().next().value);
   if (gridShadow && deckView.id) {
-    const item = focusedItem(state);
+    const item = workItem();
     if (item?.type === 'deck') highlightGrid(item.slide || 0, item.deckId);
   }
 }
@@ -3208,6 +3347,25 @@ function holdInk(surface, strokes) {
 // An outstanding request for a surface's strokes, and the slices arriving in
 // answer to it. See requestInkSurface below.
 let inkPull = { surface: null, at: 0, parts: [] };
+
+// While frozen the pad draws on a held surface (Issue #174 - see inkTargetKey
+// in protocol.js). `inkBase` is the real surface under it, as the display last
+// described it (state.ink.base / baseDigest): read-only here, and pulled the
+// same way as the surface being drawn on, through a second slot so the two
+// requests never cancel each other.
+
+function syncInkBase() {
+  const base = state.ink?.base || null;
+  if (base !== inkBase.surface) {
+    inkBase = { surface: base, strokes: base ? (inkCache.get(base) || []) : [] };
+    basePull = { surface: null, at: 0, parts: [] };
+    if (!$('[data-panel="ink"]').hidden) redrawPad();
+  }
+  if (!base || !bus || inkDigestsAgree(inkDigest(inkBase.strokes), state.ink?.baseDigest)) return;
+  if (basePull.surface === base && Date.now() - basePull.at < 3000) return;
+  basePull = { surface: base, at: Date.now(), parts: [] };
+  bus.send({ t: 'ink-pull', surface: base });
+}
 
 // The heartbeat carries only a summary of the current surface's ink (see
 // inkDigest in protocol.js) - the strokes themselves were hundreds of
@@ -3227,6 +3385,16 @@ function requestInkSurface() {
 }
 
 function receiveInkSurface(msg) {
+  if (msg.surface && msg.surface === basePull.surface && msg.surface === inkBase.surface) {
+    basePull.parts.push(...(msg.strokes || []));
+    if (!msg.last) return;
+    inkBase.strokes = basePull.parts;
+    inkCache.delete(msg.surface);
+    inkCache.set(msg.surface, basePull.parts);
+    basePull = { surface: null, at: 0, parts: [] };
+    if (!$('[data-panel="ink"]').hidden) redrawPad();
+    return;
+  }
   if (msg.surface !== inkPull.surface || msg.surface !== inkSurface) return;   // stale answer
   inkPull.parts.push(...(msg.strokes || []));
   if (!msg.last) return;
@@ -3254,6 +3422,8 @@ function syncInkFromState() {
     if (!$('[data-panel="ink"]').hidden) redrawPad();
   }
   if (!ink.drawing && !ink.erasing && !inkDigestsAgree(inkDigest(ink.strokes), state.ink?.digest)) requestInkSurface();
+  syncInkBase();
+  renderHeldInkNote();
   // Resizing mid-stroke is what caused strokes to come out warped. If the
   // deck's aspect had only just become known - Marp still loading when the
   // gesture started - the frame would resize partway through it. Points
@@ -3263,6 +3433,20 @@ function syncInkFromState() {
   // resize until the stroke ends (see endStroke()) keeps every point in a
   // gesture measured against one constant box.
   if (!$('[data-panel="ink"]').hidden && !ink.drawing && !ink.erasing) sizePad();
+}
+
+// Says, on the Ink tab, that what is being drawn is held back from the room
+// (Issue #174) - the one thing about freezing that is not otherwise visible
+// from the pad itself, which shows the held ink as if it were already live.
+function renderHeldInkNote() {
+  const note = $('#ink-held-note');
+  if (!note) return;
+  const drawingHeld = typeof state.ink?.surface === 'string' && state.ink.surface.startsWith('held:');
+  const waiting = (state.ink?.held || 0) > 0;
+  note.hidden = !drawingHeld && !waiting;
+  note.textContent = drawingHeld
+    ? 'Frozen: what you draw here is held back from the room. TAKE shows it all at once; Clear cue throws it away.'
+    : 'Ink drawn while frozen is waiting. TAKE shows it; Clear cue throws it away.';
 }
 
 const flushInk = throttle(() => {
@@ -3574,7 +3758,7 @@ const endStroke = (ev) => {
     ink.strokeId = null;
     try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
     if (gridShadow && deckView.id) {
-      const item = focusedItem(state);
+      const item = workItem();
       if (item?.type === 'deck') highlightGrid(item.slide || 0, item.deckId);
     }
     if (!$('[data-panel="ink"]').hidden) sizePad();
@@ -3586,7 +3770,7 @@ const endStroke = (ev) => {
   ink.strokeId = null;
   try { pad.releasePointerCapture(ev.pointerId); } catch { /* already released */ }
   if (gridShadow && deckView.id) {
-    const item = focusedItem(state);
+    const item = workItem();
     if (item?.type === 'deck') highlightGrid(item.slide || 0, item.deckId);
   }
   // Catch up on any resize that was deliberately deferred while that stroke
@@ -4500,6 +4684,13 @@ function renderConnection() {
     if (presentation.blankOnConnect && !alreadyBlankedHere()) send({ op: 'blank', on: true });
     noteBlankedHere();
   }
+  // Saved defaults (Issue #173), once this tab has heard the room's state -
+  // the watermark default needs to know whether one is already up.
+  if (display && bus && stateHeard && !defaultsSentThisLoad) {
+    defaultsSentThisLoad = true;
+    if (!defaultsAppliedHere()) applyDefaults();
+    noteDefaultsAppliedHere();
+  }
 
   // A display still serving an older copy of the app - a browser that never
   // revalidated the page, or a machine whose projector tab has been open
@@ -4552,6 +4743,7 @@ async function connect() {
     onMessage: (msg) => {
       if (msg.t === 'state') {
         state = { ...state, ...msg.state };
+        stateHeard = true;
         // See lastKnownLectureId above: captured here, the one place
         // state.lectureId changes, so it survives the display clearing it at
         // stand-down and only moves on once a genuinely new lecture starts.
@@ -4704,6 +4896,7 @@ function tab(name) {
   // panel actually has a size to fit into - it would otherwise sit blank
   // until whatever periodic update happens to land next.
   if (name === 'ink') { syncInkFromState(); applyInkPreferences(); sizePad(); }
+  if (name === 'now') renderNowPreview();
   if (name === 'slides') {
     lastScrolledSlideIndex = null;
     lastScrolledSectionId = null;
@@ -5081,7 +5274,7 @@ $('#next-page').addEventListener('click', () => send({ op: 'nav', dir: 'next' })
 // the arithmetic works out to without duplicating that logic.
 const PDF_ZOOM_STEP = 1.6;
 function pdfZoomStep(dir) {
-  const item = focusedItem(state);
+  const item = workItem();
   if (item?.type !== 'pdf') return;
   const zoom = dir > 0 ? (item.zoom || 1) * PDF_ZOOM_STEP : (item.zoom || 1) / PDF_ZOOM_STEP;
   send({ op: 'zoom', action: 'set', zoom, panX: item.panX ?? 0.5, panY: item.panY ?? 0.5 });
@@ -5091,7 +5284,7 @@ $('#pdf-zoom-out').addEventListener('click', () => pdfZoomStep(-1));
 $('#pdf-zoom-reset').addEventListener('click', () => send({ op: 'zoom', action: 'reset' }));
 
 function pdfPan(dx, dy) {
-  const item = focusedItem(state);
+  const item = workItem();
   if (item?.type !== 'pdf' || (item.zoom || 1) <= 1) return;
   // Half the visible window's share of the page at this zoom, so a press
   // moves a consistent fraction of "what you can currently see" rather than
@@ -5998,7 +6191,7 @@ document.addEventListener('keydown', (ev) => {
   // and C guard on there being anything cued, the same as the dock buttons
   // disable themselves - a keystroke that would send a pointless "take"
   // with nothing cued is worse than one that quietly does nothing.
-  const cued = () => !!state.preview || state.previewLayout !== null;
+  const cued = hasCue;
   if (ev.key === 't' || ev.key === 'T') { if (cued()) { ev.preventDefault(); executeSlotAction('take'); } return; }
   if (ev.key === 'c' || ev.key === 'C') { if (cued()) { ev.preventDefault(); executeSlotAction('clear'); } return; }
   if (ev.key === 'w' || ev.key === 'W') { ev.preventDefault(); executeSlotAction('whiteboard'); return; }
@@ -6038,7 +6231,7 @@ document.addEventListener('keydown', (ev) => {
   }
 
   // Paging, on the other hand, only means something on something with pages.
-  if (!['pdf', 'slides', 'web', 'deck'].includes(focusedItem(state)?.type)) return;
+  if (!['pdf', 'slides', 'web', 'deck'].includes(workItem()?.type)) return;
   if (ev.key === 'ArrowRight' || ev.key === 'PageDown' || ev.key === ' ') { ev.preventDefault(); send({ op: 'nav', dir: 'next' }); }
   if (ev.key === 'ArrowLeft' || ev.key === 'PageUp') { ev.preventDefault(); send({ op: 'nav', dir: 'prev' }); }
 });
@@ -6140,6 +6333,17 @@ function savePresentation() {
   safeStorageSet(localStorage, PRESENTATION_KEY, JSON.stringify(presentation));
 }
 let presentation = loadPresentation();
+createDefaultsPanel({
+  $, uid, downscaleImage, MAX_ASSET_CHARS,
+  initial: defaults,
+  save: (d) => { defaults = d; safeStorageSet(localStorage, DEFAULTS_KEY, JSON.stringify(d)); },
+  getState: () => state,
+  getMusicTab: () => ({
+    autoplay: !!$('#music-autoplay')?.checked,
+    untilQueue: !!$('#music-countdown-queue')?.checked,
+    countdownText: getCountdownText(),
+  }),
+});
 
 function getBottomSlots() {
   if (Array.isArray(presentation.bottomSlots) && presentation.bottomSlots.length === 8) {
@@ -6390,7 +6594,7 @@ function renderSlotButton(btn, slotType) {
       break;
 
     case 'take': {
-      const cued = !!state.preview || state.previewLayout !== null;
+      const cued = hasCue();
       btn.hidden = false;
       btn.disabled = !cued;
       btn.textContent = 'TAKE';
@@ -6400,7 +6604,7 @@ function renderSlotButton(btn, slotType) {
     }
 
     case 'clear': {
-      const cued = !!state.preview || state.previewLayout !== null;
+      const cued = hasCue();
       btn.hidden = false;
       btn.disabled = !cued;
       btn.textContent = '✕ Clear';
@@ -6441,7 +6645,7 @@ function renderSlotButton(btn, slotType) {
     }
 
     case 'next': {
-      const item = focusedItem(state);
+      const item = workItem();
       const isPaged = ['pdf', 'slides', 'web', 'deck'].includes(item?.type);
       btn.hidden = false;
       btn.disabled = !isPaged;
@@ -6451,7 +6655,7 @@ function renderSlotButton(btn, slotType) {
     }
 
     case 'prev': {
-      const item = focusedItem(state);
+      const item = workItem();
       const isPaged = ['pdf', 'slides', 'web', 'deck'].includes(item?.type);
       btn.hidden = false;
       btn.disabled = !isPaged;

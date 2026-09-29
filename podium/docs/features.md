@@ -34,9 +34,12 @@ In standard presentation software, freezing the screen holds a static frame. In 
   - You can flip ahead through slides to check upcoming material.
   - You can load a YouTube video, scrub past ads, and queue it to the exact timestamp (e.g. 3:15).
   - You can open a PDF document and navigate to page 42.
-- **TAKE**: Cuts the cued item live to the projector and unfreezes. The switch is instantaneous because both content layers are already loaded in memory.
+  - You can open a deck you never loaded before class. The **Slides** tab switches to the cued deck (marked **Cued, not on screen yet**), so you can read its notes, page through it and check the thumbnails while the room still sees what it saw.
+  - You can **mark it up**. Ink drawn on panel A while frozen is held back from the room: on the cued item if one is cued, otherwise on what is already on screen. Your pad shows it over the live ink, and the Ink tab says it's being held.
+- **TAKE**: Cuts the cued item live to the projector and unfreezes. The switch is instantaneous because both content layers are already loaded in memory. Any held ink is revealed at the same moment, so a marked-up slide appears finished. Held ink on its own is enough to arm TAKE: the cue bar reads **Ink cued**.
+- **Unfreeze** without TAKE leaves the cue (and any held ink) waiting for a later TAKE.
 - **Swap**: Swaps the on-screen item and the cued item without unfreezing, allowing you to preview both before showing the room.
-- **Clear Cue**: Abandons whatever is queued and leaves the live screen untouched.
+- **Clear Cue**: Abandons whatever is queued, held ink included, and leaves the live screen untouched.
 - **Blank**: The panic button. Instantly blacks out the projector while keeping everything loaded underneath. One tap restores the display.
 
 ### The Library: What You Can Show
@@ -81,6 +84,10 @@ The **Slides** tab provides an integrated confidence monitor:
 - **Presenter Notes**: Scrollable, readable notes corresponding to the active slide.
 - **Confidence Split Toggle**: Tap to cycle the Now/Next pane split between 50/50, 75/25, and 25/75.
 - **Jump to Slide Grid**: Tap "Jump to a slide" to view thumbnails of the entire presentation with captions. Slides that have ink drawings display an indicator badge.
+- **Pop-out Preview**: **press and hold** a thumbnail to open that slide large, fully built, with its notes. Nothing is sent to the display, so it's safe mid-lecture. **Go to this slide** jumps there; **Close** (or Escape, or a tap outside) doesn't.
+- **While frozen**, this tab works on the cue (see [Freeze is a Cue](#the-core-model-freeze-is-a-cue)). The Now box is relabelled **Cued**, and Laser and Spotlight are put away, since they point at what the room sees.
+
+The **Now** tab always opens with a large live view of what the focused pane is showing the room. It never shows the cue, frozen or not. Below it are the transport controls for media, and paging and PDF zoom for documents. While frozen, a note says those controls are working on the cue.
 
 ### PDFs: Zoom and Pan on the Projector
 
@@ -427,6 +434,20 @@ All in **Settings → Presentation**, saved on that device only:
 - **Keep this device's screen awake** while the controller is open.
 - **Haptic feedback**: a physical tick when you advance, freeze, blank or TAKE, so you know a tap registered without looking down (on devices that support vibration).
 - **Always cue first**: every pick waits in the cue, even when not frozen.
+
+### Start Every Lecture With… (Saved Defaults)
+
+Settings → Presentation → **Start every lecture with** remembers the controls you set the same way every class, on this device:
+
+| Default | What it does |
+| :--- | :--- |
+| **Music: Auto-play, Pause Queue, "We begin in…" counts to the end of the queue** | Each is *Plan / as is*, *On* or *Off*. Auto-play also decides whether a plan's auto-launched music starts playing. |
+| **Music: Countdown text** | The words on the "We begin in…" panel. |
+| **Mixer levels** | Master, loaded audio/video, background music and controller mics. **Use the Mixer's current levels** copies them from the Mixer tab. |
+| **Caption along the bottom** | Fills in the Say tab's caption box, ready to show. Nothing goes on screen until you press **Show**. |
+| **Watermark** | Text, corner and an optional logo. It goes up automatically unless you've already put up a watermark of your own in this lecture, and it replaces a course's default watermark. |
+
+**When they apply:** once when you open the controller in a new tab and it first finds the display (the same moment as *Black out the screen when this controller connects*: never on a reconnect, a reload, or closing Settings), and again every time a lecture plan loads, so they win over the plan's own music settings. The watermark is only applied on opening, so one you took down mid-lecture stays down when you load a plan. Anything left on *Plan / as is*, empty, or unticked changes nothing. **Clear all defaults** puts everything back to that.
 
 ### Lecture Pacing Clock
 

@@ -405,6 +405,79 @@ await pad.click('#mute');
 await ctx.close();
 }
 
+if (want('saved defaults: set once in Settings, applied at the start of a lecture (#173)')) {
+console.log('\n-- saved defaults: set once in Settings, applied at the start of a lecture (#173) --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript(([cfg, defaults]) => {
+  localStorage.setItem('podium.config.v2', cfg);
+  if (!localStorage.getItem('podium.defaults.v1')) localStorage.setItem('podium.defaults.v1', defaults);
+}, [
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'defaults-room', passphrase: 'same every tuesday' }),
+  JSON.stringify({
+    music: { autoplay: true, pauseQueue: true, untilQueue: true, countdownText: 'Starting soon' },
+    mixer: { enabled: true, master: 0.4, content: 0.9, music: 0.3, mic: 0.5 },
+    caption: 'PSY 415 · Memory',
+    watermark: { enabled: true, text: 'Dr. Default', position: 'tl' },
+  }),
+]);
+const screen = await ctx.newPage();
+trap(screen, 'defaults display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'defaults pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await screen.waitForFunction(() => document.querySelector('#watermark-text')?.textContent === 'Dr. Default'
+  && !document.querySelector('#watermark-text').hidden, null, { timeout: 8000 })
+  .then(() => ok('the default watermark goes up when the controller first connects', true))
+  .catch(() => ok('the default watermark goes up when the controller first connects', false));
+await pad.click('.tab[data-tab="mixer"]');
+await pad.waitForFunction(() => Math.abs(Number(document.querySelector('#mixer-master').value) - 0.4) < 0.01
+  && Math.abs(Number(document.querySelector('#mixer-music').value) - 0.3) < 0.01, null, { timeout: 8000 })
+  .then(() => ok('the mixer is set to the saved levels', true))
+  .catch(() => ok('the mixer is set to the saved levels', false));
+ok('the caption is ready in the Say tab, not shown', (await pad.inputValue('#overlay-text')) === 'PSY 415 · Memory'
+  && !(await screen.evaluate(() => (document.querySelector('#overlay')?.textContent || '').includes('Memory'))));
+ok('Auto-play is ticked', await pad.isChecked('#music-autoplay'));
+ok('"We begin in…" counts to the end of the queue', await pad.isChecked('#music-countdown-queue'));
+ok('the countdown uses the saved text', (await pad.textContent('#music-countdown')).includes('Starting soon'));
+await pad.waitForFunction(() => document.querySelector('#music-pause-queue')?.checked, null, { timeout: 5000 })
+  .then(() => ok('Pause Queue is on in the room', true))
+  .catch(() => ok('Pause Queue is on in the room', false));
+
+// The Settings section shows what is saved.
+await pad.click('#open-settings');
+await pad.click('[data-settings-tab="presentation"]');
+ok('Settings shows the saved Auto-play', (await pad.inputValue('#def-autoplay')) === 'on');
+ok('and the saved watermark text', (await pad.inputValue('#def-wm-text')) === 'Dr. Default');
+
+// A change made mid-lecture survives a reload of the same tab: defaults are
+// for opening the controller, not for every reload (the same rule as
+// blank-on-connect, Issue #170).
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await pad.click('.tab[data-tab="mixer"]');
+await pad.evaluate(() => {
+  const input = document.querySelector('#mixer-master');
+  input.value = '0.9';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+});
+await screen.waitForTimeout(400);
+await pad.reload();
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await pad.waitForTimeout(1500);
+await pad.click('.tab[data-tab="mixer"]');
+ok('reloading the same tab does not put the defaults back', Math.abs(Number(await pad.inputValue('#mixer-master')) - 0.9) < 0.01);
+
+await ctx.close();
+}
+
 if (want('controller mic amplification: more than one live at once, and it ducks the music')) {
 console.log('\n-- controller mic amplification: more than one live at once, and it ducks the music --');
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });

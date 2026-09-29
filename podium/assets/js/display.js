@@ -19,7 +19,8 @@ import {
 } from './config.js';
 import { createBus } from './bus.js';
 import {
-  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION, versionStamp,
+  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, timerById, BUILD, VERSION, versionStamp,
+  inkTargetKey, isHeldInkKey, heldInkCount, HELD_INK_PREFIX,
   watermarkForNewLecture, viewerState, viewChannel, stripDeckNotes,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS,
 } from './protocol.js';
@@ -1610,7 +1611,7 @@ function snapshotInk() {
   // case - a board from last week nobody touched today - is scoped right.
   return Object.fromEntries(
     Object.entries(state.ink.bySurface || {})
-      .filter(([, surface]) => surface?.strokes?.length && surface.touched >= recordingSince),
+      .filter(([key, surface]) => !isHeldInkKey(key) && surface?.strokes?.length && surface.touched >= recordingSince),
   );
 }
 
@@ -1831,13 +1832,22 @@ function wireState() {
   // Ink and transport both address whichever panel has focus - a controller
   // drawing or scrubbing needs the FOCUSED panel's surface and shape, not
   // always panel A's, once more than one panel is on screen.
-  const key = inkSurfaceKey(focusedItem(state));
+  // While frozen that is a held surface (Issue #174 - see inkTargetKey), and
+  // `base` names the real one under it, so a controller can draw what is
+  // already there beneath the ink it is holding back from the room.
+  const key = inkTargetKey(state);
+  const base = isHeldInkKey(key) ? key.slice(HELD_INK_PREFIX.length) : null;
   return {
     ...rest,
     ink: {
       color: inkState.color,
       width: inkState.width,
       surface: key,
+      base,
+      baseDigest: base ? inkDigest(inkState.bySurface[base]?.strokes) : null,
+      // Held surfaces with strokes on them - part of the cue, so TAKE and
+      // Clear cue stay armed for ink alone.
+      held: heldInkCount(inkState),
       // A summary, not the strokes. This object goes out every two seconds -
       // and every 400ms while anything is playing - and the strokes of a
       // well-annotated whiteboard are hundreds of kilobytes, which is past
@@ -1846,7 +1856,7 @@ function wireState() {
       digest: inkDigest(inkState.bySurface[key]?.strokes),
       // Surface keys with saved strokes, so controllers know which slide thumbnails
       // or items have annotations without pulling stroke bodies.
-      surfaces: Object.keys(inkState.bySurface).filter((k) => inkState.bySurface[k]?.strokes?.length > 0),
+      surfaces: Object.keys(inkState.bySurface).filter((k) => !isHeldInkKey(k) && inkState.bySurface[k]?.strokes?.length > 0),
     },
     stageAspect: stage.clientWidth && stage.clientHeight ? stage.clientWidth / stage.clientHeight : 16 / 9,
     // Guest View (Issue #150), for the controllers only - viewerState leaves
@@ -2443,7 +2453,8 @@ async function connect() {
         // reason - a term's annotation does not fit in one relay message.
         const parts = [];
         for (const [key, surface] of Object.entries(state.ink.bySurface)) {
-          if (!surface.strokes?.length) continue;
+          // Held ink (Issue #174) never went on screen - not part of the session.
+          if (isHeldInkKey(key) || !surface.strokes?.length) continue;
           for (const slice of chunkStrokes(surface.strokes)) parts.push([key, slice]);
         }
         if (!parts.length) parts.push(null);

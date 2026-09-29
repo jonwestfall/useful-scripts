@@ -254,7 +254,9 @@ function installClickSwallower() {
     const node = spentClick;
     if (!node) return;
     spentClick = null;
-    if (node !== ev.target && !node.contains(ev.target)) return;
+    // composedPath, not ev.target: a node inside a shadow root (the Slides
+    // tab's thumbnail grid, Issue #174) is seen here retargeted to its host.
+    if (!ev.composedPath().includes(node)) return;
     ev.preventDefault();
     ev.stopImmediatePropagation();
   }, true);
