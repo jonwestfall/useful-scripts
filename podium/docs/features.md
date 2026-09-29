@@ -54,6 +54,7 @@ The **Library** tab is where everything starts: tap a tile and it goes to the pr
 | **PDF** | Paged, zoomable and pannable on the projector (see below). |
 | **Video / Audio** | Local or linked files, with full remote transport. |
 | **YouTube** | Embedded with remote transport, so the room never sees the YouTube site. |
+| **Live stream** | A live Twitch channel or YouTube broadcast, with video and sound, video only, or sound only (see [Live Streams](#live-streams-twitch--youtube-live)). |
 | **Photo / Image** | Any picture. Upload one from the iPad's Photos or Files with **Upload a photo…**. |
 | **Web page** | Any page that allows embedding. |
 | **Text sign** | A simple card of text. |
@@ -62,7 +63,7 @@ The **Library** tab is where everything starts: tap a tile and it goes to the pr
 
 **Built-in quick tools** are always there (an administrator can toggle them on a server): **Black**, **Whiteboard**, **Chalkboard**, **Phone camera**, **Timer** and **We begin in…**.
 
-- **Paste a link** (YouTube, image, video, PDF, any page) and press **Show**, or **Save** it to this device's library.
+- **Paste a link** (YouTube, Twitch, image, video, PDF, any page) and press **Show**, or **Save** it to this device's library.
 - **Open a Marp deck…** loads a `.md` file straight from the device.
 - **Back to** remembers where you were, including the slide. Wander off to a photo mid-deck, and one tap returns you to the exact slide you left rather than restarting the deck in front of everyone.
 
@@ -163,6 +164,7 @@ A real transport and a real mixer, operated from across the room.
 Podium gives you dedicated remote transport controls for all media:
 - **Videos & Audio Files**: Play, pause, scrub timeline, restart, and toggle looping.
 - **YouTube Embeds**: Full playback control and scrubbing directly from the iPad without ever exposing the YouTube website or recommendations to the room.
+- **Live streams**: a Twitch channel or a YouTube live broadcast. See [Live Streams](#live-streams-twitch--youtube-live) below.
 - **Master Audio Mixer**:
   - Top bar / bottom bar master volume slider scales all classroom audio together.
   - Master Mute button silences the room immediately.
@@ -170,6 +172,23 @@ Podium gives you dedicated remote transport controls for all media:
 - **Pre-Class Background Music**:
   - Queue playlists to play music as students enter the room.
   - Automatically ducks under lecture video when content media is played.
+
+#### Live Streams (Twitch & YouTube Live)
+
+Show a live stream on any pane, and choose how much of it the room gets:
+
+- **Adding one:** paste a Twitch link (`twitch.tv/<channel>`) or a YouTube live link (`youtube.com/live/<id>`, or a channel page `youtube.com/channel/<UC… id>`) into the Library's link box. An ordinary YouTube *watch* link stays a normal YouTube video. In the planner, add a **Live stream** item. On a server, the admin page's library manifest has a **Live stream** type too.
+- **Video + sound, Video only, Sound only:** switch on the **Now** tab while it plays. The stream is never reloaded. *Video only* is always muted, whatever the faders say. *Sound only* keeps the stream playing behind a card that says what is on, which suits a radio-style broadcast or a talk you only need to hear. The planner sets which one it starts with.
+- **Play/pause and volume** work like any other media: the Now tab, Space, the dock's Play slot, the Mixer's content fader, the Master and mute all reach it. There is nothing to scrub or loop, so those controls are hidden. A stream that is heard (not video only) ducks background music.
+- **Behind a freeze** a stream is loaded, paused and silent in the cue, and starts the moment you TAKE it.
+- **On the controller** a stream shows as a card in the cue and the Now/Next boxes. Your iPad never pulls a second copy of the video just for a thumbnail.
+
+Good to know:
+- Twitch is played through **Twitch's own player script**, loaded from `player.twitch.tv` only when a Twitch stream is actually shown. It's what lets Podium's faders and play/pause control it. A network that blocks twitch.tv blocks this too, and the display says so.
+- Twitch only plays inside a page served from a web address: GitHub Pages, your own server, or `localhost`. It won't play from a page opened as a file, and it checks the address, so it must be HTTPS in practice.
+- A YouTube `@handle` link can't be embedded. Use the channel's `UC…` id, or the broadcast's own link.
+- A channel that isn't live shows the platform's own "offline" screen.
+- Streams can't be photographed (a browser won't let a page read pixels out of another site's player).
 
 #### Background music in detail
 

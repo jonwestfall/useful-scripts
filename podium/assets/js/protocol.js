@@ -301,6 +301,46 @@ const clamp01 = (v) => Math.min(1, Math.max(0, Number(v) || 0));
 let keySeq = 0;
 const nextKey = () => `k${Date.now().toString(36)}${(keySeq++).toString(36)}`;
 
+// --- live streams (Issue #175) -----------------------------------------------
+//
+// A stream item names a Twitch channel or a YouTube live broadcast (a video
+// id, or a channel id whose current broadcast is shown), and how much of it
+// the room gets: 'both', 'video' (always muted) or 'audio' (the player keeps
+// playing behind a card that says what is on). Anything a presenter might
+// paste is accepted and read here, once, so a plan item, a manifest tile and
+// a pasted link all end up as the same few fields.
+export const STREAM_SHOWS = ['both', 'video', 'audio'];
+const TWITCH_RESERVED = new Set(['videos', 'directory', 'p', 'settings', 'downloads', 'jobs', 'search', 'login', 'signup', 'subscriptions', 'inventory', 'wallet']);
+
+/**
+ * Read a stream out of whatever was typed or pasted.
+ * @param {string} raw - a URL, or a bare Twitch channel / YouTube id
+ * @param {string} [platform] - 'twitch' | 'youtube', to read a bare name
+ * @returns {{platform: string, channel?: string, videoId?: string}|null}
+ */
+export function parseStreamSource(raw, platform = '') {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const twitch = text.match(/^(?:https?:\/\/)?(?:www\.|m\.|player\.)?twitch\.tv\/(?:popout\/)?([A-Za-z0-9_]{2,25})(?:[/?#]|$)/i);
+  if (twitch && !TWITCH_RESERVED.has(twitch[1].toLowerCase())) return { platform: 'twitch', channel: twitch[1].toLowerCase() };
+  const channelParam = text.match(/^(?:https?:\/\/)?player\.twitch\.tv\/\?(?:.*&)?channel=([A-Za-z0-9_]{2,25})/i);
+  if (channelParam) return { platform: 'twitch', channel: channelParam[1].toLowerCase() };
+  const ytChannel = text.match(/youtube\.com\/(?:channel\/|embed\/live_stream\?channel=)(UC[\w-]{22})/);
+  if (ytChannel) return { platform: 'youtube', channel: ytChannel[1] };
+  const ytVideo = text.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|live\/|embed\/)|youtu\.be\/)([\w-]{11})(?![\w-])/);
+  if (ytVideo) return { platform: 'youtube', videoId: ytVideo[1] };
+  if (/^UC[\w-]{22}$/.test(text)) return { platform: 'youtube', channel: text };
+  if (platform === 'youtube' && /^[\w-]{11}$/.test(text)) return { platform: 'youtube', videoId: text };
+  if (platform !== 'youtube' && /^[A-Za-z0-9_]{2,25}$/.test(text)) return { platform: 'twitch', channel: text.toLowerCase() };
+  return null;
+}
+
+/** "twitch.tv/name" or "YouTube Live", for titles and cards. */
+export function streamLabel(item) {
+  if (item?.platform === 'twitch') return `twitch.tv/${item.channel || '?'}`;
+  return 'YouTube Live';
+}
+
 function normalizeItem(item) {
   if (!item || typeof item !== 'object' || !item.type) return null;
   const copy = { ...item, key: nextKey() };
@@ -323,9 +363,24 @@ function normalizeItem(item) {
     copy.font = ['serif', 'mono', 'rounded', 'display'].includes(copy.font) ? copy.font : 'sans';
     copy.caption = String(copy.caption || '').slice(0, 200);
   }
-  if (copy.type === 'video' || copy.type === 'audio' || copy.type === 'youtube') {
+  if (copy.type === 'video' || copy.type === 'audio' || copy.type === 'youtube' || copy.type === 'stream') {
     copy.playing = copy.playing ?? true;
     copy.startAt = Number(copy.startAt) || 0;
+  }
+  if (copy.type === 'stream') {
+    // Issue #175: read whatever was given - a planner's `url`, a manifest
+    // tile's `src`, or fields already split out - into platform + one id.
+    const parsed = (copy.channel || copy.videoId)
+      ? parseStreamSource(copy.platform === 'youtube' ? (copy.videoId || copy.channel) : copy.channel, copy.platform)
+      : parseStreamSource(copy.url || copy.src, copy.platform);
+    if (!parsed) return null;
+    copy.platform = parsed.platform;
+    copy.channel = parsed.channel || '';
+    copy.videoId = parsed.videoId || '';
+    delete copy.url;
+    delete copy.src;
+    copy.show = STREAM_SHOWS.includes(copy.show) ? copy.show : 'both';
+    copy.title = String(copy.title || streamLabel(copy)).slice(0, 120);
   }
   // Issue #113: every field PLAN_TYPES declares for these types used to pass
   // through normalizeItem completely unvalidated - unlike text.body/caption
@@ -1216,6 +1271,9 @@ export function applyCommand(state, cmd) {
       // move where it is paused.
       else if (cmd.action === 'restart') { item.seekTo = 0; item.seekNonce = (item.seekNonce || 0) + 1; item.playing = true; }
       else if (cmd.action === 'setLoop') item.loop = !!cmd.value;
+      // Issue #175: how much of a live stream the room gets - switched on the
+      // live player, never by restaging it (which would reload the stream).
+      else if (cmd.action === 'show' && item.type === 'stream' && STREAM_SHOWS.includes(cmd.value)) item.show = cmd.value;
       else return false;
       return true;
     }

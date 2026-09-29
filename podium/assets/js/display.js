@@ -641,7 +641,7 @@ function whyNot(panel) {
   }
   if (type === 'deck') return 'that slide would not render on its own — a font or an image in it may be blocking it';
   if (type === 'pdf') return 'that PDF page would not render — the document may be unreadable or corrupt';
-  const embedded = { web: 'an embedded web page', slides: 'an embedded slide deck', youtube: 'a YouTube player' }[type];
+  const embedded = { web: 'an embedded web page', slides: 'an embedded slide deck', youtube: 'a YouTube player', stream: 'a live stream player' }[type];
   if (embedded) return `${embedded} cannot be photographed — a browser will not let a page read pixels out of a frame it does not own`;
   const known = { text: 'a big-text card', audio: 'an audio player' }[type];
   if (known) return `Podium cannot photograph ${known} yet`;
@@ -862,7 +862,9 @@ function rampMusic(to, ms) {
 // actually be competing with the music.
 function contentIsSounding() {
   return activePanels().some((panel) => {
-    if (!['video', 'audio', 'youtube'].includes(panel.item?.type)) return false;
+    // A stream shown as video only is muted (Issue #175) - not competing.
+    if (panel.item?.type === 'stream' && panel.item.show === 'video') return false;
+    if (!['video', 'audio', 'youtube', 'stream'].includes(panel.item?.type)) return false;
     return !!panel.renderer?.telemetry?.().playing;
   });
 }
@@ -2806,7 +2808,7 @@ async function standDown() {
   // this keeps the promise above - Go live picks the lecture straight back
   // up, with the clip where the room left it rather than back at the start.
   for (const item of [state.program, ...state.panels]) {
-    if (item && ['video', 'audio', 'youtube'].includes(item.type)) item.playing = false;
+    if (item && ['video', 'audio', 'youtube', 'stream'].includes(item.type)) item.playing = false;
   }
   commit();
   queueRecordingTransition(stopRecording);

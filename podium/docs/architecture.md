@@ -73,6 +73,9 @@ Podium is built on a **Zero-Trust Relay** model. Because classroom computers and
 
 ---
 
+### 5. Live Streams Load Twitch's Own Player
+- A Twitch stream (Issue #175) is played through Twitch's embed script, fetched from `player.twitch.tv` by whichever screen shows the stream (the display, or a Guest View viewer), and only then. It is the only way to control a Twitch player's play, pause and volume. Nothing about the room travels to Twitch beyond what any embedded player sees: the page's address (Twitch requires it) and the viewer's own connection. YouTube Live uses the same `youtube.com` embed as ordinary YouTube items.
+
 ## State Machine Protocol (`protocol.js`)
 
 All application state is governed by a pure, deterministic state machine in [`podium/assets/js/protocol.js`](../assets/js/protocol.js):

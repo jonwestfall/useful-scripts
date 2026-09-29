@@ -64,7 +64,7 @@ Features marked **🖥️** need Podium's own self-hosted server. Everything els
 - **Now / Next / Notes.** A confidence monitor on your device, with a searchable thumbnail grid. Hold a thumbnail for a pop-out preview.
 - **Marp slides in Markdown**, with KaTeX math, progressive builds, presenter notes and custom CSS themes.
 - **PDFs, with projector zoom and pan.** PowerPoint uploads are converted to PDF automatically 🖥️.
-- **A library of anything:** decks, picture decks, HTML slides, video, audio, YouTube, photos, web pages, text signs, QR codes, whiteboards, chalkboards and timers. You can also paste any link or upload a photo.
+- **A library of anything:** decks, picture decks, HTML slides, video, audio, YouTube, live streams, photos, web pages, text signs, QR codes, whiteboards, chalkboards and timers. You can also paste any link or upload a photo.
 - **Split screen and picture-in-picture** (single, side-by-side, stacked, 3-up, quad, or a PiP inset). Each panel keeps its own item, zoom and ink.
 - **"Back to" strip:** go look at a photo, then return to the exact slide you left.
 
@@ -75,6 +75,7 @@ Features marked **🖥️** need Podium's own self-hosted server. Everything els
 
 ### 🎵 [Media & sound](docs/features.md#part-3--media--sound)
 - **Remote transport for video, audio and YouTube**: scrub, skip ±10s and loop, without YouTube's site ever reaching the projector.
+- **Live streams from Twitch or YouTube Live**, as video and sound, video only, or sound only, switched live from the Now tab.
 - **Background music** that ducks under lecture video, fades out on cue, and can put up a "We begin in…" countdown.
 - **A four-channel mixer** (master, content, music, microphones) with a master fader on every tab.
 - **Controller microphone**, amplified through the room's speakers and optionally recorded with the lecture 🖥️.

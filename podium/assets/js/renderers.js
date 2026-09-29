@@ -19,6 +19,7 @@
 //                        is seekTo/seekNonce, and a viewer must not fake one.
 
 import { el, miniMarkdown, fmtTime } from './util.js';
+import { parseStreamSource, streamLabel } from './protocol.js';
 import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
 
 export const TYPES = {
@@ -27,6 +28,7 @@ export const TYPES = {
   video:      { label: 'Video',      icon: '▶' },
   audio:      { label: 'Audio',      icon: '♪' },
   youtube:    { label: 'YouTube',    icon: '▶' },
+  stream:     { label: 'Live stream', icon: '\u{1F4E1}' },
   web:        { label: 'Web page',   icon: '\u{1F310}' },
   slides:     { label: 'Slides',     icon: '\u{1F4D1}' },
   deck:       { label: 'Marp deck',  icon: '\u{1F4D6}' },
@@ -349,9 +351,13 @@ function renderYouTube(item, opts) {
   if (origin) params.set('origin', origin);
 
   const HOST = 'https://www.youtube.com';
+  // A live channel (Issue #175) embeds whatever that channel is broadcasting
+  // now, by channel id, through the same player and the same postMessage API.
+  if (item.liveChannel) params.set('channel', item.liveChannel);
+  const path = item.liveChannel ? 'live_stream' : encodeURIComponent(item.videoId);
   const frame = el('iframe', {
     class: 'r-frame',
-    src: `${HOST}/embed/${encodeURIComponent(item.videoId)}?${params}`,
+    src: `${HOST}/embed/${path}?${params}`,
     allow: 'autoplay; encrypted-media; picture-in-picture; fullscreen',
     allowfullscreen: true,
     frameborder: '0',
@@ -1331,12 +1337,165 @@ function renderDeck(item, opts) {
   };
 }
 
+// --- live streams (Issue #175) ------------------------------------------------
+//
+// Twitch through Twitch's own player script, loaded from player.twitch.tv the
+// first time a Twitch stream is actually shown (never on a page that does not
+// show one): the script is the only way to control a Twitch player's play,
+// pause and volume, which is what lets the Mixer, Master, mute and the
+// transport reach a stream the same way they reach YouTube. YouTube Live is
+// the YouTube renderer above, by video id or by channel.
+//
+// `show` decides how much of it the room gets: 'both'; 'video', muted
+// whatever the faders say; or 'audio', the player still running (browsers
+// and Twitch both throttle a player they believe is hidden) under a card that
+// says what is playing. It is switched on the live player - see the 'show'
+// media action in protocol.js - never by reloading the stream.
+//
+// On the controller (opts.preview: the cue thumbnail, the Now and Next
+// mirrors) a stream is a card rather than a second live player: the iPad has
+// no business pulling a video stream just to show a thumbnail of it.
+
+const TWITCH_SCRIPT = 'https://player.twitch.tv/js/embed/v1.js';
+let twitchLoading = null;
+function loadTwitch() {
+  if (globalThis.Twitch?.Player) return Promise.resolve(globalThis.Twitch);
+  twitchLoading ||= new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = TWITCH_SCRIPT;
+    script.async = true;
+    script.onload = () => (globalThis.Twitch?.Player ? resolve(globalThis.Twitch) : reject(new Error('the Twitch player script loaded but did not start')));
+    script.onerror = () => { twitchLoading = null; script.remove(); reject(new Error(`could not load ${TWITCH_SCRIPT}`)); };
+    document.head.append(script);
+  });
+  return twitchLoading;
+}
+
+let twitchSeq = 0;
+function renderTwitch(item) {
+  const host = el('div', { class: 'r-twitch-host', id: `podium-twitch-${++twitchSeq}` });
+  const warn = el('div', { class: 'r-embed-warn' });
+  const node = el('div', { class: 'r-fill r-twitch' }, host, warn);
+  let player = null;
+  let ready = false;
+  let want = null;
+  let channel = item.channel;
+  const telemetry = { time: 0, duration: 0, playing: false };
+
+  const say = (text) => { warn.replaceChildren(el('div', {}, text)); node.classList.remove('is-loaded'); };
+  // Twitch refuses to play unless it is told the exact site embedding it, and
+  // checks it: a page opened from a file, or from an address that is not a
+  // proper host name, cannot show Twitch at all.
+  const parent = location.hostname;
+  if (!parent || location.protocol === 'file:') {
+    say('Twitch only plays on a page served from a web address - not one opened from a file.');
+  } else {
+    say(`Loading twitch.tv/${channel}…`);
+    loadTwitch().then((Twitch) => {
+      player = new Twitch.Player(host, {
+        channel, parent: [parent], width: '100%', height: '100%', autoplay: false, muted: true,
+      });
+      player.addEventListener(Twitch.Player.READY, () => { ready = true; node.classList.add('is-loaded'); apply(); });
+      player.addEventListener(Twitch.Player.PLAY, () => { telemetry.playing = true; });
+      player.addEventListener(Twitch.Player.PLAYING, () => { telemetry.playing = true; });
+      player.addEventListener(Twitch.Player.PAUSE, () => { telemetry.playing = false; });
+      player.addEventListener(Twitch.Player.OFFLINE, () => say(`twitch.tv/${channel} is not live right now.`));
+      player.addEventListener(Twitch.Player.ONLINE, () => node.classList.add('is-loaded'));
+    }).catch((err) => say(`The Twitch player did not load: ${err.message}. Check that this network allows twitch.tv.`));
+  }
+
+  function apply() {
+    if (!ready || !player || !want) return;
+    const { it, audio } = want;
+    try {
+      const silent = !!audio.muted || audio.volume <= 0;
+      player.setMuted(silent);
+      if (!silent) player.setVolume(Math.min(1, Math.max(0, audio.volume)));
+      if (it.playing === false) player.pause();
+      else player.play();
+    } catch { /* a player mid-teardown - the next reconcile tries again */ }
+  }
+
+  return {
+    el: node,
+    update(it) {
+      if (it.channel && it.channel !== channel) {
+        channel = it.channel;
+        try { player?.setChannel(channel); } catch { /* not ready yet - created with the old one, corrected on READY below */ }
+      }
+    },
+    reconcile(it, audio) { want = { it, audio }; apply(); },
+    telemetry: () => {
+      try { if (player && ready) telemetry.time = player.getCurrentTime() || 0; } catch { /* keep the last reading */ }
+      return { ...telemetry };
+    },
+    destroy() { try { player?.pause(); } catch { /* already gone */ } node.remove(); },
+  };
+}
+
+function streamCard(item, detail) {
+  return el('div', { class: 'r-stream-card' },
+    el('div', { class: 'r-stream-icon', 'aria-hidden': 'true' }, item.show === 'audio' ? '\u{1F50A}' : '\u{1F4E1}'),
+    el('div', { class: 'r-stream-title' }, item.title || 'Live stream'),
+    el('div', { class: 'r-stream-sub' }, detail));
+}
+
+const SHOW_WORDS = { both: 'Video and sound', video: 'Video only, muted', audio: 'Sound only' };
+
+// The planner previews an item before anything has normalized it (see
+// normalizeItem in protocol.js), so a card reads the link itself if it has to.
+function streamFields(it) {
+  if (it.platform && (it.channel || it.videoId)) return it;
+  return { ...it, ...(parseStreamSource(it.url || it.src || it.channel || it.videoId, it.platform) || {}) };
+}
+
+function renderStream(item, opts) {
+  item = streamFields(item);
+  const where = item.platform ? streamLabel(item) : 'No stream link yet';
+  if (opts.preview) {
+    const node = el('div', { class: 'r-fill r-stream is-preview' });
+    const paint = (raw) => {
+      const it = streamFields(raw);
+      const here = it.platform ? streamLabel(it) : 'No stream link yet';
+      node.replaceChildren(streamCard(it, `${here} · ${SHOW_WORDS[it.show] || SHOW_WORDS.both}`));
+    };
+    paint(item);
+    return { el: node, update: paint, reconcile() {}, telemetry: noTelemetry, destroy() { node.remove(); } };
+  }
+
+  const inner = item.platform === 'twitch'
+    ? renderTwitch(item)
+    : renderYouTube(item.videoId ? { ...item, videoId: item.videoId } : { ...item, videoId: '', liveChannel: item.channel }, opts);
+  const cover = el('div', { class: 'r-stream-cover' });
+  const node = el('div', { class: 'r-fill r-stream' }, inner.el, cover);
+  let show = item.show || 'both';
+  const paintCover = (it) => {
+    show = it.show || 'both';
+    node.dataset.show = show;
+    cover.hidden = show !== 'audio';
+    if (show === 'audio') cover.replaceChildren(streamCard(it, `${where} · ${SHOW_WORDS.audio}`));
+  };
+  paintCover(item);
+
+  return {
+    el: node,
+    update(it) { paintCover(it); inner.update(it); },
+    reconcile(it, audio) {
+      paintCover(it);
+      inner.reconcile(it, show === 'video' ? { ...audio, muted: true } : audio);
+    },
+    telemetry: () => inner.telemetry(),
+    destroy() { inner.destroy(); node.remove(); },
+  };
+}
+
 const FACTORIES = {
   black: renderBlack,
   image: renderImage,
   video: renderVideo,
   audio: renderAudio,
   youtube: renderYouTube,
+  stream: renderStream,
   web: renderWeb,
   slides: renderWeb,
   deck: renderDeck,

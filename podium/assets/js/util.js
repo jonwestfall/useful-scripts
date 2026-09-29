@@ -1,5 +1,7 @@
 // Small DOM + misc helpers shared by the display and controller.
 
+import { parseStreamSource, streamLabel } from './protocol.js';
+
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
@@ -169,6 +171,12 @@ export function guessItemFromUrl(raw) {
   const url = raw.trim();
   if (!url) return null;
   const lower = url.split('?')[0].toLowerCase();
+  // Issue #175: a Twitch channel, or a YouTube live broadcast or channel, is
+  // a live stream - with an audio/video/both choice - not a plain video.
+  if (/twitch\.tv\//i.test(url) || /youtube\.com\/(?:live\/|channel\/|embed\/live_stream)/.test(url)) {
+    const stream = parseStreamSource(url);
+    if (stream) return { type: 'stream', ...stream, show: 'both', title: streamLabel(stream) };
+  }
   const yt = url.match(/(?:youtube\.com\/(?:watch\?v=|live\/|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/);
   if (yt) {
     const t = url.match(/[?&#]t=(\d+)/);

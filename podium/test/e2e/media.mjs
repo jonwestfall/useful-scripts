@@ -478,6 +478,103 @@ ok('reloading the same tab does not put the defaults back', Math.abs(Number(awai
 await ctx.close();
 }
 
+if (want('live streams: Twitch through its player API, with sound, video or both (#175)')) {
+console.log('\n-- live streams: Twitch through its player API, with sound, video or both (#175) --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'stream-room', passphrase: 'live from the launch pad' }));
+// A stand-in for Twitch's own player script: this run must not depend on
+// reaching twitch.tv, and what matters here is what Podium asks the player
+// to do - which this records.
+let twitchScriptLoads = 0;
+await ctx.route('https://player.twitch.tv/js/embed/v1.js', (route) => {
+  twitchScriptLoads++;
+  route.fulfill({ contentType: 'application/javascript', body: `
+    window.__twitch = [];
+    class Player {
+      constructor(el, o) {
+        this.o = o; this.l = {}; this.muted = !!o.muted; this.vol = 0.5; this.paused = true; this.channel = o.channel;
+        const f = document.createElement('iframe'); f.title = 'twitch stand-in';
+        (typeof el === 'string' ? document.getElementById(el) : el).append(f);
+        window.__twitch.push(this);
+        setTimeout(() => this.fire('ready'), 50);
+      }
+      addEventListener(e, f) { (this.l[e] ||= []).push(f); }
+      fire(e) { (this.l[e] || []).forEach((f) => f()); }
+      play() { if (this.paused) { this.paused = false; this.fire('play'); } }
+      pause() { if (!this.paused) { this.paused = true; this.fire('pause'); } }
+      setMuted(m) { this.muted = m; } setVolume(v) { this.vol = v; } setChannel(c) { this.channel = c; }
+      getCurrentTime() { return 12; } isPaused() { return this.paused; }
+    }
+    Object.assign(Player, { READY: 'ready', PLAY: 'play', PLAYING: 'playing', PAUSE: 'pause', OFFLINE: 'offline', ONLINE: 'online' });
+    window.Twitch = { Player };
+  ` });
+});
+const screen = await ctx.newPage();
+trap(screen, 'stream display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'stream pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+const player = () => screen.evaluate(() => {
+  const last = (window.__twitch || [])[window.__twitch.length - 1];
+  return last ? { count: window.__twitch.length, channel: last.channel, parent: last.o.parent, muted: last.muted, vol: last.vol, paused: last.paused } : null;
+});
+
+await pad.fill('#url-input', 'https://www.twitch.tv/NASA');
+await pad.click('#url-form button[type=submit]');
+await screen.waitForFunction(() => window.__twitch?.length === 1 && !window.__twitch[0].paused && !window.__twitch[0].muted, null, { timeout: 8000 })
+  .then(() => ok('a pasted Twitch link plays on the projector, with sound', true))
+  .catch(() => ok('a pasted Twitch link plays on the projector, with sound', false));
+const first = await player();
+ok(`the player is told the channel and this site's host (${first?.channel}, ${first?.parent})`, first?.channel === 'nasa' && first?.parent?.[0] === '127.0.0.1');
+ok('the controller shows a card, not a second live player', await pad.evaluate(() => !!document.querySelector('#preview-stage .r-stream-card') && !window.Twitch));
+
+await pad.click('.tab[data-tab="mixer"]');
+await pad.evaluate(() => { const i = document.querySelector('#mixer-master'); i.value = '0.5'; i.dispatchEvent(new Event('input', { bubbles: true })); });
+await screen.waitForFunction(() => Math.abs(window.__twitch[0].vol - 0.5) < 0.01, null, { timeout: 5000 })
+  .then(() => ok('the Master fader reaches the stream', true))
+  .catch(() => ok('the Master fader reaches the stream', false));
+
+await pad.click('.tab[data-tab="now"]');
+ok('the Now tab offers Video + sound / Video only / Sound only', await pad.isVisible('#stream-show'));
+ok('and hides what a live stream cannot do', await pad.isHidden('#scrub') && await pad.isHidden('#restart-media'));
+await pad.click('#stream-show button[data-show="video"]');
+await screen.waitForFunction(() => window.__twitch[0].muted === true, null, { timeout: 5000 })
+  .then(() => ok('Video only mutes it', true)).catch(() => ok('Video only mutes it', false));
+await pad.click('#stream-show button[data-show="audio"]');
+await screen.waitForFunction(() => window.__twitch[0].muted === false
+  && !document.querySelector('.layer[data-role="program"] .r-stream-cover').hidden, null, { timeout: 5000 })
+  .then(() => ok('Sound only unmutes it and covers the picture with a card', true))
+  .catch(() => ok('Sound only unmutes it and covers the picture with a card', false));
+ok('still the same player - switching never reloads the stream', (await player()).count === 1 && !(await player()).paused);
+
+await pad.click('#play-pause');
+await screen.waitForFunction(() => window.__twitch[0].paused === true, null, { timeout: 5000 })
+  .then(() => ok('pause reaches the stream', true)).catch(() => ok('pause reaches the stream', false));
+
+// Cued behind a freeze: made ready, but parked silent until TAKE.
+await pad.click('#freeze');
+await pad.click('.tab[data-tab="library"]');
+await pad.fill('#url-input', 'twitch.tv/another_channel');
+await pad.click('#url-form button[type=submit]');
+await screen.waitForFunction(() => window.__twitch?.length === 2, null, { timeout: 8000 });
+await screen.waitForTimeout(300);
+const cued = await player();
+ok('a stream cued behind a freeze is loaded, paused and silent', cued.channel === 'another_channel' && cued.paused && cued.muted);
+await pad.click('#take');
+await screen.waitForFunction(() => !window.__twitch[1].paused && !window.__twitch[1].muted, null, { timeout: 5000 })
+  .then(() => ok('TAKE starts it', true)).catch(() => ok('TAKE starts it', false));
+ok(`Twitch's script was fetched once, only by the display (${twitchScriptLoads})`, twitchScriptLoads === 1);
+
+await ctx.close();
+}
+
 if (want('controller mic amplification: more than one live at once, and it ducks the music')) {
 console.log('\n-- controller mic amplification: more than one live at once, and it ducks the music --');
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });

@@ -197,7 +197,7 @@ try {
           </div>
           <form id="url-form" class="inline">
             <input id="url-input" aria-label="Link to show" class="grow" type="text" inputmode="url" autocomplete="off"
-                   autocapitalize="off" spellcheck="false" placeholder="Paste a link — YouTube, image, video, PDF, any page">
+                   autocapitalize="off" spellcheck="false" placeholder="Paste a link — YouTube, Twitch, image, video, PDF, any page">
             <button type="submit">Show</button>
             <label class="check"><input id="url-save" type="checkbox"> Save</label>
           </form>
@@ -345,6 +345,13 @@ try {
                  there and stays stopped (see handleMediaEnded in display.js) -
                  looping is something you opt into per item, not a surprise. -->
             <label class="check"><input id="media-loop" type="checkbox"> Loop when it ends</label>
+          </div>
+          <!-- Issue #175: how much of a live stream the room gets, switched on
+               the playing stream rather than by reloading it. -->
+          <div id="stream-show" class="inline" role="group" aria-label="What the room gets from this stream" hidden>
+            <button type="button" data-show="both" aria-pressed="false">Video + sound</button>
+            <button type="button" data-show="video" aria-pressed="false">Video only</button>
+            <button type="button" data-show="audio" aria-pressed="false">Sound only</button>
           </div>
           <div id="paging" class="inline" hidden>
             <button id="prev-page" type="button">◀ Back</button>

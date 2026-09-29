@@ -105,6 +105,8 @@ const send = (cmd) => {
 // protocol.js). And whether anything at all is waiting for TAKE: cued
 // content, a cued layout, or ink held back from the room.
 const workItem = () => workingItem(state);
+// What has a transport: play/pause on the Now tab, Space, the dock's Play slot.
+const MEDIA_TYPES = ['video', 'audio', 'youtube', 'stream'];
 const hasCue = () => !!state.preview || state.previewLayout !== null || (state.ink?.held || 0) > 0;
 const heldInkOnly = () => !state.preview && state.previewLayout === null && (state.ink?.held || 0) > 0;
 
@@ -2082,9 +2084,26 @@ function renderNow() {
   renderNowPreview();
   // Paging and PDF zoom follow the cue while frozen (Issue #174), the same
   // as the Slides tab; transport stays on what is actually playing.
-  const item = ['video', 'audio', 'youtube'].includes(focusedItem(state)?.type) ? focusedItem(state) : workItem();
+  const item = MEDIA_TYPES.includes(focusedItem(state)?.type) ? focusedItem(state) : workItem();
   const type = item?.type;
-  const isMedia = ['video', 'audio', 'youtube'].includes(type);
+  const isMedia = MEDIA_TYPES.includes(type);
+  // A live stream (Issue #175) plays and pauses; there is nothing to scrub,
+  // restart or loop, and it has its own Video/Sound switch instead.
+  const isStream = type === 'stream';
+  for (const id of ['#restart-media', '#back10', '#fwd10', '#scrub', '#media-loop']) {
+    const node = $(id);
+    const hide = node?.closest('label') || node;
+    if (hide) hide.hidden = isStream;
+  }
+  $('#transport .times').hidden = isStream;
+  $('#stream-show').hidden = !isStream;
+  if (isStream) {
+    $$('#stream-show button').forEach((b) => {
+      const on = (item.show || 'both') === b.dataset.show;
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  }
   const isPaged = ['pdf', 'slides', 'web', 'deck', 'imagedeck'].includes(type);
 
   $('#now-title').textContent = itemTitle(item);
@@ -5003,6 +5022,9 @@ $('#play-pause').addEventListener('click', () => send({ op: 'media', action: 'to
 $('#back10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: -10 }));
 $('#fwd10').addEventListener('click', () => send({ op: 'media', action: 'nudge', value: 10 }));
 $('#restart-media').addEventListener('click', () => send({ op: 'media', action: 'restart' }));
+$$('#stream-show button').forEach((b) => b.addEventListener('click', () => {
+  send({ op: 'media', action: 'show', value: b.dataset.show });
+}));
 $('#media-loop').addEventListener('change', (ev) => send({ op: 'media', action: 'setLoop', value: ev.target.checked }));
 
 $('#poll-kind').addEventListener('change', (ev) => {
@@ -6205,7 +6227,7 @@ document.addEventListener('keydown', (ev) => {
   // Space plays or pauses a video, audio clip or YouTube embed the same way
   // it does in every other media player - checked here, above the "has
   // pages" guard below, because a playable item is never a paged one.
-  if (ev.key === ' ' && ['video', 'audio', 'youtube'].includes(focusedItem(state)?.type)) {
+  if (ev.key === ' ' && MEDIA_TYPES.includes(focusedItem(state)?.type)) {
     ev.preventDefault();
     executeSlotAction('play');
     return;
@@ -6571,7 +6593,7 @@ function renderSlotButton(btn, slotType) {
 
     case 'play': {
       const item = focusedItem(state);
-      const isMedia = ['video', 'audio', 'youtube'].includes(item?.type);
+      const isMedia = MEDIA_TYPES.includes(item?.type);
       btn.hidden = !isMedia;
       btn.textContent = telemetry.playing ? '⏸' : '▶';
       btn.title = telemetry.playing ? 'Pause media' : 'Play media';
