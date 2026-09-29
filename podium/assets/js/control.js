@@ -1978,6 +1978,7 @@ function renderNow() {
     const t = currentTime();
     const d = telemetry.duration || 0;
     $('#play-pause').textContent = telemetry.playing ? '⏸' : '▶';
+    $('#play-pause').setAttribute('aria-label', telemetry.playing ? 'Pause' : 'Play');
     $('#time-now').textContent = fmtTime(t);
     $('#time-total').textContent = d ? fmtTime(d) : '--:--';
     const scrub = $('#scrub');
@@ -1995,6 +1996,7 @@ function renderNow() {
   $('#preview-mode').classList.toggle('is-on', state.previewMode);
   $('#mute').classList.toggle('is-on', state.muted);
   $('#mute').textContent = state.muted ? '\u{1F507}' : '\u{1F50A}';
+  $('#mute').setAttribute('aria-pressed', String(!!state.muted));
   if (document.activeElement !== $('#volume')) $('#volume').value = state.volume;
 
   renderBottomSlots();
@@ -2098,6 +2100,7 @@ const PANEL_LABELS = ['A', 'B', 'C', 'D'];
 function renderLayoutBar() {
   $$('.layout-btn').forEach((b) => {
     b.classList.toggle('is-on', b.dataset.layout === state.layout);
+    b.setAttribute('aria-pressed', String(b.dataset.layout === state.layout));
     // Frozen and waiting on TAKE - see the 'layout' case in protocol.js.
     b.classList.toggle('is-cued', state.previewLayout !== null && b.dataset.layout === state.previewLayout);
   });
@@ -4419,6 +4422,20 @@ const relayLog = createRelayLog();
 // blank the room. See the Presentation tab's own explanation of this.
 let blankSentThisLoad = false;
 
+// Issue #156: one polite live region (#sr-announce) for the connection, fed
+// only when what it says actually changes - the visible bar beside it is
+// rewritten on every heartbeat with a round-trip time, which a live region
+// would read out every few seconds. Each source remembers what it last said,
+// so a relay blip and a display change do not talk over each other's dedup.
+// Kept on the element rather than in a module-level variable: setStatus can
+// run while this module is still being evaluated.
+function announce(source, text) {
+  const region = $('#sr-announce');
+  if (!region || region.dataset[source] === text) return;
+  region.dataset[source] = text;
+  region.textContent = text;
+}
+
 function setStatus(status, detail) {
   relayStatus = status;
   relayLog.push(status, detail || '');
@@ -4433,6 +4450,18 @@ function setStatus(status, detail) {
     error: `Relay problem${detail ? `: ${detail}` : ''}`,
     mismatch: 'Wrong passphrase somewhere',
   }[status] || status;
+  // Only the transitions that matter, and never the detail: while the relay
+  // is down this runs on every retry, flipping between connecting and
+  // offline with an attempt count that changes each time - read out, that is
+  // a screen reader repeating itself for the whole outage. 'connecting' says
+  // nothing new, so it is not announced at all.
+  const spoken = {
+    online: 'Relay connected',
+    offline: 'Relay connection lost, retrying',
+    error: 'Relay connection lost, retrying',
+    mismatch: 'Wrong passphrase somewhere',
+  }[status];
+  if (spoken) announce('relay', spoken);
   // The status bar has room for two words. The panel below it has room for the
   // URL and the close code, which is what you actually need at the moment the
   // relay will not come up.
@@ -4478,6 +4507,7 @@ function renderConnection() {
 
   $('#display-state').textContent = label;
   $('.topbar-status').title = label;
+  announce('display', label.replace(/ · \d+ ms/, ''));
   $('#display-state').classList.toggle('is-bad', !display || !!mismatch);
   $('#peer-count').textContent = others.length ? `+${others.length} other controller${others.length > 1 ? 's' : ''}` : '';
 
@@ -4612,7 +4642,13 @@ const TAB_LABELS = {
 
 function tab(name) {
   const dualPane = document.body.classList.contains('dual-pane');
-  $$('.tab:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => b.classList.toggle('is-on', b.dataset.tab === name));
+  $$('.tab:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => {
+    b.classList.toggle('is-on', b.dataset.tab === name);
+    // Which section is open, for a screen reader - the highlight alone is
+    // only visible (Issue #156).
+    if (b.dataset.tab === name) b.setAttribute('aria-current', 'true');
+    else b.removeAttribute('aria-current');
+  });
   $$('.panel').forEach((p) => {
     if (dualPane && p.dataset.panel === 'slides') {
       p.hidden = false;
@@ -5139,7 +5175,10 @@ function updateMessagePreview() {
 
 function selectMessageBg(value, swatch) {
   messageBg = value;
-  $$('#msg-bg-swatches .bg-swatch').forEach((b) => b.classList.toggle('is-on', b === swatch));
+  $$('#msg-bg-swatches .bg-swatch').forEach((b) => {
+    b.classList.toggle('is-on', b === swatch);
+    b.setAttribute('aria-pressed', String(b === swatch));
+  });
   $('#msg-bg-custom-label').classList.toggle('is-on', !swatch);
   updateMessagePreview();
 }
@@ -5576,7 +5615,10 @@ $('#ink-width').addEventListener('input', (ev) => {
 });
 $$('.swatch:not(.swatch-picker)').forEach((b) => b.addEventListener('click', () => {
   ink.color = b.dataset.color;
-  $$('.swatch:not(.swatch-picker)').forEach((s) => s.classList.toggle('is-on', s === b));
+  $$('.swatch:not(.swatch-picker)').forEach((s) => {
+    s.classList.toggle('is-on', s === b);
+    s.setAttribute('aria-pressed', String(s === b));
+  });
   $('#ink-picker-label')?.classList.remove('is-on');
   if (ink.tool === 'eraser' || ink.tool === 'laser' || ink.tool === 'spotlight') setInkTool('pen');
 }));
@@ -5598,7 +5640,10 @@ if (inkColorPicker && inkPickerLabel) {
     customInkColor = color;
     ink.color = color;
     inkPickerLabel.style.setProperty('--custom-color', color);
-    $$('.swatch:not(.swatch-picker)').forEach((s) => s.classList.remove('is-on'));
+    $$('.swatch:not(.swatch-picker)').forEach((s) => {
+      s.classList.remove('is-on');
+      s.setAttribute('aria-pressed', 'false');
+    });
     inkPickerLabel.classList.add('is-on');
     safeStorageSet(localStorage, INK_CUSTOM_COLOR_KEY, color);
     if (ink.tool === 'eraser' || ink.tool === 'laser' || ink.tool === 'spotlight') setInkTool('pen');
@@ -6381,6 +6426,17 @@ function renderSlotButton(btn, slotType) {
       btn.title = '';
       break;
   }
+  // Issue #156: a button's text wins over its title for a screen reader, so a
+  // slot that shows only a symbol (✎, 🔦, ⏱ ▶) would be read out as that
+  // symbol's Unicode name. Name it from its title instead - but leave a slot
+  // with a real word on it (Freeze, TAKE) named by that word, which is what a
+  // voice-control user will say to press it.
+  if (btn.title && !/[a-z]{2}/i.test(btn.textContent)) btn.setAttribute('aria-label', btn.title);
+  else btn.removeAttribute('aria-label');
+  // The slots that switch something on and off, and so carry aria-pressed.
+  const toggles = ['music', 'play', 'freeze', 'blank', 'whiteboard', 'laser', 'spotlight', 'timer'];
+  if (toggles.includes(slotType)) btn.setAttribute('aria-pressed', String(btn.classList.contains('is-on')));
+  else btn.removeAttribute('aria-pressed');
 }
 
 function renderBottomSlots() {

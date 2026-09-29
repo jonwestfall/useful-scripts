@@ -17,6 +17,7 @@ import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDev
 import { createBus } from './bus.js';
 import {
   initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION, versionStamp,
+  watermarkForNewLecture,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
@@ -26,6 +27,7 @@ import { createCameraReceiver, createMicReceiver } from './rtc.js';
 import { serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
 import { deckId } from './deck.js';
+import { createCaptionLog } from './caption-log.js';
 
 const HEARTBEAT_MS = 2000;
 const TELEMETRY_MS = 400;
@@ -1120,6 +1122,21 @@ function renderWatermark() {
   else watermarkTextEl.textContent = wm.text;
 }
 
+// A course's default watermark (Issue #157), handed over by the server with a
+// NEW lecture (never a resumed one - see startLecture in server/lectures.js).
+// watermarkForNewLecture in protocol.js decides whether it replaces what is
+// there; the logo's bytes go into the same asset store as any other picture,
+// so a second display or a controller that joins later asks this screen for
+// them the usual way (see 'asset-need') rather than every device fetching the
+// course.
+function applyCourseBranding(branding) {
+  const next = watermarkForNewLecture(state.watermark, branding, () => uid(10), MAX_ASSET_CHARS);
+  if (!next) return false;
+  if (next.asset) assetStore.set(next.asset.id, next.asset.data);
+  state.watermark = next.watermark;
+  return true;
+}
+
 // The whole reason this exists: composited into a shot the same way the
 // caption is (see drawCaption and takeShot), so a name or logo set once
 // actually ends up in a screen grab rather than only ever being something the
@@ -1316,13 +1333,29 @@ let startFresh = false;
 let pendingEvent = null;
 let pendingTimer = null;
 
+// What the caption bar said, one finished line at a time (Issue #158) - see
+// caption-log.js for what "finished" means. Straight into the queue rather
+// than through pendingEvent's gap: that gap is there to stop forty slides
+// stepped through in a minute becoming forty rows, and each of these lines is
+// something that was actually said, not a place the lecture passed through.
+const captionLog = createCaptionLog((line) => queueEvent({
+  id: uid(10), at: line.at, kind: 'caption', title: line.text.slice(0, 200),
+  detail: { text: line.text, live: line.live },
+}));
+
+function noteCaption() {
+  if (!lectureId || !state.armed) return;
+  const bar = state.overlay;
+  captionLog.observe(bar.visible ? bar.text : '', { live: bar.live });
+}
+
 // Said on the screen the room can see, rather than left to the docs: what goes
 // on the projector being written down is the sort of thing people should not
 // have to go looking for.
 serverInfo().then((info) => {
   if (!info.features.includes('sessions')) return;
   const note = $('#arm-record');
-  note.textContent = 'This lecture is saved to the server: what went on screen, your ink and any poll results. Photos are kept only if a controller is set to keep them.';
+  note.textContent = 'This lecture is saved to the server: what went on screen, your ink, any poll results and the text of any captions shown. Photos are kept only if a controller is set to keep them.';
   note.hidden = false;
 });
 
@@ -1389,6 +1422,7 @@ async function startRecording() {
     const { lecture } = await res.json();
     lectureId = lecture.id;
     state.lectureId = lecture.id;
+    captionLog.reset();
     lastSurface = null;
     lastEventAt = 0;
     // What snapshotInk measures "drawn during this lecture" against. Ink is
@@ -1397,6 +1431,7 @@ async function startRecording() {
     // previous lecture is on screen and must stay there; it just must not be
     // filed under this lecture as though it were drawn here.
     recordingSince = lecture.resumed ? (recordingSince || Date.now()) : Date.now();
+    if (!lecture.resumed) applyCourseBranding(lecture.branding);
     startHeartbeat(lecture.id);
     // Broadcast it: a controller ending a poll files the tally under this id.
     // commit() notes what is already on screen as the timeline's first entry.
@@ -1472,6 +1507,11 @@ function startHeartbeat(id) {
 async function stopRecording() {
   const id = lectureId;
   if (!id) return;
+  // A line still on the caption bar at stand-down was still said. Written
+  // while lectureId still names this lecture, so it queues like any other;
+  // the flush timer that schedules is cancelled below, and the drain there
+  // sends it.
+  captionLog.flush();
   lectureId = null;
   state.lectureId = null;
   clearInterval(heartbeatTimer);
@@ -1640,17 +1680,24 @@ function noteSurface() {
 
 function settleSurface() {
   if (!pendingEvent || !lectureId) return;
+  lastEventAt = Date.now();
+  // `at` is when the item went up, not when the gap expired: the entry should
+  // say when the room started looking at this, not when this code got round
+  // to writing it down.
+  const event = pendingEvent;
+  pendingEvent = null;
+  queueEvent(event);
+}
+
+/** Into the queue for the live lecture, and a flush scheduled for it. */
+function queueEvent(event) {
+  if (!lectureId) return;
   // Captured now rather than read again inside the flush timer's closure
   // below: by the time that timer fires, lectureId may belong to a different
   // lecture (a stand-down and a fresh Go live both change it), and this
   // entry belongs to the lecture that was live when it was queued.
   const id = lectureId;
-  lastEventAt = Date.now();
-  // `at` is when the item went up, not when the gap expired: the entry should
-  // say when the room started looking at this, not when this code got round
-  // to writing it down.
-  eventQueue.push(pendingEvent);
-  pendingEvent = null;
+  eventQueue.push(event);
   if (eventQueue.length > RECORD_QUEUE_MAX) {
     const dropped = eventQueue.length - RECORD_QUEUE_MAX;
     eventQueue.splice(0, dropped);
@@ -1670,8 +1717,8 @@ function settleSurface() {
       detail: {},
     });
   }
-  // Bound to `id`, the lecture this entry belongs to and the one settleSurface
-  // was called for - not the mutable `lectureId`, which a stand-down clears
+  // Bound to `id`, the lecture this entry belongs to and the one it was
+  // queued for - not the mutable `lectureId`, which a stand-down clears
   // and a fresh Go live then points at a different lecture entirely before
   // this timer ever fires. See stopRecording for the other half of this: it
   // cancels this very timer on the way out, so the only way it fires is while
@@ -1959,6 +2006,7 @@ function commit() {
   saveInkSoon();
   saveStateSoon();
   noteSurface();
+  noteCaption();
 }
 
 // Ink is the one payload that can be far larger than a relay message will

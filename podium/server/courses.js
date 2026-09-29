@@ -27,6 +27,34 @@ const CODE_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 const clean = (code) => String(code || '').trim().toLowerCase();
 
+// A course's default watermark (Issue #157). The same three fields, and the
+// same limits, as state.watermark on a display (see the 'watermark' op in
+// protocol.js) - a lecture hands this straight to one, so anything it would
+// refuse has no business being stored here either. The logo's cap matches
+// MAX_ASSET_CHARS in planfile.js: the display keeps it in the same asset
+// store every other picture goes through, and serves it to a second display
+// over the relay the same way.
+const MAX_BRANDING_TEXT = 120;
+const MAX_BRANDING_IMAGE_CHARS = 160 * 1024;
+const BRANDING_IMAGE_RE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/;
+
+function cleanBranding(raw) {
+  const text = String(raw?.text || '').trim().slice(0, MAX_BRANDING_TEXT);
+  const image = typeof raw?.image === 'string' ? raw.image : '';
+  if (image && (image.length > MAX_BRANDING_IMAGE_CHARS || !BRANDING_IMAGE_RE.test(image))) {
+    throw Object.assign(new Error(
+      `a course logo has to be a PNG, JPEG, GIF or WebP picture under ${Math.round(MAX_BRANDING_IMAGE_CHARS / 1024)} KB`,
+    ), { status: 400 });
+  }
+  return { text, image, position: raw?.position === 'tl' ? 'tl' : 'br' };
+}
+
+function parseBranding(text) {
+  try { return cleanBranding(JSON.parse(text || '{}')); } catch { return { text: '', image: '', position: 'br' }; }
+}
+
+const hasBranding = (branding) => !!(branding?.text || branding?.image);
+
 function courseRow(row) {
   return {
     code: row.code,
@@ -83,6 +111,9 @@ function list(db, user) {
     // account on the instance assembled from course pages is exactly the kind
     // of thing that should need a reason.
     people: mayManage(db, user, row.code) ? members(db, row.id) : undefined,
+    // The same audience as `people`: whoever may change it. Nobody else has a
+    // use for it - the display that needs it is handed it by startLecture.
+    branding: mayManage(db, user, row.code) ? parseBranding(row.branding) : undefined,
   }));
 }
 
@@ -135,6 +166,37 @@ function update(db, user, code, { title, archived } = {}) {
     db.prepare('UPDATE courses SET archived_at = ? WHERE id = ?').run(archived ? Date.now() : null, course.id);
   }
   return courseRow(find(db, code));
+}
+
+/**
+ * What a lecture held under this course starts with in the corner (Issue
+ * #157), or null when the course has none. Read by startLecture, which has
+ * already decided the lecture belongs here - so no permission check of its
+ * own: whoever is starting a lecture in a course's room already holds its
+ * passphrase, which is a far bigger thing than its logo.
+ */
+function brandingFor(db, courseId) {
+  if (courseId == null) return null;
+  const row = db.prepare('SELECT branding FROM courses WHERE id = ?').get(courseId);
+  const branding = row ? parseBranding(row.branding) : null;
+  return hasBranding(branding) ? branding : null;
+}
+
+/**
+ * Set a course's default watermark. An owner's business as well as an
+ * admin's, unlike renaming or archiving: it changes nothing about who can see
+ * what, only what a fresh lecture shows before anybody touches the Say tab.
+ * An empty text and image clears it.
+ */
+function setBranding(db, user, code, raw) {
+  if (!mayManage(db, user, code)) {
+    throw Object.assign(new Error(`no course with the code ${code} that you can change`), { status: 403 });
+  }
+  const course = find(db, code);
+  const branding = cleanBranding(raw);
+  db.prepare('UPDATE courses SET branding = ? WHERE id = ?')
+    .run(JSON.stringify(hasBranding(branding) ? branding : {}), course.id);
+  return branding;
 }
 
 function addMember(db, user, code, { username, role = 'member' }) {
@@ -203,4 +265,7 @@ function removeMember(db, user, code, username) {
   return members(db, course.id);
 }
 
-module.exports = { list, members, create, update, addMember, removeMember, roleOf, mayManage, find };
+module.exports = {
+  list, members, create, update, addMember, removeMember, roleOf, mayManage, find,
+  brandingFor, setBranding, cleanBranding, MAX_BRANDING_IMAGE_CHARS,
+};

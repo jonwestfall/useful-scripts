@@ -1,7 +1,8 @@
 // Run with:  node podium/test/protocol.test.mjs
 // Pure state-machine tests - no DOM, no network.
 import { initialState, applyCommand, timerRemaining, timerById, inkSurfaceKey,
-  inkDigest, inkDigestsAgree, applyInkAction, distToSegmentSquared, strokeHitTest, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp, LAYOUTS } from '../assets/js/protocol.js';
+  inkDigest, inkDigestsAgree, applyInkAction, distToSegmentSquared, strokeHitTest, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp, LAYOUTS,
+  watermarkForNewLecture } from '../assets/js/protocol.js';
 const s = initialState();
 let ok = true;
 const chk = (label, cond) => { if (!cond) { ok = false; console.log('FAIL', label); } else console.log('ok  ', label); };
@@ -751,6 +752,50 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
   applyCommand(c, { op:'set', action:'select', index:0 });
   chk('jumping to a specific entry (the panel picker\'s own controls) syncs the caption the same way',
     c.overlay.text === 'First announcement');
+}
+
+{
+  // A course's default watermark at the start of a new lecture (Issue #157).
+  const LOGO = 'data:image/png;base64,iVBORw0KGgo=';
+  const MAX = 160 * 1024;
+  let n = 0;
+  const id = () => `logo${++n}`;
+  const brandA = { text: 'Course A', image: LOGO, position: 'tl' };
+  const brandB = { text: 'Course B', image: '', position: 'br' };
+
+  const w = initialState();
+  const first = watermarkForNewLecture(w.watermark, brandA, id, MAX);
+  chk('an empty corner takes the course default, marked as the course\'s',
+    first.watermark.enabled && first.watermark.text === 'Course A' && first.watermark.image === 'asset:logo1'
+    && first.watermark.position === 'tl' && first.watermark.fromCourse === true);
+  chk('and hands back the logo\'s bytes to file under that id', first.asset.id === 'logo1' && first.asset.data === LOGO);
+
+  const next = watermarkForNewLecture(first.watermark, brandB, id, MAX);
+  chk('the next course\'s lecture on the same PC replaces a course default with its own',
+    next.watermark.text === 'Course B' && next.watermark.image === '' && next.asset === null && next.watermark.fromCourse);
+
+  const none = watermarkForNewLecture(first.watermark, null, id, MAX);
+  chk('and a course with no default takes the last course\'s down rather than borrowing it',
+    none.watermark.enabled === false && !none.watermark.text && !none.watermark.image && !none.watermark.fromCourse);
+
+  chk('an empty corner with no course default is left alone', watermarkForNewLecture(w.watermark, null, id, MAX) === null);
+
+  const mine = initialState();
+  mine.watermark = { ...first.watermark };
+  applyCommand(mine, { op: 'watermark', text: 'Dr. Smith', enabled: true });
+  chk('typing over a course default makes it the presenter\'s', mine.watermark.fromCourse === false);
+  chk('and a later lecture never replaces the presenter\'s own', watermarkForNewLecture(mine.watermark, brandB, id, MAX) === null);
+
+  const moved = initialState();
+  moved.watermark = { ...first.watermark };
+  applyCommand(moved, { op: 'watermark', enabled: false });
+  applyCommand(moved, { op: 'watermark', position: 'br' });
+  chk('hiding or moving a course default does not make it the presenter\'s', moved.watermark.fromCourse === true);
+
+  chk('a logo that is not a picture data URL is ignored, keeping the text',
+    watermarkForNewLecture(w.watermark, { text: 'T', image: 'https://example.com/x.png' }, id, MAX).watermark.image === '');
+  chk('and so is one over the asset cap',
+    watermarkForNewLecture(w.watermark, { text: 'T', image: LOGO }, id, 10).watermark.image === '');
 }
 
 console.log(ok ? '\nALL PASS' : '\nFAILURES');

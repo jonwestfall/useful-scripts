@@ -20,6 +20,7 @@ Podium is designed for real classroom lectures. It gives you total control over 
 - [Audience Polls & Interactive Questions](#audience-polls--interactive-questions)
 - [Automated Presentation Sets](#automated-presentation-sets)
 - [Watermarks](#watermarks)
+- [Lecture Recaps](#lecture-recaps)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Planning Lectures with `plan.html`](#planning-lectures-with-planhtml)
 
@@ -106,6 +107,7 @@ Real-time captions along the bottom of the projector, for a hearing-impaired or 
 - Tap **Start live captions** in the Say tab. Recognition runs on that device's microphone using the browser's own speech recognition — nothing to install, nothing to configure, and off by default.
 - Captions ride the same bottom bar as the manual "Caption along the bottom" overlay above it, and clear themselves after a few seconds of silence rather than sitting on the last thing said for the rest of class.
 - Typing a manual caption while captions are running takes over the bar immediately; the next recognized phrase does not overwrite it.
+- **On a self-hosted server that records sessions**, each finished caption line is saved to the lecture's timeline (Issue #158) — the text only, never audio — so it can appear in the [lecture recap](#lecture-recaps). The arming screen says so alongside the rest of what is recorded. This covers typed and pre-scripted captions as well as live ones.
 - **The trade-off, stated plainly**: in Chrome and Edge, this sends the room's audio to Google's servers for recognition — outside Podium's own end-to-end encryption entirely, since it happens inside the browser's own code. Safari recognizes on-device instead. Firefox has no speech recognition at all. See [Security & End-to-End Cryptography](architecture.md#security--end-to-end-cryptography) for the full picture.
 
 ---
@@ -177,6 +179,28 @@ Create timed, automated rotations of items:
 ## Watermarks
 
 Pin your university logo, course number (e.g. `CS 101`), or date to any corner of the projector display. The watermark remains persistently anchored across all slide transitions and split-screen layouts.
+
+**A default per course** (Issue #157): on a self-hosted server, a course owner or an admin can set a default watermark — text, a logo, and a corner — from the course's card on the admin page's **Courses** tab. A **new** lecture held in that course's room starts with it, so the same name or logo is not re-entered every session. It is only where a lecture starts:
+
+- It is still changed or hidden from the Say tab like any other watermark.
+- A watermark the presenter set themselves (typed or uploaded from the Say tab, now or in an earlier session) always wins; the course default never replaces it.
+- A course default does not linger into another course's lecture: on a classroom PC shared between courses, the next new lecture swaps it for that course's default, or takes it down if that course has none. Hiding or moving a course default for one lecture does not stop the next lecture of that course starting with it.
+- Reloading the display mid-lecture resumes the same lecture and does **not** put the default back — a logo taken down ten minutes ago stays down.
+- A logo is shrunk to a small PNG on upload, the same way the Say tab's own logo upload is, so transparency survives.
+
+---
+
+## Lecture Recaps
+
+On a self-hosted server that records sessions, open a lecture on the admin page's **Sessions** tab and choose **Download the recap** (Issue #158) for one PDF of how the lecture went, in order:
+
+- Everything that went on the projector — each slide, board, message or media item — with the time it went up.
+- Under each entry, the caption lines said while it was on screen (see [Live Captions](#live-captions)). Lines said before anything went up get a section of their own at the top.
+- An annotated slide the session kept, placed right after the moment that slide was shown.
+- Each poll's final result, at the point it closed.
+- At the end, anything kept that has no moment of its own — photos, boards, and annotated slides the timeline never recorded.
+
+A lecture with no captions still makes a useful recap (slides and polls alone). The recap is a one-off export of what happened, like the session ZIP and PDF beside it; it is not edited afterwards. Caption lines also show in the session's timeline on the same page, and in the downloaded timeline text.
 
 ---
 

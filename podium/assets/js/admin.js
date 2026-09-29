@@ -7,10 +7,13 @@
 import { $, el } from './util.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { createZip } from './zip.js';
-import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg, loadImage } from './pdf-writer.js';
+import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg, loadImage, planRecapPages, renderRecapPages } from './pdf-writer.js';
+import { buildRecap, describeEvent as describe, captionText } from './recap.js';
 import { versionStamp } from './protocol.js';
 import { TYPES } from './renderers.js';
 import { mountZipImport } from './zip-review.js';
+import { downscaleImage } from './store.js';
+import { MAX_ASSET_CHARS } from './planfile.js';
 
 mountSessionBadge($('#session-badge'));
 const stampEl = $('#admin-version-stamp');
@@ -248,6 +251,9 @@ function timelineText(detail) {
     '',
   ];
   for (const event of detail.timeline) {
+    // A caption line (Issue #158) is something said, not something shown -
+    // indented under whatever was on screen, in quotes, so the two read apart.
+    if (event.kind === 'caption') { lines.push(`${clock(event.at)}      “${captionText(event)}”`); continue; }
     lines.push(`${clock(event.at)}  ${event.title}${describe(event) ? `  (${describe(event)})` : ''}`);
   }
   if (detail.truncated) {
@@ -260,21 +266,6 @@ function timelineText(detail) {
     }
   }
   return `${lines.join('\n')}\n`;
-}
-
-/** The small print after an entry's name: which slide, which page. */
-function describe(event) {
-  const bits = [];
-  if (event.detail?.slide) bits.push(`slide ${event.detail.slide}`);
-  if (event.detail?.page) bits.push(`page ${event.detail.page}`);
-  if (event.detail?.type && !bits.length && event.detail.type !== 'black') bits.push(event.detail.type);
-  // A split layout's other panels, recorded alongside panel A rather than as
-  // events of their own - see noteSurface in display.js.
-  if (event.detail?.panels?.length) {
-    const labels = ['B', 'C', 'D'];
-    bits.push(event.detail.panels.map((p, i) => `${labels[i] || '?'}: ${p.title || p.type || '—'}`).join(', '));
-  }
-  return bits.join(' · ');
 }
 
 const safeName = (detail) => String(detail.title || detail.room || 'session')
@@ -412,6 +403,61 @@ async function downloadSessionPdf(detail, button) {
   button.textContent = was;
 }
 
+/**
+ * The lecture recap (Issue #158): the timeline in order, the captions said
+ * over each entry, annotated slides beside the moment they were shown, and
+ * each poll's result where it closed - one PDF, from what the session already
+ * recorded. See recap.js for the ordering and pdf-writer.js for the pages.
+ */
+async function downloadSessionRecap(detail, button) {
+  button.disabled = true;
+  const was = button.textContent;
+  try {
+    const recap = buildRecap(detail);
+    const meta = {
+      title: detail.title || detail.room || 'Podium Session',
+      course: detail.course || '',
+      room: detail.room || '',
+      date: detail.startedAt ? new Date(detail.startedAt) : new Date(),
+    };
+    const summary = [
+      `${dayAndTime(detail.startedAt)} — ${spanOf(detail)}`,
+      `${recap.blocks.filter((b) => b.type === 'entry').length} things on screen`,
+      detail.pollResults.length ? `${detail.pollResults.length} poll${detail.pollResults.length === 1 ? '' : 's'}` : '',
+      recap.captionCount ? `${recap.captionCount} caption line${recap.captionCount === 1 ? '' : 's'}` : 'no captions recorded',
+      detail.truncated ? 'the timeline stops before the lecture did' : '',
+    ].filter(Boolean).join('  ·  ');
+
+    const measureCtx = document.createElement('canvas').getContext('2d');
+    const measure = (text, font) => { measureCtx.font = font; return measureCtx.measureText(text).width; };
+    const plan = planRecapPages(recap, measure, { summary });
+
+    const pages = await renderRecapPages(plan, meta, {
+      loadPicture: async (file) => {
+        const res = await fetch(file.url, { credentials: 'same-origin' });
+        return res.ok ? loadImage(await res.blob()) : null;
+      },
+      onProgress: (done, total) => { button.textContent = `Rendering page ${done} of ${total}…`; },
+    });
+    if (!pages.length) { button.textContent = 'Nothing to put in a recap'; return; }
+
+    button.textContent = 'Building the PDF…';
+    const stamp = new Date(detail.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const blob = createPdf(pages, { ...meta, title: `${meta.title} — recap` });
+    const a = el('a', { href: URL.createObjectURL(blob), download: `podium-${safeName(detail)}-${stamp}-recap.pdf` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  } catch {
+    button.textContent = 'That did not work';
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  button.textContent = was;
+}
+
 function renderSessionBody(detail) {
   const body = el('div', { class: 'session-body' });
 
@@ -434,6 +480,13 @@ function renderSessionBody(detail) {
       onclick: (ev) => downloadSessionPdf(detail, ev.target),
     }, 'Download as PDF'));
   }
+  if (detail.timeline.length || detail.pollResults?.length) {
+    actions.append(el('button', {
+      class: 'admin-small', type: 'button',
+      title: 'What was on screen, what was said over it, and how each poll came out - one PDF',
+      onclick: (ev) => downloadSessionRecap(detail, ev.target),
+    }, 'Download the recap'));
+  }
   for (const poll of detail.pollResults) {
     actions.append(el('button', {
       class: 'admin-small', type: 'button',
@@ -451,6 +504,12 @@ function renderSessionBody(detail) {
   if (detail.timeline.length) {
     const list = el('div', { class: 'timeline' });
     for (const event of detail.timeline) {
+      if (event.kind === 'caption') {
+        list.append(el('div', { class: 'timeline-row timeline-caption' },
+          el('span', { class: 'timeline-at' }, clock(event.at)),
+          el('span', { class: 'timeline-what' }, `“${captionText(event)}”`)));
+        continue;
+      }
       list.append(el('div', { class: 'timeline-row' },
         el('span', { class: 'timeline-at' }, clock(event.at)),
         el('span', { class: 'timeline-what' }, event.title || '—'),
@@ -1026,6 +1085,92 @@ function renderCourseSettings(course, settings) {
   return el('div', {}, form, el('div', { class: 'admin-actions' }, save, rotate, status));
 }
 
+/**
+ * A course's default watermark (Issue #157): what a NEW lecture held in this
+ * course's room starts with in the corner, so the same name or logo is not
+ * typed in again every session. Still changed or hidden per lecture from the
+ * Say tab - this is only where a fresh session starts (see startRecording in
+ * display.js for the rule when a watermark is already set there).
+ */
+function renderCourseBranding(course) {
+  const saved = course.branding || { text: '', image: '', position: 'br' };
+  let image = saved.image || '';
+
+  const text = el('input', {
+    type: 'text', maxlength: '120', value: saved.text || '', placeholder: 'Dr. Jane Smith · PSY 415',
+    autocomplete: 'off', 'aria-label': 'Watermark text',
+  });
+  const position = el('select', { 'aria-label': 'Corner' },
+    el('option', { value: 'br' }, 'Bottom right'),
+    el('option', { value: 'tl' }, 'Top left'));
+  position.value = saved.position === 'tl' ? 'tl' : 'br';
+
+  const preview = el('img', { class: 'branding-preview', alt: 'The course logo', hidden: !image });
+  if (image) preview.src = image;
+  const status = el('span', { class: 'hint', role: 'status' });
+  const fileId = `branding-file-${course.code.replace(/[^a-z0-9_-]/gi, '')}`;
+  const file = el('input', { id: fileId, type: 'file', accept: 'image/*', hidden: true });
+  const clearImage = el('button', { class: 'admin-small', type: 'button', hidden: !image }, 'Remove logo');
+  const pick = el('label', { class: 'admin-small filebtn', for: fileId }, image ? 'Change logo…' : 'Upload a logo…');
+
+  function showImage() {
+    preview.hidden = !image;
+    if (image) preview.src = image; else preview.removeAttribute('src');
+    clearImage.hidden = !image;
+    pick.textContent = image ? 'Change logo…' : 'Upload a logo…';
+  }
+
+  file.addEventListener('change', async () => {
+    const picked = file.files?.[0];
+    file.value = '';
+    if (!picked) return;
+    status.textContent = `Resizing ${picked.name}…`;
+    try {
+      // The same PNG ladder the Say tab's own logo upload uses (watermark.js),
+      // so a transparent background survives and the result fits the asset
+      // cap a display holds every picture to.
+      const shrunk = await downscaleImage(picked, MAX_ASSET_CHARS, { widths: [480, 320, 200, 120], qualities: [1], mime: 'image/png' });
+      if (shrunk.tooBig) throw new Error('that picture is still too large once shrunk - try a simpler logo');
+      image = shrunk.dataUrl;
+      showImage();
+      status.textContent = 'Not saved yet.';
+    } catch (err) {
+      status.textContent = `That did not load: ${err.message}`;
+    }
+  });
+  clearImage.addEventListener('click', () => { image = ''; showImage(); status.textContent = 'Not saved yet.'; });
+
+  const save = el('button', {
+    class: 'admin-small', type: 'button',
+    onclick: async () => {
+      save.disabled = true;
+      status.textContent = 'Saving…';
+      try {
+        const { branding } = await courseApi(`/${encodeURIComponent(course.code)}/branding`, {
+          method: 'PUT',
+          body: JSON.stringify({ branding: { text: text.value.trim(), image, position: position.value } }),
+        });
+        // Kept in step with what the server now holds, so closing and reopening
+        // this course does not redraw the form from the list fetched earlier.
+        course.branding = branding;
+        status.textContent = branding.text || branding.image
+          ? 'Saved — the next new lecture in this course starts with it.'
+          : 'Cleared — new lectures start with no watermark.';
+      } catch (err) {
+        status.textContent = err.message;
+      } finally {
+        save.disabled = false;
+      }
+    },
+  }, 'Save the watermark');
+
+  return el('div', {},
+    el('div', { class: 'admin-actions' }, text, position),
+    el('div', { class: 'admin-actions' },
+      preview, pick, file, clearImage),
+    el('div', { class: 'admin-actions' }, save, status));
+}
+
 function renderCourseBody(course) {
   const body = el('div', { class: 'session-body' });
 
@@ -1071,6 +1216,11 @@ function renderCourseBody(course) {
 
   body.append(el('h3', { class: 'hint', style: 'margin:14px 0 0' }, 'What a device that signs in gets'));
   body.append(renderCourseSettings(course, courseSettings[course.code] || {}));
+
+  body.append(el('h3', { class: 'hint', style: 'margin:14px 0 0' }, 'Default watermark'));
+  body.append(el('p', { class: 'hint' },
+    'What a new lecture in this course starts with in the corner. It can still be changed or hidden from the Say tab during a lecture.'));
+  body.append(renderCourseBranding(course));
 
   body.append(el('h3', { class: 'hint', style: 'margin:14px 0 0' }, 'Plan template'));
   const template = courseTemplates[course.code];

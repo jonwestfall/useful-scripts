@@ -39,6 +39,11 @@ try {
       <span id="peer-count"></span>
       <span id="plan-name" hidden></span>
     </div>
+    <!-- Issue #156: what a screen reader hears about the connection. The bar
+         beside it changes on every heartbeat (the display's round-trip time),
+         which would be read out every few seconds; this only changes when
+         the state itself does - see announce() in control.js. -->
+    <span id="sr-announce" class="sr-only" role="status" aria-live="polite"></span>
     <div id="clock-widget" class="clock-widget">
       <span id="topbar-clock" class="topbar-clock" title="Current time"></span>
       <button id="topbar-pacing" class="topbar-pacing" type="button" title="Lecture pacing timer (tap to start or reset)" hidden>
@@ -56,22 +61,22 @@ try {
          Lives in the topbar rather than a row of its own so it costs no
          extra height in the (default, common) single-panel case. -->
     <div class="layout-picker" role="group" aria-label="Screen layout">
-      <button class="layout-btn is-on" data-layout="single" type="button" title="Full screen">
+      <button class="layout-btn is-on" data-layout="single" type="button" title="Full screen" aria-label="Full screen" aria-pressed="true">
         <span class="layout-icon layout-icon-single"><i></i></span>
       </button>
-      <button class="layout-btn" data-layout="2h" type="button" title="Side by side">
+      <button class="layout-btn" data-layout="2h" type="button" title="Side by side" aria-label="Side by side" aria-pressed="false">
         <span class="layout-icon layout-icon-2h"><i></i><i></i></span>
       </button>
-      <button class="layout-btn" data-layout="2v" type="button" title="Top and bottom">
+      <button class="layout-btn" data-layout="2v" type="button" title="Top and bottom" aria-label="Top and bottom" aria-pressed="false">
         <span class="layout-icon layout-icon-2v"><i></i><i></i></span>
       </button>
-      <button class="layout-btn" data-layout="3" type="button" title="One large, two small">
+      <button class="layout-btn" data-layout="3" type="button" title="One large, two small" aria-label="One large, two small" aria-pressed="false">
         <span class="layout-icon layout-icon-3"><i></i><i></i><i></i></span>
       </button>
-      <button class="layout-btn" data-layout="4" type="button" title="Four panels">
+      <button class="layout-btn" data-layout="4" type="button" title="Four panels" aria-label="Four panels" aria-pressed="false">
         <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
       </button>
-      <button class="layout-btn" data-layout="pip" type="button" title="Picture in picture">
+      <button class="layout-btn" data-layout="pip" type="button" title="Picture in picture" aria-label="Picture in picture" aria-pressed="false">
         <span class="layout-icon layout-icon-pip"><i></i><i></i></span>
       </button>
     </div>
@@ -96,7 +101,7 @@ try {
   <!-- Shown only when the copy running in this tab is older than the copy the
        server is handing out - i.e. this page came out of a cache the deploy
        has already replaced. -->
-  <div id="update-banner" hidden>
+  <div id="update-banner" role="alert" hidden>
     <b>This page is running an old copy.</b>
     <span id="update-detail"></span>
     <button id="update-reload" type="button">Reload now</button>
@@ -107,7 +112,7 @@ try {
        (see safeStorageSet in util.js); this is the one place that tells
        anyone that preferences, the library, poll history or drafts are
        not actually being kept (Issue #116). -->
-  <div id="storage-warning" hidden>
+  <div id="storage-warning" role="alert" hidden>
     <b>This browser would not save something just now.</b>
     <span id="storage-warning-detail"></span>
   </div>
@@ -151,7 +156,7 @@ try {
     </aside>
 
     <main class="main">
-      <nav class="tabs">
+      <nav class="tabs" aria-label="Controller sections">
         <button class="tab is-on" data-tab="library" type="button">Library</button>
         <button class="tab" data-tab="slides" type="button">Slides</button>
         <button class="tab" data-tab="now" type="button">Now</button>
@@ -171,8 +176,8 @@ try {
           <button id="tabs-more" class="tab" type="button" hidden>More &#9662;</button>
           <div id="tabs-more-menu" class="tabs-more-menu" hidden></div>
         </div>
-        <button id="dual-pane-toggle" class="tab" type="button" title="Toggle Split View" style="margin-left: auto; padding: 0 10px;" hidden>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <button id="dual-pane-toggle" class="tab" type="button" title="Toggle Split View" aria-label="Toggle split view" style="margin-left: auto; padding: 0 10px;" hidden>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
             <line x1="12" y1="3" x2="12" y2="21"></line>
           </svg>
@@ -191,7 +196,7 @@ try {
             <div id="recent" class="recent-strip"></div>
           </div>
           <form id="url-form" class="inline">
-            <input id="url-input" class="grow" type="text" inputmode="url" autocomplete="off"
+            <input id="url-input" aria-label="Link to show" class="grow" type="text" inputmode="url" autocomplete="off"
                    autocapitalize="off" spellcheck="false" placeholder="Paste a link — YouTube, image, video, PDF, any page">
             <button type="submit">Show</button>
             <label class="check"><input id="url-save" type="checkbox"> Save</label>
@@ -206,11 +211,11 @@ try {
             <input id="photo-upload" type="file" accept="image/*" hidden>
             <label class="check"><input id="photo-upload-save" type="checkbox"> Save</label>
           </div>
-          <div id="photo-upload-note" class="hint"></div>
+          <div id="photo-upload-note" role="status" class="hint"></div>
           <div class="inline">
             <label class="filebtn" for="deck-file">Open a Marp deck…</label>
             <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
-            <span id="deck-file-note" class="hint"></span>
+            <span id="deck-file-note" role="status" class="hint"></span>
           </div>
           <!-- Server-backed only: unlike a deck or a photo, a PDF cannot be
                shrunk to fit one relay message, so this uploads straight to
@@ -219,7 +224,7 @@ try {
           <div class="inline" id="pdf-upload-row" hidden>
             <label class="filebtn" for="pdf-upload">Upload/Load a PDF…</label>
             <input id="pdf-upload" type="file" accept=".pdf,.ppt,.pptx,application/pdf" hidden>
-            <span id="pdf-upload-note" class="hint"></span>
+            <span id="pdf-upload-note" role="status" class="hint"></span>
           </div>
           <!-- A lecture plan built in plan.html. It belongs here rather than in
                Settings: it is content, not configuration, and Settings' Close
@@ -227,7 +232,7 @@ try {
           <div class="inline">
             <label class="filebtn" for="plan-file">Load a lecture plan…</label>
             <input id="plan-file" type="file" accept=".json,application/json" hidden>
-            <span id="plan-note" class="hint"></span>
+            <span id="plan-note" role="status" class="hint"></span>
             <button type="button" id="plan-clear" hidden>Remove plan</button>
           </div>
           <!-- When the server keeps plans, there is nothing to carry: the
@@ -240,7 +245,7 @@ try {
           <p class="hint" style="margin:0">
             Plans are built in <a href="plan.html">Planning</a> on your office machine and carried here as a file.
           </p>
-          <input id="lib-filter" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
+          <input id="lib-filter" aria-label="Filter the library" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
           <div id="library"></div>
         </section>
 
@@ -303,14 +308,14 @@ try {
                  else, and its only other label (the title attribute) is a
                  hover tooltip - nothing on a touchscreen. -->
             <div id="deck-grid-chips" class="deck-chips" hidden></div>
-            <input id="deck-grid-filter" type="text" placeholder="Filter slides by title or text…" autocomplete="off" spellcheck="false">
+            <input id="deck-grid-filter" aria-label="Filter slides by title or text" type="text" placeholder="Filter slides by title or text…" autocomplete="off" spellcheck="false">
             <div id="deck-grid"></div>
             <p class="hint" id="deck-grid-empty" hidden>No slide matches that.</p>
             <div class="notes-head">Export</div>
             <div class="inline">
               <button id="deck-export" type="button" disabled>Export marked-up slides (.zip)</button>
             </div>
-            <p class="hint" id="deck-export-status"></p>
+            <p class="hint" id="deck-export-status" role="status"></p>
           </div>
         </section>
 
@@ -323,11 +328,11 @@ try {
           <div id="transport" class="stack" hidden>
             <div class="inline">
               <button id="restart-media" type="button" title="Back to the start">⏮ Restart</button>
-              <button id="back10" type="button">−10s</button>
-              <button id="play-pause" type="button">▶</button>
-              <button id="fwd10" type="button">+10s</button>
+              <button id="back10" type="button" aria-label="Back 10 seconds">−10s</button>
+              <button id="play-pause" type="button" aria-label="Play">▶</button>
+              <button id="fwd10" type="button" aria-label="Forward 10 seconds">+10s</button>
             </div>
-            <input id="scrub" type="range" min="0" max="0" step="1" value="0">
+            <input id="scrub" aria-label="Position in the media" type="range" min="0" max="0" step="1" value="0">
             <div class="times"><span id="time-now">0:00</span><span id="time-total">--:--</span></div>
             <!-- Off by default: a clip that reaches its own end now stops
                  there and stays stopped (see handleMediaEnded in display.js) -
@@ -343,16 +348,16 @@ try {
                tab's own pad zoom above, which only changes what you see
                while drawing and never leaves this device. -->
           <div id="pdf-zoom" class="inline" hidden>
-            <button id="pdf-zoom-out" type="button" title="Zoom out">−</button>
+            <button id="pdf-zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
             <span id="pdf-zoom-level" class="mono">1×</span>
-            <button id="pdf-zoom-in" type="button" title="Zoom in">+</button>
+            <button id="pdf-zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
             <button id="pdf-zoom-reset" type="button">Reset zoom</button>
           </div>
           <div id="pdf-pan" class="inline" hidden>
-            <button id="pdf-pan-left" class="pan-btn" type="button" disabled title="Pan left">◀</button>
-            <button id="pdf-pan-up" class="pan-btn" type="button" disabled title="Pan up">▲</button>
-            <button id="pdf-pan-down" class="pan-btn" type="button" disabled title="Pan down">▼</button>
-            <button id="pdf-pan-right" class="pan-btn" type="button" disabled title="Pan right">▶</button>
+            <button id="pdf-pan-left" class="pan-btn" type="button" disabled title="Pan left" aria-label="Pan left">◀</button>
+            <button id="pdf-pan-up" class="pan-btn" type="button" disabled title="Pan up" aria-label="Pan up">▲</button>
+            <button id="pdf-pan-down" class="pan-btn" type="button" disabled title="Pan down" aria-label="Pan down">▼</button>
+            <button id="pdf-pan-right" class="pan-btn" type="button" disabled title="Pan right" aria-label="Pan right">▶</button>
           </div>
           <div class="inline">
             <button id="preview-mode" type="button">Always cue first</button>
@@ -374,16 +379,16 @@ try {
           </div>
           <div id="ink-controls" class="ink-controls">
             <div class="inline">
-              <button id="ink-zoom-out" type="button" title="Zoom out">−</button>
+              <button id="ink-zoom-out" type="button" title="Zoom out" aria-label="Zoom out">−</button>
               <span id="ink-zoom-level" class="mono">1×</span>
-              <button id="ink-zoom-in" type="button" title="Zoom in">+</button>
+              <button id="ink-zoom-in" type="button" title="Zoom in" aria-label="Zoom in">+</button>
               <button id="ink-zoom-reset" type="button">Reset zoom</button>
               <button id="ink-toggle-mirror" type="button" class="is-on">Showing slide</button>
               <span class="hint" style="margin:0 0 0 6px">Pan (once zoomed):</span>
-              <button id="pan-left" class="pan-btn" type="button" disabled title="Pan left">◀</button>
-              <button id="pan-up" class="pan-btn" type="button" disabled title="Pan up">▲</button>
-              <button id="pan-down" class="pan-btn" type="button" disabled title="Pan down">▼</button>
-              <button id="pan-right" class="pan-btn" type="button" disabled title="Pan right">▶</button>
+              <button id="pan-left" class="pan-btn" type="button" disabled title="Pan left" aria-label="Pan left">◀</button>
+              <button id="pan-up" class="pan-btn" type="button" disabled title="Pan up" aria-label="Pan up">▲</button>
+              <button id="pan-down" class="pan-btn" type="button" disabled title="Pan down" aria-label="Pan down">▼</button>
+              <button id="pan-right" class="pan-btn" type="button" disabled title="Pan right" aria-label="Pan right">▶</button>
             </div>
             <div class="inline">
               <div class="ink-tools" role="group" aria-label="Ink tool selection">
@@ -402,11 +407,11 @@ try {
               <button id="ink-unclear" type="button" hidden>Undo clear</button>
             </div>
             <div class="inline">
-              <button class="swatch is-on" type="button" data-color="#ffd166" style="background:#ffd166"></button>
-              <button class="swatch" type="button" data-color="#ff4d4f" style="background:#ff4d4f"></button>
-              <button class="swatch" type="button" data-color="#45d483" style="background:#45d483"></button>
-              <button class="swatch" type="button" data-color="#6ea8fe" style="background:#6ea8fe"></button>
-              <button class="swatch" type="button" data-color="#ffffff" style="background:#ffffff"></button>
+              <button class="swatch is-on" type="button" data-color="#ffd166" style="background:#ffd166" aria-label="Yellow ink" aria-pressed="true"></button>
+              <button class="swatch" type="button" data-color="#ff4d4f" style="background:#ff4d4f" aria-label="Red ink" aria-pressed="false"></button>
+              <button class="swatch" type="button" data-color="#45d483" style="background:#45d483" aria-label="Green ink" aria-pressed="false"></button>
+              <button class="swatch" type="button" data-color="#6ea8fe" style="background:#6ea8fe" aria-label="Blue ink" aria-pressed="false"></button>
+              <button class="swatch" type="button" data-color="#ffffff" style="background:#ffffff" aria-label="White ink" aria-pressed="false"></button>
               <label id="ink-picker-label" class="swatch swatch-picker" title="Custom color">
                 <span id="ink-picker-preview" class="swatch-picker-inner"></span>
                 <input id="ink-color-picker" type="color" value="#a371f7">
@@ -452,7 +457,7 @@ try {
           <div class="stack" id="caption-block">
             <div class="inline">
               <button id="caption-toggle" type="button">Start live captions</button>
-              <span class="hint" id="caption-status"></span>
+              <span class="hint" id="caption-status" role="status"></span>
             </div>
             <p class="hint">
               Live captions use this device's microphone and its browser's own speech
@@ -469,7 +474,7 @@ try {
           <div class="stack" id="mic-block">
             <div class="inline">
               <button id="mic-start" type="button">Start my mic</button>
-              <span class="hint" id="mic-status">Off</span>
+              <span class="hint" id="mic-status" role="status">Off</span>
             </div>
             <div class="inline" id="mic-record-row" hidden>
               <label class="check"><input id="mic-record" type="checkbox" checked> Record this mic to the session</label>
@@ -487,7 +492,7 @@ try {
             <label for="qr-data">QR code for the class</label>
             <div class="inline">
               <input id="qr-data" class="grow" type="text" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://…">
-              <input id="qr-caption" class="grow" type="text" placeholder="Caption (optional)">
+              <input id="qr-caption" aria-label="QR code caption" class="grow" type="text" placeholder="Caption (optional)">
               <button type="submit">Show</button>
             </div>
           </form>
@@ -510,7 +515,7 @@ try {
               <input id="watermark-image" type="file" accept="image/*" hidden>
               <button id="watermark-image-clear" type="button" hidden>Remove image</button>
             </div>
-            <div id="watermark-note" class="hint"></div>
+            <div id="watermark-note" role="status" class="hint"></div>
           </div>
           <!-- Only shown once the layout picker's own PiP button is on - see
                #layout-picker above and pipPanel.render in control.js. Which
@@ -556,8 +561,8 @@ try {
             <button class="timer-preset" type="button" data-mins="15">15m</button>
           </div>
           <div class="inline">
-            <input id="timer-mins" class="grow" type="number" min="1" max="180" value="5">
-            <input id="timer-label" class="grow" type="text" placeholder="Label, e.g. Group work">
+            <input id="timer-mins" aria-label="Timer minutes" class="grow" type="number" min="1" max="180" value="5">
+            <input id="timer-label" aria-label="Timer label" class="grow" type="text" placeholder="Label, e.g. Group work">
             <button id="timer-start" type="button">Start</button>
             <button id="timer-stop" type="button">Stop</button>
           </div>
@@ -592,11 +597,11 @@ try {
             <label id="music-pause-queue-wrap" class="check"><input id="music-pause-queue" type="checkbox"> Pause Queue</label>
           </div>
           <form id="music-url-form" class="inline">
-            <input id="music-url" class="grow" type="text" inputmode="url" autocomplete="off"
+            <input id="music-url" aria-label="Link to an audio file" class="grow" type="text" inputmode="url" autocomplete="off"
                    autocapitalize="off" spellcheck="false" placeholder="…or paste a link to an audio file">
             <button type="submit">Queue it</button>
           </form>
-          <div id="music-note" class="hint"></div>
+          <div id="music-note" role="status" class="hint"></div>
           <div id="music-track-row" class="inline" hidden>
             <select id="music-track-select" class="grow" aria-label="Track to play or queue"></select>
             <button id="music-track-play" type="button">▶ Play</button>
@@ -612,9 +617,9 @@ try {
           </div>
 
           <div class="music-transport">
-            <button id="music-prev" class="skip" type="button" title="Previous track">⏮</button>
+            <button id="music-prev" class="skip" type="button" title="Previous track" aria-label="Previous track">⏮</button>
             <button id="music-play" type="button">▶ Play</button>
-            <button id="music-next" class="skip" type="button" title="Next track">⏭</button>
+            <button id="music-next" class="skip" type="button" title="Next track" aria-label="Next track">⏭</button>
           </div>
           <div class="inline">
             <button id="music-fade" type="button">Fade out &amp; stop</button>
@@ -702,7 +707,7 @@ try {
 
           <div id="sets-build" class="stack" hidden>
             <div class="inline">
-              <input id="sets-build-name" class="grow" type="text" placeholder="Set name" maxlength="60">
+              <input id="sets-build-name" aria-label="Set name" class="grow" type="text" placeholder="Set name" maxlength="60">
               <select id="sets-build-mode" aria-label="Order">
                 <option value="sequential">In order</option>
                 <option value="random">Random</option>
@@ -747,7 +752,7 @@ try {
             <div id="poll-running-status" class="hint"></div>
             <div id="poll-running-countdown" class="hint" style="font-variant-numeric: tabular-nums; font-weight: 700; color: var(--dim);" hidden></div>
             <div id="poll-running-results"></div>
-            <p id="poll-action-error" class="hint" hidden></p>
+            <p id="poll-action-error" class="hint" role="alert" hidden></p>
             <div class="inline" id="poll-timer-btns">
               <button id="poll-timer-30" type="button" class="btn-small">+30s</button>
               <button id="poll-timer-60" type="button" class="btn-small">+60s</button>
@@ -771,7 +776,7 @@ try {
                 <option value="qna">Audience Q&A</option>
               </select>
             </div>
-            <textarea id="poll-question" placeholder="Question" maxlength="500" rows="2"></textarea>
+            <textarea id="poll-question" aria-label="Poll question" placeholder="Question" maxlength="500" rows="2"></textarea>
             <div id="poll-options" class="stack"></div>
             <div class="inline">
               <button id="poll-option-add" type="button">+ Option</button>
@@ -781,9 +786,9 @@ try {
                 <input id="poll-ask-name" type="checkbox">
                 Ask participants for name / ID
               </label>
-              <input id="poll-name-prompt" type="text" placeholder="Name:" value="Name:" maxlength="50" style="max-width: 140px; padding: 4px 8px; font-size: 13px;" hidden>
+              <input id="poll-name-prompt" aria-label="Name prompt shown to participants" type="text" placeholder="Name:" value="Name:" maxlength="50" style="max-width: 140px; padding: 4px 8px; font-size: 13px;" hidden>
             </div>
-            <p id="poll-error" class="hint" hidden></p>
+            <p id="poll-error" class="hint" role="alert" hidden></p>
             <button id="poll-start" type="submit">Start poll</button>
           </form>
 
@@ -807,12 +812,12 @@ try {
             <button id="cam-flip" type="button">Flip</button>
             <button id="cam-shot" type="button" disabled>Take a photo</button>
           </div>
-          <div id="cam-status">Off</div>
+          <div id="cam-status" role="status">Off</div>
           <video id="cam-local" playsinline muted hidden></video>
           <!-- Stills taken from the feed. They last for this session only, and
                each one is an ordinary photo as far as the rest of Podium is
                concerned - which is what lets four of them sit in four panels. -->
-          <div id="cam-shot-note" class="hint" hidden></div>
+          <div id="cam-shot-note" role="status" class="hint" hidden></div>
           <div id="cam-shots" class="shots" hidden></div>
           <p class="hint shots-hint" hidden>
             Tap a photo to put it on the panel you have focused (the A/B/C/D buttons in the top bar).
@@ -832,7 +837,7 @@ try {
             <button id="photo-screen" type="button">Photograph the whole screen</button>
             <span id="photo-count" class="hint" style="margin:0"></span>
           </div>
-          <div id="photo-note" class="hint" hidden></div>
+          <div id="photo-note" role="status" class="hint" hidden></div>
           <div id="photo-strip" class="shots" hidden></div>
           <p class="hint shots-empty">
             Nothing kept yet. <b>Press and hold</b> a panel letter (A/B/C/D, top right) to photograph
@@ -858,7 +863,7 @@ try {
           <div class="inline">
             <button id="photo-clear" class="danger-outline" type="button">Discard every photo</button>
           </div>
-          <div id="photo-export-status" class="hint"></div>
+          <div id="photo-export-status" role="status" class="hint"></div>
           <p class="hint">
             One zip: every photo above, every deck slide you annotated (ink included), and every board
             or image you drew on. Ink lives on the display, so it is pulled from there as the zip is
@@ -880,15 +885,15 @@ try {
             its arming screen — the deliberate way to close class, next to the automatic close
             after 15 minutes of silence.
           </p>
-          <div id="finish-session-status" class="hint"></div>
+          <div id="finish-session-status" role="status" class="hint"></div>
         </section>
       </div>
     </main>
   </div>
 
   <div class="bottombar">
-    <button id="bar-music" class="bar-slot" type="button" data-slot="1" hidden title="Pause or resume the music">♪</button>
-    <button id="bar-play" class="bar-slot" type="button" data-slot="2" hidden>▶</button>
+    <button id="bar-music" class="bar-slot" type="button" data-slot="1" hidden title="Pause or resume the music" aria-label="Pause or resume the music">♪</button>
+    <button id="bar-play" class="bar-slot" type="button" data-slot="2" hidden aria-label="Play media">▶</button>
     <button id="freeze" class="bar-slot" type="button" data-slot="3">Freeze</button>
     <button id="blank" class="bar-slot" type="button" data-slot="4">Blank</button>
     <button id="bar-slot-5" class="bar-slot" type="button" data-slot="5" hidden></button>
@@ -901,7 +906,7 @@ try {
          Reachable from every tab without a tab switch, on purpose: it is the
          one control for "the room is too loud right now." -->
     <div class="vol" title="Master volume — everything the room hears">
-      <button id="mute" type="button" title="Mute everything">🔊</button>
+      <button id="mute" type="button" title="Mute everything" aria-label="Mute everything" aria-pressed="false">🔊</button>
       <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Master volume — everything the room hears">
     </div>
   </div>
@@ -972,7 +977,7 @@ try {
           <label for="c-pass">Passphrase</label>
           <input id="c-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
         </div>
-        <p class="error" id="setup-error"></p>
+        <p class="error" id="setup-error" role="alert"></p>
         <button type="submit" class="big-button">Save</button>
       </form>
       <p class="hint">
@@ -1058,7 +1063,7 @@ try {
             <option value="90">90 minutes</option>
             <option value="custom">Custom…</option>
           </select>
-          <input id="pref-lecture-duration-custom" type="number" min="1" max="360" placeholder="Mins" style="width:90px;" hidden>
+          <input id="pref-lecture-duration-custom" aria-label="Custom lecture length in minutes" type="number" min="1" max="360" placeholder="Mins" style="width:90px;" hidden>
         </div>
         <p class="hint">
           Shows a pacing tracker in the top bar with elapsed time and a progress bar so you know
@@ -1350,11 +1355,11 @@ try {
       <div class="field">
         <label>Background</label>
         <div class="inline" id="msg-bg-swatches" role="group" aria-label="Background colour">
-          <button type="button" class="bg-swatch is-on" data-bg="" style="background:#0a0d12" title="Default"></button>
-          <button type="button" class="bg-swatch" data-bg="#0b1e3d" style="background:#0b1e3d" title="Navy"></button>
-          <button type="button" class="bg-swatch" data-bg="#132a1c" style="background:#132a1c" title="Forest"></button>
-          <button type="button" class="bg-swatch" data-bg="#3a0f1c" style="background:#3a0f1c" title="Maroon"></button>
-          <button type="button" class="bg-swatch" data-bg="#2a1436" style="background:#2a1436" title="Plum"></button>
+          <button type="button" class="bg-swatch is-on" data-bg="" style="background:#0a0d12" title="Default" aria-label="Default background" aria-pressed="true"></button>
+          <button type="button" class="bg-swatch" data-bg="#0b1e3d" style="background:#0b1e3d" title="Navy" aria-label="Navy background" aria-pressed="false"></button>
+          <button type="button" class="bg-swatch" data-bg="#132a1c" style="background:#132a1c" title="Forest" aria-label="Forest background" aria-pressed="false"></button>
+          <button type="button" class="bg-swatch" data-bg="#3a0f1c" style="background:#3a0f1c" title="Maroon" aria-label="Maroon background" aria-pressed="false"></button>
+          <button type="button" class="bg-swatch" data-bg="#2a1436" style="background:#2a1436" title="Plum" aria-label="Plum background" aria-pressed="false"></button>
           <label id="msg-bg-custom-label" class="bg-swatch-picker" title="Custom">
             <span class="bg-swatch-picker-inner"></span>
             <input id="msg-bg-custom" type="color" value="#0a0d12">
@@ -1368,7 +1373,7 @@ try {
           <input id="msg-image" type="file" accept="image/*" hidden>
           <button id="msg-image-clear" type="button" hidden>Remove picture</button>
         </div>
-        <input id="msg-caption" type="text" placeholder="Caption (optional)" style="margin-top:8px" hidden>
+        <input id="msg-caption" aria-label="Picture caption" type="text" placeholder="Caption (optional)" style="margin-top:8px" hidden>
         <p class="hint" id="msg-image-note"></p>
       </div>
       <div class="field">

@@ -18,7 +18,10 @@
 <div id="stage"></div>
 <canvas id="ink"></canvas>
 <div id="blank"></div>
-<div id="overlay"></div>
+<!-- The caption bar, announced as it changes (Issue #156) - live captions
+     included, which a screen reader coalesces rather than reading every
+     interim word. -->
+<div id="overlay" role="status" aria-live="polite" aria-atomic="true" aria-label="Caption"></div>
 <!-- A name or logo pinned to one corner for the whole lecture - not content,
      so it survives every pick, freeze and blank, and is meant to end up IN a
      screen grab rather than only ever being something the room sees live
@@ -29,12 +32,12 @@
 </div>
 <div id="spotlight"></div>
 <div id="laser"></div>
-<div id="hud" data-status="connecting">Not connected</div>
+<div id="hud" data-status="connecting" role="status">Not connected</div>
 <!-- Shown once per page load if a save to localStorage throws - most of
      all the crash-recovery snapshot saveStateNow() writes every few
      seconds. Unlike #hud this never fades: the risk is a reload losing
      the lecture, not a transient connection blip (Issue #116). -->
-<div id="storage-warn" hidden>Local save is not working — a reload may lose this lecture</div>
+<div id="storage-warn" role="alert" hidden>Local save is not working — a reload may lose this lecture</div>
 
 <!-- Standby: shown when nothing is on screen and no controller is connected -->
 <div id="standby" class="sheet">
@@ -80,7 +83,7 @@
     </div>
     <p class="hint">Room <span id="room-name" class="mono"></span> · code <span id="arm-code" class="mono">····</span></p>
     <p class="hint">Press <kbd>?</kbd> at any time for the keyboard shortcuts.</p>
-    <p class="hint" id="arm-status">Connecting…</p>
+    <p class="hint" id="arm-status" role="status">Connecting…</p>
     <!-- Only on a server-backed Podium that keeps session records. Saying so
          on the screen the room can see is the point: nobody should have to read
          the docs to find out that what goes on the projector is written down. -->
@@ -97,7 +100,7 @@
          first time this room is used for a different class. -->
     <p class="hint">
       <button id="arm-fresh-session" type="button">Clear this room’s saved session</button>
-      <span id="arm-fresh-session-note"></span>
+      <span id="arm-fresh-session-note" role="status"></span>
     </p>
     <p class="hint mono relay-target"></p>
     <p class="hint stale-note" id="arm-build" hidden></p>
@@ -176,7 +179,7 @@
           Leave this off for an ordinary classroom display.
         </p>
       </div>
-      <p class="error" id="setup-error"></p>
+      <p class="error" id="setup-error" role="alert"></p>
       <div class="row">
         <button type="submit" class="big-button">Save</button>
         <button type="button" id="setup-close" hidden>Close</button>

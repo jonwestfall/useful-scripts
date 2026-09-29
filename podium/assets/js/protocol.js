@@ -203,7 +203,12 @@ export function initialState() {
     // that should be IN a screen grab, not something you pick and lose the
     // next time you change what is on screen. So it lives beside program and
     // panels rather than inside any of them, the same reason music does.
-    watermark: { enabled: false, text: '', image: '', position: 'br' },
+    // `fromCourse` (Issue #157): this is the course's default, put here by the
+    // display when a new lecture started - not something the presenter chose.
+    // The next new lecture replaces a course default with ITS course's one,
+    // and never touches a watermark the presenter set (see applyCourseBranding
+    // in display.js).
+    watermark: { enabled: false, text: '', image: '', position: 'br', fromCourse: false },
     // Picture-in-picture's own configuration (Issue #110) - independent of
     // `layout` the same way watermark is independent of what is on screen,
     // so switching away from the 'pip' layout and back does not lose the
@@ -419,6 +424,43 @@ function advanceSet(item) {
   }
   item.startedAt = Date.now();
   item.remainingMs = 0;
+}
+
+/**
+ * What the corner shows when a NEW lecture starts under a course (Issue #157).
+ *
+ * A watermark the presenter set - typed or uploaded from the Say tab, before
+ * Go live or in an earlier session - is theirs and is never replaced. One that
+ * was itself a course default is: a classroom PC may have just taught a
+ * different course, and that course's logo has no business opening this one,
+ * or staying up at all when this course has no default.
+ *
+ * Pure, so it can be tested: `newAssetId` names the logo's bytes, and the
+ * caller files `asset.data` under that id in its own asset store.
+ *
+ * @param {object} current - state.watermark as it is now
+ * @param {{text?: string, image?: string, position?: string}|null|undefined} branding - from the server
+ * @param {() => string} newAssetId
+ * @param {number} maxImageChars - the asset cap every picture is held to
+ * @returns {{ watermark: object, asset: {id: string, data: string}|null } | null} null = leave it alone
+ */
+export function watermarkForNewLecture(current, branding, newAssetId, maxImageChars) {
+  if ((current.text || current.image) && !current.fromCourse) return null;
+  const data = typeof branding?.image === 'string' && /^data:image\/(png|jpeg|gif|webp);base64,/.test(branding.image)
+    && branding.image.length <= maxImageChars ? branding.image : '';
+  const text = String(branding?.text || '').slice(0, 120);
+  if (!data && !text) {
+    if (!current.fromCourse) return null;
+    return { watermark: { ...current, enabled: false, text: '', image: '', fromCourse: false }, asset: null };
+  }
+  const asset = data ? { id: newAssetId(), data } : null;
+  return {
+    watermark: {
+      enabled: true, text, image: asset ? `asset:${asset.id}` : '',
+      position: branding.position === 'tl' ? 'tl' : 'br', fromCourse: true,
+    },
+    asset,
+  };
 }
 
 // Pre-scripted captions (Issue #154): whatever is actually on the program
@@ -1198,6 +1240,10 @@ export function applyCommand(state, cmd) {
     case 'watermark':
       if (cmd.text !== undefined) state.watermark.text = String(cmd.text).slice(0, 120);
       if (cmd.image !== undefined) state.watermark.image = String(cmd.image).slice(0, 200);
+      // New text or a new logo makes it the presenter's own - a later lecture
+      // leaves it alone. Moving or hiding a course default does not: the next
+      // lecture of that course still starts with it showing.
+      if (cmd.text !== undefined || cmd.image !== undefined) state.watermark.fromCourse = false;
       if (cmd.position !== undefined) state.watermark.position = cmd.position === 'tl' ? 'tl' : 'br';
       if (cmd.enabled !== undefined) state.watermark.enabled = !!cmd.enabled;
       return true;
