@@ -156,8 +156,17 @@ function updatePlan(db, user, id, { title, courseCode, doc, baseUpdatedAt }) {
   if (courseCode !== undefined) { sets.push('course_id = ?'); values.push(courseIdFor(db, user, courseCode)); }
   if (doc !== undefined) { sets.push('doc = ?'); values.push(docText(doc)); }
   if (!sets.length) return plan;
+  // Strictly later than the updatedAt it replaces, never just Date.now():
+  // updatedAt is the only thing the check above compares, so a save that
+  // leaves it where it was is invisible to every other device. Two saves in
+  // the same millisecond (a fast machine, or an autosave racing a manual
+  // save) would otherwise stamp the same value twice, and a tab still
+  // holding the first one would sail through the second as if nothing had
+  // changed. The clock going backwards (NTP stepping it, a restored VM) is
+  // the same failure more slowly, and this covers that too - updatedAt is a
+  // version number first and a timestamp second.
   sets.push('updated_at = ?');
-  values.push(Date.now(), Number(id));
+  values.push(Math.max(Date.now(), plan.updatedAt + 1), Number(id));
   db.prepare(`UPDATE plans SET ${sets.join(', ')} WHERE id = ?`).run(...values);
   return getPlan(db, user, id);
 }
