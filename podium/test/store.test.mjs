@@ -478,9 +478,12 @@ ok('and an admin can', plans.mayWrite(db, admin, shared) === true);
 // second must be told, not silently win and erase the first one's changes.
 //
 // Forced ahead by a raw UPDATE, rather than relying on a second real
-// updatePlan() call to land in a later millisecond than revised.updatedAt -
-// two Date.now() calls back to back can tie, which would make the "stale"
-// case below flaky rather than reliably stale.
+// updatePlan() call to land in a later millisecond than revised.updatedAt.
+// The nudge alone used to not be enough: the "still current" save below
+// stamped a plain Date.now(), which dragged updated_at BACK to the same
+// millisecond revised was saved in on a fast machine, and the "stale" save
+// then matched and went through. updatePlan now only ever moves updatedAt
+// forward (nudged + 1 here), which is what keeps this deterministic.
 const nudgedUpdatedAt = revised.updatedAt + 5000;
 db.prepare('UPDATE plans SET updated_at = ? WHERE id = ?').run(nudgedUpdatedAt, shared.id);
 ok('a save staged against the current updatedAt goes through',
@@ -494,6 +497,23 @@ ok('and the conflicting save never actually landed',
   plans.getPlan(db, owner, shared.id).title === 'Day 6, still current');
 ok('a save with no base at all (an older client, or a script) is not checked, the same as before this existed',
   plans.updatePlan(db, owner, shared.id, { title: 'Day 6, once more' }).title === 'Day 6, once more');
+
+// The product bug behind that flake, pinned without leaning on the clock at
+// all: park updated_at far in the future so every save below is guaranteed
+// to land "in the same millisecond" as far as Date.now() is concerned, then
+// make sure each save still moves it, and a tab holding the older value is
+// still turned away.
+const farFuture = Date.now() + 60 * 60 * 1000;
+db.prepare('UPDATE plans SET updated_at = ? WHERE id = ?').run(farFuture, shared.id);
+const firstQuick = plans.updatePlan(db, owner, shared.id, { title: 'Quick one', baseUpdatedAt: farFuture });
+const secondQuick = plans.updatePlan(db, owner, shared.id, { title: 'Quick two', baseUpdatedAt: firstQuick.updatedAt });
+ok(`two saves inside one millisecond still each move updatedAt forward (${farFuture} → ${firstQuick.updatedAt} → ${secondQuick.updatedAt})`,
+  firstQuick.updatedAt > farFuture && secondQuick.updatedAt > firstQuick.updatedAt);
+refusedPlan = '';
+try { plans.updatePlan(db, owner, shared.id, { title: 'Holding the first', baseUpdatedAt: firstQuick.updatedAt }); }
+catch (err) { refusedPlan = err.message; }
+ok('so a tab that only saw the first of them is refused, not waved through',
+  /changed on the server/.test(refusedPlan) && plans.getPlan(db, owner, shared.id).title === 'Quick two');
 
 refusedPlan = '';
 try { plans.savePlan(db, outsider, { title: 'Sneaking in', courseCode: 'psy415', doc: {} }); }
