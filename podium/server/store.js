@@ -449,6 +449,19 @@ const MIGRATIONS = [
       ALTER TABLE kiosks ADD COLUMN schedule TEXT NOT NULL DEFAULT '[]';
     `);
   },
+
+  (db) => {
+    db.exec(`
+      -- A course's default watermark (Issue #157): {text, image, position},
+      -- where image is a small PNG data URL - the same shape and size cap a
+      -- watermark logo already has once it is on a display, so a lecture
+      -- started under this course can hand it straight over. JSON on the
+      -- course row rather than in course_settings, deliberately: that table
+      -- is the room's KEY (see settings.js), handed only to members and
+      -- written only by owners, and a logo is neither of those things.
+      ALTER TABLE courses ADD COLUMN branding TEXT NOT NULL DEFAULT '{}';
+    `);
+  },
 ];
 
 function migrate(db) {

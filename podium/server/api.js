@@ -363,6 +363,18 @@ async function handleApi(req, res, url, ctx) {
       return true;
     }
 
+    // A course's default watermark (Issue #157). Big enough for the logo's
+    // own cap plus the JSON around it, and no bigger.
+    if (head === 'courses' && rest.length === 2 && rest[1] === 'branding' && req.method === 'PUT') {
+      const body = await readJson(req, courses.MAX_BRANDING_IMAGE_CHARS + 8 * 1024);
+      const branding = courses.setBranding(ctx.db, user, rest[0], body.branding || {});
+      auditLog(ctx, req, user, 'course_branding_modified', {
+        courseCode: String(rest[0]).toLowerCase(), text: branding.text, image: !!branding.image, position: branding.position,
+      });
+      json(res, 200, { branding });
+      return true;
+    }
+
     if (head === 'courses' && rest.length === 2 && rest[1] === 'members' && req.method === 'POST') {
       const body = await readJson(req, 8 * 1024);
       json(res, 200, { people: courses.addMember(ctx.db, user, rest[0], { username: body.username, role: body.role }) });

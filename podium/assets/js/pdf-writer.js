@@ -283,7 +283,7 @@ export async function renderSessionPageToJpeg(img, meta, pageNum, totalPages) {
   ctx.stroke();
 
   ctx.font = '16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.fillStyle = '#64748b';
+  ctx.fillStyle = '#94a3b8';
   ctx.fillText('Podium  ·  Lecture Notes', 40, 1058);
 
   ctx.textAlign = 'right';
@@ -454,7 +454,7 @@ export async function renderPollPageToJpeg(poll, meta, pageNum, totalPages) {
   ctx.stroke();
 
   ctx.font = '16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.fillStyle = '#64748b';
+  ctx.fillStyle = '#94a3b8';
   ctx.fillText('Podium  ·  Lecture Notes', 40, 1058);
 
   ctx.textAlign = 'right';
@@ -487,4 +487,247 @@ export function loadImage(src) {
       img.src = src;
     }
   });
+}
+
+// --- the lecture recap (Issue #158) ------------------------------------------
+//
+// The same 1920x1080 page, header and footer as the two renderers above, with
+// one new kind of page: text - the timeline's entries in order, each followed
+// by the caption lines said while it was up. Pictures and polls reuse
+// renderSessionPageToJpeg and renderPollPageToJpeg exactly as they are.
+//
+// Laid out in two passes, because every page's footer says "Page n of N":
+// planRecapPages decides what goes on which page (measuring text with
+// whatever `measure` it is handed, so it can be tested without a canvas), and
+// renderRecapPages draws them once the total is known.
+
+const RECAP_FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+export const RECAP_STYLE = {
+  top: 140, bottom: 1010, left: 80, right: 1840,
+  heading: { font: `bold 30px ${RECAP_FONT}`, size: 30, height: 46 },
+  note: { font: `20px ${RECAP_FONT}`, size: 20, height: 30 },
+  caption: { font: `24px ${RECAP_FONT}`, size: 24, height: 34, indent: 110 },
+  gap: 18,
+};
+
+/**
+ * Split text into lines no wider than maxWidth. A single word wider than the
+ * line (a URL, say) is broken by characters rather than left to run off the
+ * page.
+ * @param {(text: string) => number} measure
+ */
+export function wrapText(text, maxWidth, measure) {
+  const lines = [];
+  let line = '';
+  for (const word of String(text || '').split(/\s+/).filter(Boolean)) {
+    const tryLine = line ? `${line} ${word}` : word;
+    if (measure(tryLine) <= maxWidth) { line = tryLine; continue; }
+    if (line) lines.push(line);
+    if (measure(word) <= maxWidth) { line = word; continue; }
+    let piece = '';
+    for (const ch of word) {
+      if (measure(piece + ch) > maxWidth && piece) { lines.push(piece); piece = ''; }
+      piece += ch;
+    }
+    line = piece;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+const hhmm = (ms) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+/**
+ * Decide every page of a recap, in order, without drawing anything.
+ * @param {{ blocks: object[], extras: object[] }} recap - from buildRecap (recap.js)
+ * @param {(text: string, font: string) => number} measure
+ * @param {{ summary?: string }} [options]
+ * @returns {Array<{ kind: 'text', rows: object[] } | { kind: 'picture', file: object, title: string, note: string } | { kind: 'poll', poll: object }>}
+ */
+export function planRecapPages(recap, measure, { summary = '' } = {}) {
+  const S = RECAP_STYLE;
+  const pages = [];
+  let rows = [];
+  let y = S.top;
+  // The heading the rows being added belong to, so a block that runs over a
+  // page break can say whose captions the next page carries on with.
+  let heading = null;
+
+  const flush = () => {
+    if (rows.length) pages.push({ kind: 'text', rows });
+    rows = [];
+    y = S.top;
+  };
+  const add = (row, height) => {
+    if (y + height > S.bottom && rows.length) {
+      flush();
+      if (heading && row.style === 'caption') {
+        rows.push({ style: 'continued', text: `${heading} (continued)`, y });
+        y += S.note.height;
+      }
+    }
+    rows.push({ ...row, y });
+    y += height;
+  };
+  const addWrapped = (style, text, extra, indent = 0) => {
+    const width = S.right - S.left - indent;
+    for (const [i, line] of wrapText(text, width, (t) => measure(t, style.font)).entries()) {
+      add({ ...extra, text: line, first: i === 0 }, style.height);
+    }
+  };
+  const addCaptions = (captions) => {
+    for (const caption of captions) {
+      addWrapped(S.caption, caption.text, { style: 'caption', at: caption.at }, S.caption.indent);
+    }
+  };
+
+  if (summary) { addWrapped(S.note, summary, { style: 'summary' }); y += S.gap; }
+
+  for (const block of recap.blocks) {
+    if (block.type === 'poll') {
+      flush();
+      pages.push({ kind: 'poll', poll: block.poll });
+      if (block.captions.length) {
+        heading = `Poll: ${block.poll.question || 'Poll'}`;
+        addWrapped(S.heading, heading, { style: 'poll', at: block.at });
+        addCaptions(block.captions);
+        y += S.gap;
+      }
+      continue;
+    }
+    // Never strand a heading alone at the foot of a page with its first
+    // caption over the leaf: start a new page if both do not fit.
+    const needed = S.heading.height + (block.note ? S.note.height : 0) + (block.captions.length ? S.caption.height : 0);
+    if (y + needed > S.bottom && rows.length) flush();
+    heading = block.title;
+    addWrapped(S.heading, block.title, { style: block.type === 'opening' ? 'opening' : 'heading', at: block.at });
+    if (block.note) addWrapped(S.note, block.note, { style: 'note' });
+    addCaptions(block.captions);
+    y += S.gap;
+    if (block.images?.length) {
+      flush();
+      for (const file of block.images) pages.push({ kind: 'picture', file, title: block.title, note: block.note });
+    }
+  }
+  flush();
+  for (const file of recap.extras || []) pages.push({ kind: 'picture', file, title: '', note: '' });
+  return pages;
+}
+
+function drawRecapFrame(ctx, meta, pageNum, totalPages, rightTitle) {
+  const width = 1920;
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, 0, width, 1080);
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(0, 0, width, 110);
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, 110); ctx.lineTo(width, 110); ctx.stroke();
+
+  ctx.font = `bold 28px ${RECAP_FONT}`;
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillText(meta.title || meta.room || 'Podium Session', 40, 48);
+  ctx.font = `18px ${RECAP_FONT}`;
+  ctx.fillStyle = '#94a3b8';
+  const metaBits = [
+    meta.course ? meta.course.toUpperCase() : '',
+    meta.room ? `Room: ${meta.room}` : '',
+    meta.date ? new Date(meta.date).toLocaleString() : '',
+  ].filter(Boolean);
+  ctx.fillText(metaBits.join('  ·  '), 40, 86);
+
+  ctx.textAlign = 'right';
+  ctx.font = `bold 22px ${RECAP_FONT}`;
+  ctx.fillStyle = '#38bdf8';
+  ctx.fillText(rightTitle, width - 40, 48);
+  ctx.textAlign = 'left';
+
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, 1030); ctx.lineTo(width, 1030); ctx.stroke();
+  ctx.font = `16px ${RECAP_FONT}`;
+  // #94a3b8, as on the other two pages: the #64748b they used to use is
+  // 3.75:1 on this background, under WCAG AA for text this size (Issue #156).
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('Podium  ·  Lecture Recap', 40, 1058);
+  ctx.textAlign = 'right';
+  ctx.fillText(`Page ${pageNum} of ${totalPages}`, width - 40, 1058);
+  ctx.textAlign = 'left';
+}
+
+async function renderRecapTextPage(page, meta, pageNum, totalPages) {
+  const S = RECAP_STYLE;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1920;
+  canvas.height = 1080;
+  const ctx = canvas.getContext('2d');
+  drawRecapFrame(ctx, meta, pageNum, totalPages, 'Lecture recap');
+  ctx.textBaseline = 'top';
+  for (const row of page.rows) {
+    if (row.style === 'heading' || row.style === 'opening' || row.style === 'poll') {
+      ctx.font = S.heading.font;
+      ctx.fillStyle = row.style === 'poll' ? '#c084fc' : row.style === 'opening' ? '#cbd5e1' : '#f8fafc';
+      ctx.fillText(row.text, S.left, row.y + 6);
+      if (row.first && row.at) {
+        ctx.textAlign = 'right';
+        ctx.font = S.note.font;
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(hhmm(row.at), S.right, row.y + 12);
+        ctx.textAlign = 'left';
+      }
+    } else if (row.style === 'note' || row.style === 'summary' || row.style === 'continued') {
+      ctx.font = S.note.font;
+      ctx.fillStyle = row.style === 'note' ? '#94a3b8' : '#cbd5e1';
+      ctx.fillText(row.text, S.left, row.y + 4);
+    } else if (row.style === 'caption') {
+      if (row.first && row.at) {
+        ctx.font = S.note.font;
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(hhmm(row.at), S.left + 20, row.y + 6);
+      }
+      ctx.font = S.caption.font;
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText(row.text, S.left + S.caption.indent, row.y + 4);
+    }
+  }
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+  return { width: 1920, height: 1080, data: new Uint8Array(await blob.arrayBuffer()) };
+}
+
+/**
+ * Draw a planned recap into JPEG pages for createPdf.
+ * @param {object[]} plan - from planRecapPages
+ * @param {object} meta - { title, course, room, date }
+ * @param {object} io
+ * @param {(file: object) => Promise<HTMLImageElement|null>} io.loadPicture - null skips that page
+ * @param {(done: number, total: number) => void} [io.onProgress]
+ */
+export async function renderRecapPages(plan, meta, { loadPicture, onProgress = () => {} }) {
+  // Pictures are fetched first so a file that will not load is dropped before
+  // anything is numbered - otherwise the footers would count a page that is
+  // not there.
+  const pictures = new Map();
+  for (const page of plan) {
+    if (page.kind !== 'picture') continue;
+    const img = await loadPicture(page.file).catch(() => null);
+    if (img) pictures.set(page, img);
+  }
+  const kept = plan.filter((page) => page.kind !== 'picture' || pictures.has(page));
+  const out = [];
+  for (const [i, page] of kept.entries()) {
+    onProgress(i + 1, kept.length);
+    if (page.kind === 'text') out.push(await renderRecapTextPage(page, meta, i + 1, kept.length));
+    else if (page.kind === 'poll') out.push(await renderPollPageToJpeg(page.poll, meta, i + 1, kept.length));
+    else {
+      const label = page.file.name.startsWith('photos/') ? 'Photo'
+        : page.file.name.startsWith('boards/') ? 'Board' : 'Annotated slide';
+      out.push(await renderSessionPageToJpeg(pictures.get(page),
+        { ...meta, itemTitle: page.title || label, itemType: label, itemNote: page.note || page.file.name },
+        i + 1, kept.length));
+    }
+  }
+  return out;
 }

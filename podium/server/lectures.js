@@ -26,6 +26,7 @@ const path = require('node:path');
 
 const library = require('./library.js');
 const settings = require('./settings.js');
+const courses = require('./courses.js');
 
 // A 90-minute lecture recording a surface change every 15 seconds tops out
 // around 360 events. 5000 is "something is looping", and the point of the cap
@@ -36,7 +37,10 @@ const MAX_POLLS = 200;
 const MAX_TITLE = 200;
 const MAX_DETAIL_BYTES = 2000;
 
-const EVENT_KINDS = new Set(['program', 'poll', 'note']);
+// 'caption' (Issue #158): one finished line of what the caption bar said -
+// live speech or a scripted/typed caption - with the full text in
+// detail.text. See caption-log.js for how the display decides a line is done.
+const EVENT_KINDS = new Set(['program', 'poll', 'note', 'caption']);
 
 // --- what a session may keep -------------------------------------------------
 //
@@ -319,11 +323,17 @@ function startLecture(db, user, { room, title, dataDir, resume = true, now = Dat
     return { ...lectureRow(findLecture(db, user, live.id)), resumed: true };
   }
 
+  const courseId = courseIdForRoom(db, user, room);
   const { lastInsertRowid } = db.prepare(`INSERT INTO lectures
       (course_id, room, title, started_by, started_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)`)
-    .run(courseIdForRoom(db, user, room), String(room || '').slice(0, 200),
+    .run(courseId, String(room || '').slice(0, 200),
       String(title || '').slice(0, MAX_TITLE), user.id, now, now);
-  return lectureRow(findLecture(db, user, lastInsertRowid));
+  // What a NEW lecture in this course starts with in the corner (Issue #157).
+  // Only here, never on the resumed path above: a reload mid-lecture must not
+  // put back a logo the presenter took down ten minutes ago. Whether to use it
+  // is still the display's call - see startRecording in display.js.
+  const branding = courses.brandingFor(db, courseId);
+  return { ...lectureRow(findLecture(db, user, lastInsertRowid)), ...(branding ? { branding } : {}) };
 }
 
 /**

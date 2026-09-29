@@ -137,7 +137,7 @@ const KIOSK_OPEN_PATHS = new Set([
   '/display.html', '/config.json', '/manifest-display.webmanifest',
   '/assets/vendor/marp.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
-  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/deck.js',
+  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/deck.js',
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js',
 ]);
 

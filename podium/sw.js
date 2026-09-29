@@ -42,8 +42,8 @@ const WARM = [
   // Kept complete by test/offline-shell.test.mjs: a module control.js or
   // display.js imports that is missing here fails the whole page offline.
   ...[
-    'admin', 'assets', 'bus', 'config', 'control', 'crypto', 'deck', 'display',
-    'index', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'renderers',
+    'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'display',
+    'index', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'recap', 'renderers',
     'rtc', 'server', 'store', 'util', 'watermark', 'zip', 'zip-review',
   ].map((name) => `assets/js/${name}.js`),
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),

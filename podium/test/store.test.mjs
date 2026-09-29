@@ -1740,6 +1740,67 @@ const dirOut = execFileSync(process.execPath, ['podium-admin.js', 'backup', '--o
 ok('--out naming a directory (even one that does not exist yet, by its trailing slash) gets a timestamped file inside it',
   path.dirname(dirOut) === path.join(root, 'chosen-dir') && existsSync(dirOut));
 
+console.log('\n-- a course\'s default watermark (Issue #157) --');
+
+courses.create(db, admin, { code: 'brand101', title: 'Branding 101' });
+courses.addMember(db, admin, 'brand101', { username: owner.username, role: 'owner' });
+courses.addMember(db, admin, 'brand101', { username: ta.username, role: 'member' });
+settings.write(db, owner, 'brand101', { transport: 'ws', room: 'brand-room', passphrase: 'p', wsUrl: 'ws://localhost/podium' });
+
+const refusedBranding = (who) => {
+  try { courses.setBranding(db, who, 'brand101', { text: 'Not mine' }); return null; } catch (err) { return err.status; }
+};
+ok('a member cannot set a course\'s default watermark', refusedBranding(ta) === 403);
+ok('and neither can somebody outside the course', refusedBranding(outsider) === 403);
+
+const brandOf = (who) => courses.list(db, who).find((c) => c.code === 'brand101')?.branding;
+ok('a course with nothing set starts with an empty default', brandOf(owner)?.text === '' && brandOf(owner)?.image === '');
+ok('and a fresh lecture in its room is handed none',
+  lectures.startLecture(db, owner, { room: 'brand-room' }).branding === undefined);
+
+const LOGO = `data:image/png;base64,${Buffer.from('not really a png, but shaped like one').toString('base64')}`;
+const savedBranding = courses.setBranding(db, owner, 'brand101', { text: '  Dr. Owner  ', image: LOGO, position: 'tl' });
+ok('its owner can set one, trimmed', savedBranding.text === 'Dr. Owner' && savedBranding.image === LOGO && savedBranding.position === 'tl');
+ok('the owner sees it in the course list', brandOf(owner)?.text === 'Dr. Owner');
+ok('a member does not - it is shown to the people who may change it', brandOf(ta) === undefined);
+ok('an unknown corner falls back to bottom right',
+  courses.setBranding(db, owner, 'brand101', { text: 'Dr. Owner', image: LOGO, position: 'middle' }).position === 'br');
+courses.setBranding(db, owner, 'brand101', { text: 'Dr. Owner', image: LOGO, position: 'tl' });
+
+const refusedImage = (image) => {
+  try { courses.setBranding(db, owner, 'brand101', { text: 'x', image }); return null; } catch (err) { return err.status; }
+};
+ok('a logo that is not an image data URL is refused', refusedImage('https://example.com/logo.png') === 400);
+ok('and so is an SVG, which could carry script', refusedImage('data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=') === 400);
+ok('and one over the cap a display holds every picture to',
+  refusedImage(`data:image/png;base64,${'A'.repeat(courses.MAX_BRANDING_IMAGE_CHARS)}`) === 400);
+ok('a refused save leaves the last good one in place', brandOf(owner)?.image === LOGO);
+
+const brandedLecture = lectures.startLecture(db, ta, { room: 'brand-room' });
+ok('a NEW lecture in the course\'s room is handed its default watermark',
+  brandedLecture.course === 'brand101' && brandedLecture.branding?.text === 'Dr. Owner'
+  && brandedLecture.branding?.image === LOGO && brandedLecture.branding?.position === 'tl');
+ok('but a resumed one is not - a reload must not put back a logo taken down mid-lecture',
+  lectures.startLecture(db, ta, { room: 'brand-room' }).branding === undefined);
+ok('and a room no course claims gets none',
+  lectures.startLecture(db, ta, { room: 'unclaimed-brand-room' }).branding === undefined);
+
+courses.setBranding(db, owner, 'brand101', { text: '', image: '' });
+ok('clearing both text and logo clears the default',
+  lectures.startLecture(db, ta, { room: 'brand-room', resume: false }).branding === undefined);
+
+console.log('\n-- caption lines on the timeline (Issue #158) --');
+
+const captionLecture = lectures.startLecture(db, ta, { room: 'caption-room', resume: false });
+lectures.appendEvents(db, ta, captionLecture.id, [
+  { id: 'cap0000001', at: Date.now(), kind: 'caption', title: 'Good morning', detail: { text: 'Good morning everyone', live: true } },
+  { id: 'cap0000002', at: Date.now(), kind: 'nonsense', title: 'Slide', detail: {} },
+]);
+const captionRead = lectures.getLecture(db, ta, captionLecture.id).timeline;
+ok('a caption line is stored as its own kind, with its full text in the detail',
+  captionRead[0].kind === 'caption' && captionRead[0].detail.text === 'Good morning everyone' && captionRead[0].detail.live === true);
+ok('and a kind the server does not know is still filed as a program entry, as before', captionRead[1].kind === 'program');
+
 console.log('\n--- audit logs ---');
 accounts.logEvent(db, { userId: admin.id, username: admin.username, action: 'test_action', details: { foo: 'bar' }, now: 1000 });
 accounts.logEvent(db, { userId: null, username: null, action: 'anon_action', now: 2000 });
