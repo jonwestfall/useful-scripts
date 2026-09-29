@@ -13,6 +13,10 @@
 //   destroy()
 //   snapshot(ctx, rect)  optional: paint what you are showing into someone
 //                        else's canvas, for "take a photo of this panel".
+//   syncTo(seconds)      optional, media only: jump to where the room is - a
+//                        Guest View viewer (Issue #150) that joined late or
+//                        drifted. Never part of `state`: the room's own seek
+//                        is seekTo/seekNonce, and a viewer must not fake one.
 
 import { el, miniMarkdown, fmtTime } from './util.js';
 import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
@@ -266,6 +270,7 @@ function mediaRenderer(item, opts, media, node) {
       if (it.playing !== false && media.paused) play();
     },
     telemetry: () => ({ time: media.currentTime || 0, duration: media.duration || 0, playing: !media.paused }),
+    syncTo(seconds) { if (Number.isFinite(seconds)) media.currentTime = Math.max(0, seconds); },
     destroy() {
       media.pause();
       media.removeEventListener('loadedmetadata', cue);
@@ -421,6 +426,7 @@ function renderYouTube(item, opts) {
       post(it.playing === false ? 'pauseVideo' : 'playVideo');
     },
     telemetry: () => ({ ...state }),
+    syncTo(seconds) { if (Number.isFinite(seconds)) post('seekTo', [Math.max(0, seconds), true]); },
     destroy() { window.removeEventListener('message', onMessage); node.remove(); },
   };
 }
@@ -906,7 +912,10 @@ function renderPoll(item, opts) {
   };
 
   const draw = (it) => {
-    const archived = !it.token && !!it.pollId;
+    // viewerLive: a guest viewer's copy of a live poll, whose token was
+    // stripped before it left the display (see viewerPoll in protocol.js) -
+    // live all the same, not an archived snapshot.
+    const archived = !it.token && !it.viewerLive && !!it.pollId;
     const joinUrl = it.pollId ? (opts.getPollJoinUrl?.(it.pollId) || '') : '';
     question.textContent = it.question || '';
     code.textContent = it.pollId || '';

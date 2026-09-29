@@ -4422,6 +4422,21 @@ const relayLog = createRelayLog();
 // blank the room. See the Presentation tab's own explanation of this.
 let blankSentThisLoad = false;
 
+// ...and at most once per TAB per room, not per page-load (Issue #170). Closing
+// Settings reloads the page (see #setup-close), and so does iOS Safari on its
+// own after a spell in the background - neither is "this controller just
+// connected", and blanking the room for either one, mid-lecture, is exactly
+// what this setting must never do. sessionStorage survives a reload of this
+// tab and nothing else: a fresh tab, or pointing this one at a different room,
+// is a genuinely new connection and still blanks.
+const blankedKey = () => `podium.blanked-on-connect.${cfg.room || ''}`;
+function alreadyBlankedHere() {
+  try { return sessionStorage.getItem(blankedKey()) === '1'; } catch { return false; }
+}
+function noteBlankedHere() {
+  try { sessionStorage.setItem(blankedKey(), '1'); } catch { /* private mode: at worst, the old behaviour */ }
+}
+
 // Issue #156: one polite live region (#sr-announce) for the connection, fed
 // only when what it says actually changes - the visible bar beside it is
 // rewritten on every heartbeat with a round-trip time, which a live region
@@ -4482,7 +4497,8 @@ function renderConnection() {
   // next heartbeat rather than being marked done and silently never sent.
   if (display && bus && !blankSentThisLoad) {
     blankSentThisLoad = true;
-    if (presentation.blankOnConnect) send({ op: 'blank', on: true });
+    if (presentation.blankOnConnect && !alreadyBlankedHere()) send({ op: 'blank', on: true });
+    noteBlankedHere();
   }
 
   // A display still serving an older copy of the app - a browser that never
@@ -4509,7 +4525,11 @@ function renderConnection() {
   $('.topbar-status').title = label;
   announce('display', label.replace(/ · \d+ ms/, ''));
   $('#display-state').classList.toggle('is-bad', !display || !!mismatch);
-  $('#peer-count').textContent = others.length ? `+${others.length} other controller${others.length > 1 ? 's' : ''}` : '';
+  $('#peer-count').textContent = [
+    others.length ? `+${others.length} other controller${others.length > 1 ? 's' : ''}` : '',
+    // Guest View (Issue #150): confirmation people are watching, never who.
+    display && state.viewers ? `${state.viewers} watching` : '',
+  ].filter(Boolean).join(' · ');
 
   if (display) waitingSince = Date.now();
 
@@ -5244,6 +5264,27 @@ $('#qr-form').addEventListener('submit', (ev) => {
   ev.preventDefault();
   stage({ type: 'qr', title: 'QR', data: $('#qr-data').value, caption: $('#qr-caption').value });
 });
+// Guest View (Issue #150). The link and code belong to the display - only it
+// holds the view channel's keys - so this asks it to make one if it has none
+// yet, then stages the QR as soon as the link arrives in its next heartbeat.
+$('#guest-view-show').addEventListener('click', async () => {
+  const note = $('#guest-view-note');
+  if (!state.viewerLink) {
+    note.textContent = 'Asking the display for its viewer link…';
+    bus?.send({ t: 'view-link-need' });
+    for (let i = 0; i < 20 && !state.viewerLink; i++) await new Promise((r) => setTimeout(r, 250));
+    if (!state.viewerLink) { note.textContent = 'The display did not answer - is it connected and up to date?'; return; }
+  }
+  const host = new URL(state.viewerLink).host;
+  stage({
+    type: 'qr', title: 'Watch on your own device', data: state.viewerLink,
+    caption: state.viewerCode
+      ? `Watch on your own device — scan, or go to ${host}/view.html and type ${state.viewerCode}`
+      : 'Watch on your own device — scan to follow along',
+  });
+  note.textContent = '';
+});
+
 $('#overlay-form').addEventListener('submit', (ev) => {
   ev.preventDefault();
   send({ op: 'overlay', text: $('#overlay-text').value, visible: true });

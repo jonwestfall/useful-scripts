@@ -21,6 +21,7 @@ Podium is designed for real classroom lectures. It gives you total control over 
 - [Automated Presentation Sets](#automated-presentation-sets)
 - [Watermarks](#watermarks)
 - [Lecture Recaps](#lecture-recaps)
+- [Guest View: Watching on Your Own Device](#guest-view-watching-on-your-own-device)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Planning Lectures with `plan.html`](#planning-lectures-with-planhtml)
 
@@ -201,6 +202,40 @@ On a self-hosted server that records sessions, open a lecture on the admin page'
 - At the end, anything kept that has no moment of its own — photos, boards, and annotated slides the timeline never recorded.
 
 A lecture with no captions still makes a useful recap (slides and polls alone). The recap is a one-off export of what happened, like the session ZIP and PDF beside it; it is not edited afterwards. Caption lines also show in the session's timeline on the same page, and in the downloaded timeline text.
+
+---
+
+## Guest View: Watching on Your Own Device
+
+Guest View (Issue #150) lets someone watch the live display on their own phone or laptop, with its sound: a student at the back of a big room, or someone who is not in the room at all. It is **watch-only**. Nothing a viewer does reaches the display.
+
+**Handing it out**
+- On the display, open **Pair a device** and choose **Guest view (watch only)**. Unlike the two control modes, this QR code stays up until you close it.
+- Or, from any controller's **Say** tab, choose **Put the viewer QR on screen** to show the QR code (and the typed code) on the projector as content.
+- On a server running Podium's own relay, there is also a **six-character code** for anyone who can't scan: they go to `…/view.html` and type it. The code stays the same from lecture to lecture, but it only works while the display is live. Guessing is rate-limited.
+- The link and the code stay valid until you replace them. **New viewer link**, on the display's Guest view sheet, cuts off everyone holding the old link or code at once.
+
+**What viewers see and hear**
+- Exactly what is on the projector:
+  - slides and decks, with presenter notes stripped out;
+  - PDFs, pictures, video and audio, which viewers who join late catch up on;
+  - whiteboards and ink, layouts and picture-in-picture, the watermark, captions, timers, polls, the laser and spotlight, and background music.
+- Never the presenter's cue. Something you cue while frozen reaches viewers only when you take it, the same as the projector.
+- A poll shows its question and how many have voted. Results and the correct answer appear only once revealed. Nobody's name next to their answer is ever sent, and neither is the poll's control token.
+- Between lectures, a viewer sees "Not live right now", never the last thing that was on screen. It comes back on its own when the class goes live.
+- **Not included:** live mic amplification and the document camera. Both are peer-to-peer and need a media relay to reach many viewers; that's future work.
+
+**Who's watching:** controllers show a count next to the connection status, like "3 watching". The count never says who.
+
+**How it's kept watch-only**
+- The viewer link never contains the room passphrase. It opens a separate view channel with its own random room name and key, and the display sends only what's on screen there. Holding a viewer link gets you nowhere near the room itself.
+- Everything the display sends viewers is **signed** with a key only the display holds. The link carries the matching public half, so a viewer can't show other viewers something the presenter never put up.
+- **On a server with accounts:** viewers never sign in. Instead:
+  - The relay lets an anonymous viewer onto a view channel only while a signed-in display is on it.
+  - Viewers get a short-lived **viewer pass**. It reads the course files and library media the presenting account can read, and nothing else: no pages and no API. It stops working the moment the display stands down or the link is replaced.
+  - The server keeps typed codes, and therefore view links, in memory so it can answer them. It never holds the room passphrase for this.
+
+**Capacity:** on Podium's own relay, a view channel takes up to 300 viewers (`MAX_VIEWERS_PER_ROOM`). The 12-device limit for controllers and displays is unchanged. On MQTT or Supabase deployments, capacity is whatever that service allows. For now, viewers also receive every message the display sends the view channel. If audiences get very large, trimming that is a planned follow-up.
 
 ---
 

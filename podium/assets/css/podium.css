@@ -399,7 +399,7 @@ dl.keys dd { margin: 0; color: var(--dim); }
 
 .r-qr { display: grid; place-items: center; gap: 3cqh; background: #fff; color: #111; align-content: center; }
 .r-qr-code svg { width: min(58cqh, 58cqw); height: auto; display: block; }
-.r-qr-caption { font-size: clamp(7px, 2.6cqw, 40px); font-weight: 600; word-break: break-all; padding: 0 6cqw; text-align: center; }
+.r-qr-caption { font-size: clamp(7px, 2.6cqw, 40px); font-weight: 600; overflow-wrap: anywhere; padding: 0 6cqw; text-align: center; }
 
 .r-timer { display: grid; place-items: center; align-content: center; gap: 2cqh; background: #07090c; }
 .r-timer-label { font-size: clamp(8px, 3cqw, 46px); color: var(--dim); }

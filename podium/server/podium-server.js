@@ -52,6 +52,7 @@ const api = require('./api.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
 const zipStaging = require('./zip-staging.js');
+const { createViewCodes, VIEW_ROOM_RE } = require('./view-codes.js');
 
 const PORT = Number(process.env.PORT || 8080);
 // Unset means every interface, which is what running this on a laptop for a
@@ -65,6 +66,13 @@ const ORIGINS = process.env.ORIGIN ? process.env.ORIGIN.split(',').map((s) => s.
 
 const MAX_MESSAGE = 256 * 1024;   // ink batches and SDP are the biggest things
 const MAX_PER_ROOM = 12;
+// A Guest View room (Issue #150) is a lecture hall of phones watching one
+// display, not a handful of devices driving it - so it carries its own,
+// much higher ceiling, and the 12 above stays exactly what it was for every
+// room a controller can reach. A view room is told apart by its name alone
+// (see viewChannel in assets/js/protocol.js): nothing a client claims about
+// itself is involved.
+const MAX_VIEWERS_PER_ROOM = Number(process.env.MAX_VIEWERS_PER_ROOM || 300);
 // Generous for what this runs at - one department or building, not a campus
 // - and still a real ceiling: a room name is not secret (only the
 // passphrase is), so nothing before this stopped an attacker who knows or
@@ -141,6 +149,24 @@ const KIOSK_OPEN_PATHS = new Set([
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js',
 ]);
 
+// What view.html (Guest View, Issue #150) needs to load, open to everyone
+// the same way guest.html's files are: a viewer has no account and is not
+// meant to have one. It is the viewer mode of display.js, so it is most of
+// the kiosk list above - never display.html itself, and never config.json:
+// a viewer's whole configuration arrives in its link, and the deployment's
+// default config is none of a stranger's business.
+// test/kiosk-open-paths.test.mjs checks this against what view.html really loads.
+const VIEW_OPEN_PATHS = new Set([
+  '/view.html',
+  '/assets/vendor/marp.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
+  '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
+  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/deck.js',
+  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js',
+]);
+for (const openPath of VIEW_OPEN_PATHS) AUTH_OPEN_PATHS.add(openPath);
+
+const viewCodes = createViewCodes();
+
 /**
  * The build this PROCESS is serving, read once at startup and reported on
  * /healthz.
@@ -196,6 +222,7 @@ const authContext = {
   openPaths: AUTH_OPEN_PATHS,
   publicPaths: AUTH_PUBLIC_WITH_ACCOUNTS,
   kioskOpenPaths: KIOSK_OPEN_PATHS,
+  viewerMayRead: (req, pathname) => viewerMayRead(req, pathname),
 };
 
 function timingSafeEqualString(given, want) {
@@ -504,6 +531,105 @@ async function handlePoll(req, res, url) {
   pollJson(res, 405, { error: 'not something a poll can do' });
 }
 
+// --- Guest View's viewer pass (Issue #150) ------------------------------------
+//
+// A viewer has no account, but on an instance with accounts everything the
+// display fetches for itself - a deck, a PDF, a picture from content/ or the
+// library - is behind sign-in. The pass is the narrow way through: a viewer
+// that names a view room a signed-in display is in RIGHT NOW gets a cookie,
+// and that cookie reads
+//
+//   - files under content/ (GET and HEAD only - never a page, never the API);
+//   - library media the presenting account itself may read (serveMedia).
+//
+// It is worth only as much as the room is live: every request re-checks that
+// a signed-in display is still in that view room, so standing down (or the
+// presenter rotating the viewer link, which moves the display to a new room)
+// ends every pass issued for it on the spot, whatever the cookie's age says.
+// Knowing the view room's name is knowing the viewer link: it is a random id
+// that appears nowhere but in the link and on this relay.
+const VIEWER_COOKIE = 'podium_viewer';
+const VIEWER_PASS_MS = 12 * 60 * 60 * 1000;
+const MAX_VIEWER_PASSES = 5000;
+const viewerPasses = new Map();   // token -> { room, issued }
+
+/** The signed-in socket hosting a view room, or null when it is not live. */
+function viewRoomHost(room) {
+  for (const peer of rooms.get(room) || []) if (peer.authed) return peer;
+  return null;
+}
+
+function viewerPassHost(req) {
+  const token = api.parseCookies(req.headers.cookie)[VIEWER_COOKIE] || '';
+  const pass = token && viewerPasses.get(token);
+  if (!pass || pass.issued + VIEWER_PASS_MS < Date.now()) return null;
+  return viewRoomHost(pass.room);
+}
+
+function viewerMayRead(req, pathname) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  if (!pathname.startsWith('/content/')) return false;
+  return !!viewerPassHost(req);
+}
+
+async function handleViewPass(req, res) {
+  if (req.method !== 'POST') { api.json(res, 405, { error: 'POST a room' }); return; }
+  const body = await readJson(req, 1024);
+  const room = String(body.room || '');
+  if (!VIEW_ROOM_RE.test(room)) { api.json(res, 400, { error: 'that is not a viewer room' }); return; }
+  if (!viewRoomHost(room)) { api.json(res, 404, { error: 'that class is not live right now' }); return; }
+  const now = Date.now();
+  for (const [token, pass] of viewerPasses) if (pass.issued + VIEWER_PASS_MS < now) viewerPasses.delete(token);
+  while (viewerPasses.size >= MAX_VIEWER_PASSES) viewerPasses.delete(viewerPasses.keys().next().value);
+  const token = crypto.randomBytes(24).toString('base64url');
+  viewerPasses.set(token, { room, issued: now });
+  res.setHeader('set-cookie', api.setCookie(req, token, Math.floor(VIEWER_PASS_MS / 1000), VIEWER_COOKIE));
+  api.json(res, 200, { ok: true });
+}
+
+// Typed viewer codes (Issue #150) - see server/view-codes.js for the rules.
+// Looking one up is open to anyone, like a poll code: it is typed by a person
+// with no account. Registering, keeping alive and releasing one is the
+// display's business, so on an instance with accounts it takes the same
+// signed-in (or kiosk) cookie the display's own socket does.
+async function handleViewCode(req, res, url) {
+  const [, , rawCode = ''] = url.pathname.split('/');
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'access-control-allow-origin': '*',
+      'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
+      'access-control-allow-headers': 'content-type,authorization',
+      'access-control-max-age': '86400',
+    });
+    res.end();
+    return;
+  }
+  if (req.method === 'GET' && rawCode) {
+    const found = viewCodes.lookup(rawCode, api.clientIp(req));
+    pollJson(res, found.error ? found.status : 200, found.error ? { error: found.error } : { link: found.link });
+    return;
+  }
+  const signedIn = !hasAccounts() || accounts.sessionUser(db, api.cookieToken(req)) || kiosks.sessionKiosk(db, api.kioskCookieToken(req));
+  if (!signedIn) { pollJson(res, 401, { error: 'sign in to give out a viewer code' }); return; }
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (req.method === 'POST' && !rawCode) {
+    const body = await readJson(req, 4 * 1024);
+    const made = viewCodes.register({ want: body.want, token, link: body.link });
+    pollJson(res, made.error ? made.status : 200, made.error ? { error: made.error } : made);
+    return;
+  }
+  if (req.method === 'PUT' && rawCode) {
+    pollJson(res, viewCodes.touch(rawCode, token) ? 200 : 404, {});
+    return;
+  }
+  if (req.method === 'DELETE' && rawCode) {
+    pollJson(res, viewCodes.release(rawCode, token) ? 200 : 404, {});
+    return;
+  }
+  pollJson(res, 405, { error: 'not something a viewer code can do' });
+}
+
 const server = http.createServer((req, res) => {
   if (req.url === '/healthz') {
     res.writeHead(200, { 'content-type': 'text/plain' });
@@ -513,6 +639,18 @@ const server = http.createServer((req, res) => {
     return;
   }
   const url = new URL(req.url, 'http://x');
+  if (url.pathname === '/view-pass') {
+    handleViewPass(req, res).catch(() => {
+      try { api.json(res, 500, { error: 'viewer pass failed' }); } catch { /* response already begun */ }
+    });
+    return;
+  }
+  if (url.pathname === '/view-code' || url.pathname.startsWith('/view-code/')) {
+    handleViewCode(req, res, url).catch(() => {
+      try { pollJson(res, 500, { error: 'viewer code failed' }); } catch { /* response already begun */ }
+    });
+    return;
+  }
   if (url.pathname === '/poll' || url.pathname.startsWith('/poll/')) {
     handlePoll(req, res, url).catch(() => {
       try { pollJson(res, 500, { error: 'poll failed' }); } catch { /* response already begun */ }
@@ -579,7 +717,10 @@ const server = http.createServer((req, res) => {
  */
 function serveMedia(req, res, url) {
   if (!db) { res.writeHead(404); res.end('not found'); return; }
-  const user = accounts.sessionUser(db, api.cookieToken(req));
+  // A Guest View viewer reads with the presenting account's rights, and only
+  // while that account's display is live (see viewerPassHost) - never more
+  // than the projector itself could show.
+  const user = accounts.sessionUser(db, api.cookieToken(req)) || viewerPassHost(req)?.user || null;
   if (!user) { api.json(res, 401, { error: 'not signed in' }); return; }
 
   const sha256 = url.pathname.split('/')[2] || '';
@@ -833,7 +974,17 @@ server.on('upgrade', (req, socket, head) => {
   // session - checked here too, or a kiosk assigned the self-hosted ws
   // transport would load display.html fine and then sit on a permanently
   // rejected socket, the one combination the feature exists for.
-  if (hasAccounts() && !accounts.sessionUser(db, api.cookieToken(req)) && !kiosks.sessionKiosk(db, api.kioskCookieToken(req))) {
+  const sessionUser = hasAccounts() ? accounts.sessionUser(db, api.cookieToken(req)) : null;
+  const authed = !hasAccounts() || !!sessionUser || !!kiosks.sessionKiosk(db, api.kioskCookieToken(req));
+  // Guest View (Issue #150) is the one exception, and a narrow one: a viewer
+  // has no account, so a view room lets one in without a cookie - but only a
+  // view room that a signed-in display is already in. Otherwise "anyone may
+  // open a view.* room" would make this relay a free anonymous message
+  // service for anybody who can type a room name. What a viewer sees is
+  // still sealed under the view key; this only decides who may connect.
+  const viewRoom = VIEW_ROOM_RE.test(room);
+  const hosted = viewRoom && [...(rooms.get(room) || [])].some((peer) => peer.authed);
+  if (!authed && !hosted) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return;
@@ -845,7 +996,11 @@ server.on('upgrade', (req, socket, head) => {
     // against the real controller/display of a room that already exists.
     if (!rooms.has(room) && rooms.size >= MAX_ROOMS) { ws.close(1013, 'relay full'); return; }
     const peers = rooms.get(room) || new Set();
-    if (peers.size >= MAX_PER_ROOM) { ws.close(1013, 'room full'); return; }
+    if (peers.size >= (viewRoom ? MAX_VIEWERS_PER_ROOM : MAX_PER_ROOM)) { ws.close(1013, 'room full'); return; }
+    ws.authed = authed;
+    // Whose rights a Guest View viewer's pass reads library media with (see
+    // serveMedia) - a person's, never a kiosk's, which has no library of its own.
+    ws.user = sessionUser || null;
     peers.add(ws);
     rooms.set(room, peers);
     ws.isAlive = true;

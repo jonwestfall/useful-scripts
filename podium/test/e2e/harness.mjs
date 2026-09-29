@@ -460,6 +460,8 @@ const expecting = {
   pollLost: false,
   planConflict: false,
   kioskOffscopeWarm: false,
+  // Guest View (Issue #150): a viewer's pass being refused a page and the API.
+  viewerRefused: false,
 };
 
 const trap = (page, tag) => {
@@ -509,6 +511,7 @@ const trap = (page, tag) => {
     if (expecting.templateWriteForbidden && TEMPLATE_WRITE_FORBIDDEN.test(where)) return;
     if (expecting.planConflict && /responded with a status of 409/.test(text)) return;
     if (expecting.kioskOffscopeWarm && KIOSK_OFFSCOPE_WARM.test(text)) return;
+    if (expecting.viewerRefused && /responded with a status of 401/.test(text)) return;
     // Killing and restarting a relay process (Issue #115's e2e section) is
     // its own brief burst of expected noise: a connection-refused while the
     // old process is down and the new one is not up yet, then a 404 once it

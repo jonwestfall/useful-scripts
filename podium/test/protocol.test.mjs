@@ -2,7 +2,7 @@
 // Pure state-machine tests - no DOM, no network.
 import { initialState, applyCommand, timerRemaining, timerById, inkSurfaceKey,
   inkDigest, inkDigestsAgree, applyInkAction, distToSegmentSquared, strokeHitTest, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp, LAYOUTS,
-  watermarkForNewLecture } from '../assets/js/protocol.js';
+  watermarkForNewLecture, viewerState, viewChannel, isViewRoom, stripDeckNotes } from '../assets/js/protocol.js';
 const s = initialState();
 let ok = true;
 const chk = (label, cond) => { if (!cond) { ok = false; console.log('FAIL', label); } else console.log('ok  ', label); };
@@ -796,6 +796,54 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
     watermarkForNewLecture(w.watermark, { text: 'T', image: 'https://example.com/x.png' }, id, MAX).watermark.image === '');
   chk('and so is one over the asset cap',
     watermarkForNewLecture(w.watermark, { text: 'T', image: LOGO }, id, 10).watermark.image === '');
+}
+
+{
+  // Guest View (Issue #150): what a view-only guest is sent.
+  const st = initialState();
+  st.armed = true;
+  st.preview = { type: 'text', body: 'the answer to the next question' };
+  st.previewLayout = '2h';
+  st.lectureId = 42;
+  st.program = {
+    type: 'poll', pollId: 'ABCD', token: 'host-secret', question: 'Which is H0?', kind: 'choice',
+    options: ['A', 'B'], counts: [9, 3], correct: 1, revealed: false, voters: 12,
+    responses: [{ voter: 'v1', answer: 0, name: 'Sam Student' }],
+    qnaFeed: [{ id: 'q1', text: 'Why?', upvotes: ['v1', 'v2'] }],
+  };
+  const wire = { ...st, ink: { color: '#fff', width: 6, surface: 'poll:ABCD', digest: 'd1', surfaces: ['x'] }, stageAspect: 1.6, build: 1 };
+  const v = viewerState(wire, { 'poll:ABCD': 'd1' });
+  chk('a viewer never sees the presenter\'s cue', v.preview === undefined && v.previewLayout === undefined && v.previewMode === undefined);
+  chk('or the lecture id', v.lectureId === undefined);
+  chk('a poll on screen reaches a viewer without its host token', v.program.token === undefined && v.program.viewerLive === true);
+  chk('or anyone\'s name next to their answer', v.program.responses === undefined);
+  chk('and, until revealed, without the tally or the right answer',
+    v.program.counts.every((n) => n === 0) && v.program.correct === -1 && v.program.voters === 12);
+  chk('a Q&A question shows how many upvoted it, never who',
+    v.program.qnaFeed[0].upvotes.length === 2 && v.program.qnaFeed[0].upvotes.every((u) => u === ''));
+  chk('the original state is untouched by any of that', st.program.token === 'host-secret' && st.program.counts[0] === 9);
+  st.program.revealed = true;
+  chk('once revealed, the tally and the right answer are what the room sees too',
+    viewerState({ ...st, ink: wire.ink }).program.counts[0] === 9 && viewerState({ ...st, ink: wire.ink }).program.correct === 1);
+  chk('ink is just which surfaces are on screen and whether a copy is current',
+    JSON.stringify(v.ink) === JSON.stringify({ surfaces: { 'poll:ABCD': 'd1' } }));
+  chk('what is on screen is all there', v.armed && v.layout === 'single' && Array.isArray(v.panels) && v.watermark && v.overlay && v.music);
+
+  const deck = [
+    '---', 'marp: true', 'theme: default', '---', '',
+    '<!-- _class: lead -->', '# Week 6', '', '<!-- Remind them the exam moved to Friday -->', '',
+    '---', '', '<!--', '_paginate: false', 'backgroundColor: #fff', '-->', '## H0', '',
+    '<!--', 'Answer is B.', 'Do not show this -->',
+  ].join('\n');
+  const bare = stripDeckNotes(deck);
+  chk('a deck reaches a viewer without the presenter\'s notes', !bare.includes('exam moved') && !bare.includes('Answer is B'));
+  chk('but with the directives the slides need to look right',
+    bare.includes('<!-- _class: lead -->') && bare.includes('_paginate: false') && bare.includes('# Week 6') && bare.includes('## H0'));
+
+  chk('no view channel until a display has a view id and key', viewChannel({ room: 'r', passphrase: 'p' }) === null);
+  const ch = viewChannel({ room: 'psy415', passphrase: 'p', viewId: 'Abc123xyz9', viewKey: 'k' });
+  chk('a view channel is named by its own random id, not the class room', ch.room === 'view.Abc123xyz9' && !ch.room.includes('psy415') && ch.passphrase === 'k');
+  chk('and the relay can tell one apart', isViewRoom(ch.room) && !isViewRoom('psy415') && !isViewRoom('view.') && !isViewRoom('view.a/b'));
 }
 
 console.log(ok ? '\nALL PASS' : '\nFAILURES');

@@ -2909,6 +2909,183 @@ await spAdminCtx.close();
 spServer.kill();
 }
 
+if (want('guest view: watching the display without controlling it')) {
+console.log('\n-- guest view: watching the display without controlling it (Issue #150) --');
+// Its own server WITH accounts: the hard case - an anonymous viewer, a relay
+// that otherwise refuses any socket without a signed-in cookie, and course
+// files behind sign-in that a viewer still has to be able to load.
+const gvPort = await freePort();
+const gvBase = `http://127.0.0.1:${gvPort}`;
+const gvData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-guestview-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'gv', '--admin', '--name', 'GV', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: gvData }, input: 'a guest view password\n',
+});
+const gvServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(gvPort), STATIC: '../', DATA_DIR: gvData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+gvServer.stderr.on('data', (d) => process.stderr.write(`[guest-view-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('guest view relay did not start')), 10000);
+  let log = '';
+  gvServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  gvServer.on('exit', (code) => reject(new Error(`guest view relay exited with ${code}`)));
+});
+
+const presenter = await browser.newContext();
+await presenter.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${gvPort}/podium`, room: 'gv-hall', passphrase: 'the room key viewers never see' }));
+const gvCtrl = await presenter.newPage();
+trap(gvCtrl, 'guest view controller');
+await gvCtrl.goto(`${gvBase}/control.html`);
+await gvCtrl.waitForSelector('#form');
+await gvCtrl.fill('#username', 'gv');
+await gvCtrl.fill('#password', 'a guest view password');
+await Promise.all([gvCtrl.waitForURL(/control\.html/), gvCtrl.click('#go')]);
+await gvCtrl.waitForSelector('#app:not([hidden])');
+
+const gvDisplay = await presenter.newPage();
+trap(gvDisplay, 'guest view display');
+await gvDisplay.goto(`${gvBase}/display.html`);
+await gvDisplay.click('#arm-button');
+await gvDisplay.waitForSelector('#hud[data-status="online"]');
+await gvCtrl.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'), null, { timeout: 10000 });
+// Blank-on-connect has fired by now; lift it so there is something to watch.
+await gvCtrl.waitForTimeout(800);
+await gvCtrl.click('#blank');
+
+// Which modes arm the sheet's 90-second auto-hide: recorded by wrapping
+// setTimeout, since the sheet's own timer is private to display.js.
+await gvDisplay.evaluate(() => {
+  window.__hideTimers = 0;
+  const real = window.setTimeout;
+  window.setTimeout = (fn, ms, ...rest) => { if (ms === 90000) window.__hideTimers += 1; return real(fn, ms, ...rest); };
+  document.querySelector('#pair').hidden = false;
+});
+await gvDisplay.click('#pair-mode-full');
+const fullTimers = await gvDisplay.evaluate(() => window.__hideTimers);
+await gvDisplay.evaluate(() => { window.__hideTimers = 0; });
+await gvDisplay.click('#pair-mode-view');
+await gvDisplay.waitForFunction(() => /view\.html#/.test(document.querySelector('#pair-url').textContent), null, { timeout: 10000 });
+await gvDisplay.waitForFunction(() => /type [A-Z2-9]{6}$/.test(document.querySelector('#pair-view-code').textContent), null, { timeout: 10000 });
+const viewerLink = await gvDisplay.textContent('#pair-url');
+const viewerCode = (await gvDisplay.textContent('#pair-view-code')).match(/type ([A-Z2-9]{6})$/)[1];
+const linkParams = new URLSearchParams(new URL(viewerLink).hash.slice(1));
+ok('the viewer link never carries the room\'s passphrase', !viewerLink.includes(encodeURIComponent('the room key viewers never see'))
+  && !viewerLink.includes('gv-hall') && /^view\./.test(linkParams.get('r')) && !!linkParams.get('vk'));
+ok('and unlike a control code, it does not hide itself after 90 seconds',
+  fullTimers === 1 && (await gvDisplay.evaluate(() => window.__hideTimers)) === 0);
+await gvDisplay.click('#pair-close');
+
+// A stranger's phone: its own context, no account, no cookie.
+const stranger = await browser.newContext({ viewport: { width: 390, height: 844 } });
+const viewer = await stranger.newPage();
+trap(viewer, 'guest viewer');
+await viewer.goto(viewerLink);
+await viewer.waitForSelector('#viewer-start-row:not([hidden])', { timeout: 15000 });
+ok('an anonymous viewer reaches the class with no sign-in', true);
+await viewer.click('#viewer-start');
+
+const gvStage = async (body) => {
+  await gvCtrl.click('.tab[data-tab="say"]');
+  await gvCtrl.click('#text-open-editor');
+  await gvCtrl.fill('#msg-body', body);
+  await gvCtrl.click('#message-editor-show');
+};
+await gvStage('Welcome, remote viewers');
+await viewer.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-text')?.textContent.includes('Welcome, remote viewers'),
+  null, { timeout: 10000 });
+ok('what goes on the projector appears on the viewer\'s screen', true);
+await gvCtrl.waitForFunction(() => /1 watching/.test(document.querySelector('#peer-count').textContent), null, { timeout: 10000 });
+ok('and the presenter sees that someone is watching - a count, never who', true);
+
+// The presenter's cue is private: freeze, cue something, and it must stay
+// off the viewer exactly as it stays off the projector.
+await gvCtrl.click('#freeze');
+await gvStage('The answer to question 3 is B');
+await gvCtrl.waitForTimeout(1500);
+ok('a cued item never reaches a viewer', await viewer.evaluate(() => !document.body.textContent.includes('The answer to question 3 is B')));
+await gvCtrl.click('#take');
+await viewer.waitForFunction(() => document.body.textContent.includes('The answer to question 3 is B'), null, { timeout: 10000 });
+ok('until the presenter takes it', true);
+
+// Ink on a whiteboard, drawn on the controller, drawn on the viewer.
+await gvCtrl.click('.tab[data-tab="library"]');
+await gvCtrl.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+await gvCtrl.click('.tab[data-tab="ink"]');
+await viewer.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-whiteboard'), null, { timeout: 10000 });
+const pad = await gvCtrl.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await gvCtrl.mouse.move(pad.x + pad.w * 0.2, pad.y + pad.h * 0.3);
+await gvCtrl.mouse.down();
+for (let i = 1; i <= 12; i++) await gvCtrl.mouse.move(pad.x + pad.w * (0.2 + i * 0.045), pad.y + pad.h * (0.3 + i * 0.03));
+await gvCtrl.mouse.up();
+await viewer.waitForFunction(() => {
+  const c = document.querySelector('#ink');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) n++;
+  return n > 200;
+}, null, { timeout: 10000 });
+ok('ink drawn in the room is drawn on the viewer', true);
+
+// The course's own files, through the viewer pass - and nothing else.
+expecting.viewerRefused = true;
+const files = await viewer.evaluate(async () => ({
+  content: (await fetch('content/sample.pdf')).status,
+  page: (await fetch('control.html', { redirect: 'manual' })).status,
+  api: (await fetch('api/courses')).status,
+}));
+// Console messages for those two refusals can land a moment after the fetch.
+await viewer.waitForTimeout(500);
+expecting.viewerRefused = false;
+ok(`a viewer can load the files on screen, but no page and no API (${JSON.stringify(files)})`,
+  files.content === 200 && files.page !== 200 && files.api === 401);
+
+// A viewer holding the view key tries to drive the room, and to fool the
+// other viewers. Neither may work.
+const program = () => gvDisplay.evaluate(() => document.querySelector('.layer[data-role="program"]')?.textContent || '');
+const displayBefore = await program();
+await viewer.evaluate(async (link) => {
+  const { createBus } = await import('./assets/js/bus.js');
+  const p = new URLSearchParams(new URL(link).hash.slice(1));
+  const rogue = await createBus({
+    cfg: { transport: 'ws', wsUrl: p.get('wu'), room: p.get('r'), passphrase: p.get('p') },
+    role: 'control', onMessage() {},
+  });
+  await new Promise((r) => setTimeout(r, 800));
+  rogue.send({ t: 'cmd', op: 'stage', item: { type: 'text', body: 'hijacked the projector' } });
+  rogue.send({ t: 'state', state: { armed: true, program: { type: 'text', body: 'spoofed, unsigned' } } });
+  rogue.send({ t: 'signed', body: JSON.stringify({ t: 'state', state: { armed: true, program: { type: 'text', body: 'spoofed, forged signature' } } }), sig: 'AAAA' });
+  await new Promise((r) => setTimeout(r, 1500));
+}, viewerLink);
+ok('a command sent on the view channel never reaches the display', (await program()) === displayBefore && !displayBefore.includes('hijacked'));
+ok('and nothing the display did not sign is shown to other viewers', await viewer.evaluate(() =>
+  !document.body.textContent.includes('spoofed')));
+
+// The typed-code fallback, on another stranger's phone.
+const typist = await stranger.newPage();
+trap(typist, 'guest viewer by code');
+await typist.goto(`${gvBase}/view.html`);
+await typist.waitForSelector('#viewer-code-form:not([hidden])');
+await typist.fill('#viewer-code', viewerCode.toLowerCase());
+await typist.click('#viewer-code-form button[type=submit]');
+await typist.waitForSelector('#viewer-start-row:not([hidden])', { timeout: 15000 });
+ok('typing the code on the screen joins the same class', true);
+
+// Standing down ends the viewing: the screen goes to "not live", the code
+// stops answering, and the pass stops opening files.
+await gvDisplay.keyboard.press('e');
+await viewer.waitForSelector('#viewer-offair:not([hidden])', { timeout: 15000 });
+ok('when the class stands down, viewers see that it is not live', true);
+const afterCode = await fetch(`${gvBase}/view-code/${viewerCode}`);
+ok('and the typed code stops answering', afterCode.status === 404);
+
+await stranger.close();
+await presenter.close();
+gvServer.kill();
+fs.rmSync(gvData, { recursive: true, force: true });
+}
+
 reportErrors();
 } finally {
   await teardown();

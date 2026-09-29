@@ -63,10 +63,18 @@
     <div class="row" id="pair-mode" role="group" aria-label="What this code grants">
       <button id="pair-mode-full" type="button" class="is-on">Full control</button>
       <button id="pair-mode-guest" type="button">Guest (Simple Mode)</button>
+      <button id="pair-mode-view" type="button">Guest view (watch only)</button>
     </div>
     <div class="warn" id="pair-warn">Anyone who scans this can control this screen. It hides itself after 90 seconds.</div>
     <div id="pair-qr"></div>
     <div id="pair-url"></div>
+    <!-- Guest View only (Issue #150): the typed-code fallback, how many are
+         watching, and the one way to take the link back from everyone. -->
+    <div id="pair-view" hidden>
+      <p id="pair-view-code" class="hint"></p>
+      <p id="pair-viewers" class="hint" role="status"></p>
+      <button id="pair-view-rotate" type="button" class="danger-outline">New viewer link</button>
+    </div>
     <button id="pair-close" style="margin-top:18px;width:100%">Done</button>
   </div>
 </div>

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Podium — Watch</title>
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="assets/css/podium.css">
+<link rel="icon" href="assets/icons/icon-192.png">
+<meta name="theme-color" content="#0b0d10">
+</head>
+<!-- Guest View (Issue #150): the live display, on a viewer's own phone or
+     laptop - watch and listen, never touch. This is display.js running in
+     its viewer mode (data-viewer below): the same renderers, ink, layouts,
+     watermark and captions as the projector, fed from what the display
+     sends its view channel rather than from controllers. Nothing here can
+     send the room a command - it never holds the room's key. -->
+<body class="display is-viewer" data-viewer="yes">
+
+<div id="stage"></div>
+<canvas id="ink"></canvas>
+<div id="blank"></div>
+<div id="overlay" role="status" aria-live="polite" aria-atomic="true" aria-label="Caption"></div>
+<div id="watermark">
+  <span id="watermark-text" hidden></span>
+  <img id="watermark-img" alt="" hidden>
+</div>
+<div id="spotlight"></div>
+<div id="laser"></div>
+<div id="hud" data-status="connecting" role="status">Connecting…</div>
+<div id="storage-warn" hidden></div>
+
+<!-- The one tap a browser needs before it will play sound. Also where a
+     viewer is told what this is and, when there is no link, types a code. -->
+<div id="viewer-sheet" class="sheet">
+  <div class="card" style="text-align:center">
+    <h1>Watch this class</h1>
+    <p id="viewer-what">What is on the classroom screen, on yours - with its sound. You can only watch; nothing you do here reaches the room.</p>
+    <p class="hint" id="viewer-status" role="status">Connecting…</p>
+    <div class="row" id="viewer-start-row" hidden>
+      <button id="viewer-start" class="big-button" type="button">Start watching</button>
+    </div>
+    <form id="viewer-code-form" class="stack" hidden>
+      <label for="viewer-code">The code on the classroom screen</label>
+      <input id="viewer-code" type="text" inputmode="text" autocomplete="off" autocapitalize="characters"
+             spellcheck="false" maxlength="8" placeholder="ABC234">
+      <button type="submit" class="big-button">Watch</button>
+      <p class="hint" id="viewer-code-error" role="alert"></p>
+    </form>
+  </div>
+</div>
+
+<!-- Shown over the stage while the display is not on the air - between
+     lectures, or before the presenter has pressed Go live. -->
+<div id="viewer-offair" class="sheet" hidden>
+  <div class="card" style="text-align:center">
+    <h2>Not live right now</h2>
+    <p class="hint">This screen comes back on its own when the class goes live.</p>
+  </div>
+</div>
+
+<script src="assets/vendor/qrcode.js"></script>
+<script src="assets/vendor/pdf.min.js"></script>
+<script type="module" src="assets/js/display.js"></script>
+</body>
+</html>

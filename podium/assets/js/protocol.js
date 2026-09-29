@@ -426,6 +426,115 @@ function advanceSet(item) {
   item.remainingMs = 0;
 }
 
+// --- Guest View (Issue #150) --------------------------------------------------
+//
+// What a guest viewer is sent: what is on the projector right now, and
+// nothing a viewer has no business holding. A second real display receives
+// the whole of `state`, because it is trusted - it holds the room passphrase
+// and could drive the room anyway. A viewer holds only the view key (see
+// viewChannel below), and this is everything it ever gets, so it is written
+// as an allow-list: a field added to `state` later stays private until
+// someone decides a viewer should see it.
+//
+// Left out on purpose: the presenter's cue (preview/previewLayout/
+// previewMode), the lecture id, mic and camera levels, and the full ink
+// store (a viewer pulls the surfaces it is actually shown - see `ink` below).
+const VIEWER_KEYS = [
+  'rev', 'armed', 'program', 'panels', 'layout', 'focus', 'pip', 'blank',
+  'overlay', 'watermark', 'timers', 'music', 'volume', 'contentVolume', 'muted',
+  'stageAspect', 'musicNow', 'build',
+];
+
+/**
+ * A poll on screen, as a viewer may see it. The host token is what ends or
+ * rewrites the poll on the relay; named responses are students' names next
+ * to their answers; the tallies and the correct answer stay hidden until the
+ * presenter reveals them - exactly what the projector itself shows.
+ */
+function viewerPoll(item) {
+  const { token, responses, ...rest } = item;
+  const safe = { ...rest, viewerLive: !!token };
+  if (!item.revealed) {
+    safe.counts = (item.counts || []).map(() => 0);
+    safe.answers = [];
+    safe.correct = -1;
+  }
+  // Who upvoted a question is not on the screen - only how many did.
+  if (Array.isArray(item.qnaFeed)) {
+    safe.qnaFeed = item.qnaFeed.map((q) => ({ ...q, upvotes: Array.from({ length: q.upvotes?.length || 0 }, () => '') }));
+  }
+  return safe;
+}
+
+function viewerItem(item) {
+  if (!item || typeof item !== 'object') return item;
+  if (item.type === 'poll') return viewerPoll(item);
+  if (item.type === 'set' && Array.isArray(item.entries)) {
+    return { ...item, entries: item.entries.map((entry) => ({ ...entry, item: viewerItem(entry.item) })) };
+  }
+  return item;
+}
+
+/**
+ * @param {object} wire - the display's wireState()
+ * @param {Object<string, string>} surfaces - inkSurfaceKey -> inkDigest for
+ *   every panel actually on screen. Not wire.ink, which describes only the
+ *   FOCUSED panel (what a controller draws on): a viewer has to draw every
+ *   visible panel's ink, and pulls whichever of these its own copy disagrees
+ *   with - never the presenter's pen colour, or the whole ink store.
+ * @returns {object} what goes out on the view channel
+ */
+export function viewerState(wire, surfaces = {}) {
+  const out = {};
+  for (const key of VIEWER_KEYS) if (wire[key] !== undefined) out[key] = wire[key];
+  out.program = viewerItem(wire.program);
+  out.panels = (wire.panels || []).map(viewerItem);
+  out.ink = { surfaces: { ...surfaces } };
+  return out;
+}
+
+// Marp's own directive names (global and per-slide - a per-slide one may also
+// be spelled with a leading underscore). A comment made only of these is
+// consumed by Marp as configuration; every other comment is a presenter note.
+const MARP_DIRECTIVES = new Set([
+  'marp', 'theme', 'style', 'headingDivider', 'lang', 'title', 'description', 'author', 'image',
+  'keywords', 'url', 'size', 'math', 'paginate', 'header', 'footer', 'class', 'transition',
+  'backgroundColor', 'backgroundImage', 'backgroundPosition', 'backgroundRepeat', 'backgroundSize', 'color',
+]);
+
+/**
+ * A Marp deck as a guest viewer may have it (Issue #150): the slides, without
+ * the presenter's notes. Notes are HTML comments in the source, and the only
+ * copy a viewer can get is the one the display sends it - so this is where
+ * they come out. Directive comments (`<!-- _class: lead -->`) stay, or the
+ * slides would not render the way the room sees them.
+ */
+export function stripDeckNotes(source) {
+  return String(source || '').replace(/<!--([\s\S]*?)-->/g, (whole, body) => {
+    const lines = body.split('\n').map((line) => line.trim()).filter(Boolean);
+    const directive = lines.length > 0 && lines.every((line) => {
+      const m = line.match(/^_?([A-Za-z]+)\s*:/);
+      return !!m && MARP_DIRECTIVES.has(m[1]);
+    });
+    return directive ? whole : '';
+  });
+}
+
+/**
+ * The view channel's room name and key, from a display's saved config. Room
+ * names are not secret (the relay sees them), so a viewer room is named by a
+ * random id of its own rather than anything derived from the class's room -
+ * knowing one must not help anyone find the other. The key is what actually
+ * keeps it private, exactly as the passphrase does for the real room.
+ */
+export function viewChannel(cfg) {
+  if (!cfg?.viewId || !cfg?.viewKey) return null;
+  return { room: `view.${cfg.viewId}`, passphrase: cfg.viewKey };
+}
+
+/** True for a room name viewChannel makes - what the relay keys its viewer rules on. */
+export const isViewRoom = (room) => /^view\.[A-Za-z0-9_-]{8,40}$/.test(String(room || ''));
+
 /**
  * What the corner shows when a NEW lecture starts under a course (Issue #157).
  *

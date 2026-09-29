@@ -176,6 +176,14 @@ request automatically — subresources, manifests, icons, service-worker fetches
 - An API request without a valid session gets `401` and JSON, never a redirect.
 - `join.html`, `assets/js/join.js`, `login.html` and its script, `/poll/*`,
   `/healthz` and `/api/capabilities` stay open. The audience never logs in.
+- **Guest View (Issue #150):** a viewer never logs in either.
+  - **Pages:** `view.html` and the files it loads (`VIEW_OPEN_PATHS` in `podium-server.js`) are open. `display.html` and `config.json` are not.
+  - **Endpoints:** `/view-code/<CODE>` (looking up a typed code; rate-limited) and `/view-pass` are open.
+  - **The relay socket:** an anonymous viewer is let onto a `view.*` room only while a signed-in display is already in it.
+  - **The viewer pass:** a `podium_viewer` cookie that can read `content/` and the presenting account's library media while that display is live, and nothing else.
+  - **Registering a code** (`POST`/`PUT`/`DELETE /view-code`) needs the display's own sign-in, like its socket.
+  - **Capacity:** view rooms have their own ceiling, `MAX_VIEWERS_PER_ROOM` (default 300), separate from the 12-peer limit on every other room.
+  - **nginx:** no config change is needed. `location /` already forwards these paths.
 - `SameSite=Lax` blocks cross-site form POSTs; mutating API routes
   additionally require a JSON content type and a same-origin `Origin` when one
   is sent. That is the whole CSRF story and it needs no tokens.

@@ -496,6 +496,16 @@ try {
               <button type="submit">Show</button>
             </div>
           </form>
+          <!-- Guest View (Issue #150): the display's own viewer link, as a QR
+               the room can scan - watch and listen on their own device, with
+               no way to change anything. -->
+          <div class="stack">
+            <label for="guest-view-show">Guest view — people watch this screen on their own device</label>
+            <div class="inline">
+              <button id="guest-view-show" type="button">Put the viewer QR on screen</button>
+              <span id="guest-view-note" class="hint" role="status"></span>
+            </div>
+          </div>
           <div class="stack">
             <label for="watermark-text">Watermark — your name or logo, pinned in a corner for the
               whole lecture (stays over anything, and is captured in screen grabs)</label>
@@ -1021,9 +1031,10 @@ try {
       <label class="check"><input id="pref-blank-on-connect" type="checkbox"> Black out the screen when this controller connects</label>
       <p class="hint">
         The moment this controller first finds a display, send Blank — so nothing from a
-        previous session is still up while you get ready. Fires once per time you open or
-        reload the controller, never again from a later reconnect, so a brief Wi-Fi drop
-        mid-lecture does not blank the room.
+        previous session is still up while you get ready. Fires once each time you open the
+        controller in a new tab (or point it at a different room) — never from a reconnect,
+        closing Settings, or the page reloading itself, so none of those blanks the room
+        mid-lecture.
       </p>
 
       <label class="check"><input id="pref-keep-awake" type="checkbox"> Keep this device's screen awake</label>
