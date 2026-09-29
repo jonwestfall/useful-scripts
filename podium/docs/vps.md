@@ -591,6 +591,26 @@ that it is fine. The relay deliberately logs nothing per request or per message 
 it moves ciphertext for rooms it cannot read, and a record of who connected when
 is one it has no business keeping.
 
+### Phase 7 — Guest View codes, kiosks and recaps ✅
+
+Built on everything above, and described for teachers in
+[features.md](features.md#part-11--your-own-server):
+
+- **Guest View typed codes** (Issue #150). A six-character code for `view.html`,
+  kept in memory, answering only while the display is live, and rate-limited.
+  Viewers get a short-lived pass that reads what the presenting account can
+  read, and nothing else.
+- **Kiosk profiles** (Issues #151, #152, #155). A kiosk is a room for a display
+  nobody runs. An administrator provisions a device with a one-time QR link that
+  mints its own long-lived credential, assigns a default plan and a weekly
+  schedule the display polls for, and sees when each kiosk last checked in.
+  Revoking a profile cuts off both the link and any device already using it.
+- **Lecture recaps and captions in the record** (Issue #158). Caption lines join
+  the session timeline, and the admin page's Sessions tab builds one PDF of the
+  lecture from it.
+- **Controller mic recording** (Issue #147). Recorded in short, independently
+  playable segments uploaded as the lecture goes.
+
 ## Installation
 
 `deploy/install.sh` on a fresh box: service user, the directory layout above,

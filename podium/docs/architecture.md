@@ -38,12 +38,12 @@ Podium supports three interchangeable relay backends. All messages travel as lig
 - Fully free tier compatible with zero configuration beyond entering your API URL and public anonymous key.
 
 ### 2. Self-Hosted Relay (`podium/server/`)
-- A minimal Node.js server (`server/podium-server.js`) with zero external runtime dependencies.
-- Handles WebSocket room routing, HTTP audience polling endpoints, and optional SQLite persistence (`node:sqlite`).
+- A small Node.js server (`server/podium-server.js`) with two runtime dependencies (`ws` for WebSockets, `yauzl` for ZIP imports) and built-in `node:sqlite` storage.
+- Handles WebSocket room routing and HTTP audience polling endpoints. With a `DATA_DIR`, it adds accounts, courses, a file library, stored plans, session records, Guest View codes and kiosk profiles (see [vps.md](vps.md)).
 - Can run behind reverse proxies like Caddy or Nginx with TLS termination.
 
 ### 3. Public MQTT
-- Uses standard MQTT over WebSockets for environments where WebSocket relays are blocked or restricted.
+- Uses standard MQTT over WebSockets through a public broker (the default in `config.json`, e.g. `wss://broker.emqx.io:8084/mqtt`). No signup, which makes it the fastest way to try Podium.
 
 ---
 
@@ -53,7 +53,10 @@ Podium is built on a **Zero-Trust Relay** model. Because classroom computers and
 
 ### 1. Key Derivation (PBKDF2)
 - When you set a room name and passphrase, Podium derives a 256-bit symmetric encryption key using standard Web Crypto:
-  $$\text{Key} = \text{PBKDF2}(\text{Passphrase}, \text{Salt} = \text{SHA-256}(\text{RoomName}), \text{Iterations} = 100{,}000, \text{Digest} = \text{SHA-256})$$
+  ```
+  Key = PBKDF2-SHA-256(passphrase, salt = "podium|v1|" + room, iterations = 150,000) → AES-GCM-256
+  ```
+  (See `deriveKey` in [`assets/js/crypto.js`](../assets/js/crypto.js).)
 - The passphrase and encryption key **never leave your browser** and are never transmitted over the network.
 
 ### 2. Message Encryption (AES-GCM-256)
@@ -65,14 +68,14 @@ Podium is built on a **Zero-Trust Relay** model. Because classroom computers and
 
 ### 4. The Live Caption Exception
 - Live captions (Issue #79) use the browser's own `SpeechRecognition` API, running on whichever device starts it. In Chrome and Edge, that API sends the room's audio to Google's speech recognition service to be transcribed — **inside browser-native code Podium never touches**, before there is anything for this app's own encryption to cover. Safari recognizes on-device instead; Firefox has no implementation at all.
-- This is a genuine third exception to "the relay only ever sees ciphertext," and a categorically different one from the audience-poll exception above: it is not Podium's own server, is not self-hostable, and is not auditable by this codebase — it is entirely outside Podium's trust boundary, decided by the browser vendor rather than by Podium. It also means live captions do not work on a deployment that is intentionally offline or air-gapped, regardless of how Podium itself is hosted.
+- This is a second exception to "the relay only ever sees ciphertext," and a categorically different one from the audience-poll exception (students' phones don't hold the room key, so poll answers go to your own server's poll endpoints outside the room's encryption; see [roadmap.md](roadmap.md)): it is not Podium's own server, is not self-hostable, and is not auditable by this codebase — it is entirely outside Podium's trust boundary, decided by the browser vendor rather than by Podium. It also means live captions do not work on a deployment that is intentionally offline or air-gapped, regardless of how Podium itself is hosted.
 - Recognized text travels from there exactly like any other controller-to-display state: encrypted over the relay, via `protocol.js`'s `caption` command. Off by default; the trade-off is stated plainly next to the Start button in `control.html`'s Say tab, not just here.
 
 ---
 
 ## State Machine Protocol (`protocol.js`)
 
-All application state is governed by a pure, deterministic state machine in [`podium/assets/js/protocol.js`](file:///Users/jon/projects/git/useful-scripts/podium/assets/js/protocol.js):
+All application state is governed by a pure, deterministic state machine in [`podium/assets/js/protocol.js`](../assets/js/protocol.js):
 
 - **Pure Functional Core**: `applyCommand(state, cmd)` receives the current room state and an incoming command, mutating the state predictably and returning a boolean indicating whether the command changed state.
 - **Single Source of Truth**:
@@ -92,31 +95,43 @@ All application state is governed by a pure, deterministic state machine in [`po
 
 ```
 podium/
-├── index.html            # Landing portal linking to Display, Controller, and Plan
-├── display.html          # Cleanroom projector display
-├── control.html          # Mobile/iPad presenter remote interface
-├── plan.html             # Office lecture composer
-├── join.html             # Audience poll participation page for student phones
-├── admin.html            # Self-hosted administrative dashboard (accounts & courses)
-├── login.html            # Authentication gateway for self-hosted instances
+├── index.html            # Landing page linking to every surface
+├── guide.html            # The illustrated Podium Guide (self-contained, no scripts)
+├── display.html          # Clean projector display (also view.html's engine)
+├── control.html          # iPad / phone presenter remote
+├── guest.html            # Simple Mode: a substitute's clicker (Issue #77)
+├── view.html             # Guest View: watch-only viewer (Issue #150)
+├── plan.html             # Office lecture planner
+├── join.html             # Audience poll page for student phones (self-contained)
+├── admin.html            # Self-hosted admin page (people, courses, library, sessions, kiosks)
+├── login.html            # Sign-in page for self-hosted instances (self-contained)
+├── sw.js                 # Network-first offline service worker
+├── config.json           # Optional defaults for never-configured devices
+├── content/              # Example library: manifest.json, music.json, decks, audio
+├── marp-themes/          # Marp CSS themes + themes.json
 ├── assets/
-│   ├── css/
-│   │   └── podium.css    # Unified responsive stylesheet
+│   ├── css/podium.css    # One shared stylesheet (palette tokens, dark/light)
+│   ├── vendor/           # Marp, PDF.js, QR code - vendored copies
 │   └── js/
-│       ├── control.js    # Controller view logic, touch handling, and intervals
-│       ├── display.js    # Projector rendering engine and presentation sync
-│       ├── plan.js       # Office planner UI and document serialisation
-│       ├── protocol.js   # Deterministic state machine & command reducer
-│       ├── crypto.js     # Web Crypto AES-GCM & PBKDF2 encryption routines
-│       ├── renderers.js  # Content renderers (Marp decks, PDFs, media, text)
-│       ├── ink.js        # Apple Pencil vector drawing and stroke interpolation
-│       ├── util.js       # Core helpers, timing formatters, and DOM utilities
+│       ├── protocol.js   # Deterministic state machine & command reducer, ink math
+│       ├── control.js    # Controller UI
+│       ├── display.js    # Projector renderer (and viewer mode for view.html)
+│       ├── renderers.js  # Content renderers (decks, PDFs, media, text, polls, timers)
+│       ├── plan.js       # Planner UI;  planfile.js - the .podium document format
+│       ├── crypto.js     # Web Crypto AES-GCM & PBKDF2
+│       ├── bus.js        # Encrypted message bus over a transport/
+│       ├── transport/    # mqtt.js, supabase.js, ws.js
+│       ├── rtc.js        # WebRTC camera & microphone
+│       ├── pdf-writer.js # Client-side PDF export;  recap.js - lecture recaps
+│       ├── admin.js, guest.js, join.js, ...
 │       └── ...
-├── server/               # Minimal Node.js self-hosted relay & storage server
-│   ├── podium-server.js  # WebSocket relay and HTTP server
-│   ├── store.js          # SQLite database schema and persistence layer
-│   ├── doctor.js         # Self-diagnostics and integrity inspection CLI
-│   └── ...
-├── docs/                 # Documentation directory
-└── test/                 # Test suites (unit tests and Playwright E2E)
+├── server/               # Self-hosted relay & storage server
+│   ├── podium-server.js  # HTTP + WebSocket relay, auth gate, static files
+│   ├── api.js            # REST API;  store.js - SQLite schema & persistence
+│   ├── accounts.js, courses.js, library.js, plans.js, lectures.js, kiosks.js, ...
+│   ├── podium-admin.js   # CLI: users, courses, backups, pruning, doctor
+│   └── doctor.js         # Self-diagnostics
+├── deploy/               # install/update/backup/restore scripts, systemd & nginx templates
+├── docs/                 # This documentation
+└── test/                 # Unit suites (*.test.mjs) and the Playwright e2e suite
 ```

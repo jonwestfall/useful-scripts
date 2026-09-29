@@ -9,7 +9,7 @@ Setup takes about twenty minutes, once. You will not need a terminal or a code
 editor.
 
 *(For the full reference — every feature, every setting, every design decision —
-see [README.md](../README.md). This file is the short road in.)*
+see the [features guide](features.md), or the illustrated [Podium Guide](../guide.html). This file is the short road in.)*
 
 ---
 

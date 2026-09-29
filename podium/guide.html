@@ -1,0 +1,1223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Podium Guide</title>
+<meta name="description" content="A visual tour of Podium: drive the classroom projector from your iPad or phone. Every feature, how it fits together, and how to set it up.">
+<meta name="theme-color" content="#0b0d10">
+<!--
+  The Podium Guide. A single self-contained page - no stylesheet, no module,
+  no fonts, no CDN - so it reads the same on GitHub Pages, from a folder on
+  disk, and on a self-hosted server (where it is public alongside index.html;
+  see AUTH_PUBLIC_WITH_ACCOUNTS in server/podium-server.js). It describes the
+  app; it does not load any of it. The Markdown in docs/ stays the detailed
+  reference, and every section here links to the part of it that goes deeper.
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d10;
+    --bg-2: #0f1318;
+    --panel: #14181d;
+    --panel-2: #1c2127;
+    --line: #2a3038;
+    --ink: #e8ecf1;
+    --dim: #a3adba;
+    --accent: #6ea8fe;
+    --accent-ink: #0b1a33;
+    --live: #ff6b6d;
+    --live-fill: #d32f2f;
+    --cue: #ffc94d;
+    --ok: #45d483;
+    --violet: #b79cff;
+    --radius: 14px;
+    --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 20px 40px -24px rgba(0,0,0,.6);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --bg-2: #eef1f5;
+      --panel: #ffffff;
+      --panel-2: #f1f4f8;
+      --line: #d7dde5;
+      --ink: #121821;
+      --dim: #4f5b6b;
+      --accent: #1f5fcc;
+      --accent-ink: #ffffff;
+      --live: #c62828;
+      --live-fill: #c62828;
+      --cue: #8a5a00;
+      --ok: #1b7a44;
+      --violet: #5b3bbf;
+      --shadow: 0 1px 2px rgba(16,24,40,.05), 0 16px 32px -20px rgba(16,24,40,.25);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16.5px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  a:hover { text-decoration-thickness: 2px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+  code, kbd { font-family: var(--mono); font-size: .88em; }
+  code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  kbd {
+    display: inline-block; min-width: 1.9em; text-align: center; padding: 1px 7px;
+    background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+    border-bottom-width: 3px; border-radius: 7px; font-weight: 600;
+  }
+  h1, h2, h3 { line-height: 1.2; letter-spacing: -.01em; }
+  h2 { font-size: clamp(26px, 3.4vw, 34px); margin: 0 0 10px; }
+  h3 { font-size: 18px; margin: 0 0 6px; }
+  p { margin: 0 0 14px; }
+  .wrap { max-width: 72rem; margin: 0 auto; padding: 0 16px; }
+  .dim { color: var(--dim); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* --- top bar -------------------------------------------------------- */
+  .top {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    backdrop-filter: saturate(1.4) blur(10px); -webkit-backdrop-filter: saturate(1.4) blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .top .wrap { display: flex; align-items: center; gap: 18px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); font-weight: 800; letter-spacing: .18em; font-size: 14px; }
+  .brand small { font-weight: 600; letter-spacing: .02em; color: var(--dim); font-size: 14px; }
+  .top nav { margin-left: auto; display: flex; gap: 18px; font-size: 14.5px; }
+  .top nav a { color: var(--dim); text-decoration: none; font-weight: 600; }
+  .top nav a:hover { color: var(--ink); }
+  @media (max-width: 760px) { .top nav a.opt { display: none; } }
+  .top nav a { white-space: nowrap; }
+  @media (max-width: 420px) { .brand small { display: none; } .top nav { gap: 14px; } }
+
+  /* --- hero ----------------------------------------------------------- */
+  .hero { position: relative; overflow: hidden; padding: 64px 0 40px; }
+  .hero::before {
+    content: ""; position: absolute; inset: -30% -10% auto -10%; height: 520px; z-index: -1;
+    background:
+      radial-gradient(40% 60% at 25% 40%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+      radial-gradient(35% 55% at 80% 30%, color-mix(in srgb, var(--violet) 16%, transparent), transparent 70%);
+  }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 40px; align-items: center; }
+  @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; } }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    padding: 4px 12px; border-radius: 999px;
+  }
+  .hero h1 { font-size: clamp(36px, 5.6vw, 60px); margin: 18px 0 16px; letter-spacing: -.025em; }
+  .hero h1 .grad {
+    background: linear-gradient(92deg, var(--accent), var(--violet));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lede { font-size: 19px; color: var(--dim); max-width: 36rem; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin: 26px 0 22px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 20px;
+    border-radius: 12px; font-weight: 700; text-decoration: none; border: 1px solid var(--line);
+    background: var(--panel); color: var(--ink);
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; list-style: none; }
+  .pills li {
+    font-size: 13.5px; font-weight: 600; color: var(--dim);
+    border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 12px;
+  }
+  .pills li::before { content: "✓ "; color: var(--ok); }
+  .hero-art { width: 100%; height: auto; filter: drop-shadow(0 30px 40px rgba(0,0,0,.35)); }
+
+  /* --- sections ------------------------------------------------------- */
+  section.block { padding: 64px 0; border-top: 1px solid var(--line); }
+  section.block.alt { background: var(--bg-2); }
+  .section-head { max-width: 46rem; margin-bottom: 30px; }
+  .kicker { font-size: 13px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .section-head p { color: var(--dim); font-size: 17.5px; }
+  .section-head .kicker { color: var(--accent); font-size: 13px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 20px; box-shadow: var(--shadow);
+  }
+  .grid { display: grid; gap: 16px; }
+  .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  @media (max-width: 980px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .g3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 640px) { .g2, .g3, .g4 { grid-template-columns: 1fr; } }
+
+  /* --- author note ---------------------------------------------------- */
+  .author { display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: start; }
+  @media (max-width: 700px) { .author { grid-template-columns: 1fr; } }
+  .monogram {
+    width: 92px; height: 92px; border-radius: 50%; display: grid; place-items: center;
+    font: 700 32px/1 var(--serif); color: var(--accent-ink);
+    background: linear-gradient(135deg, var(--accent), var(--violet));
+  }
+  .author blockquote { margin: 0; font: 400 21px/1.55 var(--serif); }
+  .author blockquote p { margin-bottom: 14px; }
+  .author .sig { font-size: 15px; color: var(--dim); }
+  .author .sig strong { color: var(--ink); }
+
+  /* --- how it works --------------------------------------------------- */
+  .flow-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .flow-art { width: 100%; min-width: 760px; height: auto; display: block; }
+  .flow-hint { display: none; font-size: 13px; color: var(--dim); margin-top: 6px; }
+  @media (max-width: 760px) { .flow-hint { display: block; } }
+  .role h3 { display: flex; align-items: center; gap: 10px; }
+  .role .file { font: 600 12.5px var(--mono); color: var(--dim); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+
+  /* --- timeline ------------------------------------------------------- */
+  .timeline { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 16px; counter-reset: step; }
+  @media (max-width: 980px) { .timeline { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+  @media (max-width: 640px) { .timeline { grid-template-columns: 1fr; } }
+  .timeline > li { position: relative; padding-top: 62px; }
+  .timeline > li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; top: 20px; left: 20px; width: 30px; height: 30px; border-radius: 50%;
+    display: grid; place-items: center; font-weight: 800; font-size: 14px;
+    background: var(--accent); color: var(--accent-ink);
+  }
+  .timeline .when { font-size: 12.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+  .timeline ul { margin: 8px 0 0; padding-left: 18px; color: var(--dim); font-size: 15px; }
+  .timeline ul li { padding: 0; }
+  .timeline ul li::before { display: none; }
+  .timeline ul strong { color: var(--ink); }
+
+  /* --- features ------------------------------------------------------- */
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin: -6px 0 34px; padding: 0; list-style: none; }
+  .toc a {
+    display: inline-block; padding: 6px 14px; border-radius: 999px; font-size: 14px; font-weight: 600;
+    text-decoration: none; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  }
+  .toc a:hover { border-color: var(--accent); }
+  .fgroup { margin-top: 48px; }
+  .fgroup:first-of-type { margin-top: 0; }
+  .fgroup-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+  .fgroup-head h3 { font-size: 23px; margin: 0; }
+  .fgroup-head p { margin: 0; color: var(--dim); }
+  .fgroup-head .more { margin-left: auto; font-size: 14.5px; font-weight: 600; }
+  .feature { display: flex; flex-direction: column; }
+  .feature .ico {
+    width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; font-size: 20px;
+    background: var(--panel-2); border: 1px solid var(--line); margin-bottom: 12px;
+  }
+  .feature p { color: var(--dim); font-size: 15.2px; margin: 0; }
+  .feature ul { color: var(--dim); font-size: 15px; margin: 8px 0 0; padding-left: 18px; }
+  .feature li { margin: 2px 0; }
+  .tag {
+    display: inline-block; vertical-align: 2px; margin-left: 6px; font-size: 11px; font-weight: 800;
+    letter-spacing: .06em; text-transform: uppercase; padding: 1px 7px; border-radius: 6px;
+    color: var(--violet); border: 1px solid color-mix(in srgb, var(--violet) 45%, transparent);
+  }
+  .feature.wide { grid-column: span 2; }
+  @media (max-width: 640px) { .feature.wide { grid-column: auto; } }
+
+  /* freeze diagram */
+  .cue-art { width: 100%; height: auto; display: block; margin-top: 14px; }
+
+  /* --- tiers ---------------------------------------------------------- */
+  .tier { position: relative; display: flex; flex-direction: column; }
+  .tier .price { font-size: 12.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ok); }
+  .tier h3 { font-size: 21px; margin: 6px 0 8px; }
+  .tier.rec { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
+  .tier .badge {
+    position: absolute; top: -11px; right: 16px; font-size: 11.5px; font-weight: 800; letter-spacing: .06em;
+    text-transform: uppercase; background: var(--accent); color: var(--accent-ink); padding: 3px 10px; border-radius: 999px;
+  }
+  .tier ul { list-style: none; padding: 0; margin: 10px 0 0; font-size: 15px; color: var(--dim); }
+  .tier li { padding: 5px 0 5px 24px; position: relative; border-top: 1px dashed var(--line); }
+  .tier li::before { content: "✓"; position: absolute; left: 2px; color: var(--ok); font-weight: 800; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); margin-top: 22px; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { padding: 11px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); background: var(--panel-2); }
+  tbody tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
+  td.y { color: var(--ok); font-weight: 800; }
+  td.n { color: var(--dim); }
+  tbody th { font-weight: 600; }
+
+  /* --- security ------------------------------------------------------- */
+  .fact { display: flex; gap: 14px; }
+  .fact .num { font: 800 22px/1.1 var(--sans); color: var(--accent); min-width: 6.6rem; white-space: nowrap; }
+  @media (max-width: 420px) { .fact { flex-direction: column; gap: 4px; } }
+  .fact p { margin: 0; color: var(--dim); font-size: 15.2px; }
+  .fact strong { color: var(--ink); }
+  .note {
+    margin-top: 22px; padding: 16px 18px; border-radius: var(--radius); font-size: 15.5px;
+    border: 1px solid color-mix(in srgb, var(--cue) 45%, var(--line));
+    background: color-mix(in srgb, var(--cue) 8%, var(--panel));
+  }
+  .note strong { color: var(--ink); }
+
+  /* --- shortcuts ------------------------------------------------------ */
+  .keys { list-style: none; margin: 0; padding: 0; font-size: 15px; }
+  .keys li { display: flex; gap: 12px; align-items: baseline; padding: 7px 0; border-top: 1px dashed var(--line); }
+  .keys li:first-child { border-top: 0; }
+  .keys .k { flex: none; min-width: 7.2rem; }
+
+  /* --- docs ----------------------------------------------------------- */
+  a.doc { text-decoration: none; color: var(--ink); display: block; transition: border-color .15s, transform .15s; }
+  a.doc:hover { border-color: var(--accent); transform: translateY(-2px); }
+  @media (prefers-reduced-motion: reduce) { a.doc:hover { transform: none; } }
+  a.doc h3 { display: flex; gap: 8px; align-items: center; }
+  a.doc p { color: var(--dim); font-size: 15px; margin: 0; }
+  a.doc .for { display: block; margin-top: 10px; font-size: 12.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+
+  footer { border-top: 1px solid var(--line); padding: 40px 0 56px; color: var(--dim); font-size: 14.5px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 20px; justify-content: space-between; align-items: center; }
+  footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
+
+  /* SVG helpers - colours follow the theme */
+  .s-panel { fill: var(--panel); stroke: var(--line); }
+  .s-panel2 { fill: var(--panel-2); stroke: var(--line); }
+  .s-line { stroke: var(--line); }
+  .s-dim { fill: var(--dim); }
+  .s-ink { fill: var(--ink); }
+  .s-accent { fill: var(--accent); }
+  .s-accent-stroke { stroke: var(--accent); }
+  .s-live { fill: var(--live-fill); }
+  .s-cue { fill: var(--cue); }
+  .s-ok { fill: var(--ok); }
+  .s-ok-stroke { stroke: var(--ok); }
+  .s-violet { fill: var(--violet); }
+  .s-violet-stroke { stroke: var(--violet); }
+  .s-bg { fill: var(--bg); }
+  .s-text { font-family: var(--sans); }
+  .s-mono { font-family: var(--mono); }
+</style>
+</head>
+<body>
+
+<a class="sr-only" href="#main">Skip to the guide</a>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html" aria-label="Podium home">
+      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="8" class="s-accent"/>
+        <rect x="7" y="8" width="18" height="11" rx="2" fill="none" stroke="#0b1a33" stroke-width="2.4"/>
+        <path d="M16 19v5M11 25h10" stroke="#0b1a33" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+      PODIUM <small>Guide</small>
+    </a>
+    <nav aria-label="Guide sections">
+      <a class="opt" href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a class="opt" href="#setup">Setup</a>
+      <a href="#docs">Docs</a>
+      <a href="index.html">Open Podium</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ===================================================================== -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">The Podium Guide · version 1.1</span>
+      <h1>Teach from <span class="grad">anywhere in the room.</span></h1>
+      <p class="lede">
+        Podium turns the classroom computer into a screen you drive from your iPad or phone.
+        Open one browser tab on the machine wired to the projector and walk away. Slides, PDFs,
+        video, handwriting, timers, polls and your phone's camera all come from the device in your hand.
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/quickstart.md">Set it up in 20 minutes →</a>
+        <a class="btn" href="#features">Tour the features</a>
+      </div>
+      <ul class="pills" aria-label="At a glance">
+        <li>Nothing to install</li>
+        <li>No build step</li>
+        <li>Encrypted end to end</li>
+        <li>Free to run</li>
+        <li>Open source</li>
+      </ul>
+    </div>
+
+    <!-- Hero illustration: the controller in your hand, and the projector it drives. -->
+    <svg class="hero-art" viewBox="0 0 560 400" role="img" aria-labelledby="hero-art-t hero-art-d">
+      <title id="hero-art-t">A tablet controlling a classroom projector</title>
+      <desc id="hero-art-d">On the left, a projector screen shows a slide with a hand-drawn circle. On the right, a tablet shows the same slide in a Now box, the next slide in a Next box, presenter notes, and Freeze, TAKE and Blank buttons.</desc>
+      <!-- projector screen -->
+      <rect x="12" y="20" width="330" height="210" rx="10" class="s-panel" stroke-width="2"/>
+      <rect x="26" y="34" width="302" height="170" rx="4" fill="#fdfdfb"/>
+      <text x="44" y="70" font-size="20" font-weight="700" fill="#1a2233" class="s-text">Evidence weighting</text>
+      <rect x="44" y="86" width="150" height="7" rx="3" fill="#c9d1dd"/>
+      <rect x="44" y="102" width="190" height="7" rx="3" fill="#c9d1dd"/>
+      <rect x="44" y="118" width="120" height="7" rx="3" fill="#c9d1dd"/>
+      <rect x="220" y="130" width="92" height="60" rx="4" fill="#dbe7ff"/>
+      <path d="M232 178 L252 158 L268 168 L298 142" stroke="#1f5fcc" stroke-width="3" fill="none"/>
+      <ellipse cx="266" cy="160" rx="54" ry="36" fill="none" stroke="#e53935" stroke-width="3" stroke-dasharray="0" transform="rotate(-8 266 160)"/>
+      <rect x="248" y="186" width="70" height="12" rx="3" fill="#1a2233" opacity=".85"/>
+      <text x="253" y="195" font-size="8" fill="#fff" class="s-text">PSY 415</text>
+      <rect x="160" y="230" width="34" height="18" class="s-panel2"/>
+      <rect x="120" y="246" width="114" height="8" rx="4" class="s-panel2"/>
+      <!-- wireless waves -->
+      <g fill="none" class="s-accent-stroke" stroke-width="3" stroke-linecap="round" opacity=".9">
+        <path d="M352 150 q14 14 0 28"/>
+        <path d="M364 140 q24 24 0 48" opacity=".7"/>
+        <path d="M376 130 q34 34 0 68" opacity=".45"/>
+      </g>
+      <!-- tablet -->
+      <rect x="300" y="170" width="248" height="216" rx="18" fill="#0d1117" stroke="#39414c" stroke-width="3"/>
+      <rect x="312" y="182" width="224" height="192" rx="8" fill="#14181d"/>
+      <text x="322" y="198" font-size="9" font-weight="800" fill="#97a2b0" letter-spacing="1.5" class="s-text">PODIUM</text>
+      <circle cx="486" cy="195" r="3.5" fill="#45d483"/>
+      <text x="492" y="198" font-size="8" fill="#97a2b0" class="s-text">live</text>
+      <text x="322" y="214" font-size="7.5" fill="#97a2b0" class="s-text">NOW</text>
+      <rect x="322" y="218" width="100" height="58" rx="4" fill="#fdfdfb"/>
+      <rect x="330" y="228" width="60" height="5" rx="2" fill="#1a2233"/>
+      <rect x="330" y="239" width="72" height="3.5" rx="1.5" fill="#c9d1dd"/>
+      <rect x="330" y="247" width="50" height="3.5" rx="1.5" fill="#c9d1dd"/>
+      <ellipse cx="394" cy="258" rx="20" ry="12" fill="none" stroke="#e53935" stroke-width="1.6"/>
+      <text x="430" y="214" font-size="7.5" fill="#97a2b0" class="s-text">NEXT</text>
+      <rect x="430" y="218" width="96" height="58" rx="4" fill="#fdfdfb" opacity=".8"/>
+      <rect x="438" y="228" width="50" height="5" rx="2" fill="#1a2233"/>
+      <rect x="438" y="239" width="70" height="3.5" rx="1.5" fill="#c9d1dd"/>
+      <text x="322" y="292" font-size="7.5" fill="#97a2b0" class="s-text">PRESENTER NOTES</text>
+      <rect x="322" y="297" width="190" height="4" rx="2" fill="#39414c"/>
+      <rect x="322" y="306" width="160" height="4" rx="2" fill="#39414c"/>
+      <rect x="322" y="315" width="175" height="4" rx="2" fill="#39414c"/>
+      <rect x="322" y="336" width="62" height="26" rx="6" fill="#1c2127" stroke="#2a3038"/>
+      <text x="336" y="353" font-size="10" font-weight="700" fill="#e8ecf1" class="s-text">Freeze</text>
+      <rect x="392" y="336" width="62" height="26" rx="6" fill="#d32f2f"/>
+      <text x="407" y="353" font-size="10" font-weight="800" fill="#fff" class="s-text">TAKE</text>
+      <rect x="462" y="336" width="62" height="26" rx="6" fill="#1c2127" stroke="#2a3038"/>
+      <text x="478" y="353" font-size="10" font-weight="700" fill="#e8ecf1" class="s-text">Blank</text>
+      <!-- pencil -->
+      <g transform="rotate(38 520 250)">
+        <rect x="508" y="160" width="10" height="110" rx="3" fill="#e8ecf1"/>
+        <path d="M508 270 l5 14 l5 -14 z" fill="#e8ecf1"/>
+        <path d="M511 278 l2 6 l2 -6 z" fill="#39414c"/>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="block alt" id="author" aria-labelledby="author-h">
+  <div class="wrap">
+    <div class="author">
+      <div class="monogram" aria-hidden="true">JW</div>
+      <div>
+        <p class="kicker" id="author-h">Made in a classroom, by a teacher</p>
+        <blockquote>
+          <p>Podium isn't a company or a product team. It's one professor's answer to a
+          problem every teacher knows: the lecture is happening out in the room, and the
+          computer running the projector is stuck behind the lectern.</p>
+          <p>Every feature here exists because a real class needed it: a video cued up
+          without the room watching me hunt for it, a timer for group work, a poll that
+          doesn't need an app, captions for a student who needs them. It stays deliberately
+          simple: a few web pages you can read, host for free, and trust.</p>
+        </blockquote>
+        <p class="sig"><strong>Jon Westfall</strong> · Professor, with more than twenty years in the classroom ·
+          designer and maintainer of Podium</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="block" id="how" aria-labelledby="how-h">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">How it works</p>
+      <h2 id="how-h">A few web pages, each with one job</h2>
+      <p>Podium is plain HTML, CSS and JavaScript that any modern browser runs directly. The devices
+        never talk to each other directly. They all check in with a small <em>relay</em>, and everything
+        they say is sealed with your room's passphrase before it leaves the browser.</p>
+    </div>
+
+    <div class="flow-scroll" tabindex="0" role="region" aria-label="Connection diagram">
+    <svg class="flow-art" viewBox="0 0 1000 300" role="img" aria-labelledby="flow-t flow-d">
+      <title id="flow-t">How Podium's devices connect</title>
+      <desc id="flow-d">Controllers on the left and the planning page send encrypted messages through a relay in the middle, which passes ciphertext to the display on the right. Student phones answer polls through the self-hosted server, and guest viewers watch a signed, watch-only copy of the display.</desc>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="s-accent"/>
+        </marker>
+        <marker id="arr-v" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="s-violet"/>
+        </marker>
+        <marker id="arr-g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="s-ok"/>
+        </marker>
+      </defs>
+      <!-- controllers -->
+      <rect x="10" y="40" width="210" height="84" rx="14" class="s-panel" stroke-width="1.5"/>
+      <text x="30" y="72" font-size="16" font-weight="700" class="s-ink s-text">Controllers</text>
+      <text x="30" y="94" font-size="13" class="s-dim s-text">iPad · iPhone · laptop</text>
+      <text x="30" y="112" font-size="12" class="s-dim s-mono">control.html · guest.html</text>
+      <!-- planner -->
+      <rect x="10" y="176" width="210" height="84" rx="14" class="s-panel" stroke-width="1.5"/>
+      <text x="30" y="208" font-size="16" font-weight="700" class="s-ink s-text">Planning desk</text>
+      <text x="30" y="230" font-size="13" class="s-dim s-text">your office computer</text>
+      <text x="30" y="248" font-size="12" class="s-dim s-mono">plan.html → .podium file</text>
+      <path d="M115 176 V132" class="s-line" stroke-width="2" stroke-dasharray="5 5" fill="none" marker-end="url(#arr)"/>
+      <!-- relay -->
+      <rect x="372" y="60" width="256" height="120" rx="60" class="s-panel2" stroke-width="1.5"/>
+      <text x="500" y="102" font-size="17" font-weight="700" class="s-ink s-text" text-anchor="middle">The relay</text>
+      <text x="500" y="124" font-size="13" class="s-dim s-text" text-anchor="middle">MQTT · Supabase · your own server</text>
+      <text x="500" y="148" font-size="12.5" class="s-dim s-mono" text-anchor="middle">sees only ciphertext</text>
+      <path d="M222 82 H368" class="s-accent-stroke" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+      <text x="295" y="72" font-size="12" class="s-dim s-text" text-anchor="middle">🔒 AES-256</text>
+      <path d="M632 120 H776" class="s-accent-stroke" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+      <text x="704" y="110" font-size="12" class="s-dim s-text" text-anchor="middle">🔒 still sealed</text>
+      <!-- display -->
+      <rect x="780" y="40" width="210" height="130" rx="14" class="s-panel" stroke-width="1.5"/>
+      <rect x="800" y="60" width="170" height="70" rx="5" class="s-bg"/>
+      <rect x="812" y="74" width="80" height="7" rx="3" class="s-accent"/>
+      <rect x="812" y="90" width="120" height="5" rx="2" class="s-dim" opacity=".5"/>
+      <rect x="812" y="102" width="96" height="5" rx="2" class="s-dim" opacity=".5"/>
+      <text x="800" y="152" font-size="16" font-weight="700" class="s-ink s-text">Display</text>
+      <text x="870" y="152" font-size="12" class="s-dim s-mono">display.html</text>
+      <!-- students -->
+      <rect x="372" y="222" width="256" height="64" rx="14" class="s-panel" stroke-width="1.5"/>
+      <text x="392" y="250" font-size="15" font-weight="700" class="s-ink s-text">Student phones</text>
+      <text x="392" y="270" font-size="12" class="s-dim s-mono">join.html · answer polls</text>
+      <path d="M500 222 V184" class="s-ok-stroke" stroke-width="2" stroke-dasharray="4 4" fill="none" marker-end="url(#arr-g)"/>
+      <!-- viewers -->
+      <rect x="780" y="210" width="210" height="76" rx="14" class="s-panel" stroke-width="1.5"/>
+      <text x="800" y="240" font-size="15" font-weight="700" class="s-ink s-text">Guest viewers</text>
+      <text x="800" y="262" font-size="12" class="s-dim s-mono">view.html · watch only</text>
+      <path d="M885 172 V206" class="s-violet-stroke" stroke-width="2" fill="none" marker-end="url(#arr-v)"/>
+    </svg>
+    </div>
+    <p class="flow-hint">Swipe the diagram sideways to see all of it.</p>
+
+    <div class="grid g4" style="margin-top: 22px;">
+      <div class="card role">
+        <h3><span class="dot" style="background: var(--accent)"></span>The display</h3>
+        <p class="file">display.html</p>
+        <p class="dim">Runs fullscreen on the classroom PC. No toolbars, no cursor, no notifications.
+          It shows what it's told and remembers the lecture through a reload.</p>
+      </div>
+      <div class="card role">
+        <h3><span class="dot" style="background: var(--ok)"></span>The controller</h3>
+        <p class="file">control.html</p>
+        <p class="dim">Your remote on an iPad, iPhone or laptop. It holds the library, presenter notes, ink,
+          timers, polls, music and camera. Several controllers can share one room.</p>
+      </div>
+      <div class="card role">
+        <h3><span class="dot" style="background: var(--cue)"></span>The planning desk</h3>
+        <p class="file">plan.html</p>
+        <p class="dim">For your office. Build a lecture's running order, then carry it to class as a
+          single file, or send it straight to your own server.</p>
+      </div>
+      <div class="card role">
+        <h3><span class="dot" style="background: var(--violet)"></span>The audience</h3>
+        <p class="file">join.html · view.html</p>
+        <p class="dim">Students answer polls on their own phones with no app and no login. Guest viewers
+          watch the screen on their own device and can't change anything.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="block alt" id="day" aria-labelledby="day-h">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">A class period with Podium</p>
+      <h2 id="day-h">From your office to the end of class</h2>
+      <p>Here's how the pieces fit into an ordinary teaching day.</p>
+    </div>
+    <ol class="timeline">
+      <li class="card">
+        <p class="when">The night before</p>
+        <h3>Plan it at your desk</h3>
+        <ul>
+          <li>Drag decks, PDFs, clips and notes into a <strong>running order</strong>.</li>
+          <li>Set a <strong>target length</strong> and saved countdowns.</li>
+          <li>Choose what <strong>auto-launches</strong> when you open it.</li>
+        </ul>
+      </li>
+      <li class="card">
+        <p class="when">Ten minutes before</p>
+        <h3>Set the room</h3>
+        <ul>
+          <li>Press <kbd>G</kbd> on the classroom PC to <strong>go live</strong>.</li>
+          <li>Scan the <strong>pairing QR</strong> with your iPad.</li>
+          <li>Start <strong>background music</strong> and a "We begin in…" countdown.</li>
+        </ul>
+      </li>
+      <li class="card">
+        <p class="when">During class</p>
+        <h3>Teach, don't click</h3>
+        <ul>
+          <li><strong>Freeze</strong>, line up the next thing, then <strong>TAKE</strong> it.</li>
+          <li>Write on slides with <strong>ink</strong> and point with the <strong>laser</strong>.</li>
+          <li>Run a <strong>poll</strong>, show a <strong>document camera</strong>, put up <strong>captions</strong>.</li>
+        </ul>
+      </li>
+      <li class="card">
+        <p class="when">After class</p>
+        <h3>Keep what mattered</h3>
+        <ul>
+          <li>Export annotated slides and boards as a <strong>ZIP or PDF</strong>.</li>
+          <li>Download poll results as <strong>CSV</strong>.</li>
+          <li>On your own server, get a <strong>lecture recap</strong> PDF.</li>
+        </ul>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="block" id="features" aria-labelledby="features-h">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">Every feature, by what you're trying to do</p>
+      <h2 id="features-h">What Podium can do</h2>
+      <p>Features marked <span class="tag" style="margin-left:0">Server</span> need Podium's own
+        self-hosted server. Everything else works on every setup, including free GitHub Pages hosting.</p>
+    </div>
+
+    <ul class="toc" aria-label="Feature groups">
+      <li><a href="#f-present">Presenting</a></li>
+      <li><a href="#f-ink">Drawing &amp; pointing</a></li>
+      <li><a href="#f-media">Media &amp; sound</a></li>
+      <li><a href="#f-screen">On-screen tools</a></li>
+      <li><a href="#f-room">Engaging the room</a></li>
+      <li><a href="#f-access">Accessibility</a></li>
+      <li><a href="#f-share">Sharing the lectern</a></li>
+      <li><a href="#f-plan">Planning</a></li>
+      <li><a href="#f-yours">Make it yours</a></li>
+      <li><a href="#f-after">After class</a></li>
+      <li><a href="#f-server">Your own server</a></li>
+    </ul>
+
+    <!-- Presenting -->
+    <div class="fgroup" id="f-present">
+      <div class="fgroup-head">
+        <h3>Presenting</h3>
+        <p>Show anything, and never cut to something you haven't looked at first.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/features.md#part-1--presenting">Details →</a>
+      </div>
+      <div class="grid g3">
+        <div class="card feature wide">
+          <div class="ico" aria-hidden="true">🎬</div>
+          <h3>Freeze is a cue</h3>
+          <p>Borrowed from a TV control room. <strong>Freeze</strong> holds the projector still while
+            you flip ahead, scrub a video past its ad, or open page 42 of a PDF. <strong>TAKE</strong>
+            cuts it live instantly, <strong>Swap</strong> trades live and cued, and <strong>Blank</strong>
+            blacks out the room with everything still loaded underneath. Turn on <em>Always cue first</em>
+            and every pick waits in the cue.</p>
+          <svg class="cue-art" viewBox="0 0 640 120" role="img" aria-labelledby="cue-t">
+            <title id="cue-t">While frozen, the projector keeps showing slide 4 while the cue holds a video; TAKE swaps them</title>
+            <rect x="4" y="10" width="200" height="100" rx="10" class="s-panel2" stroke-width="1.5"/>
+            <text x="18" y="32" font-size="12" font-weight="800" class="s-dim s-text" letter-spacing="1">ON SCREEN · FROZEN</text>
+            <rect x="18" y="42" width="172" height="56" rx="5" fill="#fdfdfb"/>
+            <text x="30" y="76" font-size="14" font-weight="700" fill="#1a2233" class="s-text">Slide 4</text>
+            <text x="220" y="66" font-size="13" class="s-dim s-text">students see this</text>
+            <rect x="330" y="10" width="200" height="100" rx="10" class="s-panel2" stroke-width="1.5"/>
+            <text x="344" y="32" font-size="12" font-weight="800" fill="var(--cue)" class="s-text" letter-spacing="1">CUED · ONLY YOU</text>
+            <rect x="344" y="42" width="172" height="56" rx="5" fill="#111"/>
+            <path d="M420 58 l18 12 l-18 12 z" fill="#fff"/>
+            <text x="352" y="92" font-size="10" fill="#bbb" class="s-mono">3:15</text>
+            <rect x="548" y="44" width="88" height="34" rx="8" class="s-live"/>
+            <text x="592" y="66" font-size="14" font-weight="800" fill="#fff" class="s-text" text-anchor="middle">TAKE</text>
+          </svg>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🔭</div>
+          <h3>Now, Next &amp; Notes</h3>
+          <p>A confidence monitor in your hand: what the room sees, what's coming (down to the next
+            bullet of a build), and your presenter notes. Jump to any slide from a searchable thumbnail grid.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📝</div>
+          <h3>Slides in Markdown</h3>
+          <p><a href="https://marp.app/">Marp</a> decks rendered live in the browser, with KaTeX math,
+            progressive builds, presenter notes and your department's own CSS theme.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📄</div>
+          <h3>PDFs &amp; PowerPoint</h3>
+          <p>Page through PDFs, and <strong>zoom and pan the projector</strong> into a figure.
+            On your own server, <code>.pptx</code> uploads become PDFs automatically.<span class="tag">Server</span></p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🗂️</div>
+          <h3>A library of anything</h3>
+          <ul>
+            <li>Decks, picture decks, PDFs, HTML slides</li>
+            <li>Video, audio and YouTube</li>
+            <li>Photos, web pages, text signs, QR codes</li>
+            <li>Whiteboard, chalkboard, black, timers</li>
+          </ul>
+          <p style="margin-top:8px">Paste any link, or upload a photo from the iPad.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🪟</div>
+          <h3>Split screen &amp; picture-in-picture</h3>
+          <p>Single, side-by-side, stacked, one-big-two-small, a quad grid, or a <strong>PiP inset</strong>
+            in any corner. Each panel keeps its own item, zoom and ink.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">↩️</div>
+          <h3>Back to where you were</h3>
+          <p>Wander off to a photo mid-deck and the <strong>Back to</strong> strip returns you to the exact
+            slide you left, not to the start of the deck.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ink -->
+    <div class="fgroup" id="f-ink">
+      <div class="fgroup-head">
+        <h3>Drawing &amp; pointing</h3>
+        <p>Write on anything with an Apple Pencil, a stylus or a finger.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/features.md#part-2--drawing--pointing">Details →</a>
+      </div>
+      <div class="grid g4">
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">✏️</div>
+          <h3>Live ink</h3>
+          <p>Pen, highlighter and a stroke-by-stroke eraser in any colour and thickness. Ink stays pinned
+            to the slide, and each slide keeps its own drawing.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📐</div>
+          <h3>Clean shapes</h3>
+          <p>Pause at the end of a stroke and it snaps into a straight line, arrow, rectangle or circle.
+            <strong>Undo</strong> and <strong>Undo clear</strong> rescue a slip.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🔴</div>
+          <h3>Laser pointer</h3>
+          <p>Drag across the Now box and a red, green or blue dot follows on the projector, gone
+            the moment you lift your finger.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🔆</div>
+          <h3>Spotlight</h3>
+          <p>Dim everything except a circle around your finger, to point the whole room at one line of an equation.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Media -->
+    <div class="fgroup" id="f-media">
+      <div class="fgroup-head">
+        <h3>Media &amp; sound</h3>
+        <p>A real transport and a real mixer, operated from across the room.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/features.md#part-3--media--sound">Details →</a>
+      </div>
+      <div class="grid g4">
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">▶️</div>
+          <h3>Video, audio &amp; YouTube</h3>
+          <p>Play, pause, scrub, skip ±10s and loop, without the YouTube site or its recommendations
+            ever reaching the projector.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🎵</div>
+          <h3>Background music</h3>
+          <p>Playlists for while the room fills. It ducks under lecture video, fades out over three seconds,
+            and can put a <strong>"We begin in…"</strong> countdown on screen.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🎚️</div>
+          <h3>A four-channel mixer</h3>
+          <p>Separate faders for content, music and microphones, a Master on every tab, and one-tap mute.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🎙️</div>
+          <h3>Your iPad as a microphone</h3>
+          <p>Amplify a controller's mic through the room's speakers. On your own server you can also
+            record it with the lecture.<span class="tag">Server</span></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Screen tools -->
+    <div class="fgroup" id="f-screen">
+      <div class="fgroup-head">
+        <h3>On-screen tools</h3>
+        <p>The small things a lecture needs, one tap away.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/features.md#part-4--on-screen-tools">Details →</a>
+      </div>
+      <div class="grid g4">
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">⏱️</div>
+          <h3>Countdown timers</h3>
+          <p>Up to four at once, run by the display so they stay accurate if your iPad sleeps.
+            Split the screen to show two side by side.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">💬</div>
+          <h3>Full-screen messages</h3>
+          <p>"Back in 5", a discussion prompt, a title card. Light Markdown, five fonts, colours and an
+            optional picture, with a live preview.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🏷️</div>
+          <h3>Watermarks</h3>
+          <p>Your name, course number or logo pinned to a corner through every change. Courses on your
+            own server can set a default.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🔁</div>
+          <h3>Automated sets</h3>
+          <p>A rotation that runs itself (announcements, a QR code, lab rules), each item held for its
+            own seconds, in order or shuffled.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Engaging the room -->
+    <div class="fgroup" id="f-room">
+      <div class="fgroup-head">
+        <h3>Engaging the room</h3>
+        <p>Participation with no apps, no accounts, and no third-party service.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/features.md#part-5--engaging-the-room">Details →</a>
+      </div>
+      <div class="grid g3">
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🗳️</div>
+          <h3>Audience polls<span class="tag">Server</span></h3>
+          <ul>
+            <li>Multiple choice, with an optional <strong>correct answer</strong> for quizzes</li>
+            <li>Short answer, with a <strong>word cloud</strong></li>
+            <li><strong>Q&amp;A</strong> where students upvote questions</li>
+            <li>Voting timers, optional names, CSV export</li>
+          </ul>
+          <p style="margin-top:8px">Results stay on your iPad until you tap <strong>Reveal to room</strong>.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📷</div>
+          <h3>Document camera</h3>
+          <p>Your phone streams its camera to the projector over a direct connection. Freeze frames of
+            student work and hold four up side by side, each ready for ink.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📺</div>
+          <h3>Guest View</h3>
+          <p>Anyone can watch the live screen, with sound, on their own phone or laptop: the back row,
+            or someone not in the room. It's watch-only and signed by the display, and presenter notes
+            and the cue are never included.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Accessibility -->
+    <div class="fgroup" id="f-access">
+      <div class="fgroup-head">
+        <h3>Accessibility</h3>
+        <p>For the students in the room, and for the person at the front of it.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/accessibility.md">Audit →</a>
+      </div>
+      <div class="grid g4">
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🗣️</div>
+          <h3>Live captions</h3>
+          <p>Your speech, captioned along the bottom of the projector by the browser's own speech recognition.
+            Off by default, with its privacy trade-off stated plainly.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📜</div>
+          <h3>Pre-scripted captions</h3>
+          <p>Write a caption or audio description for any planned item. It appears the moment that item goes
+            live, and never overwrites a live transcript.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">♿</div>
+          <h3>Screen readers &amp; contrast</h3>
+          <p>Every control has a name, state changes are announced, text meets WCAG AA contrast, and
+            automated tests keep it that way.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🌗</div>
+          <h3>Light &amp; high contrast</h3>
+          <p>A high-contrast light theme for bright rooms and window glare, or follow the system setting.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sharing -->
+    <div class="fgroup" id="f-share">
+      <div class="fgroup-head">
+        <h3>Sharing the lectern</h3>
+        <p>Co-teachers, TAs and substitutes, without handing over your iPad.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/features.md#part-7--sharing-the-lectern">Details →</a>
+      </div>
+      <div class="grid g3">
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🤝</div>
+          <h3>Pair in seconds</h3>
+          <p>The display shows a QR code. Scan it and the controller opens already configured, then the
+            code hides itself after 90 seconds. Matching four-character codes confirm both ends agree.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">👥</div>
+          <h3>Many controllers, one room</h3>
+          <p>An instructor's iPad, a TA's phone and a laptop at the back all stay in sync, each
+            showing the same cue and the same screen.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🧑‍🏫</div>
+          <h3>Simple Mode for substitutes</h3>
+          <p>A guest link gives a big-button clicker: Next, Previous, Play, Blank and a laser pad.
+            It can't disturb anything you've frozen or cued.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Planning -->
+    <div class="fgroup" id="f-plan">
+      <div class="fgroup-head">
+        <h3>Planning</h3>
+        <p>Do the fiddly part at your desk, not in front of forty people.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/features.md#part-8--planning-lectures">Details →</a>
+      </div>
+      <div class="grid g4">
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🧭</div>
+          <h3>Running order</h3>
+          <p>Drag items into order with notes to yourself, a target length, and saved countdowns that replace the iPad's defaults.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🚀</div>
+          <h3>Auto-launch</h3>
+          <p>Opening the plan can stage every panel, start the music and begin a countdown, live, cued or blacked out.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📦</div>
+          <h3>One portable file</h3>
+          <p>A <code>.podium</code> file carries your slides and photos device to device, and nothing is uploaded anywhere.
+            Or send the plan to your server.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🗜️</div>
+          <h3>Import a whole folder<span class="tag">Server</span></h3>
+          <p>Drop in a ZIP of exported slides, decks, PDFs and media, check what Podium found, then import. Courses can share plan templates.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Yours -->
+    <div class="fgroup" id="f-yours">
+      <div class="fgroup-head">
+        <h3>Make it yours</h3>
+        <p>Every teacher drives differently.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/features.md#part-9--making-the-controller-yours">Details →</a>
+      </div>
+      <div class="grid g4">
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🧩</div>
+          <h3>Your tabs, your dock</h3>
+          <p>Reorder or hide the twelve controller tabs, and fill up to eight bottom-bar shortcut slots.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">⌨️</div>
+          <h3>Keyboards &amp; clickers</h3>
+          <p>A Magic Keyboard or Bluetooth presentation clicker drives the same actions. Press <kbd>?</kbd> for the list.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">⏳</div>
+          <h3>Pacing clock</h3>
+          <p>Set a lecture budget and a top-bar progress bar turns amber near the end and red when you run over.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📳</div>
+          <h3>Little comforts</h3>
+          <p>Haptic ticks, keep-awake, split view on a wide iPad, and optional blackout the moment you connect.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- After -->
+    <div class="fgroup" id="f-after">
+      <div class="fgroup-head">
+        <h3>After class</h3>
+        <p>Take the lecture with you: the slides you marked up and what the room said.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/features.md#part-10--after-class">Details →</a>
+      </div>
+      <div class="grid g3">
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🗃️</div>
+          <h3>Session export</h3>
+          <p>One ZIP, or one merged PDF, with every photo, annotated slide and board you drew on.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🧾</div>
+          <h3>Lecture recap<span class="tag">Server</span></h3>
+          <p>A PDF of the lecture in order: what went up and when, what was said, annotated slides, and each poll's result.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🕰️</div>
+          <h3>Session history<span class="tag">Server</span></h3>
+          <p>Past lectures with their timeline, ink and poll results, downloadable again later and pruned on your schedule.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Server -->
+    <div class="fgroup" id="f-server">
+      <div class="fgroup-head">
+        <h3>Your own server</h3>
+        <p>Optional. Everything above still works without it.</p>
+        <a class="more" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/vps.md">Self-hosting guide →</a>
+      </div>
+      <div class="grid g4">
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🔑</div>
+          <h3>Accounts &amp; courses</h3>
+          <p>Logins for instructors and TAs. A course shares its library, plans and room settings with
+            its members, so a new iPad is just a sign-in.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📚</div>
+          <h3>A shared library</h3>
+          <p>Upload decks, PDFs and media from a browser. The admin page manages themes, music playlists and the built-in tools too.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🪧</div>
+          <h3>Kiosks &amp; signage</h3>
+          <p>Turn a lobby screen into signage. Provision it with one QR code, set plans on a weekly
+            schedule, see when it last checked in, and revoke it remotely.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🩺</div>
+          <h3>Simple to run</h3>
+          <p>One-command install and updates with automatic rollback, nightly backups, a <code>doctor</code>
+            health check and an audit log.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="block alt" id="setup" aria-labelledby="setup-h">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">Choose your setup</p>
+      <h2 id="setup-h">Free to start. Yours to own if you want more.</h2>
+      <p>The pages are the same everywhere. The only choice is which relay carries their sealed messages,
+        and the relay can never read them.</p>
+    </div>
+    <div class="grid g3">
+      <div class="card tier">
+        <p class="price">Free · no signup</p>
+        <h3>Public MQTT broker</h3>
+        <p class="dim">GitHub Pages hosts the pages and a free public broker carries the messages. This is the
+          default, and the <a href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/quickstart.md">quickstart</a>
+          walks through it without a terminal.</p>
+        <ul>
+          <li>About 20 minutes, once</li>
+          <li>No account beyond GitHub</li>
+          <li>Every classroom feature</li>
+        </ul>
+      </div>
+      <div class="card tier rec">
+        <span class="badge">Most classrooms</span>
+        <p class="price">Free</p>
+        <h3>Supabase Realtime</h3>
+        <p class="dim">A managed broadcast channel on Supabase's free tier. No database tables, no server
+          to maintain, and more dependable than a public broker.</p>
+        <ul>
+          <li>Two values to paste into Settings</li>
+          <li>No server to maintain</li>
+          <li>Every classroom feature</li>
+        </ul>
+      </div>
+      <div class="card tier">
+        <p class="price">Low cost</p>
+        <h3>Your own server</h3>
+        <p class="dim">Podium's own Node.js server on a small VPS, with an install script, systemd, nginx and
+          backups. <a href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/deploy/README.md">Deploy guide</a>.</p>
+        <ul>
+          <li>Polls, accounts and courses</li>
+          <li>Shared library and session history</li>
+          <li>Guest View codes, kiosks and recaps</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <caption class="sr-only">What each setup supports</caption>
+        <thead>
+          <tr><th scope="col">Feature</th><th scope="col">MQTT</th><th scope="col">Supabase</th><th scope="col">Own server</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">Slides, PDFs, media, ink, layouts, timers, music, captions</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+          <tr><th scope="row">Document camera, sets, messages, watermark, session export</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+          <tr><th scope="row">Plan files, pairing, Simple Mode, Guest View links</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+          <tr><th scope="row">Audience polls, quizzes, Q&amp;A, word clouds</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
+          <tr><th scope="row">Accounts, courses, uploads, stored plans, templates</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
+          <tr><th scope="row">Session history, lecture recaps, mic recording</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
+          <tr><th scope="row">Guest View typed codes, kiosk profiles, PowerPoint conversion</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="block" id="security" aria-labelledby="security-h">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">Privacy &amp; reliability</p>
+      <h2 id="security-h">Built for campus Wi-Fi and a live audience</h2>
+      <p>Classroom networks are shared and a lecture can't be restarted, so Podium assumes the network is
+        watched and that it might drop.</p>
+    </div>
+    <div class="grid g2">
+      <div class="card">
+        <h3 style="margin-bottom:14px">🔒 Sealed in the browser</h3>
+        <div class="grid" style="gap:14px">
+          <div class="fact"><span class="num">AES-256</span><p><strong>Every message is encrypted</strong> (AES-GCM) before it leaves the device. The relay routes by room name and sees only ciphertext.</p></div>
+          <div class="fact"><span class="num">150,000</span><p><strong>PBKDF2 rounds</strong> turn your passphrase into the key, which makes guessing slow. Use three or four random words.</p></div>
+          <div class="fact"><span class="num">#</span><p><strong>The pairing link keeps the passphrase after the <code>#</code></strong>, the part of a URL browsers never send to a server.</p></div>
+          <div class="fact"><span class="num">0</span><p><strong>No analytics, no tracking, no company</strong> holding your lecture material.</p></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:14px">🛟 Keeps going when things go wrong</h3>
+        <div class="grid" style="gap:14px">
+          <div class="fact"><span class="num">Offline</span><p><strong>A service worker caches the pages</strong>, so loaded slides, ink and timers keep working if the campus network drops.</p></div>
+          <div class="fact"><span class="num">Reload</span><p><strong>The display resumes the lecture</strong> after a crash or refresh, or starts black if you prefer.</p></div>
+          <div class="fact"><span class="num">Build</span><p><strong>Out-of-date copies are detected.</strong> A controller says which device is running old code and offers to reload it.</p></div>
+          <div class="fact"><span class="num">Tests</span><p><strong>Over two dozen unit suites and a browser end-to-end suite</strong> run on every change, covering freeze safety, ink, audio math and encryption.</p></div>
+        </div>
+      </div>
+    </div>
+    <p class="note"><strong>Stated plainly:</strong> two things step outside the encryption, and both are opt-in.
+      Audience polls go through your own server, because students' phones don't hold the room key.
+      Live captions in Chrome and Edge send audio to Google for recognition, while Safari recognizes speech
+      on the device. The <a href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/architecture.md#security--end-to-end-cryptography">architecture guide</a> explains both.</p>
+  </div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="block alt" id="keys" aria-labelledby="keys-h">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">Keyboard shortcuts</p>
+      <h2 id="keys-h">For a clicker, a keyboard, or the lectern PC</h2>
+      <p>Press <kbd>?</kbd> on either page for the full, current list. Shortcuts never fire while you're typing in a field.</p>
+    </div>
+    <div class="grid g2">
+      <div class="card">
+        <h3>On the controller</h3>
+        <ul class="keys">
+          <li><span class="k"><kbd>B</kbd> <kbd>F</kbd></span><span>Blank or freeze the screen</span></li>
+          <li><span class="k"><kbd>T</kbd> <kbd>C</kbd></span><span>TAKE the cue live, or clear it</span></li>
+          <li><span class="k"><kbd>←</kbd> <kbd>→</kbd> <kbd>Space</kbd></span><span>Page through a deck, or play and pause media</span></li>
+          <li><span class="k"><kbd>P</kbd> <kbd>⇧P</kbd></span><span>Photograph the focused panel, or the whole screen</span></li>
+          <li><span class="k"><kbd>W</kbd> <kbd>M</kbd> <kbd>R</kbd></span><span>Whiteboard, music, run the selected timer</span></li>
+          <li><span class="k"><kbd>[</kbd> <kbd>]</kbd></span><span>Step through your tabs</span></li>
+          <li><span class="k"><kbd>1</kbd>–<kbd>5</kbd> <kbd>⌘Z</kbd></span><span>Pick an ink tool, undo a stroke</span></li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>On the classroom display</h3>
+        <ul class="keys">
+          <li><span class="k"><kbd>G</kbd></span><span>Go live: fullscreen, sound, and keep the screen awake</span></li>
+          <li><span class="k"><kbd>P</kbd></span><span>Show or hide the pairing QR code</span></li>
+          <li><span class="k"><kbd>F</kbd></span><span>Toggle fullscreen</span></li>
+          <li><span class="k"><kbd>E</kbd></span><span>End of class: back to the Go live screen</span></li>
+          <li><span class="k"><kbd>S</kbd></span><span>Open Settings</span></li>
+          <li><span class="k"><kbd>B</kbd></span><span>Back to the Podium home page</span></li>
+          <li><span class="k"><kbd>Esc</kbd></span><span>Close whatever is open</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================================================================== -->
+<section class="block" id="docs" aria-labelledby="docs-h">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">Documentation</p>
+      <h2 id="docs-h">Go as deep as you like</h2>
+      <p>Start at the top. Most teachers never need to go past the first two.</p>
+    </div>
+    <div class="grid g3">
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/quickstart.md">
+        <h3>🚀 Quickstart</h3>
+        <p>Put Podium online for free in about twenty minutes, in plain English, with no terminal.</p>
+        <span class="for">For every teacher</span>
+      </a>
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/features.md">
+        <h3>🎨 Features &amp; teaching guide</h3>
+        <p>Every feature in detail, organized the same way as this page.</p>
+        <span class="for">For every teacher</span>
+      </a>
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/troubleshooting.md">
+        <h3>🩺 Troubleshooting</h3>
+        <p>What the status messages mean, stale builds, and how to reset one device.</p>
+        <span class="for">When something's off</span>
+      </a>
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/vps.md">
+        <h3>🖥️ Self-hosting</h3>
+        <p>Accounts, courses, the library, session records, kiosks, and why each is built the way it is.</p>
+        <span class="for">For IT and the curious</span>
+      </a>
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/deploy/README.md">
+        <h3>📦 Deploying &amp; operating</h3>
+        <p>Install, update, back up, restore and check up on a server.</p>
+        <span class="for">For whoever runs the box</span>
+      </a>
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/architecture.md">
+        <h3>🏗️ Architecture &amp; security</h3>
+        <p>The no-framework design, the protocol, the relays, and the cryptography.</p>
+        <span class="for">For developers</span>
+      </a>
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/accessibility.md">
+        <h3>♿ Accessibility audit</h3>
+        <p>What was checked, what was fixed, and what is still open.</p>
+        <span class="for">For accessibility staff</span>
+      </a>
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/testing.md">
+        <h3>🧪 Testing</h3>
+        <p>The unit suites, the end-to-end suite, and how to run them.</p>
+        <span class="for">For contributors</span>
+      </a>
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/roadmap.md">
+        <h3>🗺️ Audience participation design</h3>
+        <p>How polls were designed, and why results wait for the presenter.</p>
+        <span class="for">For the curious</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p style="margin:0">Podium is open source, part of Jon Westfall's
+      <a href="https://github.com/jonwestfall/useful-scripts">Useful Scripts</a>.
+      Designed by one teacher for real classrooms.</p>
+    <nav aria-label="Footer">
+      <a href="index.html">Open Podium</a>
+      <a href="https://github.com/jonwestfall/useful-scripts/tree/main/podium">Source</a>
+      <a href="https://github.com/jonwestfall/useful-scripts/issues">Report an issue</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

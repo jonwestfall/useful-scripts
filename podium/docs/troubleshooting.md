@@ -56,9 +56,9 @@ Both the display and controller provide plain-language status logs indicating th
 
 ## 2. Versioning & Stale Build Detection
 
-Podium tracks two identifiers defined in [`assets/js/protocol.js`](file:///Users/jon/projects/git/useful-scripts/podium/assets/js/protocol.js):
+Podium tracks two identifiers defined in [`assets/js/protocol.js`](../assets/js/protocol.js):
 
-*   **Version** (e.g., `1.0`): The semantic release number.
+*   **Version** (e.g., `1.1`): The semantic release number.
 *   **Build** (e.g., `23`): An auto-incrementing integer tracking individual deployments.
 
 ### Where to inspect your build number

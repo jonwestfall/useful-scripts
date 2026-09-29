@@ -505,9 +505,8 @@
       A kiosk profile is a room set aside for a display nobody is running - a lobby screen,
       hallway signage. Provisioning a device is one scan: the QR below carries a one-time
       link a blank device's own browser redeems for its connection settings, never the
-      passphrase itself sitting in a URL. Revoking a profile stops that link from working on
-      any device that has not already used it - it cannot reach out and reconfigure one that
-      has.
+      passphrase itself sitting in a URL. Revoking a profile stops that link from working, and a
+      device that already used it loses its kiosk credential on its next request.
     </p>
     <div id="kiosks"></div>
     <span class="hint" id="kiosks-note" role="status"></span>

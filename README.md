@@ -74,17 +74,16 @@ python redactor_gui_win.py
 The PC opens one fullscreen browser tab and is never touched again; everything on the
 projector is chosen from a tablet or phone, from anywhere in the room.
 
-- Present **Marp decks written in Markdown**, with presenter notes on the iPad, your own CSS themes, and math via KaTeX
-- Show PDFs, images, video, YouTube, music, a QR code, a countdown, or your phone's camera
-- **Freeze** holds the projector while you line up the next thing in the cue — the class sees none of it — then **TAKE** cuts to it
-- Annotate live over whatever is on screen with an Apple Pencil
-- iPad and iPhone can both be connected at once and stay in sync
-- Three static pages: runs on GitHub Pages, a VPS, or a folder on disk
+- **Freeze** holds the projector while you line up the next thing in the cue, then **TAKE** cuts to it
+- Marp decks in Markdown, PDFs, video, YouTube, music, timers, QR codes, and your phone as a document camera
+- Live ink with an Apple Pencil, a laser and spotlight, split screen and picture-in-picture
+- Audience polls, quizzes and Q&A from students' phones, live captions, and a watch-only Guest View
+- A planning page for your office, a Simple Mode for substitutes, and an optional server with accounts, courses, session history and kiosk signage
+- Plain static pages: runs on GitHub Pages, a VPS, or a folder on disk, with every message encrypted in the browser
 
-Messages travel via Supabase Realtime, your own tiny Node relay, or a public MQTT
-broker, and are encrypted in the browser so the relay only ever moves ciphertext.
+Designed and built by Jon Westfall, drawing on more than twenty years of classroom teaching.
 
-See [`podium/README.md`](podium/README.md) for setup.
+See [`podium/README.md`](podium/README.md) to get started, or [`podium/guide.html`](podium/guide.html) for the illustrated tour.
 
 ---
 
