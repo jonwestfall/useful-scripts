@@ -31,6 +31,13 @@ podium/test/
 ├── tabsettings.test.mjs  # Customizable/collapsible controller tab bar (Issue #76)
 ├── templates.test.mjs    # Course-level plan templates, against a real SQLite file (Issue #80)
 ├── offline-shell.test.mjs # The offline shell warms everything the pages load at startup (Issue #130)
+├── a11y.test.mjs         # Accessibility guard rails: labels, names, live regions, contrast, focus (Issue #156)
+├── kiosk-open-paths.test.mjs # Kiosk and Guest View open-path lists match what the pages load (Issues #151, #150)
+├── pptx-convert.test.mjs # PowerPoint-to-PDF conversion via LibreOffice (Issue #107)
+├── recap.test.mjs        # Lecture recap assembly: timeline, captions, polls, kept pictures (Issue #158)
+├── view-codes.test.mjs   # Typed Guest View codes and their rate limiting (Issue #150)
+├── zip-import.test.mjs   # Inspecting a ZIP before import, and the limits on hostile archives (Issue #106)
+├── zip-staging.test.mjs  # ZIP import end to end on the server: stage, review, commit (Issue #106)
 ├── e2e.mjs               # Runs every end-to-end group below
 └── e2e/
     ├── harness.mjs       # Shared setup: fixtures, relay, browser, ok()/trap()/--only

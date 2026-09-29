@@ -130,8 +130,10 @@ const AUTH_OPEN_PATHS = new Set([
 // from the *accounts* check only (see gate() in api.js). A self-hosted
 // instance using the simpler AUTH_PASSWORD gate instead of accounts chose
 // that specifically to keep the whole thing off the public internet, splash
-// included, and still gets challenged for these two paths like every other.
-const AUTH_PUBLIC_WITH_ACCOUNTS = new Set(['/', '/index.html']);
+// included, and still gets challenged for these paths like every other.
+// guide.html is the same kind of page: a self-contained, script-free tour
+// of what Podium is, linked from the showcase and loading nothing else.
+const AUTH_PUBLIC_WITH_ACCOUNTS = new Set(['/', '/index.html', '/guide.html']);
 
 // What a provisioned kiosk (Issue #151) is let onto with its own cookie
 // instead of a signed-in user - display.html itself, plus every file it
