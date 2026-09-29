@@ -40,6 +40,21 @@ export const DEFAULTS = {
   // carried by a pairing link (see pairingUrl below), since pairing hands
   // out a second device's controller, not another display's own settings.
   kiosk: false,
+  // Guest View (Issue #150): this display's own view channel - a room id and
+  // key of its own, never the class's, made the first time someone opens the
+  // Guest view QR and kept until "New viewer link" replaces them. viewCode is
+  // the typed code the relay last gave it, asked for again each Go live so a
+  // code written on a syllabus keeps working. None of these is ever carried
+  // by a pairing link: they belong to this one display.
+  viewId: '',
+  viewKey: '',
+  viewCode: '',
+  // The signing key everything this display sends viewers is signed with
+  // (a private JWK, as JSON), and its public half - which is what a viewer
+  // link carries, as `vk`, so viewers can tell the display from each other.
+  // See the signing section of crypto.js.
+  viewSignKey: '',
+  viewPub: '',
 };
 
 const KEYS = Object.keys(DEFAULTS);
@@ -95,6 +110,8 @@ function fromHash() {
   const map = {
     t: 'transport', r: 'room', p: 'passphrase',
     su: 'supabaseUrl', sk: 'supabaseKey', mu: 'mqttUrl', wu: 'wsUrl',
+    // Guest View only: the display's public signing key (see viewerUrl).
+    vk: 'viewPub',
   };
   for (const [short, long] of Object.entries(map)) {
     if (params.has(short)) out[long] = params.get(short);
@@ -135,6 +152,26 @@ function clean(obj) {
   const out = {};
   for (const k of KEYS) if (obj[k] !== undefined && obj[k] !== '') out[k] = obj[k];
   return out;
+}
+
+/**
+ * A Guest View viewer's whole configuration: what its link carries, and
+ * nothing else - never localStorage, never config.json, never the server's
+ * course settings. A viewer is a stranger's phone, not a device being set up,
+ * so nothing here is saved, and the link stays in the address bar so a reload
+ * still works.
+ */
+export function viewerConfig() {
+  return { ...DEFAULTS, ...clean(fromHash()) };
+}
+
+/** The link a viewer opens: view.html with the view channel in its fragment. */
+export function viewerUrl(cfg, channel, base = new URL('view.html', location.href)) {
+  const url = new URL(pairingUrl({ ...cfg, room: channel.room, passphrase: channel.passphrase }, base));
+  const params = new URLSearchParams(url.hash.replace(/^#/, ''));
+  params.set('vk', cfg.viewPub);
+  url.hash = params.toString();
+  return url.toString();
 }
 
 export async function loadConfig() {

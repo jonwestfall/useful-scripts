@@ -51,9 +51,10 @@ async function startRelay(env) {
 // closed with a code (MAX_PER_ROOM/MAX_ROOMS - the connection completed,
 // the relay is declining it), or the raw socket being destroyed mid-upgrade
 // (the per-IP throttle - never even gets to a WebSocket close code).
-function connect(port, room) {
+function connect(port, room, { cookie } = {}) {
   return new Promise((resolve) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/podium?room=${encodeURIComponent(room)}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/podium?room=${encodeURIComponent(room)}`,
+      cookie ? { headers: { cookie } } : undefined);
     const result = { ws, opened: false, closeCode: null, closeReason: '', errored: false };
     let settled = false;
     const finish = () => { if (!settled) { settled = true; resolve(result); } };
@@ -132,6 +133,74 @@ function connect(port, room) {
   ok(`a real relay round-trips a message between two peers (${result.detail})`, result.level === 'ok');
   proc.kill();
 }
+// --- Guest View rooms (Issue #150): a lecture hall of phones, not a handful
+// of devices - their own ceiling, and the one kind of room an anonymous
+// viewer may join on an instance with accounts, once a signed-in display is
+// in it. -----------------------------------------------------------------------
+{
+  const { port, proc } = await startRelay({ MAX_VIEWERS_PER_ROOM: '15' });
+  const viewers = [];
+  for (let i = 0; i < 15; i++) viewers.push(await connect(port, 'view.RelayTest01'));
+  ok('a view room takes more than the 12 a control room does', viewers.every((p) => p.opened && p.closeCode === null));
+  const extra = await connect(port, 'view.RelayTest01');
+  ok('but still has a ceiling of its own', extra.closeCode === 1013 && extra.closeReason === 'room full');
+  const lookalike = [];
+  for (let i = 0; i < 13; i++) lookalike.push(await connect(port, 'view-RelayTest02'));
+  ok('a room merely named like one gets the ordinary 12', lookalike.filter((p) => p.opened && p.closeCode === null).length === 12);
+  for (const p of [...viewers, extra, ...lookalike]) p.ws.terminate();
+  proc.kill();
+}
+{
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const store = require('../server/store.js');
+  const accounts = require('../server/accounts.js');
+  const dataDir = mkdtempSync(path.join(tmpdir(), 'podium-relay-'));
+  const db = store.open(dataDir);
+  const user = await accounts.createUser(db, { username: 'presenter', password: 'a long enough password' });
+  const cookie = `podium_session=${accounts.startSession(db, user.id)}`;
+  db.close();
+  const { port, proc } = await startRelay({ DATA_DIR: dataDir });
+
+  const early = await connect(port, 'view.RelayTest03');
+  ok('with accounts, an anonymous viewer cannot open a view room nobody is hosting', !early.opened);
+  const control = await connect(port, 'relay-test-control-room');
+  ok('and still cannot join an ordinary room at all', !control.opened);
+
+  const display = await connect(port, 'view.RelayTest03', { cookie });
+  ok('a signed-in display opens its view room', display.opened && display.closeCode === null);
+  const viewer = await connect(port, 'view.RelayTest03');
+  ok('after which an anonymous viewer may join it', viewer.opened && viewer.closeCode === null);
+
+  const heard = new Promise((resolve) => { viewer.ws.once('message', (d) => resolve(String(d))); setTimeout(() => resolve(null), 1000); });
+  display.ws.send('sealed-state-snapshot');
+  ok('and receives what the display sends there', (await heard) === 'sealed-state-snapshot');
+
+  // The viewer pass: the files a live display is showing, and nothing else.
+  const base = `http://127.0.0.1:${port}`;
+  const pass = async (room) => fetch(`${base}/view-pass`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ room }),
+  });
+  ok('no pass for a view room nobody is hosting', (await pass('view.NobodyHere1')).status === 404);
+  ok('or for something that is not a view room at all', (await pass('relay-test-control-room')).status === 400);
+  const granted = await pass('view.RelayTest03');
+  const viewerCookie = (granted.headers.get('set-cookie') || '').split(';')[0];
+  ok('a viewer of a live view room is handed a pass', granted.status === 200 && viewerCookie.startsWith('podium_viewer='));
+  const get = (p, withPass = true) => fetch(`${base}${p}`, { redirect: 'manual', headers: withPass ? { cookie: viewerCookie } : {} });
+  ok('without it, a stranger cannot read the course\'s files', (await get('/content/decks/example-builds.md', false)).status === 401);
+  ok('with it, the files the display shows are readable', (await get('/content/decks/example-builds.md')).status === 200);
+  ok('but never a page', [302, 401].includes((await get('/control.html')).status));
+  ok('or the API', (await get('/api/courses')).status === 401);
+
+  display.ws.terminate();
+  await new Promise((r) => setTimeout(r, 300));
+  ok('and the pass is worth nothing once the display stands down', (await get('/content/decks/example-builds.md')).status === 401);
+
+  for (const p of [early, control, display, viewer]) p.ws.terminate();
+  proc.kill();
+  rmSync(dataDir, { recursive: true, force: true });
+}
+
 {
   // Nothing listening on this port at all - the same shape of failure as a
   // firewall rule or a proxy that never forwards the WS upgrade.

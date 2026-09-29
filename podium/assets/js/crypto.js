@@ -74,3 +74,47 @@ export async function fingerprint(passphrase, room) {
   const digest = await crypto.subtle.digest('SHA-256', enc.encode(`podium|fp|${room}|${passphrase}`));
   return Array.from(new Uint8Array(digest).slice(0, 2), (b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
 }
+
+// --- signing, for Guest View (Issue #150) ------------------------------------
+//
+// The view channel is sealed under a key every viewer holds - which keeps it
+// private from the relay and from strangers, but means any one viewer could
+// also SEND on it, and show every other guest a slide the presenter never put
+// up. So the display signs what it sends there with a key only it holds
+// (ECDSA P-256), the public half travels in the viewer link, and a viewer acts
+// on nothing that does not verify. Viewers still cannot reach the real room at
+// all - that was never in question; this is about them fooling each other.
+
+const SIGN_ALG = { name: 'ECDSA', namedCurve: 'P-256' };
+const SIGN_PARAMS = { name: 'ECDSA', hash: 'SHA-256' };
+
+/** A fresh keypair, as { privateJwk, publicKey } - the second is what goes in a link. */
+export async function makeSigningKey() {
+  const pair = await crypto.subtle.generateKey(SIGN_ALG, true, ['sign', 'verify']);
+  const privateJwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+  const publicKey = b64.encode(await crypto.subtle.exportKey('raw', pair.publicKey));
+  return { privateJwk, publicKey };
+}
+
+export const importSigningKey = (privateJwk) =>
+  crypto.subtle.importKey('jwk', privateJwk, SIGN_ALG, false, ['sign']);
+
+export async function importVerifyKey(publicKey) {
+  try {
+    return await crypto.subtle.importKey('raw', b64.decode(publicKey), SIGN_ALG, false, ['verify']);
+  } catch {
+    return null;
+  }
+}
+
+export async function signText(key, text) {
+  return b64.encode(await crypto.subtle.sign(SIGN_PARAMS, key, enc.encode(text)));
+}
+
+export async function verifyText(key, text, signature) {
+  try {
+    return await crypto.subtle.verify(SIGN_PARAMS, key, b64.decode(String(signature || '')), enc.encode(String(text)));
+  } catch {
+    return false;
+  }
+}

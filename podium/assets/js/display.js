@@ -13,11 +13,14 @@ import {
   enterFullscreen, exitFullscreen, toggleFullscreen, isFullscreen, onFullscreenChange,
   safeStorageSet,
 } from './util.js';
-import { loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl } from './config.js';
+import {
+  loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl,
+  viewerConfig, viewerUrl,
+} from './config.js';
 import { createBus } from './bus.js';
 import {
   initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, focusedItem, timerById, BUILD, VERSION, versionStamp,
-  watermarkForNewLecture,
+  watermarkForNewLecture, viewerState, viewChannel, stripDeckNotes,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
@@ -28,6 +31,7 @@ import { serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
 import { deckId } from './deck.js';
 import { createCaptionLog } from './caption-log.js';
+import { makeSigningKey, importSigningKey, importVerifyKey, signText, verifyText } from './crypto.js';
 
 const HEARTBEAT_MS = 2000;
 const TELEMETRY_MS = 400;
@@ -56,13 +60,20 @@ const standby = $('#standby');
 const setupEl = $('#setup');
 const armEl = $('#arm');
 
-let cfg = await loadConfig();
+// Guest View (Issue #150): view.html runs this same file as a VIEWER - the
+// same renderers, ink, layouts, watermark and captions, fed from the signed
+// snapshots a live display sends its view channel, never from controllers.
+// Everything a viewer must not do (record, broadcast, save, answer the room,
+// take keyboard shortcuts, arm) is switched off where it happens, by this.
+const VIEWER = document.body.dataset.viewer === 'yes';
+
+let cfg = VIEWER ? viewerConfig() : await loadConfig();
 let bus = null;
 let state = initialState();
 let cameraStream = null;
 let wakeLock = null;
 
-restoreInk();
+if (!VIEWER) restoreInk();
 
 // Marp decks the display has the markdown for. A deck loaded from the server is
 // fetched here directly; one uploaded from an iPad arrives over the bus and is
@@ -469,12 +480,15 @@ watchPixelRatio();
 // been left open since before a deploy - so it states its build in Settings,
 // reports it to controllers (see wireState), and checks on load whether the
 // copy it is running is one the server has already replaced.
-$('#version-number').textContent = VERSION;
-$('#build-number').textContent = String(BUILD);
+// Not on view.html, which has no Settings sheet to put it in.
+if (!VIEWER) {
+  $('#version-number').textContent = VERSION;
+  $('#build-number').textContent = String(BUILD);
+}
 const displayStamp = $('#display-version-stamp');
 if (displayStamp) displayStamp.textContent = versionStamp();
 servedBuild().then((served) => {
-  if (served === null || served === BUILD) return;
+  if (VIEWER || served === null || served === BUILD) return;
   $('#build-check').textContent = ` — but the server is serving build ${served}, so this page came from a cache. Reload it.`;
   $('#build-note').classList.add('is-stale');
   // Deliberately NOT setHud('error'): the HUD is the RELAY's channel, and a
@@ -981,6 +995,7 @@ function syncMusic() {
 // applyCommand like anything else and is broadcast: every controller's queue
 // moves on with it.
 musicEl.addEventListener('ended', () => {
+  if (VIEWER) return;   // the display moves the queue on; its next snapshot says so
   if (applyCommand(state, { op: 'music', action: 'next', auto: true })) {
     if (!state.music.playing) musicEl.currentTime = 0;
     commit();
@@ -1190,6 +1205,8 @@ function drawWatermark(ctx, rect) {
 const lastSeenSetKey = new Map();   // panel index (0=A) -> item.key last ticked there
 
 function tickSets() {
+  // A viewer's sets advance when the display's do, in the next snapshot.
+  if (VIEWER) return;
   let changed = false;
   for (let panel = 0; panel < 4; panel++) {
     const item = panel === 0 ? state.program : state.panels[panel - 1];
@@ -1228,7 +1245,7 @@ function pollItems() {
 
 async function tickPolls() {
   const base = pollBaseUrl(cfg);
-  if (!base) return;
+  if (!base || VIEWER) return;
   // A redisplayed poll from history carries a pollId (for a stable ink key)
   // but no token - it is a frozen snapshot of a question that finished, not a
   // live one, and has nothing on the relay left to fetch.
@@ -1353,7 +1370,7 @@ function noteCaption() {
 // on the projector being written down is the sort of thing people should not
 // have to go looking for.
 serverInfo().then((info) => {
-  if (!info.features.includes('sessions')) return;
+  if (VIEWER || !info.features.includes('sessions')) return;
   const note = $('#arm-record');
   note.textContent = 'This lecture is saved to the server: what went on screen, your ink, any poll results and the text of any captions shown. Photos are kept only if a controller is set to keep them.';
   note.hidden = false;
@@ -1794,6 +1811,7 @@ function render() {
 }
 
 function updateStandby() {
+  if (VIEWER) return;
   const noController = !bus || !bus.hasPeer('control');
   const idle = state.program?.type === 'black' && !state.preview;
   // The arming sheet owns the screen until it is dismissed.
@@ -1831,6 +1849,12 @@ function wireState() {
       surfaces: Object.keys(inkState.bySurface).filter((k) => inkState.bySurface[k]?.strokes?.length > 0),
     },
     stageAspect: stage.clientWidth && stage.clientHeight ? stage.clientWidth / stage.clientHeight : 16 / 9,
+    // Guest View (Issue #150), for the controllers only - viewerState leaves
+    // all three out: how many are watching, and the link and code a
+    // controller can put on the projector for the room to scan.
+    viewers: viewerCount,
+    viewerLink: viewChannel(cfg) && cfg.viewPub ? viewerUrl(cfg, viewChannel(cfg)) : '',
+    viewerCode: viewCodeLive ? cfg.viewCode : '',
     // Where the music has got to, and whether something on screen is currently
     // talking over it - both things a controller can only learn from here.
     musicNow: {
@@ -1851,10 +1875,232 @@ function telemetry() {
 }
 
 function broadcast() {
+  if (VIEWER) return;
   bus?.send({ t: 'state', state: wireState(), telemetry: telemetry() });
+  sendViewerState();
 }
 
 const broadcastSoon = throttle(broadcast, 60);
+
+// --- Guest View: the projector's side (Issue #150) ---------------------------
+//
+// A second, separate connection - to this display's own view room, under its
+// own key (see viewChannel in protocol.js) - that carries what is on the
+// projector and nothing else, to anyone holding the viewer link. Viewers
+// never hold the room passphrase, so nothing they send can reach the room;
+// and everything sent here is signed with a key only this display holds, so
+// one viewer cannot show the others something the presenter never put up.
+//
+// What goes out: a filtered snapshot on every broadcast (viewerState), the
+// ink of every surface on screen - pushed to all viewers at once when it
+// changes, rather than pulled by each, which at a lecture hall's scale is the
+// difference between one message and a hundred per stroke - and answers to a
+// viewer's own requests for a picture, a deck (notes stripped) or a surface.
+let viewBus = null;
+let viewSigner = null;
+let viewerCount = 0;
+const viewerInk = new Map();     // surface key -> digest viewers were last sent
+const viewerInkTimers = new Map();
+const VIEWER_INK_MS = 400;
+
+/** This display's view channel, made the first time anyone asks for a viewer link. */
+async function ensureViewChannel() {
+  if (!cfg.viewId || !cfg.viewKey || !cfg.viewSignKey || !cfg.viewPub) {
+    const signing = await makeSigningKey();
+    cfg.viewId = uid(16);
+    cfg.viewKey = uid(32);
+    cfg.viewCode = '';
+    cfg.viewSignKey = JSON.stringify(signing.privateJwk);
+    cfg.viewPub = signing.publicKey;
+    saveConfig(cfg);
+  }
+  return viewChannel(cfg);
+}
+
+async function connectView() {
+  const channel = viewChannel(cfg);
+  if (VIEWER || !channel || viewBus) return;
+  viewSigner = await importSigningKey(JSON.parse(cfg.viewSignKey));
+  viewBus = await createBus({
+    cfg: { ...cfg, room: channel.room, passphrase: channel.passphrase },
+    role: 'display',
+    onPeers: (peers) => {
+      viewerCount = peers.filter((p) => p.role === 'viewer').length;
+      renderViewerCount();
+      broadcastSoon();   // so the controllers' count moves too
+    },
+    onMessage: onViewerRequest,
+  });
+  sendViewerState();
+}
+
+/** Everything that goes to viewers goes through here, signed. */
+async function sendToViewers(msg) {
+  if (!viewBus || !viewSigner) return;
+  const body = JSON.stringify(msg);
+  viewBus.send({ t: 'signed', to: msg.to, body, sig: await signText(viewSigner, body) });
+}
+
+/** inkSurfaceKey -> inkDigest for every panel actually on screen. */
+function onScreenSurfaces() {
+  const out = {};
+  for (const { item } of activePanels()) {
+    const key = inkSurfaceKey(item);
+    out[key] = inkDigest(state.ink.bySurface[key]?.strokes);
+  }
+  return out;
+}
+
+function sendViewerState() {
+  if (!viewBus) return;
+  // Between lectures a viewer sees nothing of what the projector last showed.
+  if (!state.armed) { sendToViewers({ t: 'state', state: { armed: false } }); return; }
+  const surfaces = onScreenSurfaces();
+  sendToViewers({ t: 'state', state: viewerState(wireState(), surfaces), telemetry: telemetry() });
+  for (const [key, digest] of Object.entries(surfaces)) {
+    if (viewerInk.get(key) === digest) continue;
+    viewerInk.set(key, digest);
+    // Trailing, per surface: a stroke being drawn changes the digest on every
+    // point, and viewers need the finished shape a moment later, not each point.
+    if (!viewerInkTimers.has(key)) {
+      viewerInkTimers.set(key, setTimeout(() => { viewerInkTimers.delete(key); sendInkToViewers(key); }, VIEWER_INK_MS));
+    }
+  }
+}
+
+function sendInkToViewers(key, to) {
+  const slices = chunkStrokes(state.ink.bySurface[key]?.strokes || []);
+  // A cleared board is news too - one empty slice says so.
+  if (!slices.length) slices.push([]);
+  slices.forEach((part, i) => sendToViewers({
+    t: 'ink-surface', ...(to ? { to } : {}), surface: key, seq: i, last: i === slices.length - 1, strokes: part,
+  }));
+}
+
+/** Whether `ref` is something a viewer is being shown right now. */
+function onScreenForViewers(ref) {
+  const shown = viewerState(wireState());
+  return JSON.stringify([shown.program, shown.panels, shown.watermark]).includes(ref);
+}
+
+// A viewer asking for something. Nothing here applies a command - the view
+// channel is not a way into this screen's state, only out of it - and each
+// answer is limited to what the projector is showing now, so a viewer cannot
+// walk the lecture's other pictures or decks by guessing ids.
+function onViewerRequest(msg) {
+  if (!state.armed) { if (msg.t === 'hello') sendViewerState(); return; }
+  if (msg.t === 'hello' || msg.t === 'sync') { sendViewerState(); return; }
+  if (msg.t === 'asset-need' && onScreenForViewers(`asset:${msg.id}`)) {
+    const data = assetStore.get(msg.id);
+    if (data != null) sendToViewers({ t: 'asset', to: msg.from, id: msg.id, data });
+    return;
+  }
+  if (msg.t === 'deck-need' && onScreenForViewers(`"deckId":"${msg.id}"`)) {
+    const source = deckStore.get(msg.id);
+    if (typeof source === 'string') sendToViewers({ t: 'deck', to: msg.from, id: msg.id, source: stripDeckNotes(source) });
+    return;
+  }
+  if (msg.t === 'ink-pull' && Object.hasOwn(onScreenSurfaces(), msg.surface)) sendInkToViewers(msg.surface, msg.from);
+}
+
+// The typed code (see server/view-codes.js): only where this display's relay
+// is Podium's own server, since that is what answers codes. Held while live,
+// touched every minute, released at stand-down - the code on the syllabus is
+// kept (cfg.viewCode, asked for again next Go live), but only answers during
+// class.
+let viewCodeTimer = null;
+let viewCodeLive = false;    // the relay answers cfg.viewCode right now
+const VIEW_CODE_TOUCH_MS = 60 * 1000;
+
+// What proves to the relay this display still holds its code - kept across a
+// reload of this page (in this browser only, never in a pairing link), or a
+// display reloaded mid-lecture would find its own code still taken and be
+// handed a different one, breaking the one on the syllabus.
+const VIEW_CODE_TOKEN_KEY = 'podium.view-code-token';
+let viewCodeToken = (() => {
+  if (VIEWER) return '';
+  try { return localStorage.getItem(VIEW_CODE_TOKEN_KEY) || ''; } catch { return ''; }
+})();
+function keepViewCodeToken(token) {
+  viewCodeToken = token;
+  try {
+    if (token) localStorage.setItem(VIEW_CODE_TOKEN_KEY, token);
+    else localStorage.removeItem(VIEW_CODE_TOKEN_KEY);
+  } catch { /* private mode: a reload may get a new code */ }
+}
+
+async function registerViewCode() {
+  const base = pollBaseUrl(cfg);
+  const channel = viewChannel(cfg);
+  if (VIEWER || !base || !channel || !state.armed) return;
+  try {
+    const res = await fetch(`${base}view-code`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(viewCodeToken ? { authorization: `Bearer ${viewCodeToken}` } : {}) },
+      body: JSON.stringify({ want: cfg.viewCode, link: new URL(viewerUrl(cfg, channel)).hash }),
+    });
+    if (!res.ok) return;
+    const { code, token } = await res.json();
+    keepViewCodeToken(token);
+    viewCodeLive = true;
+    if (code !== cfg.viewCode) { cfg.viewCode = code; saveConfig(cfg); }
+    renderViewerLink();
+    broadcastSoon();
+  } catch { /* no code today; the QR still works */ }
+  clearInterval(viewCodeTimer);
+  viewCodeTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`${base}view-code/${encodeURIComponent(cfg.viewCode)}`, {
+        method: 'PUT', headers: { authorization: `Bearer ${viewCodeToken}` },
+      });
+      // The relay restarted, or it lapsed while this screen was asleep.
+      if (res.status === 404) { keepViewCodeToken(''); registerViewCode(); }
+    } catch { /* try again next minute */ }
+  }, VIEW_CODE_TOUCH_MS);
+}
+
+function releaseViewCode() {
+  clearInterval(viewCodeTimer);
+  viewCodeTimer = null;
+  viewCodeLive = false;
+  const base = pollBaseUrl(cfg);
+  if (!base || !viewCodeToken || !cfg.viewCode) return;
+  const token = viewCodeToken;
+  keepViewCodeToken('');
+  fetch(`${base}view-code/${encodeURIComponent(cfg.viewCode)}`, {
+    method: 'DELETE', headers: { authorization: `Bearer ${token}` },
+  }).catch(() => { /* it lapses on its own within minutes */ });
+}
+
+/** A new viewer link: everyone holding the old one is out, from now. */
+async function rotateViewerLink() {
+  releaseViewCode();
+  const old = viewBus;
+  viewBus = null;
+  viewSigner = null;
+  viewerInk.clear();
+  try { await old?.close(); } catch { /* already gone */ }
+  cfg.viewId = '';
+  cfg.viewKey = '';
+  cfg.viewSignKey = '';
+  cfg.viewPub = '';
+  await ensureViewChannel();
+  await connectView();
+  registerViewCode();
+  showPairing('view');
+}
+
+function forwardPointer(msg) {
+  if (!viewBus || !state.armed) return;
+  const { from, role, to, ...pointer } = msg;
+  sendToViewers(pointer);
+}
+
+/** The count on the pairing sheet; controllers get theirs through wireState. */
+function renderViewerCount() {
+  const note = $('#pair-viewers');
+  if (note) note.textContent = viewerCount ? `${viewerCount} watching now` : 'Nobody watching yet';
+}
 
 // Ink is worth surviving an accidental reload of the display mid-lecture.
 // Scoped to the room so different rooms sharing a browser do not clobber each
@@ -1951,13 +2197,16 @@ function saveStateSoon() {
 // so flush on all three. A hard crash cannot be caught, and loses at most the
 // second or so since the last write.
 function flushPersistence() {
+  if (VIEWER) return;
   saveInkNow();
   saveStateNow();
   beaconEvents();
 }
 window.addEventListener('pagehide', flushPersistence);
 
-installOfflineShell();
+// Not for a viewer: a stranger's phone that watched one class has no use for
+// Podium's offline copy of itself.
+if (!VIEWER) installOfflineShell();
 
 // What was on screen, if this tab is coming back rather than starting fresh.
 // Returns the item's name for the arming screen to mention, or null.
@@ -2000,6 +2249,8 @@ function restoreState() {
 }
 
 function commit() {
+  // A viewer's state is the display's; all it ever does with a change is draw it.
+  if (VIEWER) { render(); return; }
   state.rev++;
   render();
   broadcastSoon();
@@ -2051,7 +2302,8 @@ function setHud(status, detail) {
   // Detail is carried through on every failing state, not just 'error' - an
   // 'offline' that never managed to open a socket in the first place is where
   // the useful text lives.
-  $('#arm-status').textContent = {
+  const armStatus = $('#arm-status');   // not on view.html
+  if (armStatus) armStatus.textContent = {
     connecting: `Connecting to the relay…${detail ? ` (${detail})` : ''}`,
     online: 'Connected and waiting for a controller.',
     offline: `Lost the relay — retrying.${detail ? ` ${detail}` : ''}`,
@@ -2060,7 +2312,8 @@ function setHud(status, detail) {
   }[status] || status;
   hud.textContent = {
     connecting: 'Connecting…',
-    online: `Ready · room ${cfg.room}`,
+    // A viewer's room is the view channel's random id - nothing to read out.
+    online: VIEWER ? 'Watching' : `Ready · room ${cfg.room}`,
     offline: 'Reconnecting…',
     error: `Connection problem${detail ? `: ${detail}` : ''}`,
     mismatch: 'A device is using a different passphrase',
@@ -2109,6 +2362,13 @@ async function connect() {
         return;
       }
       if (msg.t === 'rtc') { camera.handle(msg); mic.handle(msg); return; }
+      // A controller wanting the viewer QR (Issue #150) from a display that has
+      // never made a view channel: make it, and the link goes out in wireState.
+      if (msg.t === 'view-link-need') {
+        ensureViewChannel().then(connectView).then(() => { registerViewCode(); broadcast(); })
+          .catch(() => { /* the controller says the display did not answer */ });
+        return;
+      }
       if (msg.t === 'sync') { broadcast(); return; }
       // The manual, controller-driven way to end class - "Finish session &
       // save" on the Photos tab - alongside the local 'e' key and the
@@ -2119,8 +2379,10 @@ async function connect() {
       // press E on while every other display quietly outlives it - see
       // recoverRecording above for what that used to cost.
       if (msg.t === 'session-end') { standDown(); return; }
-      if (msg.t === 'laser') { showLaser(msg); return; }
-      if (msg.t === 'spotlight') { showSpotlight(msg); return; }
+      // Passed on to Guest View as they are: pointing at something is part of
+      // what the room sees.
+      if (msg.t === 'laser') { showLaser(msg); forwardPointer(msg); return; }
+      if (msg.t === 'spotlight') { showSpotlight(msg); forwardPointer(msg); return; }
       if (msg.t === 'ink-pull') {
         // A controller whose digest does not match this screen's: hand it the
         // surface it asked for. Addressed to that one controller rather than
@@ -2231,6 +2493,10 @@ async function connect() {
 
   $('#fingerprint').textContent = bus.fingerprint;
   $('#arm-code').textContent = bus.fingerprint;
+  // A display that has ever handed out a viewer link keeps its view channel
+  // open from the start, so a viewer who opens the link before class sees
+  // "not live yet" rather than a connection that never comes.
+  if (viewChannel(cfg)) connectView().catch(() => { /* viewers will retry; the room is unaffected */ });
   setInterval(broadcast, HEARTBEAT_MS);
   setInterval(() => {
     if (telemetry().playing || state.music?.playing) broadcast();
@@ -2248,6 +2514,7 @@ async function requestWakeLock() {
 }
 
 document.addEventListener('visibilitychange', () => {
+  if (VIEWER) return;
   if (document.visibilityState === 'visible' && !wakeLock) requestWakeLock();
   if (document.hidden) flushPersistence();
 });
@@ -2491,6 +2758,7 @@ function goLive() {
   sizeInk();
   commit();
   queueRecordingTransition(startRecording);
+  registerViewCode();
   return finishGoLive([audio, context, fullscreen]);
 }
 
@@ -2531,6 +2799,7 @@ async function standDown() {
   }
   commit();
   queueRecordingTransition(stopRecording);
+  releaseViewCode();
   try { await exitFullscreen(); } catch { /* already windowed */ }
 }
 
@@ -2589,11 +2858,20 @@ let pairTimer = null;
 // controller has cued (see Issue #77). Reusing pairingUrl unchanged - it
 // already takes a base URL - is what keeps this one function correct for
 // either link instead of two near-copies to keep in sync.
-function showPairing(mode = 'full') {
+async function showPairing(mode = 'full') {
   const holder = $('#pair-qr');
-  const url = mode === 'guest'
-    ? pairingUrl(cfg, new URL('guest.html', location.href))
-    : pairingUrl(cfg);
+  let url;
+  if (mode === 'view') {
+    // Guest View (Issue #150): the only mode whose code does not grant control
+    // - it opens this display's view channel, never the room - so it is the
+    // only one allowed to stay up until someone dismisses it.
+    const channel = await ensureViewChannel();
+    await connectView();
+    registerViewCode();
+    url = viewerUrl(cfg, channel);
+  } else {
+    url = mode === 'guest' ? pairingUrl(cfg, new URL('guest.html', location.href)) : pairingUrl(cfg);
+  }
   if (typeof window.qrcode === 'function') {
     const qr = window.qrcode(0, 'M');
     qr.addData(url);
@@ -2601,15 +2879,29 @@ function showPairing(mode = 'full') {
     holder.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
   }
   $('#pair-url').textContent = url;
-  $('#pair-warn').textContent = mode === 'guest'
-    ? 'Anyone who scans this can advance slides, blank the screen and use the laser - nothing else. It hides itself after 90 seconds.'
-    : 'Anyone who scans this can control this screen. It hides itself after 90 seconds.';
-  $('#pair-mode-full').classList.toggle('is-on', mode !== 'guest');
+  $('#pair-warn').textContent = {
+    guest: 'Anyone who scans this can advance slides, blank the screen and use the laser - nothing else. It hides itself after 90 seconds.',
+    view: 'Anyone who scans this can watch and listen on their own device - they cannot change anything here. It stays up until you close it.',
+  }[mode] || 'Anyone who scans this can control this screen. It hides itself after 90 seconds.';
+  $('#pair-mode-full').classList.toggle('is-on', mode === 'full');
   $('#pair-mode-guest').classList.toggle('is-on', mode === 'guest');
+  $('#pair-mode-view').classList.toggle('is-on', mode === 'view');
+  $('#pair-view').hidden = mode !== 'view';
+  if (mode === 'view') { renderViewerLink(); renderViewerCount(); }
   $('#pair').hidden = false;
   clearTimeout(pairTimer);
-  // The code grants control of this screen, so it does not stay up.
-  pairTimer = setTimeout(hidePairing, 90000);
+  // A code that grants control of this screen does not stay up.
+  if (mode !== 'view') pairTimer = setTimeout(hidePairing, 90000);
+}
+
+/** The typed code, when this display's relay gives them out and it is live. */
+function renderViewerLink() {
+  const note = $('#pair-view-code');
+  if (!note) return;
+  const base = pollBaseUrl(cfg);
+  note.textContent = viewCodeLive && base
+    ? `No camera? Go to ${base}view.html and type ${cfg.viewCode}`
+    : (base ? 'A typed code appears here once this screen is live.' : '');
 }
 
 function hidePairing() {
@@ -2634,200 +2926,394 @@ function toggleShortcuts() {
   if ($('#keys').hidden) showShortcuts(); else hideShortcuts();
 }
 
-// --- wiring -----------------------------------------------------------------
+// --- Guest View: the viewer's side (Issue #150) -----------------------------
+//
+// view.html. Joins the view room with the view key from its link (never the
+// room passphrase - it is not in the link), and draws what a live display
+// sends there - but only what verifies against the display's public key, also
+// from the link, so another viewer cannot slip it something.
 
-$('#arm-button').addEventListener('click', goLive);
-$('#arm-settings').addEventListener('click', showSetup);
+let viewerVerifyKey = null;
+let viewerStarted = false;
+let viewerLastSync = 0;
+const viewerInkParts = new Map();     // surface -> strokes assembled so far
+const viewerInkAsked = new Map();     // surface -> when it was last pulled
 
-// Reloading is the honest "cancel": it throws away half-finished edits and
-// puts the page back into whatever state the saved settings describe.
-$('#setup-close').addEventListener('click', reloadClean);
-
-wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
-  const removed = await resetDevice();
-  $('#reset-note').textContent = removed.length ? `Cleared ${removed.join(', ')}.` : 'Nothing was stored on this device.';
-  reloadClean();
-});
-$('#pair-button').addEventListener('click', () => showPairing());
-$('#pair-mode-full').addEventListener('click', () => showPairing('full'));
-$('#pair-mode-guest').addEventListener('click', () => showPairing('guest'));
-$('#pair-close').addEventListener('click', hidePairing);
-$('#keys-close').addEventListener('click', hideShortcuts);
-$('#standby-pair').addEventListener('click', () => showPairing());
-$('#standby-settings').addEventListener('click', showSetup);
-
-// Entering fullscreen (see goLive()) is the other real trigger for a stale
-// content box: requestFullscreen()'s promise is documented to settle before
-// the viewport has actually finished resizing in some browsers, so the
-// sizeInk() call right after it can run against the OLD dimensions - and if
-// no further resize happens before ink gets drawn, that stale box (and the
-// misaligned ink it produces) never self-corrects. 'resize' alone isn't a
-// reliable enough signal for this specific transition, so fullscreenchange
-// is a second, redundant trigger for the same recompute.
-window.addEventListener('resize', () => { sizeInk(); broadcastSoon(); });
-onFullscreenChange(() => {
-  sizeInk();
-  broadcastSoon();
-  if (!$('#keys').hidden) showShortcuts();
-});
-window.addEventListener('beforeunload', () => bus?.close());
-
-// The display normally runs in kiosk mode with no browser chrome, and the
-// standby screen (the usual route to Settings) is hidden whenever a controller
-// is connected. These keys are the way back in mid-lecture - and `?` is the
-// one that means you do not have to remember the others.
-document.addEventListener('keydown', (ev) => {
-  // Settings is a form, and this handler is on the document: without this
-  // guard a room called "spare" pairs, opens Settings and stands the display
-  // down while you are still typing it.
-  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName)) return;
-  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
-
-  switch (ev.key) {
-    // Shift+/ on most layouts, but not all - accept the bare key too.
-    case '?':
-    case '/':
-      ev.preventDefault();
-      toggleShortcuts();
-      break;
-    case 'g':
-    case 'G':
-      // Only before the room has gone live: the arm screen is the one thing
-      // this key does, so once it is gone there is nothing left for G to do -
-      // firing goLive() again would be a harmless but pointless re-request of
-      // fullscreen and the wake lock.
-      if (!armEl.hidden) { ev.preventDefault(); goLive(); }
-      break;
-    case 'f':
-    case 'F':
-      ev.preventDefault();
-      toggleFullscreen().catch(() => { /* the browser said no; nothing to do */ });
-      break;
-    case 'e':
-    case 'E':
-      ev.preventDefault();
-      standDown();
-      break;
-    case 'b':
-    case 'B':
-      // A real navigation, not a toggle - but nothing is lost by it: the
-      // pagehide listener (see flushPersistence) saves state and ink before
-      // the browser leaves, the same safety net that covers a reload or a
-      // crash, so coming back to this room picks up exactly where this left.
-      ev.preventDefault();
-      location.href = 'index.html';
-      break;
-    case 'p':
-    case 'P':
-      ev.preventDefault();
-      $('#pair').hidden ? showPairing() : hidePairing();
-      break;
-    case 's':
-    case 'S':
-      ev.preventDefault();
-      hidePairing();
-      hideShortcuts();
-      showSetup();
-      break;
-    case 'Escape':
-      hidePairing();
-      hideShortcuts();
-      break;
-    default:
-      break;
-  }
-});
-
-$('#room-name').textContent = cfg.room;
-$('#standby-room').textContent = cfg.room;
-$$('.relay-target').forEach((n) => { n.textContent = relayTarget(cfg); });
-
-// Down here rather than beside restoreInk() at the top: restoreState reads
-// consts declared further down the file, and a `const` - unlike a function
-// declaration - is not hoisted, so calling it early threw before anything else
-// on this page could run.
-const resumed = restoreState();
-
-// Say so rather than silently putting last lecture's slide back up: coming
-// back to content you did not expect is its own kind of surprise in front of
-// a room.
-if (resumed) {
-  $('#arm-resume-what').textContent = `Picking up where this screen left off — ${resumed}.`;
-  $('#arm-resume').hidden = false;
+function viewerSay(text) {
+  const status = $('#viewer-status');
+  if (status) status.textContent = text;
 }
-$('#arm-resume-clear').addEventListener('click', () => {
-  state.program = { type: 'black', title: 'Black' };
-  state.panels = [0, 1, 2].map(() => ({ type: 'black', title: 'Black' }));
-  state.layout = 'single';
-  state.focus = 0;
-  state.overlay = { text: '', visible: false, live: false };
-  $('#arm-resume').hidden = true;
-  commit();
-});
 
-// The room's own reset: unlike "Start black instead" above (content only,
-// and only ever shown next to a genuinely resumable session), this clears
-// everything a previous session can leave behind - including the things
-// that are deliberately NOT gated by staleness because they are meant to
-// outlive an accidental reload (a watermark, ink on a slide, the music
-// queue) - and wipes both localStorage keys so a subsequent reload does not
-// bring any of it back either. Offered unconditionally: the first time this
-// room hosts a different class is exactly when "resume where I left off"
-// is the wrong default, and nothing else on this screen catches that case.
-$('#arm-fresh-session').addEventListener('click', () => {
-  const fresh = initialState();
-  state.program = fresh.program;
-  state.panels = fresh.panels;
-  state.layout = fresh.layout;
-  state.focus = fresh.focus;
-  state.overlay = fresh.overlay;
-  state.timers = fresh.timers;
-  state.volume = fresh.volume;
-  state.contentVolume = fresh.contentVolume;
-  state.micVolume = fresh.micVolume;
-  state.muted = fresh.muted;
-  state.music = fresh.music;
-  state.watermark = fresh.watermark;
-  state.ink.bySurface = {};
-  try { localStorage.removeItem(stateStorageKey()); } catch { /* private mode */ }
-  try { localStorage.removeItem(inkStorageKey()); } catch { /* private mode */ }
-  $('#arm-resume').hidden = true;
-  $('#arm-fresh-session-note').textContent = 'Cleared.';
-  // And the session record with it: the next Go live opens a NEW lecture
-  // rather than resuming whatever this room still had open. Clearing the
-  // room's saved session and then filing the next class under the last one's
-  // record would be the same mistake in a place nobody would think to look.
-  startFresh = true;
-  commit();
-});
+async function onViewerMessage(msg) {
+  if (msg.t !== 'signed' || typeof msg.body !== 'string') return;
+  if (!(await verifyText(viewerVerifyKey, msg.body, msg.sig))) return;
+  let inner;
+  try { inner = JSON.parse(msg.body); } catch { return; }
+  if (inner.to && inner.to !== bus.clientId) return;
+  if (inner.t === 'state') { adoptViewerState(inner.state || {}, inner.telemetry); return; }
+  if (inner.t === 'ink-surface') { takeViewerInk(inner); return; }
+  if (inner.t === 'deck' && inner.id && typeof inner.source === 'string') {
+    deckStore.set(inner.id, inner.source);
+    deckWanted.delete(inner.id);
+    syncLayers();
+    return;
+  }
+  if (inner.t === 'asset' && inner.id && typeof inner.data === 'string') {
+    assetStore.set(inner.id, inner.data);
+    assetWanted.delete(inner.id);
+    syncLayers();
+    redrawInk(true);
+    return;
+  }
+  if (inner.t === 'laser') { showLaser(inner); return; }
+  if (inner.t === 'spotlight') showSpotlight(inner);
+}
 
-if (!isConfigured(cfg)) {
-  showSetup();
+function adoptViewerState(next, tele) {
+  const offAir = !next.armed;
+  $('#viewer-offair').hidden = !offAir || !viewerStarted;
+  if (!viewerStarted) {
+    viewerSay(offAir ? 'Connected - the class is not live yet. You can start now and it will appear when it is.' : 'The class is live.');
+    $('#viewer-start-row').hidden = false;
+  }
+  if (offAir) {
+    // Nothing of the last lecture lingers on a viewer's screen.
+    const ink = state.ink;
+    state = { ...initialState(), ink };
+    state.music.playing = false;
+    render();
+    return;
+  }
+  const ink = state.ink;
+  state = { ...initialState(), ...next, ink };
+  // Pull the ink of anything on screen this viewer's copy disagrees with -
+  // having just joined, or having missed a push - at most every few seconds.
+  const now = Date.now();
+  for (const [key, digest] of Object.entries(next.ink?.surfaces || {})) {
+    if (inkDigest(ink.bySurface[key]?.strokes) === digest) continue;
+    if (now - (viewerInkAsked.get(key) || 0) < 3000) continue;
+    viewerInkAsked.set(key, now);
+    bus.send({ t: 'ink-pull', surface: key });
+  }
+  render();
+  catchUpMedia(next, tele);
+}
+
+// A viewer who joins mid-clip, or whose phone stalled, jumps to where the room
+// is rather than playing its own version a minute behind. Only past a few
+// seconds' drift, and not more than every few seconds, so ordinary network
+// jitter never becomes a stutter.
+function catchUpMedia(next, tele) {
+  if (!viewerStarted || Date.now() - viewerLastSync < 5000) return;
+  const renderer = focusedPanel().renderer;
+  if (tele?.playing && renderer?.syncTo) {
+    const here = renderer.telemetry().time || 0;
+    if (Math.abs(here - tele.time) > 3) { renderer.syncTo(tele.time + 0.3); viewerLastSync = Date.now(); }
+  }
+  const room = next.musicNow;
+  if (next.music?.playing && room && Number.isFinite(room.time) && Math.abs((musicEl.currentTime || 0) - room.time) > 3) {
+    musicEl.currentTime = room.time + 0.3;
+    viewerLastSync = Date.now();
+  }
+}
+
+function takeViewerInk(part) {
+  if (typeof part.surface !== 'string' || !Array.isArray(part.strokes)) return;
+  const sofar = part.seq === 0 ? [] : (viewerInkParts.get(part.surface) || []);
+  sofar.push(...part.strokes);
+  if (!part.last) { viewerInkParts.set(part.surface, sofar); return; }
+  viewerInkParts.delete(part.surface);
+  state.ink.bySurface[part.surface] = { strokes: sofar, touched: Date.now() };
+  redrawInk(true);
+}
+
+// Whatever the link or the code pointed at, turned into this page's config.
+async function viewerFromCode(code) {
+  const res = await fetch(`view-code/${encodeURIComponent(code.trim().toUpperCase())}`, { cache: 'no-store' });
+  const answer = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(answer.error || 'That code did not work.');
+  history.replaceState(null, '', `${location.pathname}#${answer.link}`);
+  cfg = viewerConfig();
+}
+
+async function startViewer() {
+  sizeInk();
+  if (!viewChannelLink()) {
+    // No link: the typed-code fallback, on the server that issued the code.
+    viewerSay('');
+    $('#viewer-code-form').hidden = false;
+    await new Promise((resolve) => {
+      $('#viewer-code-form').addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        $('#viewer-code-error').textContent = '';
+        try {
+          await viewerFromCode($('#viewer-code').value);
+          $('#viewer-code-form').hidden = true;
+          resolve();
+        } catch (err) {
+          $('#viewer-code-error').textContent = err.message;
+        }
+      });
+    });
+  }
+  viewerVerifyKey = await importVerifyKey(cfg.viewPub || '');
+  if (!viewerVerifyKey) { viewerSay('This link is incomplete - ask for it again.'); return; }
+
+  $('#viewer-start').addEventListener('click', () => {
+    viewerStarted = true;
+    $('#viewer-sheet').hidden = true;
+    document.body.classList.add('is-live');
+    // The one gesture a browser needs before it will play sound - the same
+    // unlock Go live does on the projector, without the fullscreen, wake lock
+    // or recording that come with it there.
+    const unlock = new Audio(SILENT_CLIP);
+    unlock.muted = true;
+    Promise.resolve(unlock.play()).then(() => unlock.pause()).catch(() => { /* retried on the next tap */ });
+    try { new (window.AudioContext || window.webkitAudioContext)().resume(); } catch { /* noop */ }
+    $('#viewer-offair').hidden = state.armed !== false;
+    bus?.send({ t: 'sync' });
+    render();
+  });
+
+  // On an instance with accounts, the files on screen need a pass - see
+  // viewerMayRead in server/podium-server.js. Asked for again whenever the
+  // class (re)starts, since a pass lasts only as long as it is live.
+  const pass = () => fetch('view-pass', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ room: cfg.room }),
+  }).catch(() => { /* a relay that is not Podium's own server: nothing to ask */ });
+
+  const connectOnce = async () => {
+    bus = await createBus({
+      cfg,
+      role: 'viewer',
+      onStatus: (status, detail) => {
+        setHud(status, detail);
+        if (status === 'online') { pass(); if (!viewerStarted) viewerSay('Connected - waiting for the display…'); }
+        if (status === 'error' && !viewerStarted) viewerSay('This class is not live right now. This page keeps trying.');
+      },
+      onMessage: onViewerMessage,
+    });
+  };
+  // The relay refuses a viewer until the display is in its view room (see the
+  // upgrade handler in podium-server.js), so a link opened before class keeps
+  // trying rather than giving up.
+  for (;;) {
+    try { await connectOnce(); break; } catch (err) {
+      viewerSay(`Waiting for the class to go live… (${err?.message || err})`);
+      await new Promise((r) => setTimeout(r, 15000));
+    }
+  }
+  setInterval(() => { if (state.armed) pass(); }, 10 * 60 * 1000);
+}
+
+/** Whether this page's link carried a view channel at all. */
+function viewChannelLink() {
+  return !!(cfg.room && cfg.passphrase && cfg.viewPub);
+}
+
+if (VIEWER) {
+  await startViewer();
 } else {
-  armEl.hidden = false;
-  sizeInk();
-  // Everything that fails BEFORE a socket exists rejects out of createBus:
-  // no Web Crypto (a page served over plain http), a transport adapter whose
-  // CDN is blocked, a relay URL that is not a URL or is the wrong scheme.
-  // This module uses top-level await, so an unhandled rejection here aborts
-  // the REST of the module - render() below never ran, and the screen just
-  // sat there looking hung instead of saying what was wrong.
-  try {
-    await connect();
-  } catch (err) {
-    setHud('error', err?.message || String(err));
+  // --- wiring -----------------------------------------------------------------
+
+  $('#arm-button').addEventListener('click', goLive);
+  $('#arm-settings').addEventListener('click', showSetup);
+
+  // Reloading is the honest "cancel": it throws away half-finished edits and
+  // puts the page back into whatever state the saved settings describe.
+  $('#setup-close').addEventListener('click', reloadClean);
+
+  wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
+    const removed = await resetDevice();
+    $('#reset-note').textContent = removed.length ? `Cleared ${removed.join(', ')}.` : 'Nothing was stored on this device.';
+    reloadClean();
+  });
+  $('#pair-button').addEventListener('click', () => showPairing());
+  $('#pair-mode-full').addEventListener('click', () => showPairing('full'));
+  $('#pair-mode-guest').addEventListener('click', () => showPairing('guest'));
+  $('#pair-mode-view').addEventListener('click', () => showPairing('view'));
+  wireDangerButton($('#pair-view-rotate'), 'New viewer link', () => rotateViewerLink(),
+    { armedLabel: 'Tap again - the old link and code stop working for everyone' });
+  $('#pair-close').addEventListener('click', hidePairing);
+  $('#keys-close').addEventListener('click', hideShortcuts);
+  $('#standby-pair').addEventListener('click', () => showPairing());
+  $('#standby-settings').addEventListener('click', showSetup);
+
+  // Entering fullscreen (see goLive()) is the other real trigger for a stale
+  // content box: requestFullscreen()'s promise is documented to settle before
+  // the viewport has actually finished resizing in some browsers, so the
+  // sizeInk() call right after it can run against the OLD dimensions - and if
+  // no further resize happens before ink gets drawn, that stale box (and the
+  // misaligned ink it produces) never self-corrects. 'resize' alone isn't a
+  // reliable enough signal for this specific transition, so fullscreenchange
+  // is a second, redundant trigger for the same recompute.
+  window.addEventListener('resize', () => { sizeInk(); broadcastSoon(); });
+  onFullscreenChange(() => {
+    sizeInk();
+    broadcastSoon();
+    if (!$('#keys').hidden) showShortcuts();
+  });
+  window.addEventListener('beforeunload', () => bus?.close());
+
+  // The display normally runs in kiosk mode with no browser chrome, and the
+  // standby screen (the usual route to Settings) is hidden whenever a controller
+  // is connected. These keys are the way back in mid-lecture - and `?` is the
+  // one that means you do not have to remember the others.
+  document.addEventListener('keydown', (ev) => {
+    if (VIEWER) return;
+    // Settings is a form, and this handler is on the document: without this
+    // guard a room called "spare" pairs, opens Settings and stands the display
+    // down while you are still typing it.
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName)) return;
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+
+    switch (ev.key) {
+      // Shift+/ on most layouts, but not all - accept the bare key too.
+      case '?':
+      case '/':
+        ev.preventDefault();
+        toggleShortcuts();
+        break;
+      case 'g':
+      case 'G':
+        // Only before the room has gone live: the arm screen is the one thing
+        // this key does, so once it is gone there is nothing left for G to do -
+        // firing goLive() again would be a harmless but pointless re-request of
+        // fullscreen and the wake lock.
+        if (!armEl.hidden) { ev.preventDefault(); goLive(); }
+        break;
+      case 'f':
+      case 'F':
+        ev.preventDefault();
+        toggleFullscreen().catch(() => { /* the browser said no; nothing to do */ });
+        break;
+      case 'e':
+      case 'E':
+        ev.preventDefault();
+        standDown();
+        break;
+      case 'b':
+      case 'B':
+        // A real navigation, not a toggle - but nothing is lost by it: the
+        // pagehide listener (see flushPersistence) saves state and ink before
+        // the browser leaves, the same safety net that covers a reload or a
+        // crash, so coming back to this room picks up exactly where this left.
+        ev.preventDefault();
+        location.href = 'index.html';
+        break;
+      case 'p':
+      case 'P':
+        ev.preventDefault();
+        $('#pair').hidden ? showPairing() : hidePairing();
+        break;
+      case 's':
+      case 'S':
+        ev.preventDefault();
+        hidePairing();
+        hideShortcuts();
+        showSetup();
+        break;
+      case 'Escape':
+        hidePairing();
+        hideShortcuts();
+        break;
+      default:
+        break;
+    }
+  });
+
+  $('#room-name').textContent = cfg.room;
+  $('#standby-room').textContent = cfg.room;
+  $$('.relay-target').forEach((n) => { n.textContent = relayTarget(cfg); });
+
+  // Down here rather than beside restoreInk() at the top: restoreState reads
+  // consts declared further down the file, and a `const` - unlike a function
+  // declaration - is not hoisted, so calling it early threw before anything else
+  // on this page could run.
+  const resumed = restoreState();
+
+  // Say so rather than silently putting last lecture's slide back up: coming
+  // back to content you did not expect is its own kind of surprise in front of
+  // a room.
+  if (resumed) {
+    $('#arm-resume-what').textContent = `Picking up where this screen left off — ${resumed}.`;
+    $('#arm-resume').hidden = false;
   }
-  // Unattended signage (Issue #151): the one thing an ordinary display always
-  // requires a real click for is right here (see goLive's own comment on the
-  // audio-unlock gesture) - a kiosk has nobody to click it, on the very first
-  // load and again after every crash, reboot or power flicker. Run regardless
-  // of whether connect() above succeeded: a kiosk's job is to keep showing
-  // whatever it was showing, relay or no relay, not to sit on the arm screen
-  // waiting for a controller that will never come. If the browser was not
-  // actually launched with the autoplay-exempting flags the docs ask for,
-  // this fails exactly the way an early manual click already does today, and
-  // the existing self-heals-on-the-next-gesture fallback still applies.
-  if (cfg.kiosk) { goLive(); startKioskScheduling(); }
+  $('#arm-resume-clear').addEventListener('click', () => {
+    state.program = { type: 'black', title: 'Black' };
+    state.panels = [0, 1, 2].map(() => ({ type: 'black', title: 'Black' }));
+    state.layout = 'single';
+    state.focus = 0;
+    state.overlay = { text: '', visible: false, live: false };
+    $('#arm-resume').hidden = true;
+    commit();
+  });
+
+  // The room's own reset: unlike "Start black instead" above (content only,
+  // and only ever shown next to a genuinely resumable session), this clears
+  // everything a previous session can leave behind - including the things
+  // that are deliberately NOT gated by staleness because they are meant to
+  // outlive an accidental reload (a watermark, ink on a slide, the music
+  // queue) - and wipes both localStorage keys so a subsequent reload does not
+  // bring any of it back either. Offered unconditionally: the first time this
+  // room hosts a different class is exactly when "resume where I left off"
+  // is the wrong default, and nothing else on this screen catches that case.
+  $('#arm-fresh-session').addEventListener('click', () => {
+    const fresh = initialState();
+    state.program = fresh.program;
+    state.panels = fresh.panels;
+    state.layout = fresh.layout;
+    state.focus = fresh.focus;
+    state.overlay = fresh.overlay;
+    state.timers = fresh.timers;
+    state.volume = fresh.volume;
+    state.contentVolume = fresh.contentVolume;
+    state.micVolume = fresh.micVolume;
+    state.muted = fresh.muted;
+    state.music = fresh.music;
+    state.watermark = fresh.watermark;
+    state.ink.bySurface = {};
+    try { localStorage.removeItem(stateStorageKey()); } catch { /* private mode */ }
+    try { localStorage.removeItem(inkStorageKey()); } catch { /* private mode */ }
+    $('#arm-resume').hidden = true;
+    $('#arm-fresh-session-note').textContent = 'Cleared.';
+    // And the session record with it: the next Go live opens a NEW lecture
+    // rather than resuming whatever this room still had open. Clearing the
+    // room's saved session and then filing the next class under the last one's
+    // record would be the same mistake in a place nobody would think to look.
+    startFresh = true;
+    commit();
+  });
+
+  if (!isConfigured(cfg)) {
+    showSetup();
+  } else {
+    armEl.hidden = false;
+    sizeInk();
+    // Everything that fails BEFORE a socket exists rejects out of createBus:
+    // no Web Crypto (a page served over plain http), a transport adapter whose
+    // CDN is blocked, a relay URL that is not a URL or is the wrong scheme.
+    // This module uses top-level await, so an unhandled rejection here aborts
+    // the REST of the module - render() below never ran, and the screen just
+    // sat there looking hung instead of saying what was wrong.
+    try {
+      await connect();
+    } catch (err) {
+      setHud('error', err?.message || String(err));
+    }
+    // Unattended signage (Issue #151): the one thing an ordinary display always
+    // requires a real click for is right here (see goLive's own comment on the
+    // audio-unlock gesture) - a kiosk has nobody to click it, on the very first
+    // load and again after every crash, reboot or power flicker. Run regardless
+    // of whether connect() above succeeded: a kiosk's job is to keep showing
+    // whatever it was showing, relay or no relay, not to sit on the arm screen
+    // waiting for a controller that will never come. If the browser was not
+    // actually launched with the autoplay-exempting flags the docs ask for,
+    // this fails exactly the way an early manual click already does today, and
+    // the existing self-heals-on-the-next-gesture fallback still applies.
+    if (cfg.kiosk) { goLive(); startKioskScheduling(); }
+  }
 }
+
 
 render();

@@ -1249,6 +1249,9 @@ function gate(req, res, pathname, ctx) {
         res.setHeader('set-cookie', setKioskCookies(req, kioskToken, Math.floor(kiosks.SESSION_MS / 1000)));
       if (kiosks.sessionKiosk(ctx.db, kioskToken, { onSlide: kioskOnSlide })) return true;
     }
+    // A Guest View viewer's pass (Issue #150): the files a live display is
+    // showing, never a page or the API - see viewerMayRead in podium-server.js.
+    if (ctx.viewerMayRead?.(req, pathname)) return true;
     if (looksLikePage(req, pathname)) {
       const next = encodeURIComponent(pathname + (req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''));
       res.writeHead(302, { location: `/login.html?next=${next}`, 'cache-control': 'no-store' });
@@ -1269,5 +1272,5 @@ function gate(req, res, pathname, ctx) {
 }
 
 module.exports = {
-  handleApi, gate, readJson, json, parseCookies, safeNext, cookieToken, kioskCookieToken, clientIp, COOKIE, API_VERSION,
+  handleApi, gate, readJson, json, parseCookies, setCookie, safeNext, cookieToken, kioskCookieToken, clientIp, COOKIE, API_VERSION,
 };

@@ -613,6 +613,11 @@ ok('this device requests a wake lock on load - Keep this device\'s screen awake 
   (await pad.evaluate(() => window.__wakeLog)).includes('request:screen'));
 await screen.waitForFunction(() => document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
 ok('and blacks out the screen the moment it connects - Black out on connect defaults on too', true);
+// Un-blanked by hand, so the Settings close below has something to disturb
+// (Issue #170): closing Settings reloads this page, and that reload must not
+// read as "this controller just connected" and blank the room again.
+await pad.click('#blank');
+await screen.waitForFunction(() => !document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
 
 await pad.click('#open-settings');
 await pad.waitForSelector('#setup:not([hidden])');
@@ -673,6 +678,12 @@ ok(`moving Slides up actually reorders the live tab bar (${orderBefore.join(',')
 
 await pad.click('#setup-close');
 await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'), null, { timeout: 15000 });
+// Long enough for the reconnect's first peer list to have arrived and been
+// acted on - the moment the old code sent its second blank.
+await pad.waitForTimeout(1500);
+ok('closing Settings (a reload of this page) does not blank the screen again (Issue #170)',
+  await screen.evaluate(() => !document.querySelector('#blank').classList.contains('is-on')));
 ok('"More" appears now that Camera is really out of the bar', await pad.isVisible('#tabs-more'));
 
 await pad.click('#tabs-more');
