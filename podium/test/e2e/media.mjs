@@ -588,6 +588,12 @@ const slowMusic = (ctx) => ctx.route('**/slowmusic/**', async (route) => {
 });
 const ready = async (pad) => {
   await pad.waitForSelector('.tile');
+  // The controller's start-up ends by loading the playlists and then going
+  // to the Library tab, in the same breath: once Add to queue is un-hidden
+  // that last tab switch has happened too, and a tab picked from here on
+  // stays picked. The tiles alone appear before it, and a Music tab picked
+  // in between gets switched back from under the next click.
+  await pad.waitForSelector('#music-add:not([hidden])', { state: 'attached', timeout: 15000 });
   await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'), null, { timeout: 30000 });
 };
 
