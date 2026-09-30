@@ -139,6 +139,10 @@ export function initialState() {
     previewLayout: null,
     frozen: false,          // hold the program layer; new picks land in preview
     blank: false,           // hard cut to black, keeps program loaded underneath
+    // Issue #183: photograph a marked-up screen as it is left (see
+    // inkCapturesFor). Room state rather than a device preference because the
+    // display is the one that has to do it, at the instant it switches away.
+    autoSaveInk: false,
     previewMode: false,     // always cue before going live, even when not frozen
     // `volume` is the room's master fader - it scales BOTH channels below it
     // together (see musicTarget() and syncLayers() in display.js), the one
@@ -623,6 +627,66 @@ const MARP_DIRECTIVES = new Set([
  * they come out. Directive comments (`<!-- _class: lead -->`) stay, or the
  * slides would not render the way the room sees them.
  */
+// --- keeping marked-up screens (Issues #182, #183) ---------------------------
+
+/**
+ * What each visible panel is showing, for inkCapturesFor to compare before
+ * and after a command: its ink surface, whether that surface has ink, and
+ * whether a video there is playing.
+ */
+export function liveInkSurfaces(state) {
+  const count = LAYOUTS[state.layout] || 1;
+  const out = [];
+  for (let panel = 0; panel < count; panel++) {
+    const item = panel === 0 ? state.program : state.panels?.[panel - 1];
+    const key = inkSurfaceKey(item);
+    const strokes = state.ink?.bySurface?.[key]?.strokes || [];
+    let points = 0;
+    for (const stroke of strokes) points += stroke.pts?.length || 0;
+    out.push({
+      panel, key, item,
+      type: item?.type || 'black',
+      playing: item?.playing !== false,
+      inked: strokes.length > 0,
+      // Enough to tell "the same marks as last time" from new ones.
+      sig: `${strokes.length}:${points}`,
+    });
+  }
+  return out;
+}
+
+/**
+ * Which panels to photograph because of one change to the room, and why.
+ *
+ *  - 'resume' (Issue #182): a paused video with marks on it starts playing
+ *    again. The marks were made on that frame, so the frame and the marks
+ *    are kept together, and the marks are then cleared (clearInk) rather
+ *    than left floating over a moving picture. Always on.
+ *  - 'leave' (Issue #183): with autoSave on, a panel with marks on it moves
+ *    to something else - another slide, page or item, or out of the layout.
+ *    Skipped when the same marks were already kept (`saved`: key -> sig),
+ *    so paging back and forth past one annotated slide keeps it once.
+ *
+ * @param {ReturnType<liveInkSurfaces>} before
+ * @param {ReturnType<liveInkSurfaces>} after
+ * @param {{autoSave?: boolean, saved?: Map<string, string>}} [opts]
+ * @returns {{panel: number, key: string, item: object, sig: string, reason: 'resume'|'leave', clearInk: boolean}[]}
+ */
+export function inkCapturesFor(before, after, { autoSave = false, saved = new Map() } = {}) {
+  const out = [];
+  for (const was of before) {
+    if (!was.inked) continue;
+    const now = after.find((s) => s.panel === was.panel);
+    const base = { panel: was.panel, key: was.key, item: was.item, sig: was.sig };
+    if (now && now.key === was.key) {
+      if (was.type === 'video' && !was.playing && now.playing) out.push({ ...base, reason: 'resume', clearInk: true });
+      continue;
+    }
+    if (autoSave && saved.get(was.key) !== was.sig) out.push({ ...base, reason: 'leave', clearInk: false });
+  }
+  return out;
+}
+
 // Issue #180: a music queue nobody has touched for this long belongs to an
 // earlier class. Long enough that no single lecture, break included, gets
 // near it; short enough that a room used in the morning and again after
@@ -1251,6 +1315,10 @@ export function applyCommand(state, cmd) {
 
     case 'blank':
       state.blank = cmd.on ?? !state.blank;
+      return true;
+
+    case 'autoSaveInk':
+      state.autoSaveInk = cmd.on === undefined ? !state.autoSaveInk : !!cmd.on;
       return true;
 
     case 'previewMode':

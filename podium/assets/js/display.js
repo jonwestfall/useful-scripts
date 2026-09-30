@@ -22,7 +22,7 @@ import {
   initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, timerById, BUILD, VERSION, versionStamp,
   inkTargetKey, isHeldInkKey, heldInkCount, HELD_INK_PREFIX,
   watermarkForNewLecture, viewerState, viewChannel, stripDeckNotes,
-  MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS, clearStaleMusic,
+  MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS, clearStaleMusic, liveInkSurfaces, inkCapturesFor,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { encodeToFit } from './store.js';
@@ -670,11 +670,19 @@ function drawCaption(ctx, rect) {
  * Returns { dataUrl, title, width, height }, or throws with a reason worth
  * showing to whoever pressed the button.
  */
-async function takeShot(target) {
+async function takeShot(target, { item: forItem } = {}) {
   ensureInkCanvas();
   const stageW = stage.clientWidth;
   const stageH = stage.clientHeight;
   if (!stageW || !stageH) throw new Error('this screen has no size yet');
+  // The ink as it is this instant, copied before anything below awaits
+  // (Issue #183): a screen kept as it is left is photographed in the same
+  // moment the room moves on, and by the time a slide finishes rasterizing
+  // the ink layer already belongs to the next one.
+  const inkNow = document.createElement('canvas');
+  inkNow.width = inkCanvas.width;
+  inkNow.height = inkCanvas.height;
+  inkNow.getContext('2d').drawImage(inkCanvas, 0, 0);
 
   const wholeScreen = target === 'screen';
   const panels = wholeScreen ? activePanels() : [panelAt(target)];
@@ -717,7 +725,7 @@ async function takeShot(target) {
   // The ink canvas covers the whole stage and already holds every visible
   // panel's strokes in their own places, so one draw puts the annotation back
   // exactly where it was drawn - no re-mapping, at any layout.
-  ctx.drawImage(inkCanvas, 0, 0, stageW, stageH);
+  ctx.drawImage(inkNow, 0, 0, stageW, stageH);
   drawCaption(ctx, { x: 0, y: 0, w: stageW, h: stageH });
   drawWatermark(ctx, { x: 0, y: 0, w: stageW, h: stageH });
   ctx.restore();
@@ -736,13 +744,73 @@ async function takeShot(target) {
     // be done about it from here; say which rule was hit rather than "failed".
     throw new Error('the browser will not let Podium read those pixels back — something on screen came from another site without permission to copy it');
   }
-  const item = panels[0]?.item;
+  const item = forItem || panels[0]?.item;
   // Photograph a panel, put that photo back in the panel, photograph it again:
   // without this the titles nest ("Panel A - Panel A - Whiteboard") until they
   // are unreadable. One prefix is enough to say where it came from.
   const base = itemTitle(item).replace(/^Panel [A-D] — /, '');
   const title = wholeScreen ? 'Whole screen' : `Panel ${PANEL_LABELS[target]} — ${base}`;
   return { dataUrl: shrunk.dataUrl, title, width: shrunk.width, height: shrunk.height, tooBig: shrunk.tooBig };
+}
+
+// --- keeping marked-up screens (Issues #182, #183) ---------------------------
+//
+// A screen with marks on it is photographed at the moment it stops being what
+// the room sees: a paused video starting again (always - the marks were made
+// on that frame), or, with "Save marked-up screens" on, any panel moving to
+// another slide, page or item. It happens here, on the display, in the same
+// instant the command arrives and before anything is redrawn - the only point
+// at which the frame, the slide and the ink leaving the screen are all still
+// on it. inkCapturesFor (protocol.js) decides which; takeShot does the rest.
+//
+// The photo goes to every controller like any other (their Photos strip) and,
+// while a lecture is being recorded, is filed with it once, by this screen,
+// under screens/ - never photos/, which each controller's own Keep photos
+// switch governs and a session export reconciles. Except a photo of a camera
+// feed or a picture: that can be a person or someone's work on paper, which
+// is exactly what Keep photos exists for, so those are left to it.
+const inkKept = new Map();   // surface key -> the marks last kept for it
+const PRIVATE_SOURCES = new Set(['camera', 'image']);
+
+function keepMarkedUpScreens(before) {
+  if (VIEWER) return;
+  const plans = inkCapturesFor(before, liveInkSurfaces(state), { autoSave: !!state.autoSaveInk, saved: inkKept });
+  for (const plan of plans) {
+    inkKept.set(plan.key, plan.sig);
+    // Called before commit(): its synchronous part copies the frame, the
+    // slide and the ink still on screen, whatever the command just changed.
+    const shot = takeShot(plan.panel, { item: plan.item });
+    if (plan.clearInk) {
+      // Recoverable, the same way a Clear is (see the ink case in protocol.js).
+      const surface = state.ink.bySurface[plan.key];
+      if (surface?.strokes?.length) {
+        surface.cleared = surface.strokes;
+        surface.strokes = [];
+      }
+      inkKept.delete(plan.key);
+    }
+    shot.then((taken) => sendKeptScreen(plan, taken)).catch(() => { /* nothing photographable there: nothing kept */ });
+  }
+}
+
+function sendKeptScreen(plan, taken) {
+  const id = uid(10);
+  const title = `${plan.reason === 'resume' ? 'Paused video' : 'Marked up'} — ${taken.title}`;
+  const filed = !!lectureId && !PRIVATE_SOURCES.has(plan.item?.type);
+  if (filed) fileKeptScreen(lectureId, id, title, taken.dataUrl);
+  bus?.send({ t: 'shot', id, target: plan.panel, title, data: taken.dataUrl, tooBig: !!taken.tooBig, auto: plan.reason, filed });
+}
+
+async function fileKeptScreen(id, photoId, title, dataUrl) {
+  const ext = dataUrl.startsWith('data:image/png') ? 'png' : 'jpg';
+  const safe = String(title).replace(/[^a-z0-9-_ ]+/gi, '').trim().replace(/\s+/g, '-').slice(0, 48) || 'screen';
+  const name = `screens/${photoId}-${safe}.${ext}`;
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    await fetch(lectureUrl(id, `/files?name=${encodeURIComponent(name)}&kind=photo`), {
+      method: 'POST', credentials: 'same-origin', headers: { 'content-type': blob.type || `image/${ext}` }, body: blob,
+    });
+  } catch { /* the controllers still have it in their Photos strip */ }
 }
 
 // --- background music --------------------------------------------------------
@@ -1179,6 +1247,7 @@ function tickSets() {
   // A viewer's sets advance when the display's do, in the next snapshot.
   if (VIEWER) return;
   let changed = false;
+  const before = liveInkSurfaces(state);
   for (let panel = 0; panel < 4; panel++) {
     const item = panel === 0 ? state.program : state.panels[panel - 1];
     if (!item || item.type !== 'set') { lastSeenSetKey.delete(panel); continue; }
@@ -1195,7 +1264,10 @@ function tickSets() {
       if (applyCommand(state, { op: 'set', action: 'advance', panel })) changed = true;
     }
   }
-  if (changed) commit();
+  if (changed) {
+    keepMarkedUpScreens(before);
+    commit();
+  }
 }
 setInterval(tickSets, SET_TICK_MS);
 
@@ -2143,7 +2215,7 @@ function stateStorageKey() {
 function saveStateNow() {
   clearTimeout(stateSaveTimer);
   {
-    const { program, panels, layout, focus, timers, overlay, volume, contentVolume, micVolume, muted, music, watermark } = state;
+    const { program, panels, layout, focus, timers, overlay, volume, contentVolume, micVolume, muted, music, watermark, autoSaveInk } = state;
     // Everywhere else, only the `asset:<id>` reference goes into state and
     // the bytes are fetched fresh from whoever still holds them (see
     // resolveAssets) - deliberately, so a photo of a student's worksheet is
@@ -2158,7 +2230,7 @@ function saveStateNow() {
     // persisting, a lecture just will not come back after a reload, and
     // nothing said so until the day it mattered.
     safeStorageSet(localStorage, stateStorageKey(), JSON.stringify({
-      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, contentVolume, micVolume, muted, watermark, watermarkImageData,
+      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, contentVolume, micVolume, muted, watermark, watermarkImageData, autoSaveInk,
       // The queue, not the playing: a reload lands on the arming screen, and
       // music that started itself the moment someone clicked Go live would be
       // a surprise in a room that had gone quiet.
@@ -2211,6 +2283,7 @@ function restoreState() {
   if (Number.isFinite(saved.contentVolume)) state.contentVolume = saved.contentVolume;
   if (Number.isFinite(saved.micVolume)) state.micVolume = saved.micVolume;
   state.muted = !!saved.muted;
+  state.autoSaveInk = !!saved.autoSaveInk;
   if (saved.music && Array.isArray(saved.music.tracks)) {
     state.music = { ...state.music, ...saved.music, playing: false };
   }
@@ -2445,7 +2518,11 @@ async function connect() {
         // not added to yesterday's queue (Issue #180).
         const cleared = clearStaleMusic(state, lastCommandAt, Date.now());
         lastCommandAt = Date.now();
-        if (applyCommand(state, msg) || cleared) commit();
+        // Ink commands draw on a surface; they never move one away.
+        const before = msg.op === 'ink' ? null : liveInkSurfaces(state);
+        const applied = applyCommand(state, msg);
+        if (applied && before) keepMarkedUpScreens(before);
+        if (applied || cleared) commit();
       }
     },
   });

@@ -415,6 +415,8 @@ try {
               <button id="ink-undo" type="button">Undo</button>
               <button id="ink-clear" type="button">Clear</button>
               <button id="ink-save" type="button" title="Keep a photo of this panel, ink and all">Save a photo</button>
+              <!-- Issue #183: the room's switch, so every controller sees the same. -->
+              <label class="check ink-autosave" title="Keep a photo of each marked-up screen as you move on to the next"><input id="ink-autosave" type="checkbox"> Auto-save</label>
               <!-- Appears for a few seconds after a Clear. Clearing the board is
                    a frequent, deliberate move, so it stays one tap; this is what
                    makes the accidental one survivable. -->
@@ -1074,6 +1076,16 @@ try {
         photos alongside its timeline, ink and poll results, so a past session can be
         downloaded again from the Admin page. Either way the Photos tab can turn it off for
         one lecture without changing what this sets.
+      </p>
+
+      <label class="check"><input id="pref-autosave-ink" type="checkbox"> Save marked-up screens automatically</label>
+      <p class="hint">
+        When a slide, page or anything else you have drawn on is replaced - Next, a new item,
+        a new layout - a photo of it, marks and all, goes into Photos and into the lecture's
+        record on a self-hosted Podium. Turned on for the room when this controller first
+        connects; the Ink tab's <i>Auto-save</i> switches it for this lecture. A paused video you
+        draw on is always kept when it plays again, whether or not this is on; its marks then
+        come off the moving picture, and the photo is where they are kept.
       </p>
 
       <div class="field" style="margin-top:16px;">

@@ -1004,6 +1004,8 @@ function renderPreview() {
 // screen, declared up front since renderSlides() needs them from its first
 // call; createLiveMirror itself is defined down with the ink pad, which it
 // shares its "contain"-fit geometry with.
+// Which paused frame each video mirror was last moved to (see showPausedFrame).
+const pausedFrameAt = new WeakMap();
 const nowMirror = createLiveMirror($('#deck-now-preview'));
 const nextMirror = createLiveMirror($('#deck-next-preview'));
 
@@ -3026,6 +3028,8 @@ function renderAll() {
   renderSlides();
   renderLayoutBar();
   ensureDeckView(workItem());
+  const autosave = $('#ink-autosave');
+  if (autosave && document.activeElement !== autosave) autosave.checked = !!state.autoSaveInk;
 }
 
 // --- ink pad ----------------------------------------------------------------
@@ -3202,6 +3206,7 @@ function createLiveMirror(container) {
     } else {
       renderer?.update(resolveAssets(item));
     }
+    showPausedFrame(renderer, item);
   }
 
   function destroy() {
@@ -3304,6 +3309,23 @@ function updatePadMirror() {
   } else {
     padMirrorRenderer?.update(resolveAssets(item));
   }
+  showPausedFrame(padMirrorRenderer, item);
+}
+
+// Issue #182: a copy of a video on this device is a paused preview parked on
+// its first frame. Once the room's video is paused, the copies here - the Now
+// tab, the Slides tab's Now, the ink pad - move to the frame the room is
+// actually looking at, so what gets marked up is that frame. Only while
+// paused: following a playing video here would be a second video decoding
+// on the iPad for nothing.
+function showPausedFrame(renderer, item) {
+  if (!renderer?.syncTo || item?.type !== 'video') return;
+  const live = focusedItem(state);
+  if (!live || live.key !== item.key || telemetry.playing || !Number.isFinite(telemetry.time)) return;
+  const last = pausedFrameAt.get(renderer);
+  if (last !== undefined && Math.abs(last - telemetry.time) < 0.05) return;
+  pausedFrameAt.set(renderer, telemetry.time);
+  renderer.syncTo(telemetry.time);
 }
 
 function redrawPad() {
@@ -3916,11 +3938,11 @@ function makeThumb(dataUrl) {
 const photoFileName = (photo) =>
   `photos/${photo.id}-${safeName(photo.title, 'photo')}.jpg`;
 
-function addPhoto({ id, data, title, badge }) {
+function addPhoto({ id, data, title, badge, filed = false }) {
   assetStore.set(id, data);
   photoCount += 1;
   photos.unshift({ id, title, badge, at: Date.now(), thumb: data });
-  filePhotoWithLecture(photos[0], data);
+  if (!filed) filePhotoWithLecture(photos[0], data);
   // Swap in the small copy as soon as it is ready; until then the strip shows
   // the full-size one rather than an empty box.
   makeThumb(data).then((thumb) => {
@@ -4701,7 +4723,12 @@ function renderConnection() {
   // the watermark default needs to know whether one is already up.
   if (display && bus && stateHeard && !defaultsSentThisLoad) {
     defaultsSentThisLoad = true;
-    if (!defaultsAppliedHere()) applyDefaults();
+    if (!defaultsAppliedHere()) {
+      applyDefaults();
+      // Issue #183: switched on for the room, never off - a controller whose
+      // setting is off leaves a room another controller turned it on in.
+      if (presentation.autoSaveInk && !state.autoSaveInk) send({ op: 'autoSaveInk', on: true });
+    }
     noteDefaultsAppliedHere();
   }
 
@@ -4801,15 +4828,19 @@ async function connect() {
         // Broadcast by the display, so this arrives on every controller in the
         // room - including the one that did not ask for it, which is the point.
         if (!msg.id || typeof msg.data !== 'string') return;
-        clearTimeout(shotPending);
+        // A marked-up screen the display kept on its own (Issues #182, #183)
+        // is nobody's pending request, and when it was filed with the lecture
+        // there, this device does not file a second copy.
+        if (!msg.auto) clearTimeout(shotPending);
         const photo = addPhoto({
           id: msg.id, data: msg.data,
           title: msg.title || 'Photo',
-          badge: msg.target === 'screen' ? 'Screen' : `Panel ${PANEL_LABELS[msg.target] || '?'}`,
+          badge: msg.auto ? 'Ink' : msg.target === 'screen' ? 'Screen' : `Panel ${PANEL_LABELS[msg.target] || '?'}`,
+          filed: !!msg.filed,
         });
         photoNote(msg.tooBig
           ? `${photo.title} — saved, but bigger than a relay message carries, so putting it back on screen may not work.`
-          : `${photo.title} — saved. Tap it to put it on screen.`);
+          : msg.auto ? `Kept ${photo.title} in Photos.` : `${photo.title} — saved. Tap it to put it on screen.`);
         return;
       }
       if (msg.t === 'shot-failed') {
@@ -6307,6 +6338,7 @@ const PRESENTATION_DEFAULTS = {
   keepAwake: true,
   haptics: true,
   keepPhotos: false,
+  autoSaveInk: false,
   lectureDuration: 0,
   pacingAutoStart: true,
   bottomSlot1: 'music',
@@ -6884,6 +6916,15 @@ $('#pref-keep-photos').addEventListener('change', (ev) => {
   renderKeepPhotos();
 });
 
+// Issue #183. Changed here, it is changed for the room now as well as for
+// every lecture this controller opens from here on.
+$('#pref-autosave-ink').addEventListener('change', (ev) => {
+  presentation.autoSaveInk = ev.target.checked;
+  savePresentation();
+  if (bus && stateHeard) send({ op: 'autoSaveInk', on: presentation.autoSaveInk });
+});
+$('#ink-autosave').addEventListener('change', (ev) => send({ op: 'autoSaveInk', on: ev.target.checked }));
+
 $('#pref-lecture-duration').addEventListener('change', (ev) => {
   const val = ev.target.value;
   if (val === 'custom') {
@@ -6974,6 +7015,7 @@ function showSetup() {
   const unsuppHaptics = $('#pref-haptics-unsupported');
   if (unsuppHaptics) unsuppHaptics.hidden = typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
   $('#pref-keep-photos').checked = presentation.keepPhotos;
+  $('#pref-autosave-ink').checked = !!presentation.autoSaveInk;
   const dur = presentation.lectureDuration || 0;
   const stdPresets = ['0', '30', '45', '50', '60', '75', '90'];
   if (stdPresets.includes(String(dur))) {
