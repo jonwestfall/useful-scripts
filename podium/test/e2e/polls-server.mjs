@@ -429,6 +429,67 @@ ok('and its picker comes back asking again, rather than pointing at a timer that
 await ctx.close();
 }
 
+if (want('the planner steps through Marp builds and says what each slide builds (#177)')) {
+console.log('\n-- the planner steps through Marp builds and says what each slide builds (#177) --');
+const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+const desk = await ctx.newPage();
+trap(desk, 'builds plan');
+await desk.goto(`${BASE}/plan.html`);
+await desk.waitForSelector('#type-picker .type-btn');
+await desk.click('#type-picker .type-btn:has-text("Marp deck")');
+await desk.setInputFiles('#item-fields input[type=file]', path.join(HERE, '..', 'content', 'decks', 'example-builds.md'));
+await desk.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#deck-where')?.textContent || ''), null, { timeout: 20000 });
+const where = () => desk.textContent('#deck-where');
+const note = () => desk.textContent('#deck-build');
+// The deck renders into a shadow root: Playwright's selectors reach into it,
+// document.querySelectorAll inside waitForFunction would not.
+const shown = () => desk.$$eval('#item-preview .podium-fragment.is-shown', (n) => n.length);
+const until = async (check, ms = 10000) => {
+  for (const end = Date.now() + ms; Date.now() < end; await desk.waitForTimeout(100)) if (await check()) return;
+};
+ok(`a slide with no build says so, and how to add one ("${(await note()).trim().slice(0, 60)}…")`,
+  /No build/.test(await note()) && /_class: build/.test(await note()));
+ok('and the whole deck\'s builds are listed', /Slides that build: 2, 3\./.test(await note()));
+
+await desk.click('#deck-next');
+await desk.waitForFunction(() => /Slide 2 of 4/.test(document.querySelector('#deck-where').textContent), null, { timeout: 10000 });
+ok(`a build slide counts its steps ("${await where()}")`, /0 of 3 revealed/.test(await where()));
+ok('says it builds its bullets, and shows the class that does it',
+  /bullets one at a time/.test(await note()) && /Slide class: build/.test(await note()));
+// Every slide of the deck is in the shadow root at once: 3 bullets + 2 marked parts.
+await until(async () => (await desk.$$('#item-preview .podium-fragment')).length === 5);
+ok('the preview starts with every bullet hidden, as the room will',
+  (await desk.$$('#item-preview .podium-fragment')).length === 5 && (await shown()) === 0);
+
+await desk.click('#deck-next');
+await until(async () => (await shown()) === 1);
+ok(`Next reveals one bullet rather than leaving the slide ("${await where()}")`, (await shown()) === 1 && /Slide 2 of 4 · 1 of 3/.test(await where()));
+await desk.click('#deck-next');
+await desk.click('#deck-next');
+await desk.waitForFunction(() => /3 of 3 revealed/.test(document.querySelector('#deck-where').textContent), null, { timeout: 10000 });
+await until(async () => (await shown()) === 3);
+ok('and every bullet is up after three', (await shown()) === 3);
+await desk.click('#deck-next');
+await desk.waitForFunction(() => /Slide 3 of 4/.test(document.querySelector('#deck-where').textContent), null, { timeout: 10000 });
+ok('only then does it move on', /0 of 2 revealed/.test(await where()) && /marked class="build"/.test(await note()));
+await desk.click('#deck-prev');
+await desk.waitForFunction(() => /Slide 2 of 4/.test(document.querySelector('#deck-where').textContent), null, { timeout: 10000 });
+ok('Previous goes back to the slide before, fully built', /3 of 3 revealed/.test(await where()));
+
+// The mistakes worth catching before class.
+const typo = ['---', 'marp: true', '---', '<!-- _class: Build -->', '# Capital B', '- one', '- two',
+  '---', '<!-- _class: build -->', '# Nothing to reveal', 'Just a paragraph.'].join('\n');
+await desk.click('#type-picker .type-btn:has-text("Marp deck")');
+await desk.setInputFiles('#item-fields input[type=file]', { name: 'typo.md', mimeType: 'text/markdown', buffer: Buffer.from(typo) });
+await desk.waitForFunction(() => /Slide 1 of 2/.test(document.querySelector('#deck-where')?.textContent || ''), null, { timeout: 20000 });
+ok(`a near-miss class name is flagged ("${(await note()).trim().slice(0, 70)}…")`,
+  /"Build", which is not a build/.test(await note()) && await desk.$eval('#deck-build', (n) => n.classList.contains('is-warn')));
+await desk.click('#deck-next');
+await desk.waitForFunction(() => /Slide 2 of 2/.test(document.querySelector('#deck-where').textContent), null, { timeout: 10000 });
+ok('and so is the build class with nothing to reveal', /nothing to reveal/.test(await note()));
+await ctx.close();
+}
+
 if (want('audience polls: a room full of phones answering')) {
 console.log('\n-- audience polls: a room full of phones answering --');
 // The relay is the only part of Podium that ever sees an answer in the clear,

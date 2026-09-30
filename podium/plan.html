@@ -239,10 +239,12 @@
       <h3>What the class sees</h3>
       <div id="item-preview-viewport"><div id="item-preview"></div></div>
       <div class="inline" id="deck-nav" hidden>
-        <button id="deck-prev" type="button" aria-label="Previous slide">◀</button>
+        <button id="deck-prev" type="button" aria-label="Previous slide or build step">◀</button>
         <span class="hint" id="deck-where"></span>
-        <button id="deck-next" type="button" aria-label="Next slide">▶</button>
+        <button id="deck-next" type="button" aria-label="Next slide or build step">▶</button>
       </div>
+      <!-- Issue #177: this slide's build, and which slides build at all. -->
+      <p class="hint deck-build" id="deck-build" role="status" hidden></p>
     </div>
   </section>
 

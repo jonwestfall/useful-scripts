@@ -623,6 +623,37 @@ const MARP_DIRECTIVES = new Set([
  * they come out. Directive comments (`<!-- _class: lead -->`) stay, or the
  * slides would not render the way the room sees them.
  */
+/**
+ * Next or Previous through a Marp deck, builds included: Next reveals the
+ * slide's next build step, and only moves on once every step is showing;
+ * Previous hides them again one at a time, and lands on the slide before
+ * fully built. The one rule, shared by the room and the planning page's
+ * preview (Issue #177) so rehearsing a deck there steps exactly as it will
+ * in class.
+ *
+ * @param {{slide?: number, step?: number}} pos
+ * @param {'next'|'prev'} dir
+ * @param {number[]} [fragments] - build steps per slide
+ * @param {number} slideCount
+ * @returns {{slide: number, step: number}}
+ */
+export function deckStep(pos, dir, fragments, slideCount) {
+  const last = Math.max(0, (slideCount || 1) - 1);
+  const fragsFor = (i) => (fragments && fragments[i]) || 0;
+  let slide = Math.max(0, pos?.slide || 0);
+  let step = pos?.step || 0;
+  if (dir === 'next') {
+    if (step < fragsFor(slide)) step += 1;
+    else if (slide < last) { slide += 1; step = 0; }
+  } else if (step > 0) {
+    step -= 1;
+  } else if (slide > 0) {
+    slide -= 1;
+    step = fragsFor(slide);
+  }
+  return { slide, step };
+}
+
 export function stripDeckNotes(source) {
   return String(source || '').replace(/<!--([\s\S]*?)-->/g, (whole, body) => {
     const lines = body.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -1326,16 +1357,10 @@ export function applyCommand(state, cmd) {
           // A thumbnail is a "go look at this slide" jump, not a re-run of its
           // build, so land fully revealed rather than back at bullet one.
           item.step = fragsFor(item.slide);
-        } else if (cmd.dir === 'next') {
-          if ((item.step || 0) < fragsFor(item.slide)) item.step = (item.step || 0) + 1;
-          else if (item.slide < last) { item.slide += 1; item.step = 0; }
         } else {
-          if ((item.step || 0) > 0) item.step -= 1;
-          else if (item.slide > 0) {
-            const target = item.slide - 1;
-            item.slide = target;
-            item.step = fragsFor(target);
-          }
+          const pos = deckStep(item, cmd.dir, item.fragments, item.slideCount || 1);
+          item.slide = pos.slide;
+          item.step = pos.step;
         }
       } else if (item.type === 'imagedeck') {
         const last = Math.max(0, (item.images?.length || 1) - 1);

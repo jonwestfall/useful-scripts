@@ -1489,6 +1489,9 @@ body.plan .linkish:hover { text-decoration: underline; }
   background: #000; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
 }
 #item-preview { position: absolute; inset: 0; }
+/* Issue #177: this slide's build under the planner's slide stepper. */
+.deck-build { margin-top: 6px; }
+.deck-build.is-warn .deck-build-text { color: var(--cue); font-weight: 600; }
 /* Same "16:9 box, renderer fills it" shape as #item-preview-viewport above,
    for the message editor modal's own live preview (Issue #103). */
 #message-preview-box {
