@@ -588,6 +588,12 @@ const slowMusic = (ctx) => ctx.route('**/slowmusic/**', async (route) => {
 });
 const ready = async (pad) => {
   await pad.waitForSelector('.tile');
+  // The controller's start-up ends by loading the playlists and then going
+  // to the Library tab, in the same breath: once Add to queue is un-hidden
+  // that last tab switch has happened too, and a tab picked from here on
+  // stays picked. The tiles alone appear before it, and a Music tab picked
+  // in between gets switched back from under the next click.
+  await pad.waitForSelector('#music-add:not([hidden])', { state: 'attached', timeout: 15000 });
   await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'), null, { timeout: 30000 });
 };
 
@@ -647,6 +653,145 @@ const ready = async (pad) => {
     && !(await pad.textContent('#music-queue')).includes('Old track'));
   await ctx.close();
 }
+}
+
+if (want('marked-up screens: a paused video\'s frame, and slides as you leave them (#182, #183)')) {
+console.log('\n-- marked-up screens: a paused video\'s frame, and slides as you leave them (#182, #183) --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'marked-up-room', passphrase: 'keep what I drew' }));
+const screen = await ctx.newPage();
+trap(screen, 'marked-up display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'marked-up pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// What colour a video element is showing, sampled from its middle. The
+// fixture is one solid colour per second: red, green, blue, yellow.
+const colourOf = (page, sel) => page.evaluate((sel) => {
+  const v = document.querySelector(sel);
+  if (!v || !v.videoWidth) return null;
+  const c = document.createElement('canvas');
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  const g = c.getContext('2d');
+  g.drawImage(v, 0, 0);
+  const [r, gr, b] = g.getImageData(Math.round(c.width * 0.6), Math.round(c.height * 0.6), 1, 1).data;
+  return r > 150 && gr > 150 ? 'yellow' : r > 150 ? 'red' : gr > 150 ? 'green' : b > 150 ? 'blue' : `rgb(${r},${gr},${b})`;
+}, sel);
+const photoTitles = () => pad.$$eval('#photo-strip .shot img', (imgs) => imgs.map((i) => i.alt)).catch(() => []);
+
+await pad.fill('#url-input', `${BASE}/test/e2e/media-fixtures/four-colours.webm`);
+await pad.click('#url-form button[type=submit]');
+await screen.waitForFunction(() => { const v = document.querySelector('.layer[data-role="program"] video'); return v && !v.paused && v.currentTime > 2.2; }, null, { timeout: 15000 });
+await pad.click('.tab[data-tab="now"]');
+await pad.click('#play-pause');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] video')?.paused, null, { timeout: 5000 });
+const pausedAt = await screen.evaluate(() => document.querySelector('.layer[data-role="program"] video').currentTime);
+ok(`the room's video is paused on its blue second (${pausedAt.toFixed(2)} s)`, await colourOf(screen, '.layer[data-role="program"] video') === 'blue');
+
+// #182: the copies on the controller move to the paused frame.
+await pad.waitForFunction((t) => { const v = document.querySelector('#now-preview video'); return v && Math.abs(v.currentTime - t) < 0.3 && v.readyState >= 2; }, pausedAt, { timeout: 8000 })
+  .then(() => ok('the Now tab moves to the frame the room is paused on', true))
+  .catch(async () => ok(`the Now tab moves to the frame the room is paused on (at ${await pad.evaluate(() => document.querySelector('#now-preview video')?.currentTime)})`, false));
+await pad.waitForTimeout(300);
+ok('and shows it, not the first frame', await colourOf(pad, '#now-preview video') === 'blue');
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForFunction((t) => { const v = document.querySelector('#pad-mirror video'); return v && Math.abs(v.currentTime - t) < 0.3 && v.readyState >= 2; }, pausedAt, { timeout: 8000 })
+  .then(() => ok('so does the ink pad', true))
+  .catch(() => ok('so does the ink pad', false));
+await pad.waitForTimeout(300);
+ok('the ink pad shows the paused frame to draw on', await colourOf(pad, '#pad-mirror video') === 'blue');
+
+const box = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(box.x + box.w * 0.2, box.y + box.h * 0.2);
+await pad.mouse.down();
+await pad.mouse.move(box.x + box.w * 0.5, box.y + box.h * 0.4, { steps: 5 });
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+
+const before = (await photoTitles()).length;
+await pad.click('.tab[data-tab="now"]');
+await pad.click('#play-pause');
+await pad.waitForFunction((n) => document.querySelectorAll('#photo-strip .shot img').length > n, before, { timeout: 10000 })
+  .then(() => ok('playing it again keeps a photo of the marked-up frame', true))
+  .catch(() => ok('playing it again keeps a photo of the marked-up frame', false));
+const titles = await photoTitles();
+ok(`titled for what it is ("${titles[0]}")`, /^Paused video — /.test(titles[0] || ''));
+const kept = await pad.evaluate(() => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    let blue = 0; let ink = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 2] > 150 && d[i] < 120 && d[i + 1] < 140) blue++;
+      // The yellow pen: in a small JPEG thumbnail a thin stroke blends with
+      // the blue under it, but it is still the only thing on the frame with
+      // plenty of red and not much blue (the frame is ~(32, 80, 224); the
+      // white frame number keeps its blue).
+      if (d[i] > 100 && d[i + 2] < 200) ink++;
+    }
+    resolve({ blue, ink });
+  };
+  img.src = document.querySelector('#photo-strip .shot img').src;
+}));
+ok(`the photo holds the paused (blue) frame, not a later one (${kept.blue} blue samples)`, kept.blue > 50);
+ok(`and the marks drawn on it (${kept.ink} ink samples)`, kept.ink > 0);
+await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 })
+  .then(() => ok('the marks come off the moving picture once it plays', true))
+  .catch(() => ok('the marks come off the moving picture once it plays', false));
+ok('the video is playing again', await screen.evaluate(() => !document.querySelector('.layer[data-role="program"] video').paused));
+
+// #183: with auto-save on, a board you drew on is kept as you move on.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has-text("Whiteboard")');
+await screen.waitForSelector('.layer[data-role="program"] .r-whiteboard, .layer[data-role="program"] [class*="whiteboard"]', { timeout: 5000 }).catch(() => {});
+await pad.click('.tab[data-tab="ink"]');
+ok('auto-save starts off', !(await pad.isChecked('#ink-autosave')));
+const box2 = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(box2.x + box2.w * 0.3, box2.y + box2.h * 0.3);
+await pad.mouse.down();
+await pad.mouse.move(box2.x + box2.w * 0.6, box2.y + box2.h * 0.6, { steps: 5 });
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+const n0 = (await photoTitles()).length;
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has-text("Chalkboard")');
+await pad.waitForTimeout(1500);
+ok('with auto-save off, moving on keeps nothing', (await photoTitles()).length === n0);
+
+await pad.click('.tile:has-text("Whiteboard")');
+await pad.click('.tab[data-tab="ink"]');
+await pad.check('#ink-autosave');
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+await pad.click('.tab[data-tab="library"]');
+await pad.click('.tile:has-text("Chalkboard")');
+await pad.waitForFunction((n) => document.querySelectorAll('#photo-strip .shot img').length > n, n0, { timeout: 10000 })
+  .then(() => ok('with it on, the marked-up board is kept as it is left', true))
+  .catch(() => ok('with it on, the marked-up board is kept as it is left', false));
+ok(`titled for what it is ("${(await photoTitles())[0]}")`, /^Marked up — .*Whiteboard/.test((await photoTitles())[0] || ''));
+const n1 = (await photoTitles()).length;
+await pad.click('.tile:has-text("Whiteboard")');
+await pad.waitForTimeout(600);
+await pad.click('.tile:has-text("Chalkboard")');
+await pad.waitForTimeout(1500);
+ok('leaving the same marks again does not keep a second copy', (await photoTitles()).length === n1);
+await pad.waitForTimeout(300);
+ok('a second controller sees the switch the room has', await pad.isChecked('#ink-autosave'));
+
+// The Settings default is a device preference, saved as it is ticked.
+await pad.click('#open-settings');
+await pad.click('[data-settings-tab="presentation"]');
+await pad.check('#pref-autosave-ink');
+ok('the Settings default is saved on this device', await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).autoSaveInk === true));
+await pad.click('#setup-close');
+await ctx.close();
 }
 
 if (want('live streams: Twitch through its player API, with sound, video or both (#175)')) {

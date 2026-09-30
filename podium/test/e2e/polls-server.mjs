@@ -1720,6 +1720,34 @@ await acctScreen.waitForFunction(
   () => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 });
 ok('ink drawn during a server-backed lecture reaches the display', true);
 
+// Issue #183: with Auto-save on, leaving that marked-up slide keeps a photo of
+// it in the lecture - filed once, by the display, under screens/, even with
+// this controller's own Keep photos switch on (which would otherwise file a
+// second copy under photos/). Next and straight back, so everything below
+// still finds the same slide and the same ink.
+await pad.check('#ink-autosave');
+await pad.click('.tab[data-tab="slides"]');
+await pad.click('#deck-next');
+await pad.waitForTimeout(500);
+await pad.click('#deck-prev');
+const keptScreens = await desk.evaluate(async () => {
+  const deadline = Date.now() + 15000;
+  for (;;) {
+    const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+    const live = lectures.find((l) => !l.endedAt);
+    const { lecture } = await fetch(`/api/lectures/${live.id}`, { credentials: 'same-origin' }).then((r) => r.json());
+    const names = (lecture.files || []).map((f) => f.name);
+    if (names.some((n) => n.startsWith('screens/')) || Date.now() > deadline) return names;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+});
+ok(`a marked-up slide left with Auto-save on is filed with the lecture (${keptScreens.filter((n) => n.startsWith('screens/')).join(', ') || 'nothing under screens/'})`,
+  keptScreens.filter((n) => n.startsWith('screens/')).length === 1);
+ok('and only once - the controller does not file its own copy under photos/',
+  !keptScreens.some((n) => n.startsWith('photos/') && /Marked-up/i.test(n)));
+await pad.click('.tab[data-tab="ink"]');
+await pad.uncheck('#ink-autosave');
+
 // Pin down WHICH lecture before standing down. Everything below reads the
 // list back, and once this one closes a later lecture can sit at index 0 -
 // so hold the id rather than an index that only happens to point here now.
