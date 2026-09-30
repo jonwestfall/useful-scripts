@@ -192,7 +192,8 @@ Good to know:
 
 #### Background music in detail
 
-- Playlists come from `content/music.json` (or the admin page's **Music Playlists** on a server), and each track can live anywhere reachable, including your own server. Track lengths show in the picker and the queue.
+- Playlists come from `content/music.json` (or the admin page's **Music Playlists** on a server), and each track can live anywhere reachable, including your own server. Track lengths show in the picker and the queue; they are looked up a couple of tracks at a time, so a long queue never slows the controller down.
+- The queue belongs to the room, not to one lecture, but it does not outlive the day: when a room has had no commands for 3 hours, the next one starts with an empty queue (music level and Pause Queue are kept, and a queue that is playing is never cleared).
 - **Load**, **Add to queue**, or paste a link to any audio file and **Queue it**. **Auto-play** runs the queue on its own, **Shuffle the rest** mixes up what's left, and **Pause Queue** holds after the current track.
 - **Fade out & stop** takes the room quiet over three seconds when class begins.
 - **⏳ Show "We begin in…" on screen** puts up a panel counting down to the end of the current track, with editable text, so the room can see when you're starting.

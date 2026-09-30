@@ -22,7 +22,7 @@ import {
   initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, timerById, BUILD, VERSION, versionStamp,
   inkTargetKey, isHeldInkKey, heldInkCount, HELD_INK_PREFIX,
   watermarkForNewLecture, viewerState, viewChannel, stripDeckNotes,
-  MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS,
+  MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS, clearStaleMusic,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { encodeToFit } from './store.js';
@@ -32,6 +32,7 @@ import { serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
 import { deckId } from './deck.js';
 import { createCaptionLog } from './caption-log.js';
+import { createDurationProber } from './duration-probe.js';
 import { makeSigningKey, importSigningKey, importVerifyKey, signText, verifyText } from './crypto.js';
 
 const HEARTBEAT_MS = 2000;
@@ -779,41 +780,8 @@ let musicFadeTo = -1;
 let musicApplied = { src: '', playing: false, target: -1 };
 let musicLastSeek = 0;
 
-const trackDurations = new Map();
-
-function probeTrackDuration(src) {
-  if (!src || trackDurations.has(src)) return;
-  try {
-    const fullUrl = new URL(src, location.href).href;
-    if (trackDurations.has(fullUrl)) {
-      trackDurations.set(src, trackDurations.get(fullUrl));
-      return;
-    }
-    const a = new Audio();
-    a.preload = 'metadata';
-    a.src = fullUrl;
-    const onDone = (dur) => {
-      trackDurations.set(src, dur);
-      trackDurations.set(fullUrl, dur);
-      a.removeEventListener('loadedmetadata', onLoaded);
-      a.removeEventListener('error', onError);
-    };
-    const onLoaded = () => {
-      const d = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
-      onDone(d);
-    };
-    const onError = () => {
-      onDone(0);
-    };
-    a.addEventListener('loadedmetadata', onLoaded);
-    a.addEventListener('error', onError);
-    setTimeout(() => {
-      if (!trackDurations.has(src)) onDone(0);
-    }, 4000);
-  } catch {
-    trackDurations.set(src, 0);
-  }
-}
+// Issue #180: one probe per track, a couple at a time - see duration-probe.js.
+const { durations: trackDurations, probe: probeTrackDuration } = createDurationProber();
 
 function getQueueRemaining() {
   const music = state.music;
@@ -2164,6 +2132,8 @@ const STATE_SAVE_MS = 1200;
 // between two classes in the same room; short enough that yesterday's lecture
 // does not reappear when you open the room this morning.
 const STATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+// When a controller last sent this room a command - see clearStaleMusic.
+let lastCommandAt = 0;
 let stateSaveTimer = null;
 
 function stateStorageKey() {
@@ -2244,6 +2214,9 @@ function restoreState() {
   if (saved.music && Array.isArray(saved.music.tracks)) {
     state.music = { ...state.music, ...saved.music, playing: false };
   }
+  // The room was last used when this was saved: a queue restored from then
+  // is judged against it, not against this page load (Issue #180).
+  lastCommandAt = saved.savedAt;
   if (saved.watermark && typeof saved.watermark === 'object') {
     state.watermark = { ...state.watermark, ...saved.watermark };
     // Pre-fill assetStore with the bytes this screen already had rather than
@@ -2468,7 +2441,11 @@ async function connect() {
         return;
       }
       if (msg.t === 'cmd') {
-        if (applyCommand(state, msg)) commit();
+        // Before the command, so a first "load" or one-tap track today is
+        // not added to yesterday's queue (Issue #180).
+        const cleared = clearStaleMusic(state, lastCommandAt, Date.now());
+        lastCommandAt = Date.now();
+        if (applyCommand(state, msg) || cleared) commit();
       }
     },
   });
