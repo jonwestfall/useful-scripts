@@ -614,8 +614,9 @@ ok('this device requests a wake lock on load - Keep this device\'s screen awake 
 await screen.waitForFunction(() => document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
 ok('and blacks out the screen the moment it connects - Black out on connect defaults on too', true);
 // Un-blanked by hand, so the Settings close below has something to disturb
-// (Issue #170): closing Settings reloads this page, and that reload must not
-// read as "this controller just connected" and blank the room again.
+// (Issue #170): closing Settings must not read as "this controller just
+// connected" and blank the room again. (It used to reload the page; since
+// Issue #178 it does not, and this still holds either way.)
 await pad.click('#blank');
 await screen.waitForFunction(() => !document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
 
@@ -682,7 +683,7 @@ await pad.waitForFunction(() => document.querySelector('#display-state')?.textCo
 // Long enough for the reconnect's first peer list to have arrived and been
 // acted on - the moment the old code sent its second blank.
 await pad.waitForTimeout(1500);
-ok('closing Settings (a reload of this page) does not blank the screen again (Issue #170)',
+ok('closing Settings does not blank the screen again (Issue #170)',
   await screen.evaluate(() => !document.querySelector('#blank').classList.contains('is-on')));
 ok('"More" appears now that Camera is really out of the bar', await pad.isVisible('#tabs-more'));
 
@@ -706,7 +707,10 @@ ok('restored order and visibility match what the bar shipped with', await pad.ev
 }));
 await pad.click('#setup-close');
 await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
-await pad.waitForSelector('.tile', { timeout: 15000 });
+// No reload behind Close any more (Issue #178), so the controller is still on
+// the tab it was on, not thrown back to the Library.
+ok('closing Settings leaves the controller on the tab it was on',
+  await pad.evaluate(() => !document.querySelector('[data-panel="camera"]').hidden));
 
 await pad.click('.tab[data-tab="polls"]');
 await pad.fill('#poll-question', 'Which bias is this?');
@@ -732,7 +736,6 @@ await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
 await pad.check('#pref-poll-url');
 await pad.click('#setup-close');
 await pad.waitForSelector('#app:not([hidden])', { timeout: 15000 });
-await pad.waitForSelector('.tile', { timeout: 15000 });
 
 await pad.click('.tab[data-tab="polls"]');
 await pad.fill('#poll-question', 'And now?');
@@ -1751,15 +1754,21 @@ ok('the top Save button runs the real form validation, not a shortcut around it'
   (await small.textContent('#setup-error')).includes('Fill in the fields'));
 ok('and does not navigate away on a rejected save', await small.isVisible('#setup:not([hidden])'));
 
-await Promise.all([small.waitForNavigation({ timeout: 15000 }), small.click('#setup-close-top')]);
+// Closing no longer reloads (Issue #178) - which is also what throws away the
+// half-finished edit above: the form is refilled from the saved config the
+// next time Settings opens.
+await small.evaluate(() => { window.__sameDocument = true; });
+await small.click('#setup-close-top');
 await small.waitForSelector('#app:not([hidden])', { timeout: 15000 });
-ok('the top Close button reloads back to the app, same as the bottom one', true);
+ok('the top Close button goes back to the app, same as the bottom one, without reloading',
+  await small.evaluate(() => window.__sameDocument === true) && await small.isHidden('#setup'));
 
 // A normal (non-phone) viewport never shows this row at all - the real
 // Save/Close are already in easy reach down there.
 await small.setViewportSize({ width: 1280, height: 900 });
 await small.click('#open-settings');
 await small.waitForSelector('#setup:not([hidden])');
+ok('an edit closed without saving is gone when Settings opens again', (await small.inputValue('#c-pass')) === 'reach it without scrolling');
 ok('and stays hidden on a screen wide enough not to need it', await small.isHidden('.setup-top-actions'));
 
 await smallCtx.close();

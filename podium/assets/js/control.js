@@ -18,7 +18,7 @@ import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downs
 import { mountSessionBadge, serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
 import { createWatermarkPanel } from './watermark.js';
-import { loadDefaults, defaultCommands, createDefaultsPanel, DEFAULTS_KEY } from './defaults.js';
+import { loadDefaults, defaultCommands, defaultsDelta, changedDefaultCommands, createDefaultsPanel, DEFAULTS_KEY } from './defaults.js';
 import { createPipPanel } from './pip.js';
 
 const LIB_KEY = 'podium.library.v1';
@@ -696,24 +696,56 @@ function planAutoplay(musicConfig) {
 // box) are set directly; the rest goes to the room as ordinary commands.
 let defaults = loadDefaults();
 
-function applyDefaults({ afterPlan = false } = {}) {
-  const d = defaults;
-  if (d.music.autoplay !== null && $('#music-autoplay')) $('#music-autoplay').checked = d.music.autoplay;
-  if (d.music.untilQueue !== null && $('#music-countdown-queue')) {
+// This device's own controls. `pick` limits it to some of them; `previous` is
+// the defaults they replace, so a caption box still holding the old default
+// caption takes the new one while one the presenter typed into is left alone.
+function applyDeviceDefaults(d, pick = () => true, previous = null) {
+  if (pick('autoplay') && d.music.autoplay !== null && $('#music-autoplay')) $('#music-autoplay').checked = d.music.autoplay;
+  if (pick('untilQueue') && d.music.untilQueue !== null && $('#music-countdown-queue')) {
     $('#music-countdown-queue').checked = d.music.untilQueue;
     setCountdownQueue(d.music.untilQueue);
   }
-  if (d.music.countdownText) {
+  if (pick('countdownText') && d.music.countdownText) {
     safeStorageSet(localStorage, COUNTDOWN_TEXT_KEY, d.music.countdownText);
     updateCountdownButton();
   }
   const caption = $('#overlay-text');
-  if (d.caption && caption && document.activeElement !== caption && !caption.value) caption.value = d.caption;
-  if (d.watermark.imageId && d.watermark.imageData) {
-    assetStore.set(d.watermark.imageId, d.watermark.imageData);
-    pushAssetIfHeld(assetRef(d.watermark.imageId));
-  }
+  if (pick('caption') && d.caption && caption && document.activeElement !== caption
+      && (!caption.value || (previous && caption.value === previous.caption))) caption.value = d.caption;
+}
+
+// The default logo's bytes, where the display can ask for them.
+function holdDefaultLogo(d) {
+  if (!d.watermark.imageId || !d.watermark.imageData) return;
+  assetStore.set(d.watermark.imageId, d.watermark.imageData);
+  pushAssetIfHeld(assetRef(d.watermark.imageId));
+}
+
+function applyDefaults({ afterPlan = false } = {}) {
+  const d = defaults;
+  applyDeviceDefaults(d);
+  holdDefaultLogo(d);
   for (const cmd of defaultCommands(d, state, { assetRef, afterPlan })) send(cmd);
+}
+
+// Defaults changed in Settings take effect when it closes (Issue #178) - just
+// the ones that changed, with no reload. Before, nothing changed there reached
+// this tab at all: closing Settings reloaded the page, and the reload counted
+// (rightly, for blank-on-connect) as "not opening the controller", so a
+// watermark or Auto-play set in Settings waited for a new tab.
+let defaultsAtOpen = null;
+function applyChangedDefaults() {
+  const before = defaultsAtOpen;
+  defaultsAtOpen = null;
+  if (!before) return;
+  const delta = defaultsDelta(before, defaults);
+  if (!delta.any) return;
+  applyDeviceDefaults(defaults, (key) => delta[key], before);
+  // Room commands wait for the first-connect pass when this tab has not
+  // applied its defaults yet - that one sends the whole (new) set.
+  if (!defaultsSentThisLoad || !bus || !stateHeard) return;
+  holdDefaultLogo(defaults);
+  for (const cmd of changedDefaultCommands(before, defaults, state, { assetRef })) send(cmd);
 }
 
 // Once per tab per room, like blank-on-connect below (Issue #170): a reload,
@@ -4873,7 +4905,9 @@ const TAB_LABELS = {
 
 function tab(name) {
   const dualPane = document.body.classList.contains('dual-pane');
-  $$('.tab:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => {
+  // `[data-tab]`: the controller's own tabs, not Settings' Connection and
+  // Presentation tabs, which share the class (Issue #178 - see below).
+  $$('.tab[data-tab]:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => {
     b.classList.toggle('is-on', b.dataset.tab === name);
     // Which section is open, for a screen reader - the highlight alone is
     // only visible (Issue #156).
@@ -4923,7 +4957,11 @@ function tab(name) {
   }
 }
 
-$$('.tab:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
+// Only buttons that name a tab (Issue #178). Settings' own Connection and
+// Presentation tabs share the .tab class, and picking one used to run
+// tab(undefined) as well - hiding every panel behind the sheet, which only went
+// unnoticed while closing Settings reloaded the page.
+$$('.tab[data-tab]:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
 
 const savedDual = localStorage.getItem('podium.ui.dualPane') === '1';
 if (savedDual) {
@@ -4935,7 +4973,7 @@ $('#dual-pane-toggle').addEventListener('click', () => {
   const isDual = document.body.classList.toggle('dual-pane');
   $('#dual-pane-toggle').classList.toggle('is-on', isDual);
   safeStorageSet(localStorage, 'podium.ui.dualPane', isDual ? '1' : '0');
-  const activeTab = document.querySelector('.tab.is-on:not(#dual-pane-toggle)');
+  const activeTab = document.querySelector('.tab[data-tab].is-on:not(#dual-pane-toggle)');
   if (activeTab) tab(activeTab.dataset.tab);
   window.dispatchEvent(new Event('resize'));
 });
@@ -6085,7 +6123,7 @@ window.addEventListener('keydown', (ev) => {
 function cycleTab(delta) {
   const visible = presentation.tabOrder.filter((id) => !presentation.hiddenTabs.includes(id));
   if (visible.length < 2) return;
-  const current = document.querySelector('.tab.is-on:not(#dual-pane-toggle)')?.dataset.tab;
+  const current = document.querySelector('.tab[data-tab].is-on:not(#dual-pane-toggle)')?.dataset.tab;
   const at = visible.indexOf(current);
   tab(visible[((at < 0 ? 0 : at) + delta + visible.length) % visible.length]);
 }
@@ -6956,6 +6994,11 @@ $('#topbar-pacing')?.addEventListener('click', () => {
 function showSetup() {
   $('#setup').hidden = false;
   $('#app').hidden = true;
+  $('#setup-error').textContent = '';
+  // What the saved defaults were when Settings opened, to apply what changed
+  // when it closes (see applyChangedDefaults). A copy: the Settings section
+  // edits its own object in place before saving it.
+  defaultsAtOpen = JSON.parse(JSON.stringify(defaults));
   $('#setup-close').hidden = !isConfigured(cfg);
   $('#setup-close-top').hidden = !isConfigured(cfg);
   settingsTab('connection');
@@ -6995,17 +7038,14 @@ function showSetup() {
   if (prefSnap) prefSnap.checked = presentation.snapShapes !== false;
   renderTabOrderSettings();
   renderKeepPhotos();
+  // Filled in from the saved config every time Settings opens, which is also
+  // what throws away a half-finished edit that was closed without saving.
   const form = $('#setup-form');
   for (const [key, value] of Object.entries(cfg)) {
     const field = form.elements[key];
     if (field && typeof value !== 'boolean') field.value = value;
   }
-  const onTransport = () => {
-    const t = form.elements.transport.value;
-    form.querySelectorAll('[data-for]').forEach((row) => { row.hidden = !row.dataset.for.split(' ').includes(t); });
-  };
-  form.elements.transport.addEventListener('change', onTransport);
-  onTransport();
+  onSetupTransport();
 
   // More than one course on this server has settings this account may use, so
   // nothing was adopted automatically (loadConfig only does that when there is
@@ -7021,33 +7061,66 @@ function showSetup() {
         const field = form.elements[key];
         if (field) field.value = value;
       }
-      onTransport();
+      onSetupTransport();
       $('#setup-error').textContent = `Filled in from ${course.title}. Check it and save.`;
     },
   }, course.title || course.course)));
-  form.addEventListener('submit', (ev) => {
-    ev.preventDefault();
-    // `generated: null` because submitting this form IS the choice: the room
-    // and passphrase it was pre-filled with were only a suggestion until now,
-    // and isConfigured refuses a config still carrying that marker.
-    const next = { ...cfg, generated: null };
-    for (const key of Object.keys(DEFAULTS)) {
-      const field = form.elements[key];
-      if (field && typeof field.value === 'string') next[key] = field.value.trim();
-    }
-    if (!isConfigured(next)) { $('#setup-error').textContent = 'Fill in the fields for the transport you picked.'; return; }
-    cfg = next;
-    saveConfig(cfg);
-    location.reload();
-  });
+}
+
+function onSetupTransport() {
+  const form = $('#setup-form');
+  const t = form.elements.transport.value;
+  form.querySelectorAll('[data-for]').forEach((row) => { row.hidden = !row.dataset.for.split(' ').includes(t); });
+}
+
+// Wired once, not in showSetup (Issue #178): that used to add another submit
+// and transport listener every time Settings opened, which only went
+// unnoticed because closing it always reloaded the page.
+$('#setup-form').elements.transport.addEventListener('change', onSetupTransport);
+$('#setup-form').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const form = $('#setup-form');
+  // `generated: null` because submitting this form IS the choice: the room
+  // and passphrase it was pre-filled with were only a suggestion until now,
+  // and isConfigured refuses a config still carrying that marker.
+  const next = { ...cfg, generated: null };
+  for (const key of Object.keys(DEFAULTS)) {
+    const field = form.elements[key];
+    if (field && typeof field.value === 'string') next[key] = field.value.trim();
+  }
+  if (!isConfigured(next)) { $('#setup-error').textContent = 'Fill in the fields for the transport you picked.'; return; }
+  // Nothing about the connection changed: there is nothing to reconnect, so
+  // Save is just Close (Issue #178) rather than a reload that drops the relay
+  // and every uploaded deck this tab was holding for the display.
+  if (isConfigured(cfg) && Object.keys(DEFAULTS).every((key) => String(next[key] ?? '') === String(cfg[key] ?? ''))) {
+    closeSetup();
+    return;
+  }
+  cfg = next;
+  saveConfig(cfg);
+  location.reload();
+});
+
+// Closing Settings goes straight back to the controller (Issue #178). It used
+// to reload the page, which was slow, dropped the relay mid-lecture, and lost
+// everything this tab held only in memory - uploaded decks and photos the
+// display asks this device for - leaving a controller that could not put back
+// what it had loaded. Nothing it closes over needs a reload: every
+// Presentation preference takes effect the moment it changes, a connection
+// change only counts once saved (the submit handler above reloads for that),
+// and an unsaved one is refilled from the saved config next time it opens.
+function closeSetup() {
+  if (!isConfigured(cfg)) return;
+  $('#setup').hidden = true;
+  $('#app').hidden = false;
+  $('#setup-error').textContent = '';
+  applyChangedDefaults();
+  renderAll();
 }
 
 $('#open-settings').addEventListener('click', showSetup);
-
-// Reloading is the honest "cancel": it throws away half-finished edits and
-// puts the page back into whatever state the saved settings describe.
-$('#setup-close').addEventListener('click', reloadClean);
-$('#setup-close-top').addEventListener('click', reloadClean);
+$('#setup-close').addEventListener('click', closeSetup);
+$('#setup-close-top').addEventListener('click', closeSetup);
 // Not a second save path (Issue #96) - #setup-form is outside this button,
 // so requestSubmit is what reaches the exact same handler the bottom Save
 // button's own click already triggers as a normal form submission.
@@ -7136,6 +7209,11 @@ if (!isConfigured(cfg)) {
 } else {
   $('#app').hidden = false;
   $$('.relay-target').forEach((n) => { n.textContent = relayTarget(cfg); });
+  // Auto-play and the caption box are not kept anywhere, so every load of the
+  // page - a reload, iOS reviving the tab - starts them from the saved
+  // defaults rather than from blank (Issue #178). The rest waits for the
+  // display, once per tab (see renderConnection).
+  applyDeviceDefaults(defaults, (key) => key === 'autoplay' || key === 'caption');
   // A createBus that rejects - no Web Crypto over plain http, a blocked CDN for
   // the transport adapter, a relay URL that is not a URL - used to take the
   // rest of this module with it (top-level await), so the library never loaded

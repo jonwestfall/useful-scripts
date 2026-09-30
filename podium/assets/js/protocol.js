@@ -207,8 +207,10 @@ export function initialState() {
     // display when a new lecture started - not something the presenter chose.
     // The next new lecture replaces a course default with ITS course's one,
     // and never touches a watermark the presenter set (see applyCourseBranding
-    // in display.js).
-    watermark: { enabled: false, text: '', image: '', position: 'br', fromCourse: false },
+    // in display.js). `fromDefault` (Issue #178): put here by a controller's
+    // saved "Start every lecture with" default, which is not the presenter's
+    // own either - a changed default replaces it.
+    watermark: { enabled: false, text: '', image: '', position: 'br', fromCourse: false, fromDefault: false },
     // Picture-in-picture's own configuration (Issue #110) - independent of
     // `layout` the same way watermark is independent of what is on screen,
     // so switching away from the 'pip' layout and back does not lose the
@@ -1472,7 +1474,10 @@ export function applyCommand(state, cmd) {
       // New text or a new logo makes it the presenter's own - a later lecture
       // leaves it alone. Moving or hiding a course default does not: the next
       // lecture of that course still starts with it showing.
-      if (cmd.text !== undefined || cmd.image !== undefined) state.watermark.fromCourse = false;
+      if (cmd.text !== undefined || cmd.image !== undefined) {
+        state.watermark.fromCourse = false;
+        state.watermark.fromDefault = cmd.fromDefault === true;
+      }
       if (cmd.position !== undefined) state.watermark.position = cmd.position === 'tl' ? 'tl' : 'br';
       if (cmd.enabled !== undefined) state.watermark.enabled = !!cmd.enabled;
       return true;

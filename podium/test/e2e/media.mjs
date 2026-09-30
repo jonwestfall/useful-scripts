@@ -478,6 +478,92 @@ ok('reloading the same tab does not put the defaults back', Math.abs(Number(awai
 await ctx.close();
 }
 
+if (want('Settings closes without reloading, and applies what changed (#178)')) {
+console.log('\n-- Settings closes without reloading, and applies what changed (#178) --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'settings-close-room', passphrase: 'no reload please' }));
+const screen = await ctx.newPage();
+trap(screen, 'settings-close display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'settings-close pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await pad.waitForTimeout(800);
+ok('no watermark to begin with', await screen.evaluate(() => !document.querySelector('#watermark')?.classList.contains('is-on')));
+
+// Something only this page holds: gone if Close reloads.
+await pad.evaluate(() => { window.__sameDocument = true; });
+await pad.click('.tab[data-tab="say"]');
+await pad.fill('#overlay-text', 'typed before Settings');
+
+await pad.click('#open-settings');
+await pad.click('[data-settings-tab="presentation"]');
+// Typed and never tabbed away from - Close is tapped with the box still focused.
+await pad.type('#def-wm-text', 'Dr. Settings');
+ok('typing a first watermark ticks "Put up my watermark"', await pad.isChecked('#def-wm-on'));
+ok('and it is saved as it is typed', await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.defaults.v1')).watermark.text === 'Dr. Settings'));
+await pad.selectOption('#def-autoplay', 'on');
+await pad.click('#setup-close');
+await pad.waitForSelector('#app:not([hidden])');
+ok('closing Settings does not reload the controller', await pad.evaluate(() => window.__sameDocument === true));
+ok('what was on the page is still there', (await pad.inputValue('#overlay-text')) === 'typed before Settings');
+ok('and the display is still connected', (await pad.textContent('#display-state')).startsWith('Display connected'));
+await screen.waitForFunction(() => document.querySelector('#watermark-text')?.textContent === 'Dr. Settings'
+  && document.querySelector('#watermark')?.classList.contains('is-on'), null, { timeout: 8000 })
+  .then(() => ok('the watermark set in Settings goes up when it closes', true))
+  .catch(() => ok('the watermark set in Settings goes up when it closes', false));
+ok('Auto-play set in Settings is ticked on the Music tab', await pad.isChecked('#music-autoplay'));
+
+// Opening and closing again, changing nothing, sends nothing new.
+await pad.click('#open-settings');
+await pad.click('#setup-close');
+ok('a second open and close still does not reload', await pad.evaluate(() => window.__sameDocument === true));
+
+// Save with the connection unchanged is a Close, not a reload - and it is
+// wired once, however many times Settings has been opened.
+await pad.click('#open-settings');
+await pad.click('#setup-form button[type="submit"]');
+await pad.waitForSelector('#app:not([hidden])');
+ok('Save with nothing changed in the connection does not reload either', await pad.evaluate(() => window.__sameDocument === true));
+
+// A reload (iOS reviving the tab) keeps Auto-play from the default, where it
+// used to come back unticked - the room's own defaults stay once-per-tab.
+await pad.reload();
+await pad.waitForSelector('.tile');
+ok('Auto-play survives a reload of the controller', await pad.isChecked('#music-autoplay'));
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// Turning the default off takes down the watermark it put up.
+await pad.click('#open-settings');
+await pad.click('[data-settings-tab="presentation"]');
+await pad.uncheck('#def-wm-on');
+await pad.click('#setup-close');
+await screen.waitForFunction(() => !document.querySelector('#watermark')?.classList.contains('is-on'), null, { timeout: 8000 })
+  .then(() => ok('switching the watermark default off takes it down', true))
+  .catch(() => ok('switching the watermark default off takes it down', false));
+
+// A watermark of the presenter's own is never replaced by a default change.
+await pad.click('.tab[data-tab="say"]');
+await pad.fill('#watermark-text', 'Mine');
+await pad.press('#watermark-text', 'Enter');
+await screen.waitForFunction(() => document.querySelector('#watermark-text')?.textContent === 'Mine'
+  && document.querySelector('#watermark')?.classList.contains('is-on'), null, { timeout: 8000 });
+await pad.click('#open-settings');
+await pad.click('[data-settings-tab="presentation"]');
+await pad.check('#def-wm-on');
+await pad.fill('#def-wm-text', 'Dr. Changed');
+await pad.click('#setup-close');
+await pad.waitForTimeout(1000);
+ok('a changed default leaves the presenter\'s own watermark up', await screen.evaluate(() =>
+  document.querySelector('#watermark-text')?.textContent === 'Mine'));
+await ctx.close();
+}
+
 if (want('live streams: Twitch through its player API, with sound, video or both (#175)')) {
 console.log('\n-- live streams: Twitch through its player API, with sound, video or both (#175) --');
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
