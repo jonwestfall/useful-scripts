@@ -20,6 +20,7 @@ import { createAssetResolver } from './assets.js';
 import { createWatermarkPanel } from './watermark.js';
 import { loadDefaults, defaultCommands, defaultsDelta, changedDefaultCommands, createDefaultsPanel, DEFAULTS_KEY } from './defaults.js';
 import { createPipPanel } from './pip.js';
+import { createDurationProber } from './duration-probe.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -914,7 +915,11 @@ async function pick(item, where = 'auto') {
   }
 }
 
-const trackDurations = new Map();
+// Issue #180: see duration-probe.js. A track's length arriving redraws the
+// queue, which is what shows it.
+const { durations: trackDurations, probe: probeTrackDuration } = createDurationProber({
+  onSettled: () => { musicDrawn = ''; },
+});
 
 function trackDurationStr(t) {
   if (!t) return '';
@@ -926,49 +931,6 @@ function trackDurationStr(t) {
   else if (t.src && trackDurations.has(t.src) && trackDurations.get(t.src) > 0) dur = trackDurations.get(t.src);
   if (dur != null && dur > 0) return fmtTime(Math.round(dur));
   return '';
-}
-
-function probeTrackDuration(src, onDoneCallback) {
-  if (!src) return;
-  if (trackDurations.has(src)) {
-    const d = trackDurations.get(src);
-    if (d > 0 && onDoneCallback) onDoneCallback(d);
-    return;
-  }
-  try {
-    const fullUrl = new URL(src, location.href).href;
-    if (trackDurations.has(fullUrl)) {
-      const d = trackDurations.get(fullUrl);
-      trackDurations.set(src, d);
-      if (d > 0 && onDoneCallback) onDoneCallback(d);
-      return;
-    }
-    const a = new Audio();
-    a.preload = 'metadata';
-    a.src = fullUrl;
-    const onDone = (dur) => {
-      trackDurations.set(src, dur);
-      trackDurations.set(fullUrl, dur);
-      a.removeEventListener('loadedmetadata', onLoaded);
-      a.removeEventListener('error', onError);
-      if (onDoneCallback && dur > 0) onDoneCallback(dur);
-      musicDrawn = '';
-    };
-    const onLoaded = () => {
-      const d = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
-      onDone(d);
-    };
-    const onError = () => {
-      onDone(0);
-    };
-    a.addEventListener('loadedmetadata', onLoaded);
-    a.addEventListener('error', onError);
-    setTimeout(() => {
-      if (!trackDurations.has(src)) onDone(0);
-    }, 4000);
-  } catch {
-    trackDurations.set(src, 0);
-  }
 }
 
 function getQueueRemainingControl() {

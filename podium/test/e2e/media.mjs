@@ -564,6 +564,91 @@ ok('a changed default leaves the presenter\'s own watermark up', await screen.ev
 await ctx.close();
 }
 
+if (want('a long music queue does not stall the controller, and old queues are cleared (#180)')) {
+console.log('\n-- a long music queue does not stall the controller, and old queues are cleared (#180) --');
+const wavBytes = fs.readFileSync(path.join(HERE, '..', 'content', 'audio', 'waiting-music.wav'));
+const seedQueue = (ctx, room, savedAt) => ctx.addInitScript(([cfg, room, savedAt]) => {
+  localStorage.setItem('podium.config.v2', cfg);
+  // Once per context: what the display left behind at the end of an earlier class.
+  if (location.pathname.endsWith('display.html') && !localStorage.getItem('seeded')) {
+    localStorage.setItem('seeded', '1');
+    const tracks = Array.from({ length: 30 }, (_, i) => ({ src: `${location.origin}/slowmusic/t${i}.wav`, title: `Old track ${i}` }));
+    localStorage.setItem(`podium.state.${room}`, JSON.stringify({
+      savedAt, program: { type: 'text', body: 'Earlier', key: 'k-earlier' }, panels: [null, null, null], layout: 'single',
+      music: { tracks, index: 0, playing: false, volume: 0.6, playlist: 'Last week' },
+    }));
+  }
+}, [JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room, passphrase: 'thirty tracks deep' }), room, savedAt]);
+// A music server slower than the metadata timeout: every probe of it hangs.
+let audioHits = 0;
+const slowMusic = (ctx) => ctx.route('**/slowmusic/**', async (route) => {
+  audioHits++;
+  await new Promise((r) => setTimeout(r, 6000));
+  route.fulfill({ status: 200, contentType: 'audio/wav', body: wavBytes }).catch(() => {});
+});
+const ready = async (pad) => {
+  await pad.waitForSelector('.tile');
+  await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'), null, { timeout: 30000 });
+};
+
+// A room reconnected mid-lecture: its queue is from today.
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await seedQueue(ctx, 'long-queue-room', Date.now() - 60 * 1000);
+  await slowMusic(ctx);
+  const screen = await ctx.newPage();
+  trap(screen, 'long-queue display');
+  await screen.goto(`${BASE}/display.html`);
+  await screen.click('#arm-button');
+  await screen.waitForSelector('#hud[data-status="online"]');
+  const pad = await ctx.newPage();
+  trap(pad, 'long-queue pad');
+  await pad.goto(`${BASE}/control.html`);
+  await ready(pad);
+  await pad.click('.tab[data-tab="music"]');
+  await pad.waitForFunction(() => document.querySelectorAll('#music-queue > *').length === 30, null, { timeout: 10000 });
+  ok('the controller shows the room\'s 30-track queue', true);
+  audioHits = 0;
+  await pad.waitForTimeout(5000);
+  ok(`five seconds of renders probe a few tracks at a time, not every track on every render (${audioHits} requests)`, audioHits <= 12);
+  const started = Date.now();
+  await pad.reload();
+  await ready(pad);
+  const took = Date.now() - started;
+  ok(`reloading the controller next to it is quick (${took} ms)`, took < 4000);
+  await ctx.close();
+}
+
+// The same room the next afternoon: the queue is from an earlier class.
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await seedQueue(ctx, 'old-queue-room', Date.now() - 5 * 60 * 60 * 1000);
+  await slowMusic(ctx);
+  const screen = await ctx.newPage();
+  trap(screen, 'old-queue display');
+  await screen.goto(`${BASE}/display.html`);
+  await screen.click('#arm-button');
+  await screen.waitForSelector('#hud[data-status="online"]');
+  ok('the display came back holding the earlier class\'s 30 tracks', await screen.evaluate((room) =>
+    JSON.parse(localStorage.getItem(`podium.state.${room}`) || '{}').music?.tracks?.length === 30, 'old-queue-room'));
+  const pad = await ctx.newPage();
+  trap(pad, 'old-queue pad');
+  await pad.goto(`${BASE}/control.html`);
+  await ready(pad);
+  await pad.click('.tab[data-tab="music"]');
+  // This controller's first command today - its black-out-on-connect -
+  // already cleared them: nobody opening the Music tab sees last week's list.
+  await pad.waitForFunction(() => document.querySelectorAll('#music-queue > *').length === 0, null, { timeout: 10000 })
+    .then(() => ok('the first command today clears the earlier class\'s tracks', true))
+    .catch(async () => ok(`the first command today clears the earlier class's tracks (${await pad.evaluate(() => document.querySelectorAll('#music-queue > *').length)} left)`, false));
+  await pad.click('#music-add');
+  await pad.waitForFunction(() => document.querySelectorAll('#music-queue > *').length === 1, null, { timeout: 10000 });
+  ok('and today\'s playlist starts a queue of its own', (await pad.textContent('#music-queue')).includes('Waiting music')
+    && !(await pad.textContent('#music-queue')).includes('Old track'));
+  await ctx.close();
+}
+}
+
 if (want('live streams: Twitch through its player API, with sound, video or both (#175)')) {
 console.log('\n-- live streams: Twitch through its player API, with sound, video or both (#175) --');
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });

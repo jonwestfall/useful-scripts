@@ -623,6 +623,39 @@ const MARP_DIRECTIVES = new Set([
  * they come out. Directive comments (`<!-- _class: lead -->`) stay, or the
  * slides would not render the way the room sees them.
  */
+// Issue #180: a music queue nobody has touched for this long belongs to an
+// earlier class. Long enough that no single lecture, break included, gets
+// near it; short enough that a room used in the morning and again after
+// lunch starts the afternoon with its own music rather than the morning's.
+export const MUSIC_IDLE_RESET_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Clear yesterday's music queue before today's first command (Issue #180).
+ *
+ * The queue lives on the display and outlives every lecture: it is saved
+ * with the rest of the room, a display tab is often left open for days, and
+ * the one-tap audio chips and a plan's audio items ADD to it rather than
+ * replacing it. So every Music tab showed a growing list of tracks from
+ * earlier days' plans. Nothing marks where one class ends and the next
+ * begins, but a room that has heard nothing for hours has plainly started
+ * over, and that is when the old queue goes - never while it is playing.
+ *
+ * @param {object} state - mutated in place
+ * @param {number} lastActivityAt - when the room last heard a command (0 = unknown)
+ * @param {number} now
+ * @returns {boolean} whether anything was cleared
+ */
+export function clearStaleMusic(state, lastActivityAt, now) {
+  const music = state?.music;
+  if (!music?.tracks?.length || music.playing) return false;
+  if (!lastActivityAt || now - lastActivityAt < MUSIC_IDLE_RESET_MS) return false;
+  music.tracks = [];
+  music.index = 0;
+  music.playlist = '';
+  music.seekTo = 0;
+  return true;
+}
+
 /**
  * Next or Previous through a Marp deck, builds included: Next reveals the
  * slide's next build step, and only moves on once every step is showing;
