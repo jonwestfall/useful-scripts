@@ -466,21 +466,66 @@ function outline(root) {
 // through the build before it moves to the next slide.
 function markFragments(root) {
   const fragments = [];
+  // Per slide, for the planning page (Issue #177): the slide's own classes
+  // and how its build was found, so a presenter can check the directive did
+  // what they meant before class rather than in front of it.
+  const builds = [];
   const sections = root.querySelectorAll('svg[data-marpit-svg] section');
   sections.forEach((section) => {
     const explicit = Array.from(section.querySelectorAll('.build, [data-build]'));
+    const buildClass = section.classList.contains('build');
     // Auto-build: opting a slide in without hand-marking anything treats each
     // top-level bullet as one step, which is what most decks actually want.
     const candidates = explicit.length
       ? explicit
-      : (section.classList.contains('build') ? Array.from(section.querySelectorAll('li')) : []);
+      : (buildClass ? Array.from(section.querySelectorAll('li')) : []);
     candidates.forEach((node, i) => {
       node.classList.add('podium-fragment');
       node.dataset.podiumFragment = String(i + 1);
     });
     fragments.push(candidates.length);
+    builds.push({
+      classes: Array.from(section.classList),
+      mode: explicit.length ? 'marked' : buildClass ? (candidates.length ? 'bullets' : 'empty') : '',
+      steps: candidates.length,
+    });
   });
-  return fragments;
+  return { fragments, builds };
+}
+
+// True when `a` is `b`, or one insertion, deletion, substitution or swap of
+// two neighbouring letters away from it - "Build", "bulid", "builds", "buld".
+function oneEditFrom(a, b) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  const rest = (x, y) => a.slice(x) === b.slice(y);
+  return rest(i + 1, i + 1) || rest(i + 1, i) || rest(i, i + 1)
+    || (a[i] === b[i + 1] && a[i + 1] === b[i] && rest(i + 2, i + 2));
+}
+
+/**
+ * One slide's build, in words, for the planning page's preview (Issue #177).
+ * `build` is one entry of render()'s `builds`. Returns { text, warn } - warn
+ * when the slide looks like it was meant to build and will not.
+ */
+export function describeBuild(build) {
+  if (!build) return { text: '', warn: false };
+  const n = build.steps;
+  const steps = `${n} step${n === 1 ? '' : 's'}, one per Next`;
+  if (build.mode === 'bullets') return { text: `Builds its bullets one at a time (_class: build) - ${steps}.`, warn: false };
+  if (build.mode === 'marked') return { text: `Builds the parts marked class="build" - ${steps}.`, warn: false };
+  if (build.mode === 'empty') {
+    return {
+      text: 'Has _class: build but nothing to reveal: a build reveals list bullets, or elements marked class="build".',
+      warn: true,
+    };
+  }
+  // Classes are case-sensitive, and Marp takes any name without complaint.
+  const nearMiss = (build.classes || []).find((c) => c !== 'build' && oneEditFrom(c.toLowerCase(), 'build'));
+  if (nearMiss) return { text: `Has the class "${nearMiss}", which is not a build - it has to be exactly _class: build.`, warn: true };
+  return { text: 'No build - everything on this slide appears at once. Add <!-- _class: build --> after its --- to reveal bullets one at a time.', warn: false };
 }
 
 /**
@@ -498,7 +543,7 @@ export async function render(source, id) {
   // html is one wrapping <div class="marpit"> holding every slide's <svg>.
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const root = doc.querySelector('.marpit') || doc.body;
-  const fragments = markFragments(root);
+  const { fragments, builds } = markFragments(root);
   const titles = outline(root);
   const sections = parseSections(root);
   // The aspect ratio baked into each slide's own SVG viewBox - read once here
@@ -542,6 +587,7 @@ export async function render(source, id) {
     titles,
     sections,
     fragments,
+    builds,
     aspects,
     // One scale per slide: 1 for a slide that fits its box as authored, less
     // for one whose content would otherwise run off the bottom. Apply with

@@ -74,7 +74,7 @@ Podium natively renders [Marp](https://marp.app/) Markdown decks directly inside
 - **Markdown Simplicity**: Write slides using standard markdown separated by `---`.
 - **KaTeX Math**: Include inline LaTeX math (`$E=mc^2$`) and block math (`$$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$`) with zero setup.
 - **Presenter Notes**: Use HTML comments (`<!-- presenter notes go here -->`) to display notes privately on your iPad that the audience never sees.
-- **Progressive Builds**: Use list bullets or `<!-- fit -->` directives to progressively reveal slide content one item at a time.
+- **Progressive Builds**: Put `<!-- _class: build -->` on a slide to reveal its list bullets one at a time, or mark exactly what should build with `class="build"` (see `content/decks/example-builds.md`). The planning page's *What the class sees* preview steps through each build the same way Next will in class, says what the current slide builds, lists which slides build at all, and flags a slide with the class but nothing to reveal or a near-miss class name such as `Build` (Issue #177).
 - **Custom CSS Themes**: Add custom styles and CSS themes to the top of your markdown files.
 
 ### The Presenter View (Now, Next & Notes)
@@ -466,7 +466,7 @@ Settings → Presentation → **Start every lecture with** remembers the control
 | **Caption along the bottom** | Fills in the Say tab's caption box, ready to show. Nothing goes on screen until you press **Show**. |
 | **Watermark** | Text, corner and an optional logo. It goes up automatically unless you've already put up a watermark of your own in this lecture, and it replaces a course's default watermark. |
 
-**When they apply:** once when you open the controller in a new tab and it first finds the display (the same moment as *Black out the screen when this controller connects*: never on a reconnect, a reload, or closing Settings), and again every time a lecture plan loads, so they win over the plan's own music settings. The watermark is only applied on opening, so one you took down mid-lecture stays down when you load a plan. Anything left on *Plan / as is*, empty, or unticked changes nothing. **Clear all defaults** puts everything back to that.
+**When they apply:** once when you open the controller in a new tab and it first finds the display (the same moment as *Black out the screen when this controller connects*: never on a reconnect, a reload, or closing Settings), and again every time a lecture plan loads, so they win over the plan's own music settings. The watermark is only applied on opening, so one you took down mid-lecture stays down when you load a plan. Anything you change in this section mid-lecture takes effect when you close Settings — just what you changed (turning the watermark default off takes down the one it put up). Auto-play and the Say tab's caption box are also filled from these on every reload, since nothing else remembers them. A watermark put up by a default never counts as "your own", so a changed default replaces it in the next lecture. Anything left on *Plan / as is*, empty, or unticked changes nothing. **Clear all defaults** puts everything back to that.
 
 ### Lecture Pacing Clock
 

@@ -9,7 +9,10 @@
 //     connects" fires, for the same reasons (never on a reconnect, a reload,
 //     or closing Settings); and
 //   - again after any lecture plan is loaded, so they win over a plan's own
-//     music settings.
+//     music settings; and
+//   - for whatever was changed, when Settings closes (Issue #178) - see
+//     changedDefaultCommands. Auto-play and the caption box, which nothing
+//     else keeps, are also set from them on every load of the page.
 //
 // Every default is opt-in. A music switch left on "Plan / as is" and an unset
 // mixer or watermark change nothing, so a device that never opens this section
@@ -24,7 +27,8 @@
 //   Caption - pre-filled in the Say tab, never shown until you press Show.
 //   Watermark - put up, unless the presenter already set one of their own in
 //     this lecture. A course's default watermark (Issue #157) is not the
-//     presenter's own, so this one replaces it.
+//     presenter's own, so this one replaces it; nor is one an earlier default
+//     put up (marked fromDefault), so a changed default replaces that too.
 //
 // Per device, like the rest of Settings -> Presentation: nothing here is
 // shared with other controllers or written into the room.
@@ -115,14 +119,78 @@ export function defaultCommands(defaults, state, { assetRef, afterPlan = false }
     out.push({ op: 'music', action: 'volume', value: d.mixer.music });
     out.push({ op: 'micVolume', value: d.mixer.mic });
   }
-  if (!afterPlan && watermarkDefaultReady(d)) {
+  if (!afterPlan && watermarkDefaultReady(d) && !presenterOwnsWatermark(state)) {
+    out.push(watermarkCommand(d, assetRef));
+  }
+  return out;
+}
+
+// The presenter's own watermark for this lecture wins. A course default
+// (fromCourse) is not the presenter's own, and neither is one a saved default
+// put up (fromDefault, Issue #178): the display keeps its watermark from one
+// lecture to the next, so without that flag the default put up last week
+// counted as "the presenter's own" this week and a changed default never
+// reached the screen again.
+function presenterOwnsWatermark(state) {
+  const current = state?.watermark || {};
+  return !!(current.enabled && !current.fromCourse && !current.fromDefault && (current.text || current.image));
+}
+
+function watermarkCommand(d, assetRef) {
+  const image = d.watermark.imageId && d.watermark.imageData && assetRef ? assetRef(d.watermark.imageId) : '';
+  return { op: 'watermark', text: d.watermark.text, image, position: d.watermark.position, enabled: true, fromDefault: true };
+}
+
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Which defaults differ between two sets (Issue #178). Settings no longer
+ * reloads the controller when it closes, so what was changed in it is applied
+ * then - just those parts, not the whole set again.
+ */
+export function defaultsDelta(before, after) {
+  const a = normalizeDefaults(before, Infinity);
+  const b = normalizeDefaults(after, Infinity);
+  const delta = {
+    autoplay: a.music.autoplay !== b.music.autoplay,
+    pauseQueue: a.music.pauseQueue !== b.music.pauseQueue,
+    untilQueue: a.music.untilQueue !== b.music.untilQueue,
+    countdownText: a.music.countdownText !== b.music.countdownText,
+    mixer: !same(a.mixer, b.mixer),
+    caption: a.caption !== b.caption,
+    watermark: !same(a.watermark, b.watermark),
+  };
+  delta.any = Object.values(delta).some(Boolean);
+  return delta;
+}
+
+/**
+ * The room commands for defaults changed in Settings mid-lecture (Issue #178).
+ * Only what changed, and only what the new value asks for: switching a music
+ * default back to "Plan / as is" or the mixer off leaves the room as it is.
+ *
+ * The watermark follows the first-connect rule - the presenter's own wins -
+ * with one addition: turning the default watermark off takes down the one it
+ * put up, and nothing else.
+ */
+export function changedDefaultCommands(before, after, state, { assetRef } = {}) {
+  const a = normalizeDefaults(before, Infinity);
+  const d = normalizeDefaults(after, Infinity);
+  const delta = defaultsDelta(a, d);
+  const out = [];
+  if (delta.pauseQueue && d.music.pauseQueue !== null) out.push({ op: 'music', action: 'pauseQueue', value: d.music.pauseQueue });
+  if (delta.mixer && d.mixer.enabled) {
+    out.push({ op: 'volume', value: d.mixer.master });
+    out.push({ op: 'contentVolume', value: d.mixer.content });
+    out.push({ op: 'music', action: 'volume', value: d.mixer.music });
+    out.push({ op: 'micVolume', value: d.mixer.mic });
+  }
+  if (delta.watermark) {
     const current = state?.watermark || {};
-    // The presenter's own watermark for this lecture wins; a course default
-    // (fromCourse) is not the presenter's own.
-    const ownAlready = current.enabled && !current.fromCourse && (current.text || current.image);
-    if (!ownAlready) {
-      const image = d.watermark.imageId && d.watermark.imageData && assetRef ? assetRef(d.watermark.imageId) : '';
-      out.push({ op: 'watermark', text: d.watermark.text, image, position: d.watermark.position, enabled: true });
+    if (watermarkDefaultReady(d)) {
+      if (!presenterOwnsWatermark(state)) out.push(watermarkCommand(d, assetRef));
+    } else if (current.enabled && current.fromDefault) {
+      out.push({ op: 'watermark', enabled: false });
     }
   }
   return out;
@@ -178,15 +246,28 @@ export function createDefaultsPanel({ $, uid, downscaleImage, MAX_ASSET_CHARS, s
   $('#def-autoplay').addEventListener('change', (ev) => { d.music.autoplay = readTri(ev.target.value); commit(); });
   $('#def-pause-queue').addEventListener('change', (ev) => { d.music.pauseQueue = readTri(ev.target.value); commit(); });
   $('#def-until-queue').addEventListener('change', (ev) => { d.music.untilQueue = readTri(ev.target.value); commit(); });
-  $('#def-countdown-text').addEventListener('change', (ev) => { d.music.countdownText = ev.target.value.trim(); commit(); });
+  // Text boxes save as they are typed, not on 'change' (Issue #178): 'change'
+  // waits for the box to lose focus, and tapping Close on a tablet does not
+  // always take it away first - which is how a typed watermark was lost.
+  $('#def-countdown-text').addEventListener('input', (ev) => { d.music.countdownText = ev.target.value.trim(); commit(); });
   $('#def-mixer-on').addEventListener('change', (ev) => { d.mixer.enabled = ev.target.checked; commit(); });
   for (const ch of ['master', 'content', 'music', 'mic']) {
     $(`#def-mix-${ch}`).addEventListener('input', (ev) => { $(`#def-mix-${ch}-pct`).textContent = pct(Number(ev.target.value)); });
     $(`#def-mix-${ch}`).addEventListener('change', (ev) => { d.mixer[ch] = Number(ev.target.value); commit(); });
   }
-  $('#def-caption').addEventListener('change', (ev) => { d.caption = ev.target.value.trim(); commit(); });
+  $('#def-caption').addEventListener('input', (ev) => { d.caption = ev.target.value.trim(); commit(); });
   $('#def-wm-on').addEventListener('change', (ev) => { d.watermark.enabled = ev.target.checked; commit(); });
-  $('#def-wm-text').addEventListener('change', (ev) => { d.watermark.text = ev.target.value.trim(); commit(); });
+  // Giving a watermark its first text or logo ticks "Put up my watermark" as
+  // well (Issue #178): typing one in and finding it never went up, because a
+  // separate box was left unticked, reads as the setting not working. Only the
+  // first time - one ticked off on purpose stays off while it is edited.
+  const firstWatermark = () => !d.watermark.text && !d.watermark.imageData;
+  $('#def-wm-text').addEventListener('input', (ev) => {
+    const text = ev.target.value.trim();
+    if (text && firstWatermark()) d.watermark.enabled = true;
+    d.watermark.text = text;
+    commit();
+  });
   $('#def-wm-position').addEventListener('change', (ev) => { d.watermark.position = ev.target.value; commit(); });
   $('#def-wm-image').addEventListener('change', async (ev) => {
     const file = ev.target.files?.[0];
@@ -198,6 +279,7 @@ export function createDefaultsPanel({ $, uid, downscaleImage, MAX_ASSET_CHARS, s
       // The same PNG ladder the Say tab's own logo upload uses, so
       // transparency survives and it fits a relay message.
       const shrunk = await downscaleImage(file, MAX_ASSET_CHARS, { widths: [480, 320, 200, 120], qualities: [1], mime: 'image/png' });
+      if (firstWatermark()) d.watermark.enabled = true;
       d.watermark.imageData = shrunk.dataUrl;
       d.watermark.imageId = `wmdef-${uid(8)}`;
       note.textContent = 'Logo saved as your default.';

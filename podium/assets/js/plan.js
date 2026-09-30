@@ -19,8 +19,8 @@ import {
   readFileText, downscaleImage, downloadText,
 } from './store.js';
 import { createRenderer } from './renderers.js';
-import { render as renderDeckSource, frontMatterTitle } from './deck.js';
-import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS } from './protocol.js';
+import { render as renderDeckSource, frontMatterTitle, describeBuild } from './deck.js';
+import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS, deckStep } from './protocol.js';
 import { mountSessionBadge, serverInfo } from './server.js';
 import { mountZipImport } from './zip-review.js';
 
@@ -32,7 +32,7 @@ let selectedId = null;
 // set once serverInfo() resolves.
 let serverLibraryUpload = false;
 let saveTimer = null;
-let preview = { renderer: null, key: null, slide: 0, step: 0, count: 0 };
+let preview = { renderer: null, key: null, slide: 0, step: 0, count: 0, fragments: [], builds: [] };
 // The server row this in-memory plan maps to, if any - set after pulling one
 // from the server or pushing one there, cleared by anything that swaps the
 // plan out for a different one (a new lecture, a different local lecture, an
@@ -800,27 +800,65 @@ function renderPreview({ remount = false } = {}) {
   if (isDeck) countDeck(item);
 }
 
-// Only so the slide stepper can say "3 of 14" and stop at the end; the renderer
+// So the slide stepper can say "3 of 14", stop at the end, and walk through
+// each slide's build the way Next will in class (Issue #177); the renderer
 // clamps regardless.
 async function countDeck(item) {
   const where = $('#deck-where');
+  const buildNote = $('#deck-build');
   try {
     const source = await previewDeckSource(item);
-    if (source == null) { where.textContent = 'No slides yet'; preview.count = 0; return; }
+    if (source == null) {
+      where.textContent = 'No slides yet';
+      Object.assign(preview, { count: 0, fragments: [], builds: [] });
+      buildNote.hidden = true;
+      return;
+    }
     const deck = await renderDeckSource(source, `count:${item.asset || item.src}`);
-    preview.count = deck.count;
-    where.textContent = `Slide ${Math.min(preview.slide + 1, deck.count)} of ${deck.count}`;
+    Object.assign(preview, { count: deck.count, fragments: deck.fragments || [], builds: deck.builds || [] });
+    const slide = Math.min(preview.slide, Math.max(0, deck.count - 1));
+    const steps = preview.fragments[slide] || 0;
+    where.textContent = `Slide ${slide + 1} of ${deck.count}`
+      + (steps ? ` · ${Math.min(preview.step, steps)} of ${steps} revealed` : '');
+    renderBuildNote(slide);
   } catch (err) {
-    preview.count = 0;
+    Object.assign(preview, { count: 0, fragments: [], builds: [] });
     where.textContent = `Could not read that deck: ${err.message}`;
+    buildNote.hidden = true;
   }
 }
 
-$('#deck-prev').addEventListener('click', () => { preview.slide = Math.max(0, preview.slide - 1); renderPreview(); });
-$('#deck-next').addEventListener('click', () => {
-  preview.slide = preview.count ? Math.min(preview.count - 1, preview.slide + 1) : preview.slide + 1;
+// What "What the class sees" cannot show by itself (Issue #177): whether this
+// slide builds, what it builds, and - the reason to look here at all - when a
+// build directive did not do what it was meant to. Plus which slides build
+// across the whole deck, to catch a `class: build` (every slide from here on)
+// written where `_class: build` (this slide) was meant.
+function renderBuildNote(slide) {
+  const note = $('#deck-build');
+  const { text, warn } = describeBuild(preview.builds[slide]);
+  const building = preview.builds.map((b, i) => (b.steps ? i + 1 : 0)).filter(Boolean);
+  const classes = (preview.builds[slide]?.classes || []).join(' ');
+  note.hidden = !text;
+  note.classList.toggle('is-warn', warn);
+  note.replaceChildren(
+    el('span', { class: 'deck-build-text' }, text),
+    classes ? el('span', { class: 'deck-build-classes' }, ` Slide class: ${classes}.`) : '',
+    el('span', { class: 'deck-build-deck' }, building.length
+      ? ` Slides that build: ${building.join(', ')}.`
+      : ' No slide in this deck builds.'),
+  );
+}
+
+// Next and Previous step through a slide's build before leaving it, exactly as
+// the display does (deckStep in protocol.js).
+function stepPreview(dir) {
+  const pos = deckStep(preview, dir, preview.fragments, preview.count || preview.slide + 2);
+  preview.slide = pos.slide;
+  preview.step = pos.step;
   renderPreview();
-});
+}
+$('#deck-prev').addEventListener('click', () => stepPreview('prev'));
+$('#deck-next').addEventListener('click', () => stepPreview('next'));
 
 // --- plan-level fields -------------------------------------------------------
 
