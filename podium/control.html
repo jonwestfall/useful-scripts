@@ -453,8 +453,7 @@ try {
             <label>Full-screen message</label>
             <p class="hint">
               A title card, "Back in 5 minutes", instructions for a group - with headings,
-              lists, a background colour, a font, and an optional picture if you want them
-              (Issue #103).
+              lists, a background colour, a font, and an optional picture if you want them.
             </p>
             <button id="text-open-editor" type="button" class="big-button">Compose a message…</button>
           </div>
@@ -1002,7 +1001,12 @@ try {
         </div>
         <div class="field">
           <label for="c-pass">Passphrase</label>
-          <input id="c-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
+          <!-- Dots until asked (Issue #200): Settings is opened in front of a
+               room as often as not, and this is the key to the projector. -->
+          <div class="inline">
+            <input id="c-pass" class="grow" name="passphrase" type="password" autocomplete="off" spellcheck="false">
+            <button type="button" class="reveal-btn" data-reveal="c-pass" aria-controls="c-pass" aria-pressed="false">Show</button>
+          </div>
         </div>
         <p class="error" id="setup-error" role="alert"></p>
         <button type="submit" class="big-button">Save</button>
@@ -1043,6 +1047,12 @@ try {
         A poll's join card always shows a QR and a four-letter code; this spells out the
         full address too, for a room where typing beats scanning. Decided once, when you
         start each poll — changing it here does not alter a poll already running.
+      </p>
+
+      <label class="check"><input id="pref-auto-switch-tab" type="checkbox" checked> Go to the controls for whatever I put on screen</label>
+      <p class="hint">
+        Picking a deck from the Library opens Slides; a video, PDF or web page opens Now; a
+        whiteboard opens Ink. Not when it only went to the cue.
       </p>
 
       <label class="check"><input id="pref-blank-on-connect" type="checkbox"> Black out the screen when this controller connects</label>

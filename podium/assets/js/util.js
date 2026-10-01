@@ -194,6 +194,28 @@ export function guessItemFromUrl(raw) {
  * awkward on a fullscreen kiosk display and on an iPad home-screen app, and a
  * single tap is too easy to hit by accident five minutes before class.
  */
+/**
+ * A Show/Hide button for a masked field (Issue #200) - the room passphrase,
+ * which Settings shows on a projected or shared screen as often as not.
+ * Every `[data-reveal]` button under `root` toggles the input it names.
+ * Hiding again is automatic whenever the sheet holding it is shown afresh:
+ * call the returned function then.
+ */
+export function wireRevealButtons(root = document) {
+  const buttons = [...root.querySelectorAll('[data-reveal]')];
+  const set = (button, shown) => {
+    const input = document.getElementById(button.dataset.reveal);
+    if (!input) return;
+    input.type = shown ? 'text' : 'password';
+    button.textContent = shown ? 'Hide' : 'Show';
+    button.setAttribute('aria-pressed', String(shown));
+  };
+  for (const button of buttons) {
+    button.addEventListener('click', () => set(button, button.getAttribute('aria-pressed') !== 'true'));
+  }
+  return () => buttons.forEach((button) => set(button, false));
+}
+
 export function wireDangerButton(button, label, action, { armedLabel = 'Tap again to erase', window: ms = 5000 } = {}) {
   let armed = false;
   let timer = null;

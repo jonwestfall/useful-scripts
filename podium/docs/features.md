@@ -443,6 +443,7 @@ Every teacher drives differently.
 
 ### Tabs, Dock & Clickers
 
+- **The controller remembers its tab**: a reload (or iOS reopening a tab it had put to sleep) comes back on the tab you were using. A new controller tab starts on the Library.
 - **Controller tabs** (Settings → Presentation): reorder the twelve tabs (Library, Slides, Now, Ink, Say, Timer, Camera, Photos, Music, Mixer, Sets, Polls) or hide the ones you never use. Hidden tabs are tucked under **More ▾**, never removed.
 - **Bottom bar dock**: up to eight quick-action slots chosen from Music, Media Play/Pause, Freeze, Blank, TAKE, Clear Cue, Quick Whiteboard, Laser, Spotlight, Quick Countdown, and Slide Next/Prev. On a phone the first four show alongside the volume slider.
 - **Split view**: on a wide iPad or laptop, show two tabs side by side, for example Slides beside Ink.
@@ -451,7 +452,10 @@ Every teacher drives differently.
 
 ### Comfort Settings
 
+Once a device is set up, **Settings opens on Presentation**. The connection (and the room passphrase, shown as dots until you tap **Show**) is one tab over. Closing Settings, on the controller or the display, goes straight back to where you were; only a Save that changes the connection reloads.
+
 All in **Settings → Presentation**, saved on that device only:
+- **Go to the controls for whatever I put on screen** (on by default): picking a deck from the Library opens Slides, a video, PDF or web page opens Now, a whiteboard opens Ink. Not when the pick only went to the cue.
 - **Black out the screen when this controller connects**, so nothing from a previous class is still up while you get ready. It fires once per fresh open, never on a reconnect or reload mid-lecture.
 - **Keep this device's screen awake** while the controller is open.
 - **Haptic feedback**: a physical tick when you advance, freeze, blank or TAKE, so you know a tap registered without looking down (on devices that support vibration).

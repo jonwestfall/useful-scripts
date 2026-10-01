@@ -62,6 +62,19 @@ test('every form field on the controller and display has a label', () => {
   assert.deepEqual(unlabelled, []);
 });
 
+// Issue numbers are for whoever reads the code, not whoever is teaching
+// (Issue #199): they belong in comments, never in text a page shows. Checked
+// in every page's markup and in the item blurbs the planning page displays.
+test('no issue numbers in text a page shows', () => {
+  const leaks = [];
+  for (const page of pages) {
+    const visible = read(page).replace(/<!--[\s\S]*?-->/g, '').replace(/<script[\s\S]*?<\/script>/g, '');
+    for (const m of visible.matchAll(/Issue #\d+/g)) leaks.push(`${page}: ${m[0]}`);
+  }
+  for (const m of read('assets/js/planfile.js').matchAll(/blurb:\s*'[^']*Issue #\d+[^']*'/g)) leaks.push(`planfile.js: ${m[0]}`);
+  assert.deepEqual(leaks, []);
+});
+
 test('the connection and caption changes are announced', () => {
   const control = read('control.html');
   const display = read('display.html');

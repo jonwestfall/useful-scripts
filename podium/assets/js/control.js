@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
+import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, wireRevealButtons, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, workingItem,
@@ -883,13 +883,13 @@ async function pick(item, where = 'auto') {
   // staging live - checked first, ahead of camera/deck's own special
   // handling, since this applies to a tap on absolutely anything.
   if (addToDraftSet(item)) return;
-  if (item.type === 'camera') { await startCamera(where); return; }
+  if (item.type === 'camera') { await startCamera(where); followToTab(item, where); return; }
   // A planned poll is a question, not yet a poll - it has no pollId or token
   // until something actually creates it on the relay, which is what the Polls
   // tab's composer does. Tapping it in the Library loads that composer rather
   // than trying to stage an item protocol.js would reject for missing fields.
   if (item.type === 'poll') { openPollDraftFromPlan(item); return; }
-  if (item.type !== 'deck' || item.slideCount) { stage(item, where); return; }
+  if (item.type !== 'deck' || item.slideCount) { stage(item, where); followToTab(item, where); return; }
   // A click handler can't be awaited by whatever dispatched it, so the
   // moment this returns control (at the first await below), the pad's own
   // sizing logic could already be asked to run again - well before
@@ -909,10 +909,34 @@ async function pick(item, where = 'auto') {
     const source = await getDeckSource(item.deckId ? item : { deckId: `src:${item.src}`, src: item.src });
     await stageDeck({ source, name: item.title, src: item.src });
     note.textContent = '';
+    followToTab(item, where);
   } catch (err) {
     if (pendingStage?.panel === panel && pendingStage.deckId === true) pendingStage = null;
     note.textContent = `Could not open that deck: ${err.message}`;
   }
+}
+
+// Issue #185: something picked in the Library is almost always followed by
+// controlling it, so the controller goes to the tab that does - a deck to
+// Slides, anything paged or played to Now (its paging, zoom and transport
+// live there), a whiteboard to Ink. Things with nothing to drive once they are
+// up (a message, a QR code, a picture, black) leave the controller where it
+// was. Only for what actually went on screen: a pick that landed in the cue
+// (frozen, or "Always cue first") is something still being decided on, and
+// the tab the presenter is on is the one they are deciding from. A per-device
+// preference, on unless turned off in Settings -> Presentation.
+const TAB_FOR_TYPE = {
+  deck: 'slides',
+  imagedeck: 'now', pdf: 'now', slides: 'now', web: 'now',
+  video: 'now', audio: 'now', youtube: 'now',
+  whiteboard: 'ink', timer: 'timer', camera: 'camera',
+};
+
+function followToTab(item, where = 'auto') {
+  if (presentation.autoSwitchTab === false || where === 'preview') return;
+  if (state.focus === 0 && (state.frozen || state.previewMode)) return;
+  const target = TAB_FOR_TYPE[item?.type];
+  if (target) tab(target);
 }
 
 // Issue #180: see duration-probe.js. A track's length arriving redraws the
@@ -4896,7 +4920,21 @@ const TAB_LABELS = {
   camera: 'Camera', photos: 'Photos', music: 'Music', mixer: 'Mixer', sets: 'Sets', polls: 'Polls',
 };
 
+// Which tab this browser tab was on (Issue #198), so a reload - a Save that
+// changed the connection, or iOS Safari reloading a tab it had put to sleep
+// in the background - comes back where the presenter was rather than on
+// Library. sessionStorage on purpose: it is this tab's, and a brand-new
+// controller tab (a new lecture) still starts on Library.
+const TAB_KEY = 'podium.ui.tab';
+function rememberedTab() {
+  try {
+    const saved = sessionStorage.getItem(TAB_KEY);
+    return TAB_IDS.includes(saved) ? saved : null;
+  } catch { return null; }
+}
+
 function tab(name) {
+  try { if (TAB_IDS.includes(name)) sessionStorage.setItem(TAB_KEY, name); } catch { /* private mode: Library after a reload */ }
   const dualPane = document.body.classList.contains('dual-pane');
   // `[data-tab]`: the controller's own tabs, not Settings' Connection and
   // Presentation tabs, which share the class (Issue #178 - see below).
@@ -6347,6 +6385,7 @@ const PRESENTATION_DEFAULTS = {
   inkScrollGutter: false,
   inkControlsTop: false,
   snapShapes: true,
+  autoSwitchTab: true,
   tabOrder: [...TAB_IDS],
   hiddenTabs: [],
 };
@@ -6901,6 +6940,7 @@ $('#pref-theme')?.addEventListener('change', (ev) => {
 });
 $('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
 $('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
+$('#pref-auto-switch-tab').addEventListener('change', (ev) => { presentation.autoSwitchTab = ev.target.checked; savePresentation(); });
 $('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(); applyWakeLock(); });
 $('#pref-haptics')?.addEventListener('change', (ev) => {
   presentation.haptics = ev.target.checked;
@@ -7004,7 +7044,11 @@ function showSetup() {
   defaultsAtOpen = JSON.parse(JSON.stringify(defaults));
   $('#setup-close').hidden = !isConfigured(cfg);
   $('#setup-close-top').hidden = !isConfigured(cfg);
-  settingsTab('connection');
+  // A device already set up opens on Presentation (Issue #200): the
+  // connection matters once, at setup, and a room's key on a projected or
+  // shared screen is better left a tap away. First run still needs it first.
+  settingsTab(isConfigured(cfg) ? 'presentation' : 'connection');
+  hidePassphrase();
   const prefTheme = $('#pref-theme');
   if (prefTheme) prefTheme.value = presentation.theme || 'dark';
   $('#pref-poll-url').checked = presentation.showPollUrl;
@@ -7040,6 +7084,7 @@ function showSetup() {
   if (prefTop) prefTop.checked = !!presentation.inkControlsTop;
   const prefSnap = $('#pref-snap-shapes');
   if (prefSnap) prefSnap.checked = presentation.snapShapes !== false;
+  $('#pref-auto-switch-tab').checked = presentation.autoSwitchTab !== false;
   renderTabOrderSettings();
   renderKeepPhotos();
   // Filled in from the saved config every time Settings opens, which is also
@@ -7115,12 +7160,18 @@ $('#setup-form').addEventListener('submit', (ev) => {
 // and an unsaved one is refilled from the saved config next time it opens.
 function closeSetup() {
   if (!isConfigured(cfg)) return;
+  // A field left focused inside a hidden sheet would keep taking the keyboard,
+  // and the shortcut handler ignores keys typed into an input.
+  if ($('#setup').contains(document.activeElement)) document.activeElement.blur();
   $('#setup').hidden = true;
   $('#app').hidden = false;
   $('#setup-error').textContent = '';
   applyChangedDefaults();
   renderAll();
 }
+
+// Back to dots every time Settings opens (see showSetup).
+const hidePassphrase = wireRevealButtons($('#setup'));
 
 $('#open-settings').addEventListener('click', showSetup);
 $('#setup-close').addEventListener('click', closeSetup);
@@ -7240,7 +7291,7 @@ if (!isConfigured(cfg)) {
   renderTimerPresets();
   await loadLibrary();
   await loadPlaylists();
-  tab('library');
+  tab(rememberedTab() || 'library');
   renderAll();
 }
 
