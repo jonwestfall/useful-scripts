@@ -450,7 +450,7 @@ await pad.waitForFunction(() => document.querySelector('#music-pause-queue')?.ch
   .catch(() => ok('Pause Queue is on in the room', false));
 
 // The Settings section shows what is saved.
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.click('[data-settings-tab="presentation"]');
 ok('Settings shows the saved Auto-play', (await pad.inputValue('#def-autoplay')) === 'on');
 ok('and the saved watermark text', (await pad.inputValue('#def-wm-text')) === 'Dr. Default');
@@ -501,7 +501,7 @@ await pad.evaluate(() => { window.__sameDocument = true; });
 await pad.click('.tab[data-tab="say"]');
 await pad.fill('#overlay-text', 'typed before Settings');
 
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.click('[data-settings-tab="presentation"]');
 // Typed and never tabbed away from - Close is tapped with the box still focused.
 await pad.type('#def-wm-text', 'Dr. Settings');
@@ -520,13 +520,13 @@ await screen.waitForFunction(() => document.querySelector('#watermark-text')?.te
 ok('Auto-play set in Settings is ticked on the Music tab', await pad.isChecked('#music-autoplay'));
 
 // Opening and closing again, changing nothing, sends nothing new.
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.click('#setup-close');
 ok('a second open and close still does not reload', await pad.evaluate(() => window.__sameDocument === true));
 
 // Save with the connection unchanged is a Close, not a reload - and it is
 // wired once, however many times Settings has been opened.
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.click('[data-settings-tab="connection"]');
 await pad.click('#setup-form button[type="submit"]');
 await pad.waitForSelector('#app:not([hidden])');
@@ -540,7 +540,7 @@ ok('Auto-play survives a reload of the controller', await pad.isChecked('#music-
 await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
 
 // Turning the default off takes down the watermark it put up.
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.click('[data-settings-tab="presentation"]');
 await pad.uncheck('#def-wm-on');
 await pad.click('#setup-close');
@@ -549,12 +549,12 @@ await screen.waitForFunction(() => !document.querySelector('#watermark')?.classL
   .catch(() => ok('switching the watermark default off takes it down', false));
 
 // A watermark of the presenter's own is never replaced by a default change.
-await pad.click('.tab[data-tab="say"]');
+await pad.click('.tab[data-tab="setup"]');
 await pad.fill('#watermark-text', 'Mine');
 await pad.press('#watermark-text', 'Enter');
 await screen.waitForFunction(() => document.querySelector('#watermark-text')?.textContent === 'Mine'
   && document.querySelector('#watermark')?.classList.contains('is-on'), null, { timeout: 8000 });
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.click('[data-settings-tab="presentation"]');
 await pad.check('#def-wm-on');
 await pad.fill('#def-wm-text', 'Dr. Changed');
@@ -787,7 +787,7 @@ await pad.waitForTimeout(300);
 ok('a second controller sees the switch the room has', await pad.isChecked('#ink-autosave'));
 
 // The Settings default is a device preference, saved as it is ticked.
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.click('[data-settings-tab="presentation"]');
 await pad.check('#pref-autosave-ink');
 ok('the Settings default is saved on this device', await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).autoSaveInk === true));
@@ -919,7 +919,7 @@ await padB.waitForFunction(() => document.querySelector('#display-state')?.textC
 
 const liveMicCount = () => screen.evaluate(() => document.querySelectorAll('audio.mic-relay').length);
 const amplifyOn = async (pad) => {
-  await pad.click('.tab[data-tab="say"]');
+  await pad.click('.tab[data-tab="mixer"]');
   await pad.click('#mic-start');
   await pad.waitForFunction(() => document.querySelector('#mic-status')?.textContent === 'Live', null, { timeout: 8000 });
   await pad.check('#mic-amplify');
@@ -928,7 +928,7 @@ const amplifyOn = async (pad) => {
 
 // Amplification defaults off (unlike Record, which defaults on) - the risk
 // of feedback is real enough that turning it on should be a deliberate act.
-await padA.click('.tab[data-tab="say"]');
+await padA.click('.tab[data-tab="mixer"]');
 ok('amplification defaults off, unlike recording', !(await padA.isChecked('#mic-amplify')));
 
 await amplifyOn(padA);
@@ -958,7 +958,7 @@ await screen.waitForFunction((n) => document.querySelectorAll('audio.mic-relay')
 ok('a second controller amplifying its own mic joins the first rather than replacing it', true);
 
 // Stopping the first leaves the second alone.
-await padA.click('.tab[data-tab="say"]');
+await padA.click('.tab[data-tab="mixer"]');
 await padA.click('#mic-start');
 await screen.waitForFunction((n) => document.querySelectorAll('audio.mic-relay').length === n, 1, { timeout: 8000 });
 ok('stopping one mic does not touch the other', true);
@@ -1020,7 +1020,7 @@ const shown = await screen.evaluate(() => {
 ok(`a still reaches the projector as an ordinary photo (${shown.w}x${shown.h})`, shown.data && shown.w > 100);
 
 // The point of the feature: four frames caught from one camera, up at once.
-await phone.click('.layout-btn[data-layout="4"]');
+await phone.click('#layout-current'); await phone.click('.layout-btn[data-layout="4"]');
 await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-4'), null, { timeout: 8000 });
 for (const panel of [1, 2, 3]) {
   await phone.click(`.panel-btn:nth-child(${panel + 1})`);
@@ -1308,7 +1308,7 @@ ok('and they run independently, not as one clock shown twice',
 // Two panels, two different countdowns - which is the point of having more
 // than one, and is why a timer item carries the id of the clock it shows.
 await pad.click('#timer-show');
-await pad.click('.layout-btn[data-layout="2h"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="2h"]');
 await pad.waitForTimeout(300);
 await pad.click('.panel-btn:nth-child(2)');
 await pad.click('.timer-chip:nth-child(1)');
@@ -1334,7 +1334,7 @@ ok('a countdown can be removed once you are done with it', (await chips()).lengt
 // --- laser colour ---------------------------------------------------------
 // Red disappears into a dark slide or a photograph, which is most of a
 // psychology deck.
-await pad.click('.layout-btn[data-layout="single"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="single"]');
 await pad.click('.tab[data-tab="library"]');
 await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
 await pad.waitForTimeout(2500);
@@ -1490,7 +1490,7 @@ await pad.waitForSelector('.tile');
 await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
 
 // Building one: every Library tap goes into the draft instead of going live.
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 await pad.click('#sets-new');
 await pad.fill('#sets-build-name', 'Throwaway');
 await pad.click('#sets-build-add');
@@ -1504,7 +1504,7 @@ ok('nothing goes live while building', await screen.evaluate(() => !document.que
 // note in control.js: it never gets the async WebRTC setup pick() normally
 // gives it, so it would sit there forever unresolved).
 await pad.click('.tile:has(.tile-title:text-is("Phone camera"))');
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 ok('a live camera is declined, not added broken', (await pad.$$('#sets-build-entries .set-row')).length === 2);
 
 // Tapping a whole deck tile (as opposed to one specific slide pulled from
@@ -1514,7 +1514,7 @@ ok('a live camera is declined, not added broken', (await pad.$$('#sets-build-ent
 await pad.click('.tab[data-tab="library"]');
 await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
 await pad.waitForFunction(() => document.querySelector('#sets-add-note')?.textContent.includes('Added all 13 slides'), null, { timeout: 15000 });
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 ok('the whole deck landed as 13 separate entries', (await pad.$$('#sets-build-entries .set-row')).length === 2 + 13);
 ok('each entry is its own slide of the deck, in order', await pad.evaluate(() => {
   const rows = Array.from(document.querySelectorAll('#sets-build-entries .set-row .set-row-title'));
@@ -1530,7 +1530,7 @@ await pad.fill('#sets-build-name', 'Pre-show');
 await pad.click('#sets-build-add');
 await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
 await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 ok('the real draft starts clean with just the two tiles picked for it', (await pad.$$('#sets-build-entries .set-row')).length === 2);
 
 const secInputs = await pad.$$('#sets-build-entries .set-row-secs');
@@ -1553,7 +1553,7 @@ ok('it advances itself on schedule, with no controller action', firstBg !== seco
 // a real bug found while building this - the buttons were built once and
 // closed over that render's `item`, which state replacement (a fresh object
 // every broadcast) made stale after the very next heartbeat.
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 await pad.waitForSelector('#set-now-title', { timeout: 8000 });
 await pad.click('#set-now-next');
 await screen.waitForTimeout(500);
@@ -1574,8 +1574,8 @@ ok('pressing it again resumes', true);
 
 // The same saved set can run independently on a second pane at once.
 await pad.click('.tab[data-tab="library"]');
-await pad.click('.layout-btn[data-layout="2h"]');
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="2h"]');
+await pad.click('.tab[data-tab="setup"]');
 await pad.click('.set-saved-row:has(.set-saved-title:text-is("Pre-show")) .set-start-btn:text-is("B")');
 await screen.waitForFunction(() => document.querySelectorAll('.panel-slot.is-on').length === 2, null, { timeout: 8000 });
 ok('the same saved set can run on a second pane too, independently', true);

@@ -372,7 +372,11 @@ browser.newContext = async (options = {}) => {
       try {
         const key = 'podium.presentation.v1';
         const saved = JSON.parse(localStorage.getItem(key) || '{}');
-        if (saved.autoSwitchTab === undefined) localStorage.setItem(key, JSON.stringify({ ...saved, autoSwitchTab: false }));
+        if (saved.autoSwitchTab === undefined) saved.autoSwitchTab = false;
+        // Issue #197 tucks Camera and Photos under "More"; sections written
+        // before it click those tabs directly.
+        if (saved.tabLayoutVersion === undefined) Object.assign(saved, { tabLayoutVersion: 2, hiddenTabs: [] });
+        localStorage.setItem(key, JSON.stringify(saved));
         sessionStorage.removeItem('podium.ui.tab');
         // And, from the UI batches (#189, #190): the Library's "+ Add" open,
         // the way the import controls always were before it existed, and the

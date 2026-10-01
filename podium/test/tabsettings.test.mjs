@@ -1,5 +1,6 @@
 // Run with: node podium/test/tabsettings.test.mjs
-// Unit tests for the customizable/collapsible controller tab bar (Issue #76).
+// Unit tests for the customizable/collapsible controller tab bar (Issue #76),
+// grouped by job since Issue #197.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +18,7 @@ const chk = (label, cond) => {
   }
 };
 
-const TAB_IDS = ['library', 'slides', 'now', 'ink', 'say', 'timer', 'camera', 'photos', 'music', 'mixer', 'sets', 'polls'];
+const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'music', 'mixer', 'setup'];
 
 console.log('-- loadPresentation sanitizes a saved tab order/hidden set --');
 
@@ -39,7 +40,7 @@ chk('an empty save defaults to the shipped order, nothing hidden',
   JSON.stringify(sanitizeTabPrefs({}).tabOrder) === JSON.stringify(TAB_IDS));
 
 chk('a reordered save is kept as-is', () => {
-  const reordered = ['ink', 'library', 'slides', 'now', 'say', 'timer', 'camera', 'photos', 'music', 'mixer', 'sets', 'polls'];
+  const reordered = ['ink', 'library', 'slides', 'now', 'camera', 'photos', 'say', 'timer', 'polls', 'music', 'mixer', 'setup'];
   return JSON.stringify(sanitizeTabPrefs({ tabOrder: reordered }).tabOrder) === JSON.stringify(reordered);
 });
 
@@ -87,7 +88,7 @@ chk('moving the first tab earlier is a no-op, not a wraparound',
   JSON.stringify(simulateMoveTab(TAB_IDS, 'library', -1)) === JSON.stringify(TAB_IDS));
 
 chk('moving the last tab later is a no-op, not a wraparound',
-  JSON.stringify(simulateMoveTab(TAB_IDS, 'polls', 1)) === JSON.stringify(TAB_IDS));
+  JSON.stringify(simulateMoveTab(TAB_IDS, 'setup', 1)) === JSON.stringify(TAB_IDS));
 
 function simulateToggleHidden(hiddenTabs, id, hide) {
   const next = hiddenTabs.filter((t) => t !== id);
@@ -121,7 +122,7 @@ console.log('-- DOM and CSS verification --');
   chk('podium.css styles .tab-order-row', css.includes('.tab-order-row'));
 
   const js = fs.readFileSync(path.join(ROOT, 'assets/js/control.js'), 'utf8');
-  chk('control.js has the 12-tab TAB_IDS list', js.includes("const TAB_IDS = ['library', 'slides', 'now', 'ink', 'say', 'timer', 'camera', 'photos', 'music', 'mixer', 'sets', 'polls']"));
+  chk('control.js has the 12-tab TAB_IDS list', js.includes("const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'music', 'mixer', 'setup']"));
   chk('control.js has renderTabBar', js.includes('function renderTabBar()'));
   chk('control.js has renderTabsMoreMenu', js.includes('function renderTabsMoreMenu()'));
   chk('control.js has moveTab', js.includes('function moveTab('));
@@ -129,7 +130,20 @@ console.log('-- DOM and CSS verification --');
   chk('control.js has renderTabOrderSettings', js.includes('function renderTabOrderSettings()'));
   chk('control.js calls renderTabOrderSettings from showSetup', js.includes('renderTabOrderSettings();\n  renderKeepPhotos();'));
   chk('control.js excludes #tabs-more from the ordinary tab click wiring', js.includes(":not(#dual-pane-toggle):not(#tabs-more)"));
-  chk('control.js defaults tabOrder to every tab, nothing hidden', js.includes('tabOrder: [...TAB_IDS]') && js.includes('hiddenTabs: []'));
+  chk('control.js defaults tabOrder to every tab, with Camera and Photos under More (Issue #197)',
+    js.includes('tabOrder: [...TAB_IDS]') && js.includes('hiddenTabs: [...DEFAULT_HIDDEN_TABS]')
+    && js.includes("const DEFAULT_HIDDEN_TABS = ['camera', 'photos']"));
+  chk('control.js moves a device saved before the groups onto them once', js.includes('merged.tabLayoutVersion || 1) < TAB_LAYOUT_VERSION'));
+
+  // Issue #197: four job groups that between them hold every tab exactly once.
+  const groupsSrc = js.match(/const TAB_GROUPS = \[([\s\S]*?)\n\];/)?.[1] || '';
+  const grouped = [...groupsSrc.matchAll(/\[([^[\]]*)\]\]/g)].flatMap((m) => [...m[1].matchAll(/'([a-z]+)'/g)].map((x) => x[1]));
+  const groupNames = [...groupsSrc.matchAll(/\['([a-z]+)', '([A-Z][a-z]+)', \[/g)].map((m) => m[2]);
+  chk(`the tabs fall into Present, Room, Sound and Setup (${groupNames.join(', ')})`,
+    JSON.stringify(groupNames) === JSON.stringify(['Present', 'Room', 'Sound', 'Setup']));
+  chk(`every tab is in exactly one group (${grouped.length} placed)`,
+    grouped.length === TAB_IDS.length && TAB_IDS.every((id) => grouped.filter((g) => g === id).length === 1));
+  chk('a tab is only ever moved within its own group', js.includes('const inGroup = presentation.tabOrder.filter((t) => group.includes(t));'));
 }
 
 if (!ok) {

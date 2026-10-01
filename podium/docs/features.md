@@ -98,7 +98,7 @@ On a self-hosted server, **Upload/Load a PDF…** on the Library tab uploads str
 
 ### Screen Layouts, Split Screen & Picture-in-Picture
 
-Divide the classroom projector into multiple simultaneous panels using the layout picker in the top bar:
+Divide the classroom projector into multiple simultaneous panels using the layout button in the top bar (it shows the current layout; tap it for all six):
 - **Single**: Standard fullscreen presentation.
 - **2h (Side by Side)**: Compare two items (e.g. code on the left, live web output on the right; or lecture slide on the left, blank whiteboard on the right).
 - **2v (Stacked)**: Top and bottom split.
@@ -252,11 +252,11 @@ Pin your university logo, course number (e.g. `CS 101`), or date to any corner o
 
 **A default per course** (Issue #157): on a self-hosted server, a course owner or an admin can set a default watermark — text, a logo, and a corner — from the course's card on the admin page's **Courses** tab. A **new** lecture held in that course's room starts with it, so the same name or logo is not re-entered every session. It is only where a lecture starts:
 
-- It is still changed or hidden from the Say tab like any other watermark.
-- A watermark the presenter set themselves (typed or uploaded from the Say tab, now or in an earlier session) always wins; the course default never replaces it.
+- It is still changed or hidden from the Setup tab like any other watermark.
+- A watermark the presenter set themselves (typed or uploaded from the Setup tab, now or in an earlier session) always wins; the course default never replaces it.
 - A course default does not linger into another course's lecture: on a classroom PC shared between courses, the next new lecture swaps it for that course's default, or takes it down if that course has none. Hiding or moving a course default for one lecture does not stop the next lecture of that course starting with it.
 - Reloading the display mid-lecture resumes the same lecture and does **not** put the default back — a logo taken down ten minutes ago stays down.
-- A logo is shrunk to a small PNG on upload, the same way the Say tab's own logo upload is, so transparency survives.
+- A logo is shrunk to a small PNG on upload, the same way the Setup tab's own logo upload is, so transparency survives.
 
 ### Automated Presentation Sets
 
@@ -445,10 +445,11 @@ Every teacher drives differently.
 ### Tabs, Dock & Clickers
 
 - **The controller remembers its tab**: a reload (or iOS reopening a tab it had put to sleep) comes back on the tab you were using. A new controller tab starts on the Library.
-- **Controller tabs** (Settings → Presentation): reorder the twelve tabs (Library, Slides, Now, Ink, Say, Timer, Camera, Photos, Music, Mixer, Sets, Polls) or hide the ones you never use. Hidden tabs are tucked under **More ▾**, never removed.
+- **Controller tabs** come in four groups, with a thin divider between them: **Present** (Library, Slides, Now, Ink, plus Camera and Photos), **Room** (Say, Timer, Polls), **Sound** (Music, Mixer, which also holds your microphone) and **Setup** (the watermark, picture-in-picture panes, Guest View and Sets). Camera and Photos start under **More ▾**. In Settings → Presentation you can reorder tabs within their group or hide the ones you never use; hidden tabs are tucked under More, never removed.
+- **The top bar** is one row on every screen: the connection, the clock and pacing, the layout button, and **⋯**, which holds Settings, Hide cue bar, the room and its code, your account, and the build number.
 - **Bottom bar dock**: up to eight quick-action slots chosen from Music, Media Play/Pause, Freeze, Blank, TAKE, Clear Cue, Quick Whiteboard, Laser, Spotlight, Quick Countdown, and Slide Next/Prev. On a phone the first four show alongside the volume slider.
 - **Split view**: on a wide iPad or laptop, show two tabs side by side, for example Slides beside Ink.
-- **Hide cue bar**: tuck the cue sidebar away when nothing is cued to give Now/Next more room.
+- **The cue bar** shows in full only while it has a job: when the screen is frozen (the next pick will land in the cue) or something is cued. Otherwise it folds to a thin "On screen" strip, and its room goes to the tab you're working in. **Hide cue bar** (in ⋯) hides it outright.
 - A **Magic Keyboard or Bluetooth presentation clicker** drives the same actions (see [Keyboard Shortcuts](#keyboard-shortcuts)).
 
 ### Comfort Settings
