@@ -52,33 +52,38 @@ try {
       </button>
     </div>
     <span class="spacer"></span>
-    <span id="control-version-tag" class="version-tag"></span>
-    <!-- Only ever filled in when this Podium came from a server with accounts
-         (see server.js); on every other deployment it stays empty and hidden. -->
-    <span id="session-badge" class="session-badge" hidden></span>
-    <!-- Splitting the screen: pick how many panels and how they're arranged,
-         then which one Library taps, deck nav, and Ink currently address.
-         Lives in the topbar rather than a row of its own so it costs no
-         extra height in the (default, common) single-panel case. -->
-    <div class="layout-picker" role="group" aria-label="Screen layout">
-      <button class="layout-btn is-on" data-layout="single" type="button" title="Full screen" aria-label="Full screen" aria-pressed="true">
-        <span class="layout-icon layout-icon-single"><i></i></span>
+    <!-- One row at every screen size (Issue #187): status, the clock, the
+         layout and the menu. The six layout buttons fold behind one that
+         shows the current layout; version, account, room and Settings live
+         in the menu. Every element keeps its id, so nothing that fills them
+         in had to change. -->
+    <div class="topbar-pop-wrap" id="layout-pop-wrap">
+      <button id="layout-current" class="layout-current" type="button" aria-haspopup="true" aria-expanded="false"
+              aria-controls="layout-pop" title="Screen layout" aria-label="Screen layout: Full screen">
+        <span class="layout-icon layout-icon-single"><i></i></span><span class="layout-caret" aria-hidden="true">▾</span>
       </button>
-      <button class="layout-btn" data-layout="2h" type="button" title="Side by side" aria-label="Side by side" aria-pressed="false">
-        <span class="layout-icon layout-icon-2h"><i></i><i></i></span>
-      </button>
-      <button class="layout-btn" data-layout="2v" type="button" title="Top and bottom" aria-label="Top and bottom" aria-pressed="false">
-        <span class="layout-icon layout-icon-2v"><i></i><i></i></span>
-      </button>
-      <button class="layout-btn" data-layout="3" type="button" title="One large, two small" aria-label="One large, two small" aria-pressed="false">
-        <span class="layout-icon layout-icon-3"><i></i><i></i><i></i></span>
-      </button>
-      <button class="layout-btn" data-layout="4" type="button" title="Four panels" aria-label="Four panels" aria-pressed="false">
-        <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
-      </button>
-      <button class="layout-btn" data-layout="pip" type="button" title="Picture in picture" aria-label="Picture in picture" aria-pressed="false">
-        <span class="layout-icon layout-icon-pip"><i></i><i></i></span>
-      </button>
+      <div id="layout-pop" class="topbar-pop" hidden>
+        <div class="layout-picker" role="group" aria-label="Screen layout">
+          <button class="layout-btn is-on" data-layout="single" type="button" title="Full screen" aria-label="Full screen" aria-pressed="true">
+            <span class="layout-icon layout-icon-single"><i></i></span>
+          </button>
+          <button class="layout-btn" data-layout="2h" type="button" title="Side by side" aria-label="Side by side" aria-pressed="false">
+            <span class="layout-icon layout-icon-2h"><i></i><i></i></span>
+          </button>
+          <button class="layout-btn" data-layout="2v" type="button" title="Top and bottom" aria-label="Top and bottom" aria-pressed="false">
+            <span class="layout-icon layout-icon-2v"><i></i><i></i></span>
+          </button>
+          <button class="layout-btn" data-layout="3" type="button" title="One large, two small" aria-label="One large, two small" aria-pressed="false">
+            <span class="layout-icon layout-icon-3"><i></i><i></i><i></i></span>
+          </button>
+          <button class="layout-btn" data-layout="4" type="button" title="Four panels" aria-label="Four panels" aria-pressed="false">
+            <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
+          </button>
+          <button class="layout-btn" data-layout="pip" type="button" title="Picture in picture" aria-label="Picture in picture" aria-pressed="false">
+            <span class="layout-icon layout-icon-pip"><i></i><i></i></span>
+          </button>
+        </div>
+      </div>
     </div>
     <div id="panel-picker" class="panel-picker" hidden></div>
     <!-- The fast way out of "I wanted C full screen and switching to single
@@ -87,15 +92,22 @@ try {
          only when a B/C/D panel is actually focused - promoting A to A is
          not a button anyone needs. -->
     <button id="panel-promote" type="button" title="Make this panel full screen" hidden>⛶ Full screen this</button>
-    <!-- The cue bar (preview thumbnail + Take/Swap/Clear cue) costs a fixed
-         320px down the left of every tab, slides included - worth it when
-         something is cued, wasted width otherwise, most of all on an iPad
-         where the Now/Next boxes are already tight. One tap hides it, one
-         tap gets it back; nothing it does stops working, there is just
-         nowhere to see it happen until you show it again. -->
-    <button id="preview-toggle" type="button" title="Hide the cue bar for more room to see slides">⟨ Hide cue bar</button>
-    <span class="room-info">room <b id="room-name" class="mono"></b> · <b id="fingerprint" class="mono">····</b></span>
-    <button id="open-settings" type="button">Settings</button>
+    <div class="topbar-pop-wrap" id="topbar-menu-wrap">
+      <button id="topbar-more" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="topbar-menu" aria-label="More">⋯</button>
+      <div id="topbar-menu" class="topbar-pop topbar-menu" hidden>
+        <button id="open-settings" type="button">Settings</button>
+        <!-- The cue bar folds itself away when nothing is cued (Issue #186);
+             this hides it outright, for whoever wants every pixel. -->
+        <button id="preview-toggle" type="button" title="Hide the cue bar for more room to see slides">⟨ Hide cue bar</button>
+        <div class="topbar-menu-info">
+          <span class="room-info">Room <b id="room-name" class="mono"></b> · code <b id="fingerprint" class="mono">····</b></span>
+          <!-- Only ever filled in when this Podium came from a server with accounts
+               (see server.js); on every other deployment it stays empty and hidden. -->
+          <span id="session-badge" class="session-badge" hidden></span>
+          <span id="control-version-tag" class="version-tag"></span>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Shown only when the copy running in this tab is older than the copy the
@@ -164,14 +176,14 @@ try {
         <button class="tab" data-tab="slides" type="button">Slides</button>
         <button class="tab" data-tab="now" type="button">Now</button>
         <button class="tab" data-tab="ink" type="button">Ink</button>
-        <button class="tab" data-tab="say" type="button">Say</button>
-        <button class="tab" data-tab="timer" type="button">Timer</button>
         <button class="tab" data-tab="camera" type="button">Camera</button>
         <button class="tab" data-tab="photos" type="button">Photos</button>
+        <button class="tab" data-tab="say" type="button">Say</button>
+        <button class="tab" data-tab="timer" type="button">Timer</button>
+        <button class="tab" data-tab="polls" type="button">Polls</button>
         <button class="tab" data-tab="music" type="button">Music</button>
         <button class="tab" data-tab="mixer" type="button">Mixer</button>
-        <button class="tab" data-tab="sets" type="button">Sets</button>
-        <button class="tab" data-tab="polls" type="button">Polls</button>
+        <button class="tab" data-tab="setup" type="button">Setup</button>
         <!-- Hidden tabs (Settings -> Presentation -> Controller tabs) are never
              removed from the DOM, only [hidden] - reordering and this menu both
              work on the same 12 buttons the panels already key off of. -->
@@ -544,29 +556,6 @@ try {
               Safari recognizes on-device instead. Not available in Firefox.
             </p>
           </div>
-          <!-- Controller mic: recorded to the session and/or amplified
-               through the display, independent of Live Captions above
-               (which never touches a MediaStream at all - see the comment
-               on caption-block). Issue #147. -->
-          <div class="stack" id="mic-block">
-            <div class="inline">
-              <button id="mic-start" type="button">Start my mic</button>
-              <span class="hint" id="mic-status" role="status">Off</span>
-            </div>
-            <div class="inline" id="mic-record-row" hidden>
-              <label class="check"><input id="mic-record" type="checkbox" checked> Record this mic to the session</label>
-            </div>
-            <div class="inline">
-              <label class="check"><input id="mic-amplify" type="checkbox"> Play through the display's speakers</label>
-              <span class="hint" id="mic-amplify-status"></span>
-            </div>
-            <!-- Shown once, as a confirmation, the first time amplification is
-                 turned on on this device (Issue #189) - see confirmOnce. -->
-            <p class="hint" id="mic-amplify-warning" hidden>
-              Can howl (feedback) if this device is near the display's own speakers - keep
-              it across the room, or on a presenter far from them, before turning this on.
-            </p>
-          </div>
           <form id="qr-form" class="stack">
             <label for="qr-data">QR code for the class</label>
             <div class="inline">
@@ -575,62 +564,6 @@ try {
               <button type="submit">Show</button>
             </div>
           </form>
-          <!-- Guest View (Issue #150): the display's own viewer link, as a QR
-               the room can scan - watch and listen on their own device, with
-               no way to change anything. -->
-          <div class="stack">
-            <label for="guest-view-show">Guest view — people watch this screen on their own device</label>
-            <div class="inline">
-              <button id="guest-view-show" type="button">Put the viewer QR on screen</button>
-              <span id="guest-view-note" class="hint" role="status"></span>
-            </div>
-          </div>
-          <div class="stack">
-            <label for="watermark-text">Watermark — your name or logo, pinned in a corner for the
-              whole lecture (stays over anything, and is captured in screen grabs)</label>
-            <div class="inline">
-              <select id="watermark-position" aria-label="Corner">
-                <option value="br">Bottom right</option>
-                <option value="tl">Top left</option>
-              </select>
-              <button id="watermark-hide" type="button">Hide</button>
-            </div>
-            <form id="watermark-form" class="inline">
-              <input id="watermark-text" class="grow" type="text" maxlength="120" placeholder="Dr. Jane Smith">
-              <button type="submit">Show text</button>
-            </form>
-            <div class="inline">
-              <label class="filebtn grow" for="watermark-image">Upload a logo…</label>
-              <input id="watermark-image" type="file" accept="image/*" hidden>
-              <button id="watermark-image-clear" type="button" hidden>Remove image</button>
-            </div>
-            <div id="watermark-note" role="status" class="hint"></div>
-          </div>
-          <!-- Only shown once the layout picker's own PiP button is on - see
-               #layout-picker above and pipPanel.render in control.js. Which
-               two panes, out of the same up-to-four this device can already
-               stage into under the "4" layout, is picked here rather than
-               fixed by position the way every other layout's panes are. -->
-          <div class="stack" id="pip-settings" hidden>
-            <label for="pip-main">Picture-in-picture — one pane full screen, another as a small inset
-              over a corner of it</label>
-            <div class="inline">
-              <span class="hint">Full screen</span>
-              <select id="pip-main" aria-label="Main pane (full screen)"></select>
-              <span class="hint">Inset</span>
-              <select id="pip-inset" aria-label="Inset pane"></select>
-            </div>
-            <div class="inline">
-              <select id="pip-corner" aria-label="Inset corner">
-                <option value="tr">Top right</option>
-                <option value="tl">Top left</option>
-                <option value="br">Bottom right</option>
-                <option value="bl">Bottom left</option>
-              </select>
-              <input id="pip-size" type="range" min="10" max="50" step="5" aria-label="Inset size">
-              <span id="pip-size-label" class="hint"></span>
-            </div>
-          </div>
         </section>
 
         <!-- Timer -->
@@ -794,10 +727,100 @@ try {
             regardless of where any fader sits.
           </p>
           </details>
+          <h3 class="setup-head">Your microphone</h3>
+          <!-- Controller mic: recorded to the session and/or amplified
+               through the display, independent of Live Captions on the Say tab
+               (which never touches a MediaStream at all - see the comment
+               on caption-block). Issue #147; here with the rest of the
+               sound since Issue #197. -->
+          <div class="stack" id="mic-block">
+            <div class="inline">
+              <button id="mic-start" type="button">Start my mic</button>
+              <span class="hint" id="mic-status" role="status">Off</span>
+            </div>
+            <div class="inline" id="mic-record-row" hidden>
+              <label class="check"><input id="mic-record" type="checkbox" checked> Record this mic to the session</label>
+            </div>
+            <div class="inline">
+              <label class="check"><input id="mic-amplify" type="checkbox"> Play through the display's speakers</label>
+              <span class="hint" id="mic-amplify-status"></span>
+            </div>
+            <!-- Shown once, as a confirmation, the first time amplification is
+                 turned on on this device (Issue #189) - see confirmOnce. -->
+            <p class="hint" id="mic-amplify-warning" hidden>
+              Can howl (feedback) if this device is near the display's own speakers - keep
+              it across the room, or on a presenter far from them, before turning this on.
+            </p>
+          </div>
         </section>
 
-        <!-- Automated Sets -->
-        <section class="panel" data-panel="sets" hidden>
+        <!-- Setup (Issue #197): what you arrange before class rather than
+             reach for during it - the watermark, the picture-in-picture
+             panes, the Guest View link and automated Sets - gathered out of
+             Say, which had become everything that was not a slide. -->
+        <section class="panel" data-panel="setup" hidden>
+          <h3 class="setup-head" id="setup-watermark">Watermark</h3>
+          <div class="stack">
+            <label for="watermark-text">Watermark — your name or logo, pinned in a corner for the
+              whole lecture (stays over anything, and is captured in screen grabs)</label>
+            <div class="inline">
+              <select id="watermark-position" aria-label="Corner">
+                <option value="br">Bottom right</option>
+                <option value="tl">Top left</option>
+              </select>
+              <button id="watermark-hide" type="button">Hide</button>
+            </div>
+            <form id="watermark-form" class="inline">
+              <input id="watermark-text" class="grow" type="text" maxlength="120" placeholder="Dr. Jane Smith">
+              <button type="submit">Show text</button>
+            </form>
+            <div class="inline">
+              <label class="filebtn grow" for="watermark-image">Upload a logo…</label>
+              <input id="watermark-image" type="file" accept="image/*" hidden>
+              <button id="watermark-image-clear" type="button" hidden>Remove image</button>
+            </div>
+            <div id="watermark-note" role="status" class="hint"></div>
+          </div>
+          <h3 class="setup-head" id="setup-pip">Picture-in-picture</h3>
+          <p class="hint" id="pip-settings-off">Pick the picture-in-picture layout (the layout button in the top bar) to choose its panes here.</p>
+          <!-- Only shown once the layout picker's own PiP button is on - see
+               #layout-picker above and pipPanel.render in control.js. Which
+               two panes, out of the same up-to-four this device can already
+               stage into under the "4" layout, is picked here rather than
+               fixed by position the way every other layout's panes are. -->
+          <div class="stack" id="pip-settings" hidden>
+            <label for="pip-main">Picture-in-picture — one pane full screen, another as a small inset
+              over a corner of it</label>
+            <div class="inline">
+              <span class="hint">Full screen</span>
+              <select id="pip-main" aria-label="Main pane (full screen)"></select>
+              <span class="hint">Inset</span>
+              <select id="pip-inset" aria-label="Inset pane"></select>
+            </div>
+            <div class="inline">
+              <select id="pip-corner" aria-label="Inset corner">
+                <option value="tr">Top right</option>
+                <option value="tl">Top left</option>
+                <option value="br">Bottom right</option>
+                <option value="bl">Bottom left</option>
+              </select>
+              <input id="pip-size" type="range" min="10" max="50" step="5" aria-label="Inset size">
+              <span id="pip-size-label" class="hint"></span>
+            </div>
+          </div>
+          <h3 class="setup-head" id="setup-guest-view">Guest view</h3>
+          <!-- Guest View (Issue #150): the display's own viewer link, as a QR
+               the room can scan - watch and listen on their own device, with
+               no way to change anything. -->
+          <div class="stack">
+            <label for="guest-view-show">Guest view — people watch this screen on their own device</label>
+            <div class="inline">
+              <button id="guest-view-show" type="button">Put the viewer QR on screen</button>
+              <span id="guest-view-note" class="hint" role="status"></span>
+            </div>
+          </div>
+          <h3 class="setup-head" id="setup-sets">Sets</h3>
+          <div class="stack">
           <details class="help">
             <summary>How this works</summary>
             <p class="hint">
@@ -833,6 +856,7 @@ try {
               them, each starting at 15s. Come back here and adjust durations, then <b>Save set</b>.
             </p>
           </div>
+        </div>
         </section>
 
         <!-- Audience polls -->

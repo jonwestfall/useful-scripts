@@ -529,7 +529,7 @@ const pad = await fresh.newPage();
 trap(pad, 'reset control');
 await pad.goto(`${BASE}/control.html`);
 await pad.waitForSelector('#app:not([hidden])');
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.waitForSelector('#setup:not([hidden])');
 ok('Close is offered while the device is configured', !(await pad.isHidden('#setup-close')));
 
@@ -621,7 +621,7 @@ ok('and blacks out the screen the moment it connects - Black out on connect defa
 await pad.click('#blank');
 await screen.waitForFunction(() => !document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
 
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.waitForSelector('#setup:not([hidden])');
 // Issue #200: a device that is already set up opens on Presentation - the
 // connection matters once, at setup.
@@ -712,7 +712,7 @@ ok('and closes the menu behind it', await pad.isHidden('#tabs-more-menu'));
 
 // Undo both changes, the same courtesy the poll-url re-check below pays -
 // nothing later in this run should have to know a tab was ever hidden or moved.
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
 await pad.check('.tab-order-row:has-text("Camera") input[type=checkbox]');
 await pad.click('.tab-order-row:has-text("Slides") .tab-order-move button:nth-child(2)');
@@ -746,7 +746,7 @@ await pad.click('#poll-end');
 await pad.click('#poll-end');
 await screen.waitForFunction(() => !document.querySelector('.r-poll'), null, { timeout: 5000 });
 
-await pad.click('#open-settings');
+await pad.click('#topbar-more'); await pad.click('#open-settings');
 await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
 await pad.check('#pref-poll-url');
 await pad.click('#setup-close');
@@ -901,19 +901,29 @@ await pad.mouse.up();
 await screen.waitForFunction(() => !document.querySelector('#laser').classList.contains('is-on'), null, { timeout: 3000 });
 ok('releasing hides the dot - nothing is left behind, nothing was saved', true);
 
-// Hiding the cue bar gives the Now/Next boxes more room, and remembers the
-// choice per device rather than resetting on every visit.
-const widthBefore = await pad.$eval('#deck-now-preview', (n) => n.getBoundingClientRect().width);
-ok('the cue bar is visible by default', await pad.isVisible('#preview-pane'));
-await pad.click('#preview-toggle');
+// The full cue bar only while it has a job (Issue #186): frozen, or with
+// something cued. Otherwise it folds to a strip across the top and the
+// Now/Next boxes get the width it used to take down the side.
+const nowWidth = () => pad.$eval('#deck-now-preview', (n) => n.getBoundingClientRect().width);
+await pad.click('#freeze');
+await pad.waitForFunction(() => !document.querySelector('.workspace').classList.contains('cue-compact'), null, { timeout: 5000 });
+ok('freezing opens the full cue bar, ready for the next pick', await pad.isVisible('#take'));
+const widthFrozen = await nowWidth();
+await pad.click('#freeze');
+await pad.waitForFunction(() => document.querySelector('.workspace').classList.contains('cue-compact'), null, { timeout: 5000 });
+const widthIdle = await nowWidth();
+ok(`with nothing frozen or cued it folds to a strip, and Now/Next get the room (${Math.round(widthFrozen)} -> ${Math.round(widthIdle)})`,
+  widthIdle > widthFrozen && await pad.isVisible('#preview-pane') && !(await pad.isVisible('#take')));
+
+// Hiding it outright is still there, from the ⋯ menu (Issue #187), and is
+// remembered per device rather than resetting on every visit.
+await pad.click('#topbar-more'); await pad.click('#preview-toggle');
 ok('hiding it removes it from the layout', !(await pad.isVisible('#preview-pane')));
-const widthAfter = await pad.$eval('#deck-now-preview', (n) => n.getBoundingClientRect().width);
-ok(`the Now/Next boxes actually get the extra room (${Math.round(widthBefore)} -> ${Math.round(widthAfter)})`, widthAfter > widthBefore);
 await pad.reload();
 await pad.waitForSelector('.tile');
 await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
 ok('the choice survives a reload of the controller', !(await pad.isVisible('#preview-pane')));
-await pad.click('#preview-toggle');
+await pad.click('#topbar-more'); await pad.click('#preview-toggle');
 ok('and toggling it back shows it again', await pad.isVisible('#preview-pane'));
 
 // The Now/Next split cycles 50/50 -> 75/25 -> 25/75 -> back, and remembers
@@ -1040,7 +1050,7 @@ const settle = (pad, re) => pad.waitForFunction((src) => new RegExp(src).test(do
   // The gap this closes: the controller could tell you the DISPLAY's build,
   // and only while one was connected, but never said a word about its own.
   // It is the device in your hand and the one a bug report comes from.
-  await pad.click('#open-settings');
+  await pad.click('#topbar-more'); await pad.click('#open-settings');
   await pad.waitForSelector('#control-build');
   const ownLine = (await pad.textContent('#control-build')).trim();
   ok(`the controller states its own version and build in Settings ("${ownLine.split('\n')[0].trim()}")`,
@@ -1788,7 +1798,7 @@ trap(small, 'settings top actions (iPhone)');
 await small.goto(`${BASE}/control.html`);
 await small.waitForSelector('#app:not([hidden])');
 
-await small.click('#open-settings');
+await small.click('#topbar-more'); await small.click('#open-settings');
 await small.waitForSelector('#setup:not([hidden])');
 ok('the top actions row is shown on a phone-width screen', await small.isVisible('.setup-top-actions'));
 ok('Close is offered too, same as the one at the bottom, while this device is configured',
@@ -1820,7 +1830,7 @@ ok('the top Close button goes back to the app, same as the bottom one, without r
 // A normal (non-phone) viewport never shows this row at all - the real
 // Save/Close are already in easy reach down there.
 await small.setViewportSize({ width: 1280, height: 900 });
-await small.click('#open-settings');
+await small.click('#topbar-more'); await small.click('#open-settings');
 await small.waitForSelector('#setup:not([hidden])');
 ok('an edit closed without saving is gone when Settings opens again', (await small.inputValue('#c-pass')) === 'reach it without scrolling');
 ok('and the passphrase is back to dots, however it was left', (await small.getAttribute('#c-pass', 'type')) === 'password');
@@ -1969,7 +1979,7 @@ ok('the display shows its own banner once its crash-recovery save actually fails
 
 // A plain write on the controller (preview-toggle persists whether the cue
 // bar is shown) exercises the same safeStorageSet() path there, independently.
-await failPad.click('#preview-toggle');
+await failPad.click('#topbar-more'); await failPad.click('#preview-toggle');
 await failPad.waitForFunction(() => !document.querySelector('#storage-warning').hidden, null, { timeout: 5000 });
 ok('the controller shows its own banner too, not borrowed from the display', true);
 ok('with a real, specific detail line, not just "something is wrong"',
@@ -2119,7 +2129,7 @@ await fPad.waitForFunction(() => !!document.querySelector('#take:not([disabled])
 ok('a pick that only went to the cue does not switch tabs', (await onTab()) === 'library');
 await fPad.click('#take');
 
-await fPad.click('#open-settings');
+await fPad.click('#topbar-more'); await fPad.click('#open-settings');
 ok('the preference is there, and on by default', await fPad.isChecked('#pref-auto-switch-tab'));
 await fPad.uncheck('#pref-auto-switch-tab');
 await fPad.click('#setup-close');
@@ -2189,7 +2199,7 @@ const helpState = () => uPad.evaluate(() => [...document.querySelectorAll('detai
 const closedHelp = await helpState();
 ok(`explanations sit behind "How this works", closed (Issue #189; ${closedHelp.length} of them)`,
   closedHelp.length >= 20 && closedHelp.every((open) => !open));
-await uPad.click('#open-settings');
+await uPad.click('#topbar-more'); await uPad.click('#open-settings');
 await uPad.check('#pref-help-open');
 ok('"Show every explanation open" opens every one', (await helpState()).every(Boolean));
 await uPad.uncheck('#pref-help-open');
@@ -2237,6 +2247,47 @@ await uPad.click('#notes-larger');
 ok('A+ makes the notes bigger, and it is remembered on this device', await uPad.evaluate(() =>
   getComputedStyle(document.querySelector('#deck-notes')).fontSize === '20px' && localStorage.getItem('podium.ui.notesSize') === '20'));
 await uPad.click('#notes-smaller');
+
+// Block 2 (Issues #186, #187, #197), with the defaults as shipped.
+const tabsShown = () => uPad.evaluate(() => [...document.querySelectorAll('.tabs .tab[data-tab]:not([hidden])')].map((b) => b.dataset.tab).join(','));
+ok(`the tabs come in four job groups, with Camera and Photos under More (Issue #197; ${await tabsShown()})`,
+  (await tabsShown()) === 'library,slides,now,ink,say,timer,polls,music,mixer,setup'
+  && (await uPad.$$eval('.tabs .tab-divider', (d) => d.length)) === 3);
+await uPad.click('#tabs-more');
+ok('and More holds Camera and Photos', (await uPad.$$eval('#tabs-more-menu button', (b) => b.map((x) => x.textContent))).join(',') === 'Camera,Photos');
+await uPad.click('#tabs-more');
+await uPad.click('.tab[data-tab="setup"]');
+ok('Setup gathers the watermark, picture-in-picture, Guest View and Sets', (await uPad.$$eval('[data-panel="setup"] .setup-head', (h) => h.map((x) => x.textContent))).join(',')
+  === 'Watermark,Picture-in-picture,Guest view,Sets');
+await uPad.click('.tab[data-tab="mixer"]');
+ok('and the microphone lives with the rest of the sound, in Mixer', await uPad.isVisible('#mic-start'));
+
+await uPad.setViewportSize({ width: 375, height: 812 });
+ok(`the top bar is one row even on a phone (Issue #187; ${Math.round(await uPad.$eval('.topbar', (t) => t.getBoundingClientRect().height))}px)`,
+  (await uPad.$eval('.topbar', (t) => t.getBoundingClientRect().height)) < 60);
+await uPad.click('#topbar-more');
+ok('the ⋯ menu holds Settings, Hide cue bar, the room and the build', await uPad.isVisible('#open-settings')
+  && await uPad.isVisible('#preview-toggle') && /b2-room|ui-batch-room/.test(await uPad.textContent('#topbar-menu'))
+  && /build \d+/.test(await uPad.textContent('#topbar-menu')));
+await uPad.keyboard.press('Escape');
+ok('and Escape closes it', await uPad.isHidden('#topbar-menu'));
+await uPad.setViewportSize({ width: 1700, height: 950 });
+await uPad.click('#layout-current');
+ok('the six layouts are one tap away, behind the button that shows the current one', await uPad.isVisible('.layout-btn[data-layout="2h"]'));
+await uPad.click('.layout-btn[data-layout="2h"]');
+await uPad.waitForFunction(() => document.querySelector('#layout-current')?.dataset.shows === '2h', null, { timeout: 5000 });
+ok('choosing one changes the layout, closes the popover, and the button now shows it',
+  await uPad.isHidden('#layout-pop') && (await uPad.getAttribute('#layout-current', 'aria-label')) === 'Screen layout: Side by side');
+await uPad.click('#layout-current');
+await uPad.click('.layout-btn[data-layout="single"]');
+
+// Issue #186: the full cue bar only while it has a job.
+await uPad.waitForFunction(() => document.querySelector('.workspace').classList.contains('cue-compact'), null, { timeout: 5000 });
+ok('with nothing frozen or cued, the cue bar is a thin strip (Issue #186)', !(await uPad.isVisible('#take')));
+await uPad.click('#freeze');
+await uPad.waitForFunction(() => !document.querySelector('.workspace').classList.contains('cue-compact'), null, { timeout: 5000 });
+ok('and freezing opens it in full, before anything is cued', await uPad.isVisible('#take'));
+await uPad.click('#freeze');
 await uctx.close();
 }
 

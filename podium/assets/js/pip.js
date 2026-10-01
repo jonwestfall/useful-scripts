@@ -24,6 +24,9 @@ export function createPipPanel({ $, el, send }) {
     if (!settings) return;
     const active = state.layout === 'pip';
     settings.hidden = !active;
+    // Its place on the Setup tab says how to get it, rather than being blank.
+    const off = $('#pip-settings-off');
+    if (off) off.hidden = active;
     if (!active) return;
 
     const mainSelect = $('#pip-main');

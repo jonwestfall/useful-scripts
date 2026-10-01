@@ -1113,6 +1113,11 @@ function renderPreview() {
       : heldInkOnly() ? 'Ink cued' : 'On screen';
   $('#preview-title').textContent = itemTitle(item);
   $('#preview-pane').classList.toggle('is-cued', hasCue());
+  // The full cue bar only while it has a job (Issue #186): frozen - the next
+  // pick lands in the cue, so it should already be in view - or something
+  // actually cued. Otherwise it folds to a thin "On screen" strip, and the
+  // room it used to take goes to the tab you are working in.
+  $('.workspace').classList.toggle('cue-compact', !state.frozen && !hasCue());
 }
 
 // --- Marp deck panel --------------------------------------------------------
@@ -2436,6 +2441,17 @@ function renderLayoutBar() {
     // Frozen and waiting on TAKE - see the 'layout' case in protocol.js.
     b.classList.toggle('is-cued', state.previewLayout !== null && b.dataset.layout === state.previewLayout);
   });
+  // The one button the top bar keeps (Issue #187) wears the current layout's
+  // icon - or the cued one's, while a layout change waits on TAKE.
+  const shown = state.previewLayout ?? state.layout;
+  const source = $(`.layout-btn[data-layout="${shown}"]`);
+  const current = $('#layout-current');
+  if (source && current.dataset.shows !== shown) {
+    current.dataset.shows = shown;
+    current.querySelector('.layout-icon').replaceWith(source.querySelector('.layout-icon').cloneNode(true));
+    current.setAttribute('aria-label', `Screen layout: ${source.getAttribute('aria-label')}`);
+  }
+  current.classList.toggle('is-cued', state.previewLayout !== null);
   $('#panel-promote').hidden = state.focus === 0;
   const count = LAYOUTS[state.layout] || 1;
   const picker = $('#panel-picker');
@@ -3449,7 +3465,23 @@ function pan(dx, dy) {
 // the fraction-based drawing math in redrawPad()/padPoint() is the same at
 // any zoom level.
 let pendingPdfAspectRetry = null;
+// Never taller than the Ink tab has room for with its controls still in view
+// underneath. A full-width 16:9 pad grows with the panel's width, and once
+// the cue bar folds away when idle (Issue #186) a laptop's pad would push the
+// controls below the fold - and reaching for the eraser would then scroll the
+// top of the pad up under the top bar. Measured rather than guessed in CSS,
+// since how tall the controls are depends on how they wrap.
+function capPadHeight() {
+  const panels = $('.panels');
+  const panel = $('[data-panel="ink"]');
+  if (!panels || panel.hidden) return;
+  const cs = getComputedStyle(panels);
+  const room = panels.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const below = panel.offsetHeight - padViewport.offsetHeight;
+  padViewport.style.maxHeight = `${Math.max(180, Math.floor(room - below))}px`;
+}
 function sizePad() {
+  capPadHeight();
   fitFrame();
   clampPan();
   applyPadTransform();
@@ -5075,11 +5107,29 @@ async function connect() {
 // "More". Adding a 13th tab here later needs nothing else done to it: an
 // unknown id in a saved order is dropped and a new one not yet saved is
 // appended, the same defensive merge bottomSlots already does above.
-const TAB_IDS = ['library', 'slides', 'now', 'ink', 'say', 'timer', 'camera', 'photos', 'music', 'mixer', 'sets', 'polls'];
+// The tabs in their four job groups (Issue #197): Present (what is on the
+// projector and what is drawn on it), Room (what the room reads and answers),
+// Sound, and Setup (what is arranged before class). Camera and Photos belong
+// with Present but start under "More" - most lectures never open them.
+// Adding a tab here later needs nothing else done to it: an unknown id in a
+// saved order is dropped and a new one not yet saved is appended, the same
+// defensive merge bottomSlots already does above.
+const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'music', 'mixer', 'setup'];
 const TAB_LABELS = {
-  library: 'Library', slides: 'Slides', now: 'Now', ink: 'Ink', say: 'Say', timer: 'Timer',
-  camera: 'Camera', photos: 'Photos', music: 'Music', mixer: 'Mixer', sets: 'Sets', polls: 'Polls',
+  library: 'Library', slides: 'Slides', now: 'Now', ink: 'Ink', camera: 'Camera', photos: 'Photos',
+  say: 'Say', timer: 'Timer', polls: 'Polls', music: 'Music', mixer: 'Mixer', setup: 'Setup',
 };
+const TAB_GROUPS = [
+  ['present', 'Present', ['library', 'slides', 'now', 'ink', 'camera', 'photos']],
+  ['room', 'Room', ['say', 'timer', 'polls']],
+  ['sound', 'Sound', ['music', 'mixer']],
+  ['setup', 'Setup', ['setup']],
+];
+const groupOfTab = (id) => TAB_GROUPS.find(([, , ids]) => ids.includes(id))?.[0];
+const DEFAULT_HIDDEN_TABS = ['camera', 'photos'];
+// Bumped when the default arrangement itself changes, so a device that saved
+// the old one (12 tabs, in a different order) is moved onto the new one once.
+const TAB_LAYOUT_VERSION = 2;
 
 // Which tab this browser tab was on (Issue #198), so a reload - a Save that
 // changed the connection, or iOS Safari reloading a tab it had put to sleep
@@ -5168,6 +5218,43 @@ $('#dual-pane-toggle').addEventListener('click', () => {
   const activeTab = document.querySelector('.tab[data-tab].is-on:not(#dual-pane-toggle)');
   if (activeTab) tab(activeTab.dataset.tab);
   window.dispatchEvent(new Event('resize'));
+});
+
+// --- top-bar popovers (Issue #187) -------------------------------------------
+//
+// The layout picker and the ⋯ menu: each a button that opens a small panel
+// under it. One open at a time; a tap anywhere else, Escape, or choosing
+// something in it closes it.
+function setPopover(wrap, open) {
+  const button = wrap.querySelector('[aria-haspopup]');
+  const pop = wrap.querySelector('.topbar-pop');
+  pop.hidden = !open;
+  button.setAttribute('aria-expanded', String(open));
+  button.classList.toggle('is-open', open);
+}
+function closePopovers(except = null) {
+  $$('.topbar-pop-wrap').forEach((wrap) => { if (wrap !== except) setPopover(wrap, false); });
+}
+$$('.topbar-pop-wrap').forEach((wrap) => {
+  wrap.querySelector('[aria-haspopup]').addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const open = wrap.querySelector('.topbar-pop').hidden;
+    closePopovers(wrap);
+    setPopover(wrap, open);
+    if (open) wrap.querySelector('.topbar-pop button:not([hidden])')?.focus();
+  });
+  // Choosing something closes it - the panel is a way to an action, not a place.
+  wrap.querySelector('.topbar-pop').addEventListener('click', (ev) => {
+    if (ev.target.closest('button')) setPopover(wrap, false);
+  });
+});
+document.addEventListener('click', (ev) => { if (!ev.target.closest('.topbar-pop-wrap')) closePopovers(); });
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape') return;
+  const open = $$('.topbar-pop-wrap').find((wrap) => !wrap.querySelector('.topbar-pop').hidden);
+  if (!open) return;
+  setPopover(open, false);
+  open.querySelector('[aria-haspopup]').focus();
 });
 
 $$('.layout-btn').forEach((b) => {
@@ -6572,6 +6659,11 @@ document.addEventListener('keydown', (ev) => {
 });
 
 window.addEventListener('resize', () => { if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad(); });
+// The cue bar folding to a strip and back (Issue #186) resizes the panels
+// without resizing the window.
+if (typeof ResizeObserver === 'function') {
+  new ResizeObserver(() => { if (!$('[data-panel="ink"]').hidden && !ink.drawing && !ink.erasing) sizePad(); }).observe($('.panels'));
+}
 window.addEventListener('beforeunload', () => bus?.close());
 
 installOfflineShell();
@@ -6633,7 +6725,8 @@ const PRESENTATION_DEFAULTS = {
   autoSwitchTab: true,
   helpOpen: false,
   tabOrder: [...TAB_IDS],
-  hiddenTabs: [],
+  hiddenTabs: [...DEFAULT_HIDDEN_TABS],
+  tabLayoutVersion: TAB_LAYOUT_VERSION,
 };
 function loadPresentation() {
   try {
@@ -6646,6 +6739,15 @@ function loadPresentation() {
     // saved - drop ids this build no longer has and append ones it grew,
     // rather than reject the whole thing and silently reset someone's
     // careful reordering over an unrelated code change.
+    // Once, when the default arrangement changes (Issue #197's groups): a
+    // custom order saved for the old 12 tabs would scatter tabs across the
+    // new group dividers, so this device starts from the new default order,
+    // keeps whatever it had hidden, and has Camera and Photos tucked away too.
+    if ((merged.tabLayoutVersion || 1) < TAB_LAYOUT_VERSION) {
+      merged.tabOrder = [...TAB_IDS];
+      merged.hiddenTabs = [...new Set([...(Array.isArray(merged.hiddenTabs) ? merged.hiddenTabs : []), ...DEFAULT_HIDDEN_TABS])];
+      merged.tabLayoutVersion = TAB_LAYOUT_VERSION;
+    }
     if (!Array.isArray(merged.tabOrder)) merged.tabOrder = [...TAB_IDS];
     merged.tabOrder = merged.tabOrder.filter((id) => TAB_IDS.includes(id));
     for (const id of TAB_IDS) if (!merged.tabOrder.includes(id)) merged.tabOrder.push(id);
@@ -6713,23 +6815,41 @@ function getBottomSlots() {
  * it, so the click listener wired once at startup (see below) keeps working
  * on every one of them, hidden or not, in whatever order they end up in.
  */
+/**
+ * Lay the tab buttons out by group (Issue #197), in presentation.tabOrder
+ * within each group, hide the ones in presentation.hiddenTabs, put a divider
+ * between groups, and keep #tabs-more in sync. The buttons themselves are
+ * never rebuilt - appendChild on an existing node just moves it, so the click
+ * listener wired once at startup keeps working on every one of them, hidden
+ * or not, in whatever order they end up in.
+ */
+function orderedTabs() {
+  return TAB_GROUPS.flatMap(([group]) => presentation.tabOrder.filter((id) => groupOfTab(id) === group));
+}
+
 function renderTabBar() {
   const nav = $('.tabs');
   const moreWrap = $('.tabs-more-wrap');
   if (!nav || !moreWrap) return;
-  for (const id of presentation.tabOrder) {
+  nav.querySelectorAll('.tab-divider').forEach((d) => d.remove());
+  let lastGroup = null;
+  for (const id of orderedTabs()) {
     const btn = nav.querySelector(`.tab[data-tab="${id}"]`);
-    if (btn) nav.insertBefore(btn, moreWrap);
-  }
-  for (const id of TAB_IDS) {
-    const btn = nav.querySelector(`.tab[data-tab="${id}"]`);
-    if (btn) btn.hidden = presentation.hiddenTabs.includes(id);
+    if (!btn) continue;
+    btn.hidden = presentation.hiddenTabs.includes(id);
+    const group = groupOfTab(id);
+    // A divider only between two groups that both have a tab showing.
+    if (!btn.hidden && lastGroup && group !== lastGroup) {
+      nav.insertBefore(el('span', { class: 'tab-divider', 'aria-hidden': 'true' }), moreWrap);
+    }
+    nav.insertBefore(btn, moreWrap);
+    if (!btn.hidden) lastGroup = group;
   }
   renderTabsMoreMenu();
 }
 
 function renderTabsMoreMenu() {
-  const hiddenIds = presentation.tabOrder.filter((id) => presentation.hiddenTabs.includes(id));
+  const hiddenIds = orderedTabs().filter((id) => presentation.hiddenTabs.includes(id));
   const moreBtn = $('#tabs-more');
   const menu = $('#tabs-more-menu');
   if (!moreBtn || !menu) return;
@@ -6741,13 +6861,17 @@ function renderTabsMoreMenu() {
   if (hiddenIds.length === 0) menu.hidden = true;
 }
 
-/** Swap tab `id` with its neighbor in the saved order; `dir` is -1 or 1. */
+/** Swap tab `id` with its neighbour in its own group; `dir` is -1 or 1. */
 function moveTab(id, dir) {
-  const order = presentation.tabOrder.slice();
-  const i = order.indexOf(id);
+  const group = TAB_GROUPS.find(([g]) => g === groupOfTab(id))?.[2] || [];
+  const inGroup = presentation.tabOrder.filter((t) => group.includes(t));
+  const i = inGroup.indexOf(id);
   const j = i + dir;
-  if (i < 0 || j < 0 || j >= order.length) return;
-  [order[i], order[j]] = [order[j], order[i]];
+  if (i < 0 || j < 0 || j >= inGroup.length) return;
+  const order = presentation.tabOrder.slice();
+  const a = order.indexOf(inGroup[i]);
+  const b = order.indexOf(inGroup[j]);
+  [order[a], order[b]] = [order[b], order[a]];
   presentation.tabOrder = order;
   savePresentation();
   renderTabBar();
@@ -6769,21 +6893,28 @@ function toggleTabHidden(id, hide) {
 function renderTabOrderSettings() {
   const list = $('#tab-order-list');
   if (!list) return;
-  list.replaceChildren(...presentation.tabOrder.map((id, i) => {
-    const isHidden = presentation.hiddenTabs.includes(id);
-    return el('div', { class: 'tab-order-row' },
-      el('div', { class: 'tab-order-move' },
-        el('button', { type: 'button', disabled: i === 0, title: 'Move earlier', onclick: () => moveTab(id, -1) }, '▲'),
-        el('button', { type: 'button', disabled: i === presentation.tabOrder.length - 1, title: 'Move later', onclick: () => moveTab(id, 1) }, '▼')),
-      el('span', { class: 'tab-order-label' }, TAB_LABELS[id] || id),
-      el('label', { class: 'check tab-order-show' },
-        el('input', {
-          type: 'checkbox',
-          checked: !isHidden,
-          onchange: (ev) => toggleTabHidden(id, !ev.target.checked),
-        }),
-        'Show'));
-  }));
+  const rows = [];
+  for (const [group, label] of TAB_GROUPS) {
+    const ids = presentation.tabOrder.filter((id) => groupOfTab(id) === group);
+    if (!ids.length) continue;
+    rows.push(el('div', { class: 'tab-order-group' }, label));
+    ids.forEach((id, i) => {
+      const isHidden = presentation.hiddenTabs.includes(id);
+      rows.push(el('div', { class: 'tab-order-row' },
+        el('div', { class: 'tab-order-move' },
+          el('button', { type: 'button', disabled: i === 0, title: 'Move earlier', 'aria-label': `Move ${TAB_LABELS[id] || id} earlier`, onclick: () => moveTab(id, -1) }, '▲'),
+          el('button', { type: 'button', disabled: i === ids.length - 1, title: 'Move later', 'aria-label': `Move ${TAB_LABELS[id] || id} later`, onclick: () => moveTab(id, 1) }, '▼')),
+        el('span', { class: 'tab-order-label' }, TAB_LABELS[id] || id),
+        el('label', { class: 'check tab-order-show' },
+          el('input', {
+            type: 'checkbox',
+            checked: !isHidden,
+            onchange: (ev) => toggleTabHidden(id, !ev.target.checked),
+          }),
+          'Show')));
+    });
+  }
+  list.replaceChildren(...rows);
 }
 renderTabBar();
 

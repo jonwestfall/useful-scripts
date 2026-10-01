@@ -194,7 +194,7 @@ const hasInk = await screen.evaluate(() => new Promise((resolve) => {
 ok(`the photo really is the board with the ink burnt into it (${hasInk.ink} inked pixels)`, hasInk.board > 1000 && hasInk.ink > 200);
 
 // Hold a panel letter. The click that a tap would fire must not also happen.
-await pad.click('.layout-btn[data-layout="2h"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="2h"]');
 await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-2h'), null, { timeout: 8000 });
 await pad.waitForSelector('.panel-btn');
 const letter = await pad.locator('.panel-btn').nth(1).boundingBox();
@@ -218,6 +218,7 @@ await pad.locator('.panel-btn').nth(0).click();
 await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'A', null, { timeout: 8000 });
 
 // Hold a layout button: the whole screen, and the layout must not change.
+await pad.click('#layout-current');   // the six live in a popover since Issue #187
 const layout = await pad.locator('.layout-btn[data-layout="4"]').boundingBox();
 await pad.mouse.move(layout.x + layout.width / 2, layout.y + layout.height / 2);
 await pad.mouse.down();
@@ -225,6 +226,9 @@ await pad.waitForTimeout(1500);
 await pad.mouse.up();
 await pad.waitForFunction(() => document.querySelectorAll('#photo-strip .shot').length === 3, null, { timeout: 20000 });
 ok('holding a layout button photographs the whole screen', true);
+// The hold leaves the layout popover open (it is not a choice); close it the
+// way a person would, so the next "open it, then pick" starts from closed.
+await pad.keyboard.press('Escape');
 ok('and does not also rearrange the screen it just photographed',
   await pad.evaluate(() => document.querySelector('.layout-btn[data-layout="2h"]').classList.contains('is-on')));
 const screenShot = await pad.evaluate(() => {
@@ -248,7 +252,7 @@ ok('a slide lifted out of the page has its theme re-scoped to follow it',
 // Back to one panel for this one, so "how much of the photo is black" is a
 // statement about the slide rather than about the letterboxing a half-width
 // panel puts around it.
-await pad.click('.layout-btn[data-layout="single"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="single"]');
 await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 8000 });
 await pad.click('.tab[data-tab="library"]');
 await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
@@ -958,7 +962,7 @@ await screen.evaluate(() => {
   cv.height = Math.round(document.querySelector('#stage').clientHeight * 2);
   cv.getContext('2d').setTransform(2, 0, 0, 2, 0, 0);
 });
-await pad.click('.layout-btn[data-layout="4"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="4"]');
 await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-4'), null, { timeout: 5000 });
 await pad.waitForTimeout(500);
 const pb2 = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
@@ -1016,7 +1020,7 @@ await pad.waitForFunction(() => document.querySelector('#display-state')?.textCo
 await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
 await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 20000 });
 
-await pad.click('.layout-btn[data-layout="3"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="3"]');
 await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-3'), null, { timeout: 5000 });
 const slotDisplay = await screen.evaluate(() => ({
   a: getComputedStyle(document.querySelector('[data-panel="a"]')).display,
@@ -1095,7 +1099,7 @@ const inkInsideA = await screen.evaluate(() => {
 });
 ok(`every bit of the stroke stays inside panel A, not spread over the whole stage (${inkInsideA.why})`, inkInsideA.ok);
 
-await pad.click('.layout-btn[data-layout="single"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="single"]');
 await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 5000 });
 const backToSingle = await screen.evaluate(() => {
   const a = document.querySelector('[data-panel="a"]').getBoundingClientRect();
@@ -1148,10 +1152,10 @@ const inkBox = () => screen.evaluate(() => {
   return { x: minX / dpr, y: minY / dpr, w: (maxX - minX) / dpr, h: (maxY - minY) / dpr };
 });
 const beforeRoundTrip = await inkBox();
-await pad.click('.layout-btn[data-layout="4"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="4"]');
 await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-4'), null, { timeout: 5000 });
 await screen.waitForTimeout(300);
-await pad.click('.layout-btn[data-layout="single"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="single"]');
 await screen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-single'), null, { timeout: 5000 });
 await screen.waitForTimeout(500);
 const afterRoundTrip = await inkBox();
@@ -1414,7 +1418,7 @@ await pad.waitForFunction(() => document.querySelector('#display-state')?.textCo
 // "Full screen this": panel C's content becomes panel A, in single layout,
 // in one tap - the actual complaint being "I switch back to one panel and
 // get A, not the C I was just looking at".
-await pad.click('.layout-btn[data-layout="4"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="4"]');
 await pad.click('.panel-btn:nth-child(3)');
 await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'C', null, { timeout: 5000 });
 await pad.click('.tab[data-tab="library"]');
@@ -1455,7 +1459,7 @@ ok(`the ink drawn on C is still there once it is full screen (${paintedAfter})`,
 // A layout change while frozen queues behind TAKE, the same as content -
 // see the 'layout'/'take'/'clear' cases in protocol.js.
 await pad.click('#freeze');
-await pad.click('.layout-btn[data-layout="2h"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="2h"]');
 await pad.waitForTimeout(500);
 ok('a layout change while frozen does not apply immediately', await screen.evaluate(() => document.querySelector('#stage').classList.contains('layout-single')));
 ok('the cued layout button shows cued rather than live',
@@ -1473,7 +1477,7 @@ await pad.waitForFunction(() => !document.querySelector('#freeze').classList.con
 
 // Clear cue abandons a cued layout, not just cued content.
 await pad.click('#freeze');
-await pad.click('.layout-btn[data-layout="4"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="4"]');
 await pad.waitForFunction(() => document.querySelector('.layout-btn[data-layout="4"]').classList.contains('is-cued'), null, { timeout: 5000 });
 await pad.click('#clear-preview');
 await pad.waitForTimeout(300);
@@ -1637,7 +1641,7 @@ await pad.waitForFunction(() => document.querySelector('#display-state')?.textCo
 
 await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
 await screen.waitForFunction(() => (document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length || 0) > 0, null, { timeout: 20000 });
-await pad.click('.layout-btn[data-layout="2h"]');
+await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="2h"]');
 await pad.click('.panel-btn:nth-child(2)');
 await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'B', null, { timeout: 5000 });
 ok('panel B is focused, and nothing has ever been staged into it', await pad.evaluate(() => document.querySelector('#panel-promote') !== null));
@@ -1679,7 +1683,7 @@ trap(pad, 'watermark pad');
 await pad.goto(`${BASE}/control.html`);
 await pad.waitForSelector('.tile');
 await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
-await pad.click('.tab[data-tab="say"]');
+await pad.click('.tab[data-tab="setup"]');
 
 await pad.fill('#watermark-text', 'Dr. Jane Smith');
 await pad.click('#watermark-form button[type=submit]');
@@ -1702,7 +1706,7 @@ ok('and survives blank too, deliberately - it is identity, not content',
 await pad.click('#blank');
 await pad.click('#freeze');
 
-await pad.click('.tab[data-tab="say"]');
+await pad.click('.tab[data-tab="setup"]');
 await pad.selectOption('#watermark-position', 'tl');
 await screen.waitForFunction(() => document.querySelector('#watermark').classList.contains('pos-tl'), null, { timeout: 5000 });
 ok('the position switches to top left', true);
@@ -1771,7 +1775,7 @@ ok(`the logo shows up in a whole-screen grab, top left as set (${JSON.stringify(
   shotPixel.best && shotPixel.best.p[2] > shotPixel.best.p[0] + 40 && shotPixel.best.p[2] > shotPixel.best.p[1] + 40);
 
 // Remove image reverts to the text, which the queue never lost.
-await pad.click('.tab[data-tab="say"]');
+await pad.click('.tab[data-tab="setup"]');
 await pad.click('#watermark-image-clear');
 await screen.waitForFunction(() => document.querySelector('#watermark-text').hidden === false, null, { timeout: 5000 });
 ok('Remove image reverts the display back to the remembered text',
@@ -1782,7 +1786,7 @@ const pad2 = await ctx.newPage();
 trap(pad2, 'watermark pad2');
 await pad2.goto(`${BASE}/control.html`);
 await pad2.waitForSelector('.tile');
-await pad2.click('.tab[data-tab="say"]');
+await pad2.click('.tab[data-tab="setup"]');
 await pad2.waitForFunction(() => /Dr\. Jane Smith/.test(document.querySelector('#watermark-note').textContent), null, { timeout: 8000 })
   .then(() => ok('a second controller sees the same watermark state', true))
   .catch(() => ok('a second controller sees the same watermark state', false));
@@ -1831,7 +1835,7 @@ await pipPad.waitForFunction(() => document.querySelector('#display-state')?.tex
 // choosing among panes already independently staged, the same as switching
 // into "4" and picking through A/B/C/D already works, not a new staging
 // path of its own.
-await pipPad.click('.layout-btn[data-layout="4"]');
+await pipPad.click('#layout-current'); await pipPad.click('.layout-btn[data-layout="4"]');
 // The panel picker's B/C/D buttons only exist once this pad's own state
 // has caught up with the layout change it just sent - a separate round
 // trip from the display applying it, the same distinction the pip-main/
@@ -1853,9 +1857,9 @@ await pipPad.click('#message-editor-show');
 await pipScreen.waitForFunction(() => /Pane C/.test(document.querySelector('[data-panel="c"] .r-text-body')?.textContent || ''), null, { timeout: 8000 });
 ok('A, B and C each hold their own distinct content before PiP ever gets involved', true);
 
-await pipPad.click('.layout-btn[data-layout="pip"]');
+await pipPad.click('#layout-current'); await pipPad.click('.layout-btn[data-layout="pip"]');
 await pipScreen.waitForFunction(() => document.querySelector('#stage').classList.contains('layout-pip'), null, { timeout: 5000 });
-await pipPad.click('.tab[data-tab="say"]');
+await pipPad.click('.tab[data-tab="setup"]');
 await pipPad.waitForSelector('#pip-settings:not([hidden])', { timeout: 5000 });
 ok('the settings panel appears once PiP is the active layout', true);
 ok('defaulting to pane A full screen, pane B inset',

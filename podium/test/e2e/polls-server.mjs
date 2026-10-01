@@ -1243,7 +1243,8 @@ await pad.fill('#password', 'a good long password');
 await Promise.all([pad.waitForURL(/control\.html/), pad.click('#go')]);
 ok('the right password lands on the page that was asked for', /control\.html$/.test(pad.url()));
 
-await pad.waitForSelector('#session-badge .session-who');
+// In the ⋯ menu since Issue #187 - present, if not on show until it opens.
+await pad.waitForSelector('#session-badge .session-who', { state: 'attached' });
 ok(`the controller says who is signed in ("${await pad.textContent('#session-badge .session-who')}")`,
   (await pad.textContent('#session-badge .session-who')).trim() === 'Jon W');
 
@@ -2255,6 +2256,7 @@ ok(`and the same socket opens for a signed-in one (${await upgradeStatus(signedI
 await pad.waitForSelector('#status[data-status="online"]', { timeout: 15000 });
 ok('so the signed-in controller actually reaches the relay', true);
 
+await pad.click('#topbar-more');
 await Promise.all([pad.waitForURL(/login\.html/), pad.click('#session-badge button')]);
 ok('signing out goes back to the login page', /login\.html/.test(pad.url()));
 ok('and the controller is behind the gate again',
@@ -2298,7 +2300,7 @@ await micPad.waitForFunction(() => document.querySelector('#display-state')?.tex
 // Recording defaults ON (per device) - the opposite of Keep photos above,
 // which defaults off because a photo is usually somebody else's picture. A
 // presenter's own mic is exactly that: theirs.
-await micPad.click('.tab[data-tab="say"]');
+await micPad.click('.tab[data-tab="mixer"]');
 await micPad.waitForSelector('#mic-record-row:not([hidden])');
 ok('a server-backed controller offers to record its own mic to the session, on by default',
   await micPad.isChecked('#mic-record'));
@@ -2416,7 +2418,7 @@ await dispB.waitForSelector('#hud[data-status="online"]');
 // branch) rather than simply ending it - exactly the ambiguity a real
 // class never has, since something is always on screen by the time anyone
 // stands down.
-await ctrlA.click('.layout-btn[data-layout="2h"]');
+await ctrlA.click('#layout-current'); await ctrlA.click('.layout-btn[data-layout="2h"]');
 await Promise.all([dispA, dispB].map((d) => d.waitForFunction(
   () => document.querySelector('#stage')?.className === 'layout-2h', null, { timeout: 8000 })));
 ok('one command from the controller reaches both displays', true);
@@ -2475,7 +2477,7 @@ ok('the other display never stood itself down', await dispB.evaluate(() => docum
 // is what a real class does, a slide or two after the front of the room has
 // already quietly ended.
 expecting.recoveryConflict = true;
-await ctrlA.click('.layout-btn[data-layout="4"]');
+await ctrlA.click('#layout-current'); await ctrlA.click('.layout-btn[data-layout="4"]');
 await ctrlA.waitForFunction(
   () => document.querySelector('.layout-btn[data-layout="4"]')?.classList.contains('is-on'),
   null, { timeout: 8000 });
@@ -2642,7 +2644,7 @@ await gDisplay.waitForFunction(() => !document.querySelector('.layer[data-role="
 ok('and Play from the guest device resumes it', true);
 
 // --- discovery links (Issue #161) ------------------------------------------
-await gControl.click('#open-settings');
+await gControl.click('#topbar-more'); await gControl.click('#open-settings');
 await gControl.waitForSelector('#setup:not([hidden])');
 ok('the controller\'s own Settings links to Guest (Simple Mode)',
   await gControl.getAttribute('#setup a[href="guest.html"]', 'target') === '_blank');

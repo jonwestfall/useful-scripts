@@ -507,6 +507,28 @@ body.control.is-frozen { background: #171006; }
   display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-bottom: 1px solid var(--line); font-size: 13px; color: var(--dim); flex-wrap: wrap;
 }
+/* The controller's bar is one row at every size (Issue #187): what used to
+   wrap it now lives in the layout popover and the ⋯ menu, and the status
+   text is what gives way, trimming itself rather than pushing a row down. */
+body.control .topbar { flex-wrap: nowrap; }
+body.control .topbar-status { min-width: 0; }
+.topbar-pop-wrap { position: relative; flex: none; }
+.layout-current {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 8px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+}
+.layout-current.is-cued { border-color: var(--cue); }
+.layout-caret { font-size: 10px; color: var(--dim); }
+#topbar-more { min-height: 30px; min-width: 36px; padding: 0 10px; font-size: 18px; line-height: 1; }
+.topbar-pop {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .35); padding: 8px;
+}
+.topbar-menu { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
+.topbar-menu > button { width: 100%; justify-content: flex-start; text-align: left; }
+.topbar-menu-info { display: flex; flex-direction: column; gap: 6px; padding: 6px 4px 2px; border-top: 1px solid var(--line); margin-top: 2px; }
+.topbar-menu .room-info, .topbar-menu .version-tag { white-space: nowrap; }
 .topbar .brand { font-weight: 700; color: var(--ink); letter-spacing: .04em; text-decoration: none; }
 .topbar .brand:hover { text-decoration: underline; }
 .topbar .spacer { flex: 1; }
@@ -1078,6 +1100,8 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 #pad-viewport {
   width: 100%; aspect-ratio: 16 / 9; overflow: hidden; position: relative;
   background: #06090c; border: 1px solid var(--line); border-radius: var(--radius);
+  /* The height cap is set from JS (capPadHeight in control.js). */
+  min-height: 180px;
 }
 /* Sized and positioned from JS (fitFrame in control.js): CSS aspect-ratio
    cannot win against the inset an absolutely-positioned element would
@@ -1427,8 +1451,7 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 /* On a phone the bar has to fit one row: drop the identifiers you only need
    when something is wrong, and let the buttons shrink. */
 @media (max-width: 640px) {
-  .topbar .brand, .topbar .room-info, #peer-count { display: none; }
-  .topbar .session-badge .session-who { display: none; }
+  .topbar .brand, #peer-count { display: none; }
   .clock-widget { gap: 6px; }
   .topbar-clock { font-size: 12px; }
   .topbar-pacing { font-size: 11px; padding: 2px 6px 3px; min-height: 24px; }
@@ -1443,6 +1466,20 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
      which is already in easy reach on a screen that tall. */
   .setup-top-actions { display: flex; }
 }
+
+/* Nothing cued and not frozen: the cue bar folds to a thin "On screen"
+   strip across the top of the workspace, at every screen size (Issue #186).
+   TAKE, Swap and Clear have nothing to act on, so they go with it. */
+.workspace.cue-compact { flex-direction: column; }
+.workspace.cue-compact #preview-pane {
+  width: auto; flex-direction: row; align-items: center; gap: 10px;
+  padding: 6px 12px; border-right: 0; border-bottom: 1px solid var(--line);
+}
+.workspace.cue-compact #preview-stage { width: 84px; flex: none; border-width: 1px; border-radius: 6px; }
+.workspace.cue-compact #preview-pane .meta { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.workspace.cue-compact #take,
+.workspace.cue-compact #preview-pane .row,
+.workspace.cue-compact #preview-pane details.help { display: none; }
 
 @media (max-width: 900px) {
   .workspace { flex-direction: column; }
@@ -2160,3 +2197,16 @@ body.display[data-sheet-theme="light"] .sheet {
 body.display[data-sheet-theme="light"] .sheet .card { background: var(--panel); color: var(--ink); border-color: var(--line); }
 :root[data-theme="light"] .warn,
 body.display[data-sheet-theme="light"] .sheet .warn { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+
+/* Tab groups (Issue #197): a thin rule between Present, Room, Sound and
+   Setup, and the same groups as headings in Settings' tab list. */
+.tab-divider { flex: none; width: 1px; align-self: stretch; margin: 6px 4px; background: var(--line); }
+.tab-order-group {
+  margin: 10px 0 2px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+}
+/* Section headings inside a tab that gathers several things - Setup, and the
+   microphone at the foot of Mixer. */
+.setup-head {
+  margin: 10px 0 0; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim);
+}
+.panel > .setup-head:first-child { margin-top: 0; }
