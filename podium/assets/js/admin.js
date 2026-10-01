@@ -23,7 +23,19 @@ let items = [];
 let courses = [];
 let me = null;
 
-const bytes = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+// Sizes in the unit a person would say them in (Issue #207): "40 GB free",
+// not "40854.2 MB". One decimal only while it still means something (2.5 GB),
+// none once the number is big enough that it does not (40 GB, 512 MB).
+function bytes(n) {
+  const units = [['TB', 1024 ** 4], ['GB', 1024 ** 3], ['MB', 1024 ** 2]];
+  for (const [unit, size] of units) {
+    if (n >= size) {
+      const v = n / size;
+      return `${v >= 10 ? Math.round(v) : Math.round(v * 10) / 10} ${unit}`;
+    }
+  }
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
 
 function say(text, bad = false) {
   const note = $('#up-note');
@@ -646,6 +658,7 @@ function renderSessions() {
         onclick: () => removeSession(lecture, row),
       }, 'Remove'));
     }
+    row.classList.toggle('is-open', openLecture?.id === lecture.id);
     holder.append(row);
 
     if (openLecture?.id === lecture.id) {
@@ -1285,6 +1298,7 @@ function renderCourses() {
           { method: 'PATCH', body: JSON.stringify({ archived: !course.archived }) })),
       }, course.archived ? 'Bring back' : 'Archive'));
     }
+    row.classList.toggle('is-open', openCourse === course.code);
     holder.append(row);
     if (openCourse === course.code) holder.append(renderCourseBody(course));
   }
@@ -2655,6 +2669,7 @@ if (!info.features.includes('library')) {
     $('#new-course-go').addEventListener('click', addCourse);
     if (me?.isAdmin) {
       $('#tab-people').hidden = false;
+      $('#tab-server').hidden = false;
       $('#tab-storage').hidden = false;
       $('#people-search').addEventListener('input', renderPeople);
       $('#new-user-go').addEventListener('click', addPerson);

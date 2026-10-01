@@ -2131,6 +2131,103 @@ ok('while a brand-new controller tab still starts on the Library',
 await fctx.close();
 }
 
+if (want('help on demand, the Library first, and the Slides tab notes and progress')) {
+console.log('\n-- help on demand, the Library first, and the Slides tab notes and progress (Issues #189-#196) --');
+// 1700 wide: room for the Slides tab's notes column (Issue #195) beside the cue bar.
+const uctx = await browser.newContext({ podiumRealDefaults: true, viewport: { width: 1700, height: 950 } });
+await uctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'ui-batch-room', passphrase: 'controls first' }));
+const uScreen = await uctx.newPage();
+trap(uScreen, 'ui display');
+await uScreen.goto(`${BASE}/display.html`);
+await uScreen.click('#arm-button');
+await uScreen.waitForSelector('#hud[data-status="online"]');
+const uPad = await uctx.newPage();
+trap(uPad, 'ui pad');
+await uPad.goto(`${BASE}/control.html`);
+await uPad.waitForSelector('.tile');
+await uPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await uPad.waitForTimeout(800);
+await uPad.click('#blank');   // blank-on-connect has fired; lift it
+
+// #190 / #193: the Library first, imports behind "+ Add".
+ok('the Library opens on its tiles, with the imports folded away (Issue #190)',
+  await uPad.isHidden('#lib-add') && await uPad.isVisible('.tile')
+  && (await uPad.getAttribute('#lib-add-toggle', 'aria-expanded')) === 'false');
+await uPad.click('#lib-add-toggle');
+ok('"+ Add" opens them, and says so', await uPad.isVisible('#url-input') && (await uPad.getAttribute('#lib-add-toggle', 'aria-expanded')) === 'true');
+ok('"Save" now says what it does (Issue #193)', (await uPad.textContent('label:has(#url-save)')).trim() === 'Keep in Library');
+await uPad.click('#lib-add details.help > summary');
+ok('and its ⓘ explains where a kept item goes', /this device only/.test(await uPad.textContent('#lib-add details.help')));
+await uPad.reload();
+await uPad.waitForSelector('#app:not([hidden])');
+ok('open or closed is remembered on this device', await uPad.isVisible('#url-input'));
+await uPad.click('#lib-add-toggle');
+
+// #191 / #192: whole titles and thumbnails.
+ok('a tile carries its whole title, wherever two lines are not enough (Issue #191)',
+  !!(await uPad.$('.tile[title="Day 6 — Weighing the Evidence"]')));
+await uPad.waitForFunction(() => !!document.querySelector('.tile[title="Day 6 — Weighing the Evidence"] .tile-thumb.has-thumb'), null, { timeout: 30000 });
+ok('a deck tile gets a picture of its first slide (Issue #192)', true);
+ok('and a manifest entry marked thumbnail: false never tries to make one', await uPad.evaluate(() =>
+  [...document.querySelectorAll('.tile')].filter((t) => /Chapter 4|Stroop|Reaction-time/.test(t.title)).every((t) => !t.querySelector('.tile-thumb'))));
+
+// #189: help on demand.
+const helpState = () => uPad.evaluate(() => [...document.querySelectorAll('details.help')].map((d) => d.open));
+const closedHelp = await helpState();
+ok(`explanations sit behind "How this works", closed (Issue #189; ${closedHelp.length} of them)`,
+  closedHelp.length >= 20 && closedHelp.every((open) => !open));
+await uPad.click('#open-settings');
+await uPad.check('#pref-help-open');
+ok('"Show every explanation open" opens every one', (await helpState()).every(Boolean));
+await uPad.uncheck('#pref-help-open');
+await uPad.click('#setup-close');
+
+// #189: where the room's audio goes, asked once.
+await uPad.click('.tab[data-tab="say"]');
+ok('the live-captions privacy note is not a paragraph on every visit', await uPad.isHidden('#caption-privacy'));
+await uPad.click('#caption-toggle');
+await uPad.waitForSelector('.confirm-once #caption-privacy');
+ok('starting captions the first time asks first, with the note', await uPad.isVisible('#caption-privacy'));
+await uPad.click('.confirm-once button:has-text("Not now")');
+ok('"Not now" starts nothing and remembers nothing', await uPad.isHidden('#caption-privacy')
+  && (await uPad.textContent('#caption-toggle')) === 'Start live captions'
+  && await uPad.evaluate(() => localStorage.getItem('podium.ack.captions') === null));
+await uPad.click('#caption-toggle');
+await uPad.click('.confirm-once button:has-text("Start live captions")');
+ok('agreeing is remembered on this device, and the note stays reachable behind "How this works"',
+  await uPad.evaluate(() => localStorage.getItem('podium.ack.captions') === '1'
+    && !!document.querySelector('#caption-privacy').closest('details.help')));
+
+// #195 / #196: the Slides tab.
+await uPad.click('.tab[data-tab="library"]');
+await uPad.click('.tile[title="Day 6 — Weighing the Evidence"]');
+await uPad.waitForFunction(() => document.querySelector('.tab[data-tab].is-on')?.dataset.tab === 'slides'
+  && /Slide 1 \//.test(document.querySelector('#deck-count')?.textContent || ''), null, { timeout: 20000 });
+const progress = () => uPad.evaluate(() => ({
+  width: document.querySelector('#deck-progress-bar').style.width,
+  now: document.querySelector('.deck-progress-track').getAttribute('aria-valuenow'),
+  time: document.querySelector('#deck-progress-time').textContent,
+}));
+const p1 = await progress();
+await uPad.click('#deck-next');
+await uPad.waitForFunction(() => /Slide 2 \//.test(document.querySelector('#deck-count')?.textContent || ''), null, { timeout: 10000 });
+const p2 = await progress();
+ok(`the progress bar moves with the deck, and says how long it has been up (Issue #196; ${p1.width} -> ${p2.width}, "${p2.time}")`,
+  p1.now === '1' && p2.now === '2' && parseInt(p2.width, 10) > parseInt(p1.width, 10) && /^up /.test(p2.time));
+ok('on a wide panel, presenter notes sit beside Now/Next (Issue #195)', await uPad.evaluate(() =>
+  getComputedStyle(document.querySelector('.deck-stage')).display === 'grid'));
+await uPad.setViewportSize({ width: 1280, height: 900 });
+ok('while on a laptop-width panel they stay below, leaving Now/Next their room', await uPad.evaluate(() =>
+  getComputedStyle(document.querySelector('.deck-stage')).display !== 'grid'));
+await uPad.setViewportSize({ width: 1700, height: 950 });
+await uPad.click('#notes-larger');
+ok('A+ makes the notes bigger, and it is remembered on this device', await uPad.evaluate(() =>
+  getComputedStyle(document.querySelector('#deck-notes')).fontSize === '20px' && localStorage.getItem('podium.ui.notesSize') === '20'));
+await uPad.click('#notes-smaller');
+await uctx.close();
+}
+
 reportErrors();
 } finally {
   await teardown();

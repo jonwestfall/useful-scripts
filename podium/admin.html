@@ -57,6 +57,7 @@
   <p class="warn" id="storage-pressure" style="grid-column: 1 / -1;" hidden></p>
   <div class="tabs admin-tabs" id="admin-tabs" style="grid-column: 1 / -1; margin-bottom: 0;">
     <button type="button" class="tab" id="tab-people" data-target="panel-people" hidden>People</button>
+    <button type="button" class="tab" id="tab-server" data-target="panel-server" hidden>Server</button>
     <button type="button" class="tab" id="tab-courses" data-target="panel-courses" hidden>Courses</button>
     <button type="button" class="tab" id="tab-library" data-target="panel-library" hidden>Library</button>
     <button type="button" class="tab" id="tab-content" data-target="panel-content" hidden>Global Content</button>
@@ -94,7 +95,14 @@
       <button id="new-user-go" type="button">Add the account</button>
       <span class="hint" id="people-note" role="status"></span>
     </div>
-    <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 12px 0">
+  </section>
+  </div>
+
+  <!-- Settings for the whole server, not for anyone's account (Issue #206) -
+       they used to sit at the foot of People, where nobody looking for a
+       server setting would think to scroll. Administrators only. -->
+  <div class="admin-panel" id="panel-server" hidden>
+  <section class="card" id="server-card">
     <div class="admin-head">
       <h2>User &amp; Security Logs</h2>
     </div>

@@ -147,12 +147,15 @@ try {
         <button id="swap" type="button" disabled>Swap</button>
         <button id="clear-preview" type="button" disabled>Clear cue</button>
       </div>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         <b>Take</b> puts the cued item on screen and unfreezes.
         <b>Swap</b> trades places without unfreezing, so you can peek at what
         is cued without committing to it. <b>Clear cue</b> discards the cued
         item and leaves the screen exactly as it is.
       </p>
+      </details>
     </aside>
 
     <main class="main">
@@ -195,57 +198,75 @@ try {
             <span class="recent-label">Back to</span>
             <div id="recent" class="recent-strip"></div>
           </div>
-          <form id="url-form" class="inline">
-            <input id="url-input" aria-label="Link to show" class="grow" type="text" inputmode="url" autocomplete="off"
-                   autocapitalize="off" spellcheck="false" placeholder="Paste a link — YouTube, Twitch, image, video, PDF, any page">
-            <button type="submit">Show</button>
-            <label class="check"><input id="url-save" type="checkbox"> Save</label>
-          </form>
-          <!-- A photo already on this device - a meme, a screenshot, anything
-               in Photos or Files - rather than something reachable by URL.
-               Camera Roll and Files both show up in the OS's own picker
-               behind "Upload a photo…" on an iPad; nothing here talks to the
-               phone's live camera, which is the Camera tab's job. -->
-          <div class="inline">
-            <label class="filebtn grow" for="photo-upload">Upload a photo…</label>
-            <input id="photo-upload" type="file" accept="image/*" hidden>
-            <label class="check"><input id="photo-upload-save" type="checkbox"> Save</label>
+          <!-- The library first, what you add to it second (Issue #190): the
+               tiles are what a presenter reaches for mid-lecture; importing a
+               link, photo, deck, PDF or plan is occasional, and sat above them
+               taking the whole first screen of an iPad or phone. -->
+          <div class="inline lib-toolbar">
+            <input id="lib-filter" class="grow" aria-label="Filter the library" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
+            <button id="lib-add-toggle" type="button" aria-expanded="false" aria-controls="lib-add">+ Add</button>
           </div>
-          <div id="photo-upload-note" role="status" class="hint"></div>
-          <div class="inline">
-            <label class="filebtn" for="deck-file">Open a Marp deck…</label>
-            <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
-            <span id="deck-file-note" role="status" class="hint"></span>
+          <div id="lib-add" class="lib-add stack" hidden>
+            <form id="url-form" class="inline">
+              <input id="url-input" aria-label="Link to show" class="grow" type="text" inputmode="url" autocomplete="off"
+                     autocapitalize="off" spellcheck="false" placeholder="Paste a link — YouTube, Twitch, image, video, PDF, any page">
+              <button type="submit">Show</button>
+              <label class="check"><input id="url-save" type="checkbox"> Keep in Library</label>
+            </form>
+            <!-- A photo already on this device - a meme, a screenshot, anything
+                 in Photos or Files - rather than something reachable by URL.
+                 Camera Roll and Files both show up in the OS's own picker
+                 behind "Upload a photo…" on an iPad; nothing here talks to the
+                 phone's live camera, which is the Camera tab's job. -->
+            <div class="inline">
+              <label class="filebtn grow" for="photo-upload">Upload a photo…</label>
+              <input id="photo-upload" type="file" accept="image/*" hidden>
+              <label class="check"><input id="photo-upload-save" type="checkbox"> Keep in Library</label>
+            </div>
+            <details class="help">
+              <summary>What does “Keep in Library” do?</summary>
+              <p class="hint">
+                Ticked, the link or photo is also added to this Library - under <b>Saved</b> - so it
+                is one tap away next time, without pasting or uploading it again. It is kept on
+                this device only, in this browser; nothing is sent to the server or shared with
+                anyone. Remove it any time with the × on its tile.
+              </p>
+            </details>
+            <div id="photo-upload-note" role="status" class="hint"></div>
+            <div class="inline">
+              <label class="filebtn" for="deck-file">Open a Marp deck…</label>
+              <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
+              <span id="deck-file-note" role="status" class="hint"></span>
+            </div>
+            <!-- Server-backed only: unlike a deck or a photo, a PDF cannot be
+                 shrunk to fit one relay message, so this uploads straight to
+                 the library instead of trying to send it peer to peer. Hidden
+                 entirely on every other way of running Podium. -->
+            <div class="inline" id="pdf-upload-row" hidden>
+              <label class="filebtn" for="pdf-upload">Upload/Load a PDF…</label>
+              <input id="pdf-upload" type="file" accept=".pdf,.ppt,.pptx,application/pdf" hidden>
+              <span id="pdf-upload-note" role="status" class="hint"></span>
+            </div>
+            <!-- A lecture plan built in plan.html. It belongs here rather than in
+                 Settings: it is content, not configuration, and Settings' Close
+                 button reloads the page. -->
+            <div class="inline">
+              <label class="filebtn" for="plan-file">Load a lecture plan…</label>
+              <input id="plan-file" type="file" accept=".json,application/json" hidden>
+              <span id="plan-note" role="status" class="hint"></span>
+              <button type="button" id="plan-clear" hidden>Remove plan</button>
+            </div>
+            <!-- When the server keeps plans, there is nothing to carry: the
+                 lecture built at the desk is already here. Hidden entirely on
+                 every other way of running Podium. -->
+            <div class="inline" id="plan-server" hidden>
+              <select id="plan-server-pick" aria-label="A lecture on the server"></select>
+              <button type="button" id="plan-server-open">Open</button>
+            </div>
+            <p class="hint" style="margin:0">
+              Plans are built in <a href="plan.html">Planning</a> on your office machine and carried here as a file.
+            </p>
           </div>
-          <!-- Server-backed only: unlike a deck or a photo, a PDF cannot be
-               shrunk to fit one relay message, so this uploads straight to
-               the library instead of trying to send it peer to peer. Hidden
-               entirely on every other way of running Podium. -->
-          <div class="inline" id="pdf-upload-row" hidden>
-            <label class="filebtn" for="pdf-upload">Upload/Load a PDF…</label>
-            <input id="pdf-upload" type="file" accept=".pdf,.ppt,.pptx,application/pdf" hidden>
-            <span id="pdf-upload-note" role="status" class="hint"></span>
-          </div>
-          <!-- A lecture plan built in plan.html. It belongs here rather than in
-               Settings: it is content, not configuration, and Settings' Close
-               button reloads the page. -->
-          <div class="inline">
-            <label class="filebtn" for="plan-file">Load a lecture plan…</label>
-            <input id="plan-file" type="file" accept=".json,application/json" hidden>
-            <span id="plan-note" role="status" class="hint"></span>
-            <button type="button" id="plan-clear" hidden>Remove plan</button>
-          </div>
-          <!-- When the server keeps plans, there is nothing to carry: the
-               lecture built at the desk is already here. Hidden entirely on
-               every other way of running Podium. -->
-          <div class="inline" id="plan-server" hidden>
-            <select id="plan-server-pick" aria-label="A lecture on the server"></select>
-            <button type="button" id="plan-server-open">Open</button>
-          </div>
-          <p class="hint" style="margin:0">
-            Plans are built in <a href="plan.html">Planning</a> on your office machine and carried here as a file.
-          </p>
-          <input id="lib-filter" aria-label="Filter the library" type="text" placeholder="Filter…" autocomplete="off" spellcheck="false">
           <div id="library"></div>
         </section>
 
@@ -271,7 +292,19 @@ try {
                 <button id="confidence-split" type="button" title="Change how Now/Next share this row">50 / 50</button>
               </div>
             </div>
-
+            <!-- How far through the deck, at a glance (Issue #196): the count
+                 above says it in words; this says it at a glance, with how
+                 long this deck has been up. -->
+            <div class="deck-progress">
+              <div class="deck-progress-track" role="progressbar" aria-label="Progress through the deck"
+                   aria-valuemin="1" aria-valuemax="1" aria-valuenow="1"><div id="deck-progress-bar"></div></div>
+              <span id="deck-progress-time" class="hint"></span>
+            </div>
+            <!-- Now/Next and the buttons that drive them, with the presenter
+                 notes beside them when the panel is wide enough (Issue #195)
+                 and below them when it is not - see .deck-stage in the CSS. -->
+            <div class="deck-stage">
+            <div class="deck-stage-main">
             <div class="confidence-row">
               <div class="confidence-box">
                 <div id="deck-now-label" class="confidence-label">Now</div>
@@ -293,24 +326,41 @@ try {
                 <div id="deck-next-title" class="hint"></div>
               </div>
             </div>
-            <p class="hint">
+            <details class="help">
+              <summary>How this works</summary>
+              <p class="hint">
               <b>Markup</b> jumps to the Ink tab, already lined up on this slide.
               <b>Laser</b> turns the Now box into a pointer: drag on it and a dot follows your
               finger on the projector, gone the moment you lift it - nothing is saved.
             </p>
+            </details>
 
             <div class="inline deck-nav">
               <button id="deck-prev" type="button">◀ Previous</button>
               <button id="deck-next" type="button">Next ▶</button>
             </div>
-            <div class="notes-head">Presenter notes</div>
-            <div id="deck-notes" class="notes"></div>
+            </div>
+            <div class="deck-stage-notes">
+              <div class="notes-head notes-head-row">
+                <span>Presenter notes</span>
+                <span class="notes-size" role="group" aria-label="Presenter notes text size">
+                  <button id="notes-smaller" type="button" aria-label="Smaller notes text">A−</button>
+                  <button id="notes-larger" type="button" aria-label="Larger notes text">A+</button>
+                </span>
+              </div>
+              <div id="deck-notes" class="notes"></div>
+            </div>
+            </div>
             <div class="notes-head">Jump to a slide</div>
             <!-- The rendered thumbnail alone is not enough to find a slide by:
                  shrunk to ~140px, its text is legible on a laptop and not much
                  else, and its only other label (the title attribute) is a
                  hover tooltip - nothing on a touchscreen. -->
-            <div id="deck-grid-chips" class="deck-chips" hidden></div>
+            <div class="deck-chips-row">
+              <button id="deck-chips-back" class="deck-chips-scroll" type="button" aria-label="Scroll the slide list back" hidden>‹</button>
+              <div id="deck-grid-chips" class="deck-chips" hidden></div>
+              <button id="deck-chips-on" class="deck-chips-scroll" type="button" aria-label="Scroll the slide list on" hidden>›</button>
+            </div>
             <input id="deck-grid-filter" aria-label="Filter slides by title or text" type="text" placeholder="Filter slides by title or text…" autocomplete="off" spellcheck="false">
             <div id="deck-grid"></div>
             <p class="hint" id="deck-grid-empty" hidden>No slide matches that.</p>
@@ -376,11 +426,14 @@ try {
           <div class="inline">
             <button id="preview-mode" type="button">Always cue first</button>
           </div>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             Freeze holds the projector on whatever is showing. Anything you pick while frozen
             waits in the cue, so you can line up the next thing in front of the class without
             them seeing it. TAKE puts it on screen and unfreezes.
           </p>
+          </details>
         </section>
 
         <!-- Ink -->
@@ -438,23 +491,29 @@ try {
             </div>
           </div>
           <p id="ink-held-note" class="hint is-cued-note" role="status" hidden></p>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             Ink draws over whatever is on screen and is shaped to match it, so the pad above
             <i>is</i> the slide, edge to edge. Pick “Whiteboard” in the library for a blank
             surface. Each slide of a deck keeps its own drawing - flip away and back and it is
             still there; <b>Clear</b> only erases what you are looking at right now. Zoom in
             and use the arrows to pan for more precise lines.
           </p>
+          </details>
         </section>
 
         <!-- Say: big text, lower third, QR -->
         <section class="panel" data-panel="say" hidden>
           <div class="stack">
             <label>Full-screen message</label>
-            <p class="hint">
+            <details class="help">
+              <summary>How this works</summary>
+              <p class="hint">
               A title card, "Back in 5 minutes", instructions for a group - with headings,
               lists, a background colour, a font, and an optional picture if you want them.
             </p>
+            </details>
             <button id="text-open-editor" type="button" class="big-button">Compose a message…</button>
           </div>
           <form id="overlay-form" class="stack">
@@ -475,7 +534,9 @@ try {
               <button id="caption-toggle" type="button">Start live captions</button>
               <span class="hint" id="caption-status" role="status"></span>
             </div>
-            <p class="hint">
+            <!-- Shown once, as a confirmation, the first time live captions are
+                 started on this device (Issue #189) - see confirmOnce. -->
+            <p class="hint" id="caption-privacy" hidden>
               Live captions use this device's microphone and its browser's own speech
               recognition. In Chrome and Edge that means the room's audio is sent to
               Google's servers to be recognized - outside Podium's own encryption
@@ -499,7 +560,9 @@ try {
               <label class="check"><input id="mic-amplify" type="checkbox"> Play through the display's speakers</label>
               <span class="hint" id="mic-amplify-status"></span>
             </div>
-            <p class="hint" id="mic-amplify-warning">
+            <!-- Shown once, as a confirmation, the first time amplification is
+                 turned on on this device (Issue #189) - see confirmOnce. -->
+            <p class="hint" id="mic-amplify-warning" hidden>
               Can howl (feedback) if this device is near the display's own speakers - keep
               it across the room, or on a presenter far from them, before turning this on.
             </p>
@@ -597,20 +660,26 @@ try {
             <button id="timer-add" type="button">Add a timer</button>
             <button id="timer-remove" type="button" hidden>Remove this timer</button>
           </div>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             Countdowns run on the display, so they stay accurate even if your iPad sleeps.
             Each one is independent: split the screen and you can have two on the projector at once —
             put this one on screen, switch panels, then put another one on the next.
           </p>
+          </details>
         </section>
 
         <!-- Music: heard, never seen -->
         <section class="panel" data-panel="music" hidden>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             Plays through the classroom PC's speakers with nothing on the projector. It keeps going
             while you teach — picking content, freezing and blanking do not touch it — and ducks to a
             whisper by itself while a video or a clip with sound is playing.
           </p>
+          </details>
           <div id="music-quick-bar" hidden>
             <span class="recent-label">From this lecture</span>
             <div id="music-quick" class="recent-strip"></div>
@@ -664,16 +733,21 @@ try {
           </div>
 
           <div id="music-queue" class="music-queue"></div>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             Tracks come from <code>content/music.json</code> — a list of playlists pointing at audio
             files anywhere they are reachable, including your own server, so nothing you play has to
             live in the repository. See <code>content/audio/README.md</code>.
           </p>
+          </details>
         </section>
 
         <!-- Audio Mixer -->
         <section class="panel" data-panel="mixer" hidden>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             A few different things share the word "volume" in Podium, and this is where
             each one gets its own fader instead of fighting over one slider: whatever is
             playing on a panel (a video, an audio file, YouTube), the background music
@@ -682,6 +756,7 @@ try {
             alone; <b>Master</b>, also on the bottom bar of every tab, is the one fader
             for "everything is too loud right now."
           </p>
+          </details>
           <div class="mixer-channel">
             <div class="inline">
               <label class="grow" for="mixer-master">Master — everything the room hears</label>
@@ -710,22 +785,28 @@ try {
             </div>
             <input id="mixer-mic" type="range" min="0" max="1" step="0.01" value="1" aria-label="Controller mic level">
           </div>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             A channel's own level and the Master multiply together — a channel at half
             and Master at full sounds the same as a channel at full and Master at half.
             Muting (the speaker icon on the bottom bar) silences every channel at once,
             regardless of where any fader sits.
           </p>
+          </details>
         </section>
 
         <!-- Automated Sets -->
         <section class="panel" data-panel="sets" hidden>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             A rotation that advances itself — a QR code, then a photo, then a slide, each
             held for its own number of seconds — and keeps going on the display even if
             this tab closes. Start one on any pane the same way you would stage anything
             else.
           </p>
+          </details>
 
           <div id="sets-running"></div>
           <div id="sets-list"></div>
@@ -756,13 +837,16 @@ try {
 
         <!-- Audience polls -->
         <section class="panel" data-panel="polls" hidden>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             A question the room answers on their own phones — no app, no
             login. Stage it like anything else, on A or any of B/C/D; only
             one poll runs at a time. Results are visible here as they arrive —
             <b>Reveal to room</b> is the separate step that puts them on the
             projector.
           </p>
+          </details>
 
           <p id="poll-unsupported" class="hint" hidden>
             This relay does not run polls — audience participation needs the
@@ -819,20 +903,26 @@ try {
           </form>
 
           <h3>This session</h3>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             Polls you have ended since this tab loaded. <b>Reopen</b> loads the
             same question back into the composer above, fresh — new code, new
             votes from zero. <b>Redisplay</b> puts the final results back on
             the projector exactly as they ended, with no new votes possible.
             Neither is offered while a poll is currently running.
           </p>
+          </details>
           <div id="poll-history" class="stack"></div>
           <p class="empty" id="poll-history-empty">No polls ended yet this session.</p>
         </section>
 
         <!-- Camera -->
         <section class="panel" data-panel="camera" hidden>
-          <p class="hint">Turns this phone into a document camera: hold it over a book or a student's work and it goes on the projector.</p>
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">Turns this phone into a document camera: hold it over a book or a student's work and it goes on the projector.</p>
+          </details>
           <div class="inline">
             <button id="cam-start" type="button">Start camera</button>
             <button id="cam-flip" type="button">Flip</button>
@@ -854,10 +944,13 @@ try {
 
         <!-- Photos: everything kept this session, and the way out of the app -->
         <section class="panel" data-panel="photos" hidden>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             Everything you have kept this session: frames frozen off the camera, photos of a single
             panel with your ink burnt into them, and whole-screen shots.
           </p>
+          </details>
           <div class="inline">
             <button id="photo-panel" type="button">Photograph this panel</button>
             <button id="photo-screen" type="button">Photograph the whole screen</button>
@@ -890,11 +983,14 @@ try {
             <button id="photo-clear" class="danger-outline" type="button">Discard every photo</button>
           </div>
           <div id="photo-export-status" role="status" class="hint"></div>
-          <p class="hint">
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
             One zip: every photo above, every deck slide you annotated (ink included), and every board
             or image you drew on. Ink lives on the display, so it is pulled from there as the zip is
             built — keep the display connected.
           </p>
+          </details>
           <hr style="border:0;border-top:1px solid var(--line);margin:6px 0">
           <!-- Only on a Podium with a server that keeps sessions. The manual
                answer to "is there a way to end class from here" - the server
@@ -1025,10 +1121,16 @@ try {
     </section>
 
     <section class="settings-panel" data-settings-panel="presentation" hidden>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         Defaults for how <b>this device</b> presents — saved here only, nothing shared
         with other controllers or written into the room.
       </p>
+      </details>
+
+      <label class="check" style="margin-top:12px;"><input id="pref-help-open" type="checkbox"> Show every explanation open</label>
+      <p class="hint">Explanations sit behind "How this works" so the controls come first. Tick this to see them all, always.</p>
 
       <div class="field" style="margin-top:12px;">
         <label for="pref-theme">Controller theme</label>
@@ -1037,49 +1139,69 @@ try {
           <option value="light">Light / High contrast</option>
           <option value="auto">Auto (match system)</option>
         </select>
-        <p class="hint">
+        <details class="help">
+          <summary>How this works</summary>
+          <p class="hint">
           Light theme uses a clean, high-contrast palette for bright classrooms, outdoor lectures, or rooms with window glare.
         </p>
+        </details>
       </div>
 
       <label class="check"><input id="pref-poll-url" type="checkbox"> Show the voting URL below the QR code</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         A poll's join card always shows a QR and a four-letter code; this spells out the
         full address too, for a room where typing beats scanning. Decided once, when you
         start each poll — changing it here does not alter a poll already running.
       </p>
+      </details>
 
       <label class="check"><input id="pref-auto-switch-tab" type="checkbox" checked> Go to the controls for whatever I put on screen</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         Picking a deck from the Library opens Slides; a video, PDF or web page opens Now; a
         whiteboard opens Ink. Not when it only went to the cue.
       </p>
+      </details>
 
       <label class="check"><input id="pref-blank-on-connect" type="checkbox"> Black out the screen when this controller connects</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         The moment this controller first finds a display, send Blank — so nothing from a
         previous session is still up while you get ready. Fires once each time you open the
         controller in a new tab (or point it at a different room) — never from a reconnect,
         closing Settings, or the page reloading itself, so none of those blanks the room
         mid-lecture.
       </p>
+      </details>
 
       <label class="check"><input id="pref-keep-awake" type="checkbox"> Keep this device's screen awake</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         Stops this iPad or phone from dimming or locking itself while the controller is
         open, the same way the display already stays awake once armed. Released the moment
         you leave this tab or the browser backgrounds it.
       </p>
+      </details>
 
       <label class="check"><input id="pref-haptics" type="checkbox"> Keep tactile haptic feedback enabled</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         Provides physical vibration ticks when advancing slides, toggling freeze, blanking, or triggering TAKE,
         so you know a tap registered without looking down at the tablet. Supported on phones and mobile devices.
         <span id="pref-haptics-unsupported" style="color: var(--cue);" hidden>(This browser or device does not support vibration.)</span>
       </p>
+      </details>
 
       <label class="check"><input id="pref-keep-photos" type="checkbox"> Keep photos on the server by default</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         Only on a self-hosted Podium that records sessions; it does nothing anywhere else.
         Off means a photo of a worksheet or a board stays in this device's memory until you
         export, which is how Podium has always behaved. On means each lecture keeps its
@@ -1087,9 +1209,12 @@ try {
         downloaded again from the Admin page. Either way the Photos tab can turn it off for
         one lecture without changing what this sets.
       </p>
+      </details>
 
       <label class="check"><input id="pref-autosave-ink" type="checkbox"> Save marked-up screens automatically</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         When a slide, page or anything else you have drawn on is replaced - Next, a new item,
         a new layout - a photo of it, marks and all, goes into Photos and into the lecture's
         record on a self-hosted Podium. Turned on for the room when this controller first
@@ -1097,6 +1222,7 @@ try {
         draw on is always kept when it plays again, whether or not this is on; its marks then
         come off the moving picture, and the photo is where they are kept.
       </p>
+      </details>
 
       <div class="field" style="margin-top:16px;">
         <label for="pref-lecture-duration">Lecture pacing duration</label>
@@ -1113,32 +1239,47 @@ try {
           </select>
           <input id="pref-lecture-duration-custom" aria-label="Custom lecture length in minutes" type="number" min="1" max="360" placeholder="Mins" style="width:90px;" hidden>
         </div>
-        <p class="hint">
+        <details class="help">
+          <summary>How this works</summary>
+          <p class="hint">
           Shows a pacing tracker in the top bar with elapsed time and a progress bar so you know
           how much of your scheduled lecture time remains.
         </p>
+        </details>
       </div>
 
       <label class="check"><input id="pref-pacing-autostart" type="checkbox"> Auto-start pacing timer when presenting</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         Starts the pacing clock automatically the first time you un-blank or advance a slide.
         You can also tap the pacing tracker in the top bar at any time to start or reset it.
       </p>
+      </details>
 
       <label class="check"><input id="pref-ink-scroll-gutter" type="checkbox"> Add 10% scroll border around markup slide</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         Shrinks the slide area slightly so you can use your finger to scroll the page up and down without accidentally drawing strokes on the slide.
       </p>
+      </details>
 
       <label class="check"><input id="pref-ink-controls-top" type="checkbox"> Place markup tools above the slide</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         Moves the markup toolbar, colors, and thickness controls to the top of the screen above the slide instead of below it.
       </p>
+      </details>
 
       <label class="check"><input id="pref-snap-shapes" type="checkbox"> Snap lines and shapes on hold</label>
-      <p class="hint">
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
         Pausing briefly (450ms) at the end of a stroke snaps freehand lines, arrows, rectangles, and circles into clean shapes.
       </p>
+      </details>
 
       <!-- Issue #173: see assets/js/defaults.js for exactly when these apply. -->
       <div class="field defaults-block" style="margin-top:16px;">
@@ -1210,7 +1351,10 @@ try {
           </div>
           <p class="hint">Only fills in the box. Nothing is shown until you press Show.</p>
           <label class="check" style="margin-top:10px;"><input id="def-wm-on" type="checkbox"> Put up my watermark</label>
-          <p class="hint">Unless you've already set a watermark of your own in this lecture. It replaces a course's default watermark.</p>
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">Unless you've already set a watermark of your own in this lecture. It replaces a course's default watermark.</p>
+          </details>
           <div class="field def-row">
             <label for="def-wm-text">Watermark text</label>
             <input id="def-wm-text" type="text" maxlength="120" autocomplete="off" placeholder="Your name · COURSE 101">

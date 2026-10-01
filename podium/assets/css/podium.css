@@ -627,6 +627,26 @@ body.guest {
 }
 .admin-name { flex: 1; min-width: 8rem; }
 .session-body { padding: 0 0 12px; border-top: 1px solid var(--line); }
+
+/* On a wide screen, an opened course or session sits BESIDE the list rather
+   than pushing everything after it down the page (Issue #208): the list stays
+   in one column, the open one's details in the other, sticky while the list
+   scrolls. A container query on the card, so it follows the space the card
+   actually has. Pure CSS: each list already puts the open entry's details
+   straight after its row. */
+.admin-wrap .card { container-type: inline-size; }
+.admin-row.is-open { background: var(--panel-2); }
+@container (min-width: 1000px) {
+  :is(#sessions, #courses):has(> .session-body) {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); column-gap: 18px; align-items: start;
+  }
+  :is(#sessions, #courses):has(> .session-body) > :not(.session-body) { grid-column: 1; }
+  :is(#sessions, #courses) > .session-body {
+    grid-column: 2; grid-row: 1 / span 500; position: sticky; top: 12px;
+    border-top: 0; border-left: 1px solid var(--line); padding: 0 0 12px 18px;
+    max-height: calc(100vh - 40px); overflow: auto;
+  }
+}
 .timeline { display: grid; gap: 1px; margin: 8px 0 0; }
 .timeline-row { display: flex; gap: 12px; align-items: baseline; padding: 3px 0; }
 .timeline-at { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; min-width: 5.5rem; }
@@ -788,13 +808,34 @@ body.guest {
 .panel { display: flex; flex-direction: column; gap: 14px; }
 
 .group { margin: 6px 0 0; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
-.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+/* Wide enough that a lecture title survives (Issue #191) - 132px cut nearly
+   every deck name to its first two words. auto-fill rather than auto-fit, so
+   every group's tiles sit in the same columns rather than a group of two
+   stretching across the whole row. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.lib-toolbar { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 2px 0; }
+.lib-add { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; background: var(--panel); }
 .tile {
   position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
   padding: 12px; min-height: 88px; text-align: left; border-radius: var(--radius);
 }
 .tile-icon { font-size: 20px; line-height: 1; }
-.tile-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+/* The picture on a tile (Issue #192). Its space is kept from the start, so a
+   row does not jump as pictures arrive one by one; until one does (or when
+   one cannot be made) the tile's own icon stands in, in the same place. */
+.tile-thumb {
+  display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; margin-bottom: 4px;
+  background: var(--bg) center / cover no-repeat; border: 1px solid var(--line);
+}
+.tile.has-thumb-slot .tile-icon { position: absolute; top: 18px; left: 18px; opacity: .7; }
+.tile-thumb.has-thumb + .tile-icon, .tile.has-thumb-slot:has(.tile-thumb.has-thumb) .tile-icon { display: none; }
+/* Two lines before an ellipsis (Issue #191); the whole name is on the
+   tile's title, for a hover or a screen reader. */
+.tile-title {
+  font-weight: 600; font-size: 14px; max-width: 100%; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  overflow-wrap: anywhere;
+}
 .tile-type { font-size: 11px; color: var(--dim); }
 .tile-del {
   position: absolute; top: 4px; right: 6px; font-size: 18px; color: var(--dim);
@@ -928,6 +969,43 @@ body.guest {
   min-height: 76px; color: var(--ink);
 }
 .notes.is-empty { color: var(--dim); font-style: italic; }
+
+/* Presenter notes (Issue #195): their own text size, chosen per device with
+   A-/A+, and - when the Slides panel is wide enough - a column of their own
+   beside Now/Next instead of below the fold under them. A container query,
+   not a viewport one, so split view (two tabs side by side) gets the stacked
+   layout its narrower panel actually needs. */
+#deck-live { container-type: inline-size; }
+.deck-stage { display: flex; flex-direction: column; gap: 14px; }
+.deck-stage-main, .deck-stage-notes { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.deck-stage-notes .notes { font-size: var(--notes-size, 17px); }
+.notes-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.notes-size { display: inline-flex; gap: 4px; }
+.notes-size button { min-height: 30px; padding: 0 10px; font-size: 13px; letter-spacing: 0; text-transform: none; }
+/* 1300px, not less: below it, a notes column would take its room from the
+   Now/Next previews - on a 1280px laptop, hiding the cue bar to make them
+   bigger would have made them smaller. Above it there is room for both. */
+@container (min-width: 1300px) {
+  .deck-stage { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); align-items: start; }
+  .deck-stage-notes { position: sticky; top: 0; }
+  .deck-stage-notes .notes { max-height: calc(100vh - 260px); overflow: auto; }
+}
+
+/* How far through the deck (Issue #196). */
+.deck-progress { display: flex; align-items: center; gap: 10px; }
+.deck-progress-track { flex: 1; height: 6px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; }
+#deck-progress-bar { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+#deck-progress-time { margin: 0; white-space: nowrap; }
+
+/* Jump-strip arrows for a strip wider than the panel (Issue #196); on a wide
+   panel the chips wrap instead and need none. */
+.deck-chips-row { display: flex; align-items: center; gap: 6px; }
+.deck-chips-row .deck-chips { flex: 1; min-width: 0; }
+.deck-chips-scroll { min-height: 30px; width: 30px; padding: 0; flex: none; }
+@container (min-width: 1000px) {
+  .deck-chips-row .deck-chips { flex-wrap: wrap; overflow: visible; }
+  .deck-chips-scroll { display: none; }
+}
 .mini-md-list { margin: 6px 0; padding-left: 20px; list-style-type: disc; }
 .mini-md-list li { margin-bottom: 4px; }
 .notes a { color: var(--accent); text-decoration: underline; }
@@ -1367,8 +1445,10 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
   #preview-stage { width: 132px; flex: none; }
   #preview-pane .meta { flex: 1; min-width: 0; }
   #take { min-height: 52px; width: 108px; flex: none; }
-  #swap, #clear-preview, #preview-pane .hint { display: none; }
-  .tiles { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
+  #swap, #clear-preview, #preview-pane .hint, #preview-pane details.help { display: none; }
+  /* Narrower than the desktop's 170px, but no longer the 112px that cut
+     every title short: two columns on a phone, four on an iPad (Issue #191). */
+  .tiles { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 }
 
 /* ===================== PLANNING ===================================
@@ -1828,3 +1908,26 @@ body.plan .linkish:hover { text-decoration: underline; }
 .r-stream-icon { font-size: 2.6em; line-height: 1; }
 .r-stream-title { font-size: 1.5em; font-weight: 700; }
 .r-stream-sub { color: #aab4c2; }
+
+/* Help text on demand (Issue #189): an explanation is one quiet line until
+   asked for, rather than a paragraph standing between a presenter and the
+   control it explains. Native <details>, so it opens from the keyboard and
+   says "collapsed/expanded" to a screen reader with nothing else to wire. */
+details.help { margin: 0; }
+details.help > summary {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none;
+  color: var(--dim); font-size: 12px; min-height: 24px; user-select: none;
+}
+details.help > summary::-webkit-details-marker { display: none; }
+details.help > summary::before {
+  content: 'i'; display: inline-grid; place-items: center; width: 16px; height: 16px;
+  border: 1px solid var(--dim); border-radius: 50%; font: italic 700 11px/1 Georgia, serif;
+}
+details.help[open] > summary { color: var(--ink); }
+details.help > .hint { margin-top: 4px; }
+
+/* A note shown once, the first time something is switched on (Issue #189) -
+   the live-captions privacy note, the mic feedback warning. */
+.confirm-once { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; background: var(--panel-2); }
+.confirm-once .hint { margin: 0 0 8px; }
+.confirm-once-actions { display: flex; gap: 8px; flex-wrap: wrap; }

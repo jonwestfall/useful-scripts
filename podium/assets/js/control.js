@@ -18,6 +18,7 @@ import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downs
 import { mountSessionBadge, serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
 import { createWatermarkPanel } from './watermark.js';
+import { createThumbnailer } from './thumbs.js';
 import { loadDefaults, defaultCommands, defaultsDelta, changedDefaultCommands, createDefaultsPanel, DEFAULTS_KEY } from './defaults.js';
 import { createPipPanel } from './pip.js';
 import { createDurationProber } from './duration-probe.js';
@@ -411,11 +412,23 @@ function renderLibrary() {
       const tile = el('button', {
         class: 'tile',
         type: 'button',
+        // The whole name, wherever two lines are not enough (Issue #191).
+        title: item.title || itemLabel(item),
         onclick: () => pick(item),
       },
         el('span', { class: 'tile-icon' }, TYPES[item.type]?.icon || '?'),
         el('span', { class: 'tile-title' }, item.title || itemLabel(item)),
         el('span', { class: 'tile-type' }, TYPES[item.type]?.label || item.type));
+      // A picture of the thing, for the types that have one (Issue #192) - the
+      // space is kept from the start, so tiles do not jump as pictures arrive.
+      // `thumbnail: false` on a manifest entry opts out - the shipped
+      // manifest's templates point at files that do not exist yet.
+      if (THUMBNAIL_TYPES.has(item.type) && item.thumbnail !== false) {
+        const thumb = el('span', { class: 'tile-thumb', 'aria-hidden': 'true' });
+        tile.prepend(thumb);
+        tile.classList.add('has-thumb-slot');
+        thumbnails.attach(thumb, item);
+      }
       if (item.order) tile.prepend(el('span', { class: 'tile-order' }, String(item.order)));
       // The note you wrote in the office, where you will actually see it:
       // on the tile, not behind a hover a tablet cannot do.
@@ -455,6 +468,86 @@ function renderLibrary() {
   }
   if (!grid.children.length) grid.append(el('p', { class: 'empty' }, 'Nothing matches.'));
 }
+
+// --- library thumbnails (Issue #192) ------------------------------------------
+//
+// What each type's picture is made from; thumbs.js decides when. Never a
+// YouTube or web thumbnail: those would be a request to someone else's server
+// from the presenter's device for every tile on every load.
+const THUMBNAIL_TYPES = new Set(['deck', 'pdf', 'image', 'imagedeck', 'video']);
+const THUMB_HEIGHT = 180;
+
+const thumbnails = createThumbnailer(async (item) => {
+  // A presenter's own pick comes first: rendering a deck or a PDF page for a
+  // picture is real work, and the first one also pays for loading Marp, so
+  // none starts while a deck the presenter just tapped is still loading.
+  // Capped: pendingStage only clears once a display confirms the pick, and
+  // with no display in the room it never would.
+  for (let waited = 0; pendingStage && waited < 5000; waited += 250) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (item.type === 'image' || item.type === 'imagedeck') {
+    const src = item.type === 'image' ? item.src : item.images?.[0]?.src;
+    const id = assetIdOf(src);
+    if (id !== null) return assetStore.get(id) || null;
+    return src || null;
+  }
+  if (item.type === 'deck') {
+    const ref = item.deckId ? item : (item.src ? { deckId: `src:${item.src}`, src: item.src } : null);
+    const source = ref && await getDeckSource(ref);
+    if (typeof source !== 'string') return null;
+    const deck = await renderDeckSource(source, ref.deckId);
+    const mounted = await mountDeckForExport(deck);
+    try {
+      const svg = mounted.svgs[0];
+      if (!svg) return null;
+      const blob = await rasterizeSlide(svg, deck.css, deck.aspects?.[0] || 16 / 9, [], THUMB_HEIGHT);
+      return URL.createObjectURL(blob);
+    } finally {
+      mounted.release();
+    }
+  }
+  if (item.type === 'pdf' && item.src && window.pdfjsLib) {
+    if (!window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'assets/vendor/pdf.worker.min.js';
+    }
+    const doc = await window.pdfjsLib.getDocument(item.src).promise;
+    try {
+      const page = await doc.getPage(1);
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: THUMB_HEIGHT / base.height });
+      const canvas = el('canvas', { width: Math.round(viewport.width), height: Math.round(viewport.height) });
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      return canvas.toDataURL('image/jpeg', 0.75);
+    } finally {
+      doc.destroy();
+    }
+  }
+  if (item.type === 'video' && item.src) {
+    // A frame a second in (or a tenth of the way, for a very short clip) -
+    // the very first frame of a video is so often black.
+    const video = el('video', { muted: true, preload: 'metadata', playsinline: true });
+    video.muted = true;
+    try {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('timed out')), 8000);
+        video.addEventListener('loadedmetadata', () => { video.currentTime = Math.min(1, (video.duration || 10) / 10); }, { once: true });
+        video.addEventListener('seeked', () => { clearTimeout(timer); resolve(); }, { once: true });
+        video.addEventListener('error', () => { clearTimeout(timer); reject(new Error('no video')); }, { once: true });
+        video.src = item.src;
+      });
+      const h = THUMB_HEIGHT;
+      const w = Math.round(h * ((video.videoWidth || 16) / (video.videoHeight || 9)));
+      const canvas = el('canvas', { width: w, height: h });
+      canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+      return canvas.toDataURL('image/jpeg', 0.75);   // throws on a cross-origin video: no thumbnail
+    } finally {
+      video.removeAttribute('src');
+      video.load();
+    }
+  }
+  return null;
+});
 
 // --- lecture plans ----------------------------------------------------------
 
@@ -1059,6 +1152,38 @@ function getSlideSectionIndex(sections, slideIndex) {
   return secIdx;
 }
 
+// The jump strip's arrows (Issue #196): shown only while the strip is wider
+// than the room it has - on a wide panel the chips wrap (see the CSS) and
+// there is nothing to scroll.
+function syncChipArrows() {
+  const strip = $('#deck-grid-chips');
+  const overflow = !strip.hidden && strip.scrollWidth > strip.clientWidth + 2;
+  $('#deck-chips-back').hidden = !overflow || strip.scrollLeft <= 2;
+  $('#deck-chips-on').hidden = !overflow || strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 2;
+}
+
+// How far through the deck, and for how long it has been up (Issue #196).
+// "Up" is this controller's own record of when the deck first went on screen
+// - not something the display tracks - so it starts from the moment this
+// device saw it go live, and resets when a different deck does.
+const deckLiveSince = new Map();
+function renderDeckProgress(deckIdNow, index, total, onCue) {
+  const track = $('.deck-progress-track');
+  $('#deck-progress-bar').style.width = `${Math.round(((index + 1) / Math.max(1, total)) * 100)}%`;
+  track.setAttribute('aria-valuemax', String(total));
+  track.setAttribute('aria-valuenow', String(index + 1));
+  track.setAttribute('aria-valuetext', `Slide ${index + 1} of ${total}`);
+  if (!onCue && deckIdNow && !deckLiveSince.has(deckIdNow)) {
+    deckLiveSince.clear();
+    deckLiveSince.set(deckIdNow, Date.now());
+  }
+  const since = deckLiveSince.get(deckIdNow);
+  const mins = since ? Math.floor((Date.now() - since) / 60000) : null;
+  $('#deck-progress-time').textContent = onCue || mins === null
+    ? ''
+    : (mins < 1 ? 'up under a minute' : `up ${mins} min`);
+}
+
 function renderSectionChips(deck) {
   const container = $('#deck-grid-chips');
   if (!container) return;
@@ -1066,6 +1191,7 @@ function renderSectionChips(deck) {
   if (!sections.length) {
     container.hidden = true;
     container.innerHTML = '';
+    syncChipArrows();
     return;
   }
   container.hidden = false;
@@ -1124,6 +1250,39 @@ function updateChipClasses(container, activeId) {
     chip.classList.toggle('is-active', chip.dataset.section === activeId);
   });
 }
+
+$('#deck-grid-chips').addEventListener('scroll', syncChipArrows, { passive: true });
+window.addEventListener('resize', syncChipArrows);
+$('#deck-chips-back').addEventListener('click', () => {
+  const strip = $('#deck-grid-chips');
+  strip.scrollBy({ left: -strip.clientWidth * 0.8, behavior: 'smooth' });
+});
+$('#deck-chips-on').addEventListener('click', () => {
+  const strip = $('#deck-grid-chips');
+  strip.scrollBy({ left: strip.clientWidth * 0.8, behavior: 'smooth' });
+});
+
+// Presenter notes' own text size (Issue #195), per device - the notes are read
+// from arm's length on a lectern as often as up close on a phone.
+const NOTES_SIZE_KEY = 'podium.ui.notesSize';
+const NOTES_SIZES = [13, 15, 17, 20, 24, 28];
+let notesSize = (() => {
+  try { const n = Number(localStorage.getItem(NOTES_SIZE_KEY)); return NOTES_SIZES.includes(n) ? n : 17; } catch { return 17; }
+})();
+function applyNotesSize() {
+  document.documentElement.style.setProperty('--notes-size', `${notesSize}px`);
+  $('#notes-smaller').disabled = notesSize === NOTES_SIZES[0];
+  $('#notes-larger').disabled = notesSize === NOTES_SIZES[NOTES_SIZES.length - 1];
+}
+function stepNotesSize(dir) {
+  const i = NOTES_SIZES.indexOf(notesSize);
+  notesSize = NOTES_SIZES[Math.min(NOTES_SIZES.length - 1, Math.max(0, i + dir))];
+  safeStorageSet(localStorage, NOTES_SIZE_KEY, String(notesSize));
+  applyNotesSize();
+}
+$('#notes-smaller').addEventListener('click', () => stepNotesSize(-1));
+$('#notes-larger').addEventListener('click', () => stepNotesSize(1));
+applyNotesSize();
 
 function updateActiveSectionChip(slideIndex) {
   const container = $('#deck-grid-chips');
@@ -1256,6 +1415,7 @@ async function buildGridNow(deck) {
     grid.append(cell);
   });
   renderSectionChips(deck);
+  requestAnimationFrame(syncChipArrows);
   filterGrid();
   // Marp needs its own DOM polyfill for inline-SVG slides or WebKit (every
   // iPad, which is where this grid actually gets used) lays foreignObject
@@ -1432,6 +1592,7 @@ function renderSlides() {
   $('#deck-count').textContent = fragCount
     ? `Slide ${index + 1} / ${total} · build ${step}/${fragCount}${fitNote}`
     : `Slide ${index + 1} / ${total}${fitNote}`;
+  renderDeckProgress(item.deckId, index, total, onCue);
   // A slide mid-build still has Next/Previous left to do even at slide 0 or
   // the very last slide, so the ends of a build - not just of the deck -
   // decide when the buttons actually go grey.
@@ -1516,9 +1677,9 @@ function paintStrokes(ctx, strokes, w, h) {
   }
 }
 
-async function rasterizeSlide(svgLive, css, aspect, strokes) {
-  const w = Math.round(RASTER_HEIGHT * aspect);
-  const h = RASTER_HEIGHT;
+async function rasterizeSlide(svgLive, css, aspect, strokes, height = RASTER_HEIGHT) {
+  const w = Math.round(height * aspect);
+  const h = height;
 
   const clone = svgLive.cloneNode(true);
   clone.classList.remove('podium-on');
@@ -5393,6 +5554,24 @@ $('#pdf-pan-up').addEventListener('click', () => pdfPan(0, -1));
 $('#pdf-pan-down').addEventListener('click', () => pdfPan(0, 1));
 
 $('#lib-filter').addEventListener('input', renderLibrary);
+
+// "+ Add" (Issue #190): every way of bringing something into the Library -
+// a link, a photo, a deck, a PDF, a lecture plan - folded behind one button
+// so the Library itself is the first thing on the tab. Open or closed is
+// remembered on this device, for whoever imports often enough to want it open.
+const LIB_ADD_KEY = 'podium.ui.libraryAddOpen';
+function setLibAddOpen(open) {
+  $('#lib-add').hidden = !open;
+  $('#lib-add-toggle').setAttribute('aria-expanded', String(open));
+  $('#lib-add-toggle').classList.toggle('is-on', open);
+  safeStorageSet(localStorage, LIB_ADD_KEY, open ? '1' : '0');
+}
+$('#lib-add-toggle').addEventListener('click', () => {
+  const open = $('#lib-add').hidden;
+  setLibAddOpen(open);
+  if (open) $('#url-input').focus({ preventScroll: true });
+});
+setLibAddOpen((() => { try { return localStorage.getItem(LIB_ADD_KEY) === '1'; } catch { return false; } })());
 $('#url-form').addEventListener('submit', (ev) => {
   ev.preventDefault();
   const input = $('#url-input');
@@ -5672,7 +5851,12 @@ function startCaptions() {
   $('#caption-status').textContent = 'Listening…';
 }
 
-$('#caption-toggle').addEventListener('click', () => { if (recognizer) stopCaptions(); else startCaptions(); });
+$('#caption-toggle').addEventListener('click', async () => {
+  if (recognizer) { stopCaptions(); return; }
+  // The first time on this device, say where the room's audio goes before it
+  // goes there (Issue #189) - once, not as a paragraph on every visit.
+  if (await confirmOnce('captions', $('#caption-privacy'), 'Start live captions')) startCaptions();
+});
 
 // --- controller mic: record to the session (Issue #147) --------------------
 //
@@ -5804,11 +5988,71 @@ $('#mic-record').addEventListener('change', () => {
   if ($('#mic-record').checked) startMicRecording();
   else stopMicRecording();
 });
-$('#mic-amplify').addEventListener('change', () => {
+$('#mic-amplify').addEventListener('change', async () => {
+  // Feedback is a hazard to the room's ears, so the warning is a question the
+  // first time on this device rather than a paragraph every time (Issue #189).
+  if ($('#mic-amplify').checked && !acknowledged('amplify')) {
+    $('#mic-amplify').checked = false;
+    if (!(await confirmOnce('amplify', $('#mic-amplify-warning'), 'Turn it on'))) return;
+    $('#mic-amplify').checked = true;
+  }
   if (!micStream) return;
   if ($('#mic-amplify').checked) micSender.start(micStream);
   else micSender.stop();
 });
+
+// --- help on demand (Issue #189) ---------------------------------------------
+//
+// Long explanations live behind "How this works" (a <details class="help"> in
+// control.html), so the controls come first. "Show every explanation open" in
+// Settings -> Presentation puts them all back, for whoever prefers that.
+function applyHelpOpen() {
+  $$('details.help').forEach((d) => { d.open = !!presentation.helpOpen; });
+}
+
+// Two notes are not "how this works" but "before you do this": where live
+// captions send the room's audio, and that amplifying a mic near the speakers
+// can howl. Each is asked once per device, as a confirmation, the first time
+// the thing is switched on - and kept afterwards behind "How this works" like
+// any other explanation, so it is never unreachable.
+const ACK_PREFIX = 'podium.ack.';
+function acknowledged(key) {
+  try { return localStorage.getItem(ACK_PREFIX + key) === '1'; } catch { return false; }
+}
+
+function asHelp(note) {
+  if (note.closest('details.help')) return;
+  const details = el('details', { class: 'help' }, el('summary', {}, 'How this works'));
+  note.before(details);
+  details.append(note);
+  note.hidden = false;
+  details.open = !!presentation.helpOpen;
+}
+
+function confirmOnce(key, note, confirmLabel) {
+  if (acknowledged(key)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (ok) => {
+      box.replaceWith(note);
+      if (ok) {
+        safeStorageSet(localStorage, ACK_PREFIX + key, '1');
+        asHelp(note);
+      } else {
+        note.hidden = true;
+      }
+      resolve(ok);
+    };
+    const go = el('button', { type: 'button', class: 'is-on', onclick: () => finish(true) }, confirmLabel);
+    const box = el('div', { class: 'confirm-once', role: 'group', 'aria-label': 'Before you start' },
+      el('div', { class: 'confirm-once-actions' },
+        go,
+        el('button', { type: 'button', onclick: () => finish(false) }, 'Not now')));
+    note.before(box);
+    box.prepend(note);
+    note.hidden = false;
+    go.focus();
+  });
+}
 
 // --- watermark ---------------------------------------------------------------
 // Extracted to watermark.js (Issue #121) - a small, explicit interface, and
@@ -6386,6 +6630,7 @@ const PRESENTATION_DEFAULTS = {
   inkControlsTop: false,
   snapShapes: true,
   autoSwitchTab: true,
+  helpOpen: false,
   tabOrder: [...TAB_IDS],
   hiddenTabs: [],
 };
@@ -6426,6 +6671,12 @@ function savePresentation() {
   safeStorageSet(localStorage, PRESENTATION_KEY, JSON.stringify(presentation));
 }
 let presentation = loadPresentation();
+// Help on demand (Issue #189) - here rather than beside the functions it calls,
+// since both read `presentation`, which does not exist until this line.
+for (const [key, id] of [['captions', '#caption-privacy'], ['amplify', '#mic-amplify-warning']]) {
+  if (acknowledged(key)) asHelp($(id));
+}
+applyHelpOpen();
 createDefaultsPanel({
   $, uid, downscaleImage, MAX_ASSET_CHARS,
   initial: defaults,
@@ -6941,6 +7192,7 @@ $('#pref-theme')?.addEventListener('change', (ev) => {
 $('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
 $('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
 $('#pref-auto-switch-tab').addEventListener('change', (ev) => { presentation.autoSwitchTab = ev.target.checked; savePresentation(); });
+$('#pref-help-open').addEventListener('change', (ev) => { presentation.helpOpen = ev.target.checked; savePresentation(); applyHelpOpen(); });
 $('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(); applyWakeLock(); });
 $('#pref-haptics')?.addEventListener('change', (ev) => {
   presentation.haptics = ev.target.checked;
@@ -7085,6 +7337,7 @@ function showSetup() {
   const prefSnap = $('#pref-snap-shapes');
   if (prefSnap) prefSnap.checked = presentation.snapShapes !== false;
   $('#pref-auto-switch-tab').checked = presentation.autoSwitchTab !== false;
+  $('#pref-help-open').checked = !!presentation.helpOpen;
   renderTabOrderSettings();
   renderKeepPhotos();
   // Filled in from the saved config every time Settings opens, which is also
