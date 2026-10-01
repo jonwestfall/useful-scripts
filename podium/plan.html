@@ -30,61 +30,58 @@
 
   <!-- Plans on this machine -->
   <aside class="plan-col" id="col-plans">
-    <h2>Lectures</h2>
-    <div id="plan-list"></div>
-    <div class="col-actions">
-      <button id="plan-new" type="button" class="big-button">New lecture</button>
-      <!-- Only once the Course field up top names a course that actually has
-           a saved template (see refreshTemplates in plan.js) - a course with
-           none simply does not offer this, same as #plan-push-update only
-           appearing once there is something to update. -->
-      <button id="plan-new-from-template" type="button" hidden>New lecture from template…</button>
-      <button id="plan-import" type="button">Open a plan file…</button>
-      <input id="plan-import-file" type="file" accept=".json,application/json" hidden>
+    <!-- One primary action (Issue #204): New lecture on a server, where
+         saving is automatic; the plan file in file-only mode, where that is
+         the only way a lecture reaches the iPad. See setServerMode in plan.js. -->
+    <div class="plan-rail-head">
+      <h2>Lectures</h2>
+      <div class="plan-new-wrap">
+        <button id="plan-new" type="button" class="plan-new">+ New lecture</button>
+        <button id="plan-new-more" type="button" class="plan-new-more" aria-haspopup="true" aria-expanded="false"
+                aria-controls="plan-new-menu" aria-label="More ways to start a lecture">▾</button>
+        <div id="plan-new-menu" class="plan-new-menu" hidden>
+          <!-- Only once the Course field up top names a course that actually
+               has a saved template (see refreshTemplates in plan.js). -->
+          <button id="plan-new-from-template" type="button" hidden>New lecture from template…</button>
+          <button id="plan-import" type="button">Open a plan file…</button>
+        </div>
+      </div>
     </div>
+    <input id="plan-import-file" type="file" accept=".json,application/json" hidden>
+    <!-- This browser's lectures and, on a server, the server's too - one list,
+         each row saying where it lives. -->
+    <div id="plan-list"></div>
     <hr>
     <h3>This lecture</h3>
+    <p id="plan-sync" class="plan-sync" role="status"></p>
+    <!-- Autosave paused (Issue #204): the server's copy changed since this
+         one was opened, and nothing is overwritten without asking. -->
+    <div id="plan-conflict" class="plan-conflict" role="alert" hidden>
+      <p>This lecture changed on the server since you opened it - probably on another device, or a co-instructor. Saving to the server is paused.</p>
+      <div class="inline">
+        <button id="plan-conflict-mine" type="button">Keep mine</button>
+        <button id="plan-conflict-theirs" type="button">Open theirs</button>
+      </div>
+      <p class="hint">Keep mine replaces the server's copy with this one. Open theirs opens the server's, and keeps yours here as a copy.</p>
+    </div>
     <div class="col-actions">
       <button id="plan-export" type="button" class="big-button">Save a plan file for the iPad</button>
       <p class="hint" id="plan-size"></p>
-      <button id="plan-duplicate" type="button">Duplicate</button>
-      <button id="plan-delete" type="button" class="danger-outline">Delete this lecture</button>
-    </div>
-    <!-- Only when this Podium came from a server of its own. The file above
-         keeps working either way, and is still the only thing that works on
-         GitHub Pages or from a folder. -->
-    <div id="plan-server" class="col-actions" hidden>
-      <hr>
-      <h3>This server</h3>
-      <button id="plan-push" type="button" class="big-button">Send this lecture to the server</button>
-      <!-- Shown only once this lecture maps to a known server row - pulled
-           from the server, or just sent there - so there is something for it
-           to overwrite. See setCurrentServerPlanId in plan.js. -->
-      <button id="plan-push-update" type="button" hidden>Update the copy already there</button>
-      <p class="hint" id="plan-push-note" role="status"></p>
-      <div class="inline">
-        <select id="plan-pull-pick" aria-label="A lecture on the server"></select>
-        <button id="plan-pull" type="button">Open</button>
-        <button id="plan-pull-delete" type="button" class="danger-outline">Delete from server</button>
-      </div>
-      <p class="hint">
-        A lecture sent here is on the iPad in class without a file to carry.
-        Filing it under a course shares it with that course; otherwise it is
-        yours alone. Deleting one here only removes it from the server — a
-        plan file you saved for it is untouched.
-      </p>
-      <!-- The template a course starts a new lecture from (Issue #80) - built
-           from a real plan, since this is the only page with an editor for
-           one. Course owners and admins only; visible either way so the
-           error explains itself rather than the button just not working. -->
-      <div class="inline" id="plan-template-row" hidden>
-        <button id="plan-save-template" type="button">Save as this course's template</button>
-        <button id="plan-remove-template" type="button" class="danger-outline" hidden>Remove template</button>
+      <div class="inline plan-secondary">
+        <button id="plan-duplicate" type="button">Duplicate</button>
+        <!-- The template a course starts a new lecture from (Issue #80).
+             Course owners and admins only; visible either way so the error
+             explains itself rather than the button just not working. -->
+        <span id="plan-template-row" class="inline" hidden>
+          <button id="plan-save-template" type="button">Save as course template</button>
+          <button id="plan-remove-template" type="button" class="danger-outline" hidden>Remove template</button>
+        </span>
       </div>
       <p class="hint" id="plan-template-note" role="status"></p>
+      <button id="plan-delete" type="button" class="danger-outline">Delete this lecture</button>
     </div>
     <hr>
-    <p class="hint">
+    <p class="hint" id="plan-where-hint">
       Plans live in this browser on this machine. To teach from one, save a plan file and
       open it on the iPad: <b>Library → Load a lecture plan</b> in the controller.
     </p>
@@ -116,6 +113,13 @@
       </div>
     </div>
     <p class="hint">Drag to reorder. This is the order the Library shows on the iPad, numbered.</p>
+    <!-- Issue #205: what applies to the whole lecture opens in the right
+         column, like an item does - see renderEditor in plan.js. -->
+    <button id="order-settings" class="order-settings" type="button" aria-controls="lecture-settings">
+      <span class="order-icon" aria-hidden="true">⚙</span>
+      <span class="order-title">Lecture settings</span>
+      <span class="order-type">Timers, starting layout, auto-launch, notes</span>
+    </button>
     <ol id="order"></ol>
     <p class="empty" id="order-empty">Nothing in this lecture yet. Add the first thing below.</p>
 
@@ -128,105 +132,6 @@
       <div id="plan-zip"></div>
     </div>
 
-    <h3>Timers</h3>
-    <p class="hint">Saved countdowns. These replace the iPad's 1/2/5/10/15 buttons.</p>
-    <ul id="timers"></ul>
-    <div class="inline">
-      <input id="timer-new-label" class="grow" type="text" placeholder="Label, e.g. Group work">
-      <input id="timer-new-mins" type="number" min="1" max="180" value="5" aria-label="Minutes">
-      <button id="timer-add" type="button">Add timer</button>
-    </div>
-
-    <h3>Screen layout to start in</h3>
-    <div class="layout-picker" id="plan-layout" role="group" aria-label="Screen layout">
-      <button class="layout-btn is-on" data-layout="single" type="button" title="Full screen">
-        <span class="layout-icon layout-icon-single"><i></i></span>
-      </button>
-      <button class="layout-btn" data-layout="2h" type="button" title="Side by side">
-        <span class="layout-icon layout-icon-2h"><i></i><i></i></span>
-      </button>
-      <button class="layout-btn" data-layout="2v" type="button" title="Stacked">
-        <span class="layout-icon layout-icon-2v"><i></i><i></i></span>
-      </button>
-      <button class="layout-btn" data-layout="3" type="button" title="One large, two small">
-        <span class="layout-icon layout-icon-3"><i></i><i></i><i></i></span>
-      </button>
-      <button class="layout-btn" data-layout="4" type="button" title="Four tiles">
-        <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
-      </button>
-      <button class="layout-btn" data-layout="pip" type="button" title="Picture in picture">
-        <span class="layout-icon layout-icon-pip"><i></i><i></i></span>
-      </button>
-    </div>
-    <div class="stack" id="plan-pip" hidden>
-      <p class="hint">Picture in picture: one pane full screen, another as a small inset over a corner. Stage what each pane shows under Auto-launch below.</p>
-      <div class="inline">
-        <label for="plan-pip-main">Full screen</label>
-        <select id="plan-pip-main"></select>
-        <label for="plan-pip-inset">Inset</label>
-        <select id="plan-pip-inset"></select>
-      </div>
-      <label for="plan-pip-corner">Inset corner</label>
-      <div class="inline">
-        <select id="plan-pip-corner">
-          <option value="tr">Top right</option>
-          <option value="tl">Top left</option>
-          <option value="br">Bottom right</option>
-          <option value="bl">Bottom left</option>
-        </select>
-        <label for="plan-pip-size">Size</label>
-        <input id="plan-pip-size" type="range" min="10" max="50" step="5">
-        <span id="plan-pip-size-label" class="hint"></span>
-      </div>
-    </div>
-
-    <h3>On plan load (Auto-launch)</h3>
-    <p class="hint">Automatically stage panes, play background music, and start a countdown when opening this plan in class.</p>
-    <div class="field">
-      <label class="check">
-        <input id="plan-autolaunch-enable" type="checkbox"> Auto-launch on plan load
-      </label>
-    </div>
-
-    <div id="plan-autolaunch-settings" class="stack autolaunch-box" hidden>
-      <div class="field">
-        <label for="plan-autolaunch-state">Initial presentation state</label>
-        <select id="plan-autolaunch-state">
-          <option value="live">Live (cut to screen immediately)</option>
-          <option value="freeze">Staged in Cue (Freeze / Take)</option>
-          <option value="blank">Blank (blacked-out screen)</option>
-        </select>
-        <p class="hint">Freeze stages into cue behind a held screen; Blank reveals with one tap of Blank.</p>
-      </div>
-
-      <div class="field">
-        <label>Pane staging</label>
-        <div id="plan-autolaunch-panes" class="stack" style="gap:10px;"></div>
-      </div>
-
-      <div class="field">
-        <label for="plan-autolaunch-music">Background music</label>
-        <div class="inline">
-          <select id="plan-autolaunch-music" class="grow">
-            <option value="">None</option>
-          </select>
-          <label class="check" style="white-space:nowrap;">
-            <input id="plan-autolaunch-music-play" type="checkbox" checked> Auto-play
-          </label>
-        </div>
-      </div>
-
-      <div class="field">
-        <label for="plan-autolaunch-timer">Auto-start countdown</label>
-        <select id="plan-autolaunch-timer">
-          <option value="">None</option>
-        </select>
-        <p class="hint">Starts this countdown ticking immediately when the plan is opened.</p>
-      </div>
-    </div>
-
-    <h3>Notes to yourself</h3>
-    <textarea id="plan-notes" rows="4" placeholder="Anything you want to remember about this lecture."></textarea>
   </section>
 
   <!-- The selected item -->
@@ -234,6 +139,110 @@
     <h2 id="item-heading">Nothing selected</h2>
     <p class="hint" id="item-blurb">Pick something from the running order, or add one.</p>
     <div id="item-fields"></div>
+
+    <!-- The whole lecture's settings (Issue #205): shown here whenever no item
+         is selected, rather than stacked under the running order. -->
+    <div id="lecture-settings" hidden>
+      <h3>Timers</h3>
+      <p class="hint">Saved countdowns. These replace the iPad's 1/2/5/10/15 buttons.</p>
+      <ul id="timers"></ul>
+      <div class="inline">
+        <input id="timer-new-label" class="grow" type="text" placeholder="Label, e.g. Group work">
+        <input id="timer-new-mins" type="number" min="1" max="180" value="5" aria-label="Minutes">
+        <button id="timer-add" type="button">Add timer</button>
+      </div>
+
+      <h3>Screen layout to start in</h3>
+      <div class="layout-picker" id="plan-layout" role="group" aria-label="Screen layout">
+        <button class="layout-btn is-on" data-layout="single" type="button" title="Full screen">
+          <span class="layout-icon layout-icon-single"><i></i></span>
+        </button>
+        <button class="layout-btn" data-layout="2h" type="button" title="Side by side">
+          <span class="layout-icon layout-icon-2h"><i></i><i></i></span>
+        </button>
+        <button class="layout-btn" data-layout="2v" type="button" title="Stacked">
+          <span class="layout-icon layout-icon-2v"><i></i><i></i></span>
+        </button>
+        <button class="layout-btn" data-layout="3" type="button" title="One large, two small">
+          <span class="layout-icon layout-icon-3"><i></i><i></i><i></i></span>
+        </button>
+        <button class="layout-btn" data-layout="4" type="button" title="Four tiles">
+          <span class="layout-icon layout-icon-4"><i></i><i></i><i></i><i></i></span>
+        </button>
+        <button class="layout-btn" data-layout="pip" type="button" title="Picture in picture">
+          <span class="layout-icon layout-icon-pip"><i></i><i></i></span>
+        </button>
+      </div>
+      <div class="stack" id="plan-pip" hidden>
+        <p class="hint">Picture in picture: one pane full screen, another as a small inset over a corner. Stage what each pane shows under Auto-launch below.</p>
+        <div class="inline">
+          <label for="plan-pip-main">Full screen</label>
+          <select id="plan-pip-main"></select>
+          <label for="plan-pip-inset">Inset</label>
+          <select id="plan-pip-inset"></select>
+        </div>
+        <label for="plan-pip-corner">Inset corner</label>
+        <div class="inline">
+          <select id="plan-pip-corner">
+            <option value="tr">Top right</option>
+            <option value="tl">Top left</option>
+            <option value="br">Bottom right</option>
+            <option value="bl">Bottom left</option>
+          </select>
+          <label for="plan-pip-size">Size</label>
+          <input id="plan-pip-size" type="range" min="10" max="50" step="5">
+          <span id="plan-pip-size-label" class="hint"></span>
+        </div>
+      </div>
+
+      <h3>On plan load (Auto-launch)</h3>
+      <p class="hint">Automatically stage panes, play background music, and start a countdown when opening this plan in class.</p>
+      <div class="field">
+        <label class="check">
+          <input id="plan-autolaunch-enable" type="checkbox"> Auto-launch on plan load
+        </label>
+      </div>
+
+      <div id="plan-autolaunch-settings" class="stack autolaunch-box" hidden>
+        <div class="field">
+          <label for="plan-autolaunch-state">Initial presentation state</label>
+          <select id="plan-autolaunch-state">
+            <option value="live">Live (cut to screen immediately)</option>
+            <option value="freeze">Staged in Cue (Freeze / Take)</option>
+            <option value="blank">Blank (blacked-out screen)</option>
+          </select>
+          <p class="hint">Freeze stages into cue behind a held screen; Blank reveals with one tap of Blank.</p>
+        </div>
+
+        <div class="field">
+          <label>Pane staging</label>
+          <div id="plan-autolaunch-panes" class="stack" style="gap:10px;"></div>
+        </div>
+
+        <div class="field">
+          <label for="plan-autolaunch-music">Background music</label>
+          <div class="inline">
+            <select id="plan-autolaunch-music" class="grow">
+              <option value="">None</option>
+            </select>
+            <label class="check" style="white-space:nowrap;">
+              <input id="plan-autolaunch-music-play" type="checkbox" checked> Auto-play
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="plan-autolaunch-timer">Auto-start countdown</label>
+          <select id="plan-autolaunch-timer">
+            <option value="">None</option>
+          </select>
+          <p class="hint">Starts this countdown ticking immediately when the plan is opened.</p>
+        </div>
+      </div>
+
+      <h3>Notes to yourself</h3>
+      <textarea id="plan-notes" rows="4" placeholder="Anything you want to remember about this lecture."></textarea>
+    </div>
 
     <div id="item-preview-wrap" hidden>
       <h3>What the class sees</h3>
