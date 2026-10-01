@@ -19,7 +19,7 @@ import {
 } from './config.js';
 import { createBus } from './bus.js';
 import {
-  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, timerById, BUILD, VERSION, versionStamp,
+  initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, PANEL_COUNT, timerById, BUILD, VERSION, versionStamp,
   inkTargetKey, isHeldInkKey, heldInkCount, HELD_INK_PREFIX,
   watermarkForNewLecture, viewerState, viewChannel, stripDeckNotes,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS, clearStaleMusic, liveInkSurfaces, inkCapturesFor,
@@ -2238,7 +2238,7 @@ function stateStorageKey() {
 function saveStateNow() {
   clearTimeout(stateSaveTimer);
   {
-    const { program, panels, layout, focus, timers, overlay, volume, contentVolume, micVolume, muted, music, watermark, autoSaveInk } = state;
+    const { program, panels, recall, layout, focus, timers, overlay, volume, contentVolume, micVolume, muted, music, watermark, autoSaveInk } = state;
     // Everywhere else, only the `asset:<id>` reference goes into state and
     // the bytes are fetched fresh from whoever still holds them (see
     // resolveAssets) - deliberately, so a photo of a student's worksheet is
@@ -2253,7 +2253,7 @@ function saveStateNow() {
     // persisting, a lecture just will not come back after a reload, and
     // nothing said so until the day it mattered.
     safeStorageSet(localStorage, stateStorageKey(), JSON.stringify({
-      savedAt: Date.now(), program, panels, layout, focus, timers, overlay, volume, contentVolume, micVolume, muted, watermark, watermarkImageData, autoSaveInk,
+      savedAt: Date.now(), program, panels, recall, layout, focus, timers, overlay, volume, contentVolume, micVolume, muted, watermark, watermarkImageData, autoSaveInk,
       // The queue, not the playing: a reload lands on the arming screen, and
       // music that started itself the moment someone clicked Go live would be
       // a surprise in a room that had gone quiet.
@@ -2297,7 +2297,8 @@ function restoreState() {
   state.program = saved.program;
   if (Array.isArray(saved.panels) && saved.panels.length === 3) state.panels = saved.panels;
   if (LAYOUTS[saved.layout]) state.layout = saved.layout;
-  if (Number.isInteger(saved.focus) && saved.focus < (LAYOUTS[state.layout] || 1)) state.focus = saved.focus;
+  if (Number.isInteger(saved.focus) && saved.focus >= 0 && saved.focus < PANEL_COUNT) state.focus = saved.focus;
+  if (Array.isArray(saved.recall) && saved.recall.length === PANEL_COUNT) state.recall = saved.recall;
   // An endsAt is an absolute moment, so a countdown restored here is still
   // telling the truth about when it runs out.
   if (Array.isArray(saved.timers) && saved.timers.length) state.timers = saved.timers;
@@ -3400,6 +3401,7 @@ if (VIEWER) {
     const fresh = initialState();
     state.program = fresh.program;
     state.panels = fresh.panels;
+    state.recall = fresh.recall;
     state.layout = fresh.layout;
     state.focus = fresh.focus;
     state.overlay = fresh.overlay;

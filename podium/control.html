@@ -292,6 +292,12 @@ try {
                 <!-- Issue #174: frozen with a deck cued, this tab works on the
                      cue - paging and ink both land there until TAKE. -->
                 <div id="deck-cued-note" class="hint is-cued-note" hidden>Cued, not on screen yet. Paging here moves the cued copy; TAKE puts it up.</div>
+                <!-- Issue #216: the deck this panel last showed, kept while
+                     something else is up - browse it, and put it back. -->
+                <div id="deck-recall" class="deck-recall" hidden>
+                  <span id="deck-recall-what" class="hint"></span>
+                  <button id="deck-back" type="button" class="big-button">Back to slides</button>
+                </div>
                 <div id="deck-theme" class="hint"></div>
               </div>
               <div class="deck-head-right">

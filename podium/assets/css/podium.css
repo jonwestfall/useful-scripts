@@ -83,6 +83,10 @@ label { display: block; font-size: 13px; color: var(--dim); margin-bottom: 5px; 
 .hint { color: var(--dim); font-size: 13px; margin: 6px 0 0; }
 /* Issue #174: "this is the cue, not the screen" - in the cue's own colour. */
 .hint.is-cued-note { color: var(--cue); font-weight: 600; }
+/* A deck kept for reference while something else is up (Issue #216). */
+.deck-recall { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 6px 0 2px; }
+.deck-recall .hint { color: var(--cue); font-weight: 600; flex: 1 1 220px; }
+.deck-recall .big-button { flex: none; }
 .error { color: #ff8f8f; font-size: 13px; min-height: 18px; }
 
 /* ===================== DISPLAY ====================================
@@ -727,6 +731,10 @@ body.guest {
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
 }
 .panel-btn.is-on { border-color: var(--accent); color: var(--accent); background: #16202c; }
+/* Not part of this layout (Issue #215): still selectable, to set it up
+   unseen, but plainly not what the room is looking at. */
+.panel-btn.is-offscreen { border-style: dashed; color: var(--dim); background: transparent; }
+.panel-btn.is-offscreen.is-on { color: var(--accent); }
 
 #build-note.is-stale, .stale-note { color: #ffd9a8; }
 

@@ -46,6 +46,9 @@ export function versionStamp() {
 
 export const BLACK = { type: 'black', title: 'Black' };
 
+// Panels A-D: program plus state.panels' three.
+export const PANEL_COUNT = 4;
+
 // How many panels each layout actually shows - panel A (state.program) is
 // always the first of them; B/C/D come from state.panels[0..2].
 export const LAYOUTS = {
@@ -222,6 +225,12 @@ export function initialState() {
     // the 'pip' case below); `corner` is where the inset sits; `size` is
     // its side length as a percentage of the stage, in each dimension.
     pip: { main: 'A', inset: 'B', corner: 'tr', size: 20 },
+    // The deck each panel (A-D) last showed, once something else replaced it
+    // (Issue #216) - so the Slides tab can keep it up for reference while a
+    // video plays, and put it back at the slide you left. Cleared when that
+    // panel gets a different deck (or the same one again), and with the
+    // session; see rememberDecks below.
+    recall: [null, null, null, null],
   };
 }
 
@@ -230,6 +239,15 @@ export function initialState() {
 // screen, exactly like today when there is only one panel), or state.panels
 // for 1/2/3. Returns null for an out-of-range focus rather than throwing, so
 // a stale focus from a layout that has since shrunk fails safe.
+/**
+ * Whether panel `index` (0=A .. 3=D) is part of what the room sees in the
+ * current layout. Picture-in-picture shows only its main and inset panes.
+ */
+export function panelOnScreen(state, index) {
+  if (state.layout === 'pip') return [state.pip?.main, state.pip?.inset].includes('ABCD'[index]);
+  return index < (LAYOUTS[state.layout] || 1);
+}
+
 export function focusedItem(state) {
   if (state.focus === 0) return state.program;
   return state.panels[state.focus - 1] || null;
@@ -1252,6 +1270,30 @@ function applyMusicCommand(state, cmd) {
 }
 
 export function applyCommand(state, cmd) {
+  const before = [state.program, ...(state.panels || [])];
+  const applied = applyOp(state, cmd);
+  if (applied) rememberDecks(state, before);
+  return applied;
+}
+
+/**
+ * Issue #216: when a panel's deck is replaced by something that is not a
+ * deck, keep it - where it was, build step and all - in state.recall, so the
+ * Slides tab can still show it and put it back. A deck going up on a panel
+ * (a different one, or this one again) clears that panel's memory.
+ */
+export function rememberDecks(state, before) {
+  if (!Array.isArray(state.recall) || state.recall.length !== PANEL_COUNT) state.recall = [null, null, null, null];
+  const now = [state.program, ...(state.panels || [])];
+  for (let i = 0; i < PANEL_COUNT; i++) {
+    const was = before[i];
+    const is = now[i];
+    if (is?.type === 'deck') state.recall[i] = null;
+    else if (was?.type === 'deck' && was !== is) state.recall[i] = { ...was };
+  }
+}
+
+function applyOp(state, cmd) {
   switch (cmd.op) {
     case 'stage': {
       const item = normalizeItem(cmd.item);
@@ -1355,9 +1397,11 @@ export function applyCommand(state, cmd) {
     }
 
     case 'focus': {
+      // Any of A-D, whether or not the layout shows it (Issue #215): B can be
+      // set up while A is full screen. A panel off screen is never mounted
+      // on the display (see syncLayers), so it is silent until shown.
       const index = Number(cmd.index);
-      const count = LAYOUTS[state.layout] || 1;
-      if (!Number.isInteger(index) || index < 0 || index >= count) return false;
+      if (!Number.isInteger(index) || index < 0 || index >= PANEL_COUNT) return false;
       state.focus = index;
       return true;
     }
@@ -1447,7 +1491,10 @@ export function applyCommand(state, cmd) {
       // regardless of freeze - freeze's whole point (browse ahead unseen) is
       // moot for a panel that was never going to be seen changing anyway,
       // since it is not what freeze is protecting.
-      const item = state.focus === 0 ? state[resolveVisualTarget(state, cmd)] : state.panels[state.focus - 1];
+      // "What the room sees" (a guest clicker's Next) never pages a panel the
+      // layout is not showing (Issue #215) - it means the screen, so A.
+      const panel = cmd.where === 'program' && !panelOnScreen(state, state.focus) ? 0 : state.focus;
+      const item = panel === 0 ? state[resolveVisualTarget(state, cmd)] : state.panels[panel - 1];
       if (!item) return false;
       const step = cmd.dir === 'prev' ? -1 : 1;
       if (item.type === 'deck') {

@@ -2291,6 +2291,84 @@ await uPad.click('#freeze');
 await uctx.close();
 }
 
+if (want('work on what is off screen')) {
+console.log('\n-- work on what is off screen: panels A-D in any layout (Issue #215), and slides kept on the Slides tab (Issue #216) --');
+const octx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+await octx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'offscreen-room', passphrase: 'set it up unseen' }));
+const oScreen = await octx.newPage();
+trap(oScreen, 'offscreen display');
+await oScreen.goto(`${BASE}/display.html`);
+await oScreen.click('#arm-button');
+await oScreen.waitForSelector('#hud[data-status="online"]');
+const oPad = await octx.newPage();
+trap(oPad, 'offscreen pad');
+await oPad.goto(`${BASE}/control.html`);
+await oPad.waitForSelector('.tile');
+await oPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+const oTile = (title) => oPad.click(`.tile:has(.tile-title:text-is("${title}"))`);
+const shownDeckSlide = () => oScreen.evaluate(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const svgs = [...(host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || [])];
+  return svgs.findIndex((x) => x.classList.contains('podium-on'));
+});
+
+// #215
+ok('all four panel buttons show in the single layout',
+  await oPad.isVisible('#panel-picker') && (await oPad.$$('.panel-btn')).length === 4);
+ok('with B, C and D marked off screen',
+  await oPad.$$eval('.panel-btn', (bs) => bs.map((b) => b.classList.contains('is-offscreen')).join()) === 'false,true,true,true');
+
+// #216: a deck, paged, then replaced by a whiteboard.
+await oTile('Day 6 — Weighing the Evidence');
+await oScreen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-deck'), null, { timeout: 15000 });
+await oPad.click('.tab[data-tab="slides"]');
+await oPad.waitForSelector('#deck-live:not([hidden])');
+for (let i = 0; i < 3; i++) await oPad.click('#deck-next');
+await oPad.waitForTimeout(400);
+const leftAt = await oPad.textContent('#deck-count');
+ok(`the deck is on screen and the recall row is not (${leftAt})`, await oPad.isHidden('#deck-recall'));
+await oPad.click('.tab[data-tab="library"]');
+await oTile('Whiteboard');
+await oScreen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-whiteboard'), null, { timeout: 8000 });
+await oPad.click('.tab[data-tab="slides"]');
+await oPad.waitForSelector('#deck-recall:not([hidden])', { timeout: 5000 });
+ok('with a whiteboard up instead, the Slides tab keeps the deck', await oPad.isVisible('#deck-live') && await oPad.isHidden('#deck-none'));
+ok('at the slide it was left on', (await oPad.textContent('#deck-count')) === leftAt);
+ok('marked off screen, with the pointers put away',
+  (await oPad.textContent('#deck-now-label')) === 'Off screen'
+  && await oPad.$eval('#deck-laser', (b) => b.disabled) && await oPad.$eval('#deck-markup', (b) => b.disabled));
+await oPad.click('#deck-next');
+await oPad.waitForFunction((was) => document.querySelector('#deck-count').textContent !== was, leftAt, { timeout: 5000 });
+const browsedTo = await oPad.textContent('#deck-count');
+await oScreen.waitForTimeout(500);
+ok(`paging it moves only this copy (${browsedTo}) - the room still sees the whiteboard`,
+  !!(await oScreen.$('.layer[data-role="program"] .r-whiteboard')) && !(await oScreen.$('.layer[data-role="program"] .r-deck')));
+await oPad.click('#deck-back');
+await oScreen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-deck'), null, { timeout: 15000 });
+await oPad.waitForSelector('#deck-recall', { state: 'hidden', timeout: 5000 });
+ok('Back to slides puts it up again, and it is live, not kept', (await oPad.textContent('#deck-now-label')) === 'Now');
+ok(`at the slide browsed to (${await oPad.textContent('#deck-count')})`, (await oPad.textContent('#deck-count')) === browsedTo);
+const slideBack = await shownDeckSlide();
+ok(`and the projector agrees (slide index ${slideBack})`, slideBack >= 0 && `Slide ${slideBack + 1}` === browsedTo.split(' / ')[0]);
+
+// #215: set B up while A is full screen - nothing on the projector changes.
+await oPad.click('.panel-btn:text-is("B")');
+await oPad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'B', null, { timeout: 5000 });
+await oPad.click('.tab[data-tab="library"]');
+await oTile('Timer');
+await oScreen.waitForTimeout(800);
+ok('picking into the off-screen B leaves the room on the deck',
+  !!(await oScreen.$('.layer[data-role="program"] .r-deck')) && (await oScreen.evaluate(() => document.querySelector('#stage').className)) === 'layout-single');
+ok('and B is not mounted - silent until shown', !(await oScreen.$('[data-panel="b"] .r-timer')));
+await oPad.click('#layout-current'); await oPad.click('.layout-btn[data-layout="2h"]');
+await oScreen.waitForFunction(() => !!document.querySelector('[data-panel="b"] .r-timer'), null, { timeout: 8000 });
+ok('a layout that shows B brings up what was set up there', true);
+await oPad.waitForFunction(() => !document.querySelector('.panel-btn:nth-child(2)').classList.contains('is-offscreen'), null, { timeout: 5000 });
+ok('and B is no longer marked off screen', true);
+await octx.close();
+}
+
 reportErrors();
 } finally {
   await teardown();
