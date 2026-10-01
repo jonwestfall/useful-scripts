@@ -449,8 +449,9 @@ Every teacher drives differently.
 - **Controller tabs** come in four groups, with a thin divider between them: **Present** (Library, Slides, Now, Ink, plus Camera and Photos), **Room** (Say, Timer, Polls), **Sound** (Music, Mixer, which also holds your microphone) and **Setup** (the watermark, picture-in-picture panes, Guest View and Sets). Camera and Photos start under **More ▾**. In Settings → Presentation you can reorder tabs within their group or hide the ones you never use; hidden tabs are tucked under More, never removed.
 - **The top bar** is one row on every screen: the connection, the clock and pacing, the layout button, and **⋯**, which holds Settings, Hide cue bar, the room and its code, your account, and the build number.
 - **Bottom bar dock**: up to eight quick-action slots chosen from Music, Media Play/Pause, Freeze, Blank, TAKE, Clear Cue, Quick Whiteboard, Laser, Spotlight, Quick Countdown, and Slide Next/Prev. On a phone the first four show alongside the volume slider.
-- **Split view**: on a wide iPad or laptop, show two tabs side by side, for example Slides beside Ink.
-- **The cue bar** shows in full only while it has a job: when the screen is frozen (the next pick will land in the cue) or something is cued. Otherwise it folds to a thin "On screen" strip, and its room goes to the tab you're working in. **Hide cue bar** (in ⋯) hides it outright.
+- **A phone as a remote** (Issue #188): on a phone's Slides tab, big **◀ / ▶** take the volume slider's place in the bottom bar, where your thumb rests (mute stays), and the Now and Next previews stay pinned at the top while the notes and the slide grid scroll underneath.
+- **Slides beside another tab** (Issue #188): on a screen at least 1100px wide, the **◫** button at the end of the tab row puts Slides in the left column and whichever tab you pick in the right, for example Slides beside the Library or Ink. Remembered on that device; a screen that narrows (a tablet turned to portrait) goes back to one column until it's wide again.
+- **The cue bar** shows in full only while it has a job: when the screen is frozen (the next pick will land in the cue) or something is cued. Otherwise it folds to a thin "On screen" strip, and its room goes to the tab you're working in. On the Slides tab, where the strip would only repeat the Now box, it steps aside altogether until something is cued or frozen. **Hide cue bar** (in ⋯) hides it outright.
 - A **Magic Keyboard or Bluetooth presentation clicker** drives the same actions (see [Keyboard Shortcuts](#keyboard-shortcuts)).
 
 ### Comfort Settings
@@ -463,6 +464,7 @@ All in **Settings → Presentation**, saved on that device only:
 - **Keep this device's screen awake** while the controller is open.
 - **Haptic feedback**: a physical tick when you advance, freeze, blank or TAKE, so you know a tap registered without looking down (on devices that support vibration).
 - **Always cue first**: every pick waits in the cue, even when not frozen.
+- **Compact controls** (Issue #209, off by default): tighter spacing and smaller buttons (never under 36px), with the "How this works" explanations put away, for a small phone or a crowded lectern screen. Settings keeps its own explanations either way.
 
 ### Start Every Lecture With… (Saved Defaults)
 

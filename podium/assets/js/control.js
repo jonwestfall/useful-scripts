@@ -1118,6 +1118,17 @@ function renderPreview() {
   // actually cued. Otherwise it folds to a thin "On screen" strip, and the
   // room it used to take goes to the tab you are working in.
   $('.workspace').classList.toggle('cue-compact', !state.frozen && !hasCue());
+  syncStripRepeat();
+}
+
+// On the Slides tab the strip says exactly what the Now box under it already
+// shows (Issue #188) - so while that is all it would say (nothing cued or
+// frozen, panel A, the deck live rather than kept), it steps aside.
+function syncStripRepeat() {
+  const slidesOpen = !$('[data-panel="slides"]').hidden;
+  const view = slidesOpen ? slidesView() : null;
+  const repeats = !state.frozen && !hasCue() && state.focus === 0 && !!view && !view.recalled;
+  $('.workspace').classList.toggle('strip-repeats', repeats);
 }
 
 // --- Marp deck panel --------------------------------------------------------
@@ -1632,7 +1643,7 @@ function renderSlides() {
   const recalled = !!view?.recalled;
   $('#deck-none').hidden = !!item;
   $('#deck-live').hidden = !item;
-  if (!item) return;
+  if (!item) { $('#bar-prev').disabled = true; $('#bar-next').disabled = true; return; }
 
   $('#deck-title').textContent = itemTitle(item);
   // Working on the cue (Issue #174): say so, and put the pointers away - the
@@ -1673,6 +1684,8 @@ function renderSlides() {
   // decide when the buttons actually go grey.
   $('#deck-prev').disabled = index === 0 && step === 0;
   $('#deck-next').disabled = index >= total - 1 && step >= fragCount;
+  $('#bar-prev').disabled = $('#deck-prev').disabled;
+  $('#bar-next').disabled = $('#deck-next').disabled;
 
   const notesEl = $('#deck-notes');
   if (!deck) {
@@ -5247,6 +5260,9 @@ function tab(name) {
   if (dualPane) {
     document.body.classList.toggle('dual-secondary', name !== 'slides');
   }
+  // Which tab is in front, for the CSS that changes the bottom bar on a
+  // phone's Slides tab (Issue #188).
+  document.body.dataset.tab = name;
   // The list of lectures on the server is asked for again every time the tab
   // carrying it is opened. Reading it once at startup would mean a lecture
   // sent from the desk five minutes ago was invisible here until a reload -
@@ -5280,6 +5296,7 @@ function tab(name) {
     quietChipFollow = true;
     renderSlides();
   }
+  syncStripRepeat();
 }
 
 // Only buttons that name a tab (Issue #178). Settings' own Connection and
@@ -5288,20 +5305,36 @@ function tab(name) {
 // unnoticed while closing Settings reloaded the page.
 $$('.tab[data-tab]:not(#dual-pane-toggle):not(#tabs-more)').forEach((b) => b.addEventListener('click', () => tab(b.dataset.tab)));
 
-const savedDual = localStorage.getItem('podium.ui.dualPane') === '1';
-if (savedDual) {
-  document.body.classList.add('dual-pane');
-  $('#dual-pane-toggle').classList.add('is-on');
-}
+// Slides beside another tab (Issue #188): Slides in the left column, the tab
+// you pick in the right. Only offered on a screen wide enough for two working
+// columns; the choice is remembered per device, and a screen that narrows
+// (a tablet turned to portrait) goes back to one column without forgetting it.
+const DUAL_KEY = 'podium.ui.dualPane';
+const dualWide = window.matchMedia('(min-width: 1100px)');
+let dualWanted = false;
+try { dualWanted = localStorage.getItem(DUAL_KEY) === '1'; } catch { /* private mode: off */ }
 
-$('#dual-pane-toggle').addEventListener('click', () => {
-  const isDual = document.body.classList.toggle('dual-pane');
-  $('#dual-pane-toggle').classList.toggle('is-on', isDual);
-  safeStorageSet(localStorage, 'podium.ui.dualPane', isDual ? '1' : '0');
+function applyDualPane() {
+  const on = dualWanted && dualWide.matches;
+  const was = document.body.classList.contains('dual-pane');
+  $('#dual-pane-toggle').hidden = !dualWide.matches;
+  $('#dual-pane-toggle').classList.toggle('is-on', on);
+  $('#dual-pane-toggle').setAttribute('aria-pressed', String(on));
+  if (on === was) return;
+  document.body.classList.toggle('dual-pane', on);
+  if (!on) document.body.classList.remove('dual-secondary');
   const activeTab = document.querySelector('.tab[data-tab].is-on:not(#dual-pane-toggle)');
   if (activeTab) tab(activeTab.dataset.tab);
   window.dispatchEvent(new Event('resize'));
+}
+
+$('#dual-pane-toggle').addEventListener('click', () => {
+  dualWanted = !document.body.classList.contains('dual-pane');
+  safeStorageSet(localStorage, DUAL_KEY, dualWanted ? '1' : '0');
+  applyDualPane();
 });
+dualWide.addEventListener('change', applyDualPane);
+applyDualPane();
 
 // --- top-bar popovers (Issue #187) -------------------------------------------
 //
@@ -5498,6 +5531,8 @@ $('#scrub').addEventListener('change', (ev) => {
 $('#deck-prev').addEventListener('click', () => deckNav('prev'));
 $('#deck-next').addEventListener('click', () => deckNav('next'));
 $('#deck-back').addEventListener('click', putDeckBack);
+$('#bar-prev').addEventListener('click', () => deckNav('prev'));
+$('#bar-next').addEventListener('click', () => deckNav('next'));
 $('#deck-export').addEventListener('click', exportDeck);
 $('#deck-grid-filter').addEventListener('input', filterGrid);
 
@@ -6808,6 +6843,8 @@ const PRESENTATION_DEFAULTS = {
   snapShapes: true,
   autoSwitchTab: true,
   helpOpen: false,
+  // Issue #209: tighter spacing, smaller buttons, help put away. Per device.
+  compact: false,
   tabOrder: [...TAB_IDS],
   hiddenTabs: [...DEFAULT_HIDDEN_TABS],
   tabLayoutVersion: TAB_LAYOUT_VERSION,
@@ -7373,6 +7410,13 @@ async function applyWakeLock() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') applyWakeLock(); });
 applyWakeLock();
 
+// Compact density (Issue #209) - every size it changes is in podium.css under
+// body.compact; this only switches it on.
+function applyDensity() {
+  document.body.classList.toggle('compact', !!presentation.compact);
+  window.dispatchEvent(new Event('resize'));
+}
+
 function applyTheme() {
   const theme = presentation.theme || 'auto';
   let effective = theme;
@@ -7388,6 +7432,7 @@ if (typeof window !== 'undefined' && window.matchMedia) {
   });
 }
 applyTheme();
+applyDensity();
 
 function settingsTab(name) {
   $$('#setup .settings-tabs .tab').forEach((b) => b.classList.toggle('is-on', b.dataset.settingsTab === name));
@@ -7409,6 +7454,7 @@ $('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUr
 $('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
 $('#pref-auto-switch-tab').addEventListener('change', (ev) => { presentation.autoSwitchTab = ev.target.checked; savePresentation(); });
 $('#pref-help-open').addEventListener('change', (ev) => { presentation.helpOpen = ev.target.checked; savePresentation(); applyHelpOpen(); });
+$('#pref-compact').addEventListener('change', (ev) => { presentation.compact = ev.target.checked; savePresentation(); applyDensity(); });
 $('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(); applyWakeLock(); });
 $('#pref-haptics')?.addEventListener('change', (ev) => {
   presentation.haptics = ev.target.checked;
@@ -7554,6 +7600,7 @@ function showSetup() {
   if (prefSnap) prefSnap.checked = presentation.snapShapes !== false;
   $('#pref-auto-switch-tab').checked = presentation.autoSwitchTab !== false;
   $('#pref-help-open').checked = !!presentation.helpOpen;
+  $('#pref-compact').checked = !!presentation.compact;
   renderTabOrderSettings();
   renderKeepPhotos();
   // Filled in from the saved config every time Settings opens, which is also
