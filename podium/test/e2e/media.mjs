@@ -850,6 +850,9 @@ await screen.waitForFunction(() => window.__twitch?.length === 1 && !window.__tw
   .catch(() => ok('a pasted Twitch link plays on the projector, with sound', false));
 const first = await player();
 ok(`the player is told the channel and this site's host (${first?.channel}, ${first?.parent})`, first?.channel === 'nasa' && first?.parent?.[0] === '127.0.0.1');
+// The controller hears about the stream from the display's next state, a beat
+// after the projector starts playing it - wait for that, not just look.
+await pad.waitForFunction(() => !!document.querySelector('#preview-stage .r-stream-card'), null, { timeout: 8000 }).catch(() => {});
 ok('the controller shows a card, not a second live player', await pad.evaluate(() => !!document.querySelector('#preview-stage .r-stream-card') && !window.Twitch));
 
 await pad.click('.tab[data-tab="mixer"]');
