@@ -1471,6 +1471,19 @@ await screen2.keyboard.press('Escape');
 await screen2.waitForSelector('#setup', { state: 'hidden' });
 ok('Escape closes Settings even from inside a field, back to the Go live screen',
   await screen2.evaluate(() => window.__sameLoad === true && !document.querySelector('#arm').hidden));
+// Hidden is not enough: Chromium only moves focus off a hidden field on its
+// next rendering update, and until then the shortcut handler sees every key
+// as typed into that field - which is exactly how this failed in CI.
+// Checked in one synchronous step - Escape, then where focus is - so no
+// rendering update gets the chance to tidy it up first, as one did locally
+// while CI's slower runner caught the field still holding the keyboard.
+await screen2.keyboard.press('s');
+await screen2.waitForSelector('#setup:not([hidden])');
+ok('and takes the keyboard focus with it, so the next shortcut works straight away', await screen2.evaluate(() => {
+  document.querySelector('#d-room').focus();
+  document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  return document.querySelector('#setup').hidden && !document.querySelector('#setup').contains(document.activeElement);
+}));
 await screen2.keyboard.press('s');
 await screen2.waitForSelector('#setup:not([hidden])');
 ok('and an edit closed without saving is gone the next time Settings opens',

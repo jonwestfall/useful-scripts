@@ -2913,6 +2913,10 @@ function onSetupTransport() {
 // recording, and put the room back on the arming screen mid-lecture.
 function closeSetup() {
   if (!isConfigured(cfg)) return;
+  // A field left focused inside a hidden sheet still takes the keyboard: the
+  // shortcut handler ignores keys typed into an input, so after Escape the
+  // next S, P or E would go nowhere until someone clicked the page.
+  if (setupEl.contains(document.activeElement)) document.activeElement.blur();
   setupEl.hidden = true;
   $('#setup-error').textContent = '';
   armEl.hidden = setupReturnsTo === 'live';

@@ -7160,6 +7160,9 @@ $('#setup-form').addEventListener('submit', (ev) => {
 // and an unsaved one is refilled from the saved config next time it opens.
 function closeSetup() {
   if (!isConfigured(cfg)) return;
+  // A field left focused inside a hidden sheet would keep taking the keyboard,
+  // and the shortcut handler ignores keys typed into an input.
+  if ($('#setup').contains(document.activeElement)) document.activeElement.blur();
   $('#setup').hidden = true;
   $('#app').hidden = false;
   $('#setup-error').textContent = '';
