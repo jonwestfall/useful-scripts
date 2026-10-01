@@ -1585,7 +1585,7 @@ await kPad.keyboard.press(']');
 ok(`] moves to the next tab (${await activeTab()})`, (await activeTab()) === 'slides');
 await kPad.keyboard.press('[');
 await kPad.keyboard.press('[');
-ok(`[ steps back, wrapping past the start to the last tab (${await activeTab()})`, (await activeTab()) === 'polls');
+ok(`[ steps back, wrapping past the start to the last tab (${await activeTab()})`, (await activeTab()) === 'setup');
 
 // Hiding a tab (Settings > Controller tabs) takes it out of the cycle too -
 // proving [ and ] read the live preference, not a fixed list.

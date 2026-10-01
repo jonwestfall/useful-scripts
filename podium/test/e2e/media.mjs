@@ -1490,7 +1490,7 @@ await pad.waitForSelector('.tile');
 await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
 
 // Building one: every Library tap goes into the draft instead of going live.
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 await pad.click('#sets-new');
 await pad.fill('#sets-build-name', 'Throwaway');
 await pad.click('#sets-build-add');
@@ -1504,7 +1504,7 @@ ok('nothing goes live while building', await screen.evaluate(() => !document.que
 // note in control.js: it never gets the async WebRTC setup pick() normally
 // gives it, so it would sit there forever unresolved).
 await pad.click('.tile:has(.tile-title:text-is("Phone camera"))');
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 ok('a live camera is declined, not added broken', (await pad.$$('#sets-build-entries .set-row')).length === 2);
 
 // Tapping a whole deck tile (as opposed to one specific slide pulled from
@@ -1514,7 +1514,7 @@ ok('a live camera is declined, not added broken', (await pad.$$('#sets-build-ent
 await pad.click('.tab[data-tab="library"]');
 await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
 await pad.waitForFunction(() => document.querySelector('#sets-add-note')?.textContent.includes('Added all 13 slides'), null, { timeout: 15000 });
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 ok('the whole deck landed as 13 separate entries', (await pad.$$('#sets-build-entries .set-row')).length === 2 + 13);
 ok('each entry is its own slide of the deck, in order', await pad.evaluate(() => {
   const rows = Array.from(document.querySelectorAll('#sets-build-entries .set-row .set-row-title'));
@@ -1530,7 +1530,7 @@ await pad.fill('#sets-build-name', 'Pre-show');
 await pad.click('#sets-build-add');
 await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
 await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 ok('the real draft starts clean with just the two tiles picked for it', (await pad.$$('#sets-build-entries .set-row')).length === 2);
 
 const secInputs = await pad.$$('#sets-build-entries .set-row-secs');
@@ -1553,7 +1553,7 @@ ok('it advances itself on schedule, with no controller action', firstBg !== seco
 // a real bug found while building this - the buttons were built once and
 // closed over that render's `item`, which state replacement (a fresh object
 // every broadcast) made stale after the very next heartbeat.
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 await pad.waitForSelector('#set-now-title', { timeout: 8000 });
 await pad.click('#set-now-next');
 await screen.waitForTimeout(500);
@@ -1575,7 +1575,7 @@ ok('pressing it again resumes', true);
 // The same saved set can run independently on a second pane at once.
 await pad.click('.tab[data-tab="library"]');
 await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="2h"]');
-await pad.click('.tab[data-tab="sets"]');
+await pad.click('.tab[data-tab="setup"]');
 await pad.click('.set-saved-row:has(.set-saved-title:text-is("Pre-show")) .set-start-btn:text-is("B")');
 await screen.waitForFunction(() => document.querySelectorAll('.panel-slot.is-on').length === 2, null, { timeout: 8000 });
 ok('the same saved set can run on a second pane too, independently', true);
