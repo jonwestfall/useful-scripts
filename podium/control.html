@@ -191,7 +191,9 @@ try {
           <button id="tabs-more" class="tab" type="button" hidden>More &#9662;</button>
           <div id="tabs-more-menu" class="tabs-more-menu" hidden></div>
         </div>
-        <button id="dual-pane-toggle" class="tab" type="button" title="Toggle Split View" aria-label="Toggle split view" style="margin-left: auto; padding: 0 10px;" hidden>
+        <!-- Slides on the left, any other tab on the right (Issue #188) -
+             offered only on a screen wide enough for two columns. -->
+        <button id="dual-pane-toggle" class="tab" type="button" title="Slides beside another tab" aria-label="Slides beside another tab" aria-pressed="false" style="margin-left: auto; padding: 0 10px;" hidden>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
             <line x1="12" y1="3" x2="12" y2="21"></line>
@@ -327,21 +329,23 @@ try {
               <div class="confidence-box">
                 <div id="deck-now-label" class="confidence-label">Now</div>
                 <div id="deck-now-preview" class="confidence-preview"></div>
-                <div class="inline">
-                  <button id="deck-markup" type="button">✎ Markup</button>
-                  <button id="deck-laser" type="button" data-color="red">Laser</button>
-                  <button id="deck-spotlight" type="button">Spotlight</button>
-                  <div class="laser-picker" role="group" aria-label="Laser colour">
-                    <button class="laser-swatch laser-red is-on" type="button" data-color="red" title="Red" aria-label="Red laser"></button>
-                    <button class="laser-swatch laser-green" type="button" data-color="green" title="Green — reads on a dark slide or a photo" aria-label="Green laser"></button>
-                    <button class="laser-swatch laser-blue" type="button" data-color="blue" title="Blue — reads on a bright slide" aria-label="Blue laser"></button>
-                  </div>
-                </div>
               </div>
               <div class="confidence-box">
                 <div class="confidence-label">Next</div>
                 <div id="deck-next-preview" class="confidence-preview"></div>
                 <div id="deck-next-title" class="hint"></div>
+              </div>
+            </div>
+            <!-- Under the pair rather than inside Now, so on a phone the pair
+                 alone can stay pinned while the notes scroll (Issue #188). -->
+            <div class="inline deck-tools">
+              <button id="deck-markup" type="button">✎ Markup</button>
+              <button id="deck-laser" type="button" data-color="red">Laser</button>
+              <button id="deck-spotlight" type="button">Spotlight</button>
+              <div class="laser-picker" role="group" aria-label="Laser colour">
+                <button class="laser-swatch laser-red is-on" type="button" data-color="red" title="Red" aria-label="Red laser"></button>
+                <button class="laser-swatch laser-green" type="button" data-color="green" title="Green — reads on a dark slide or a photo" aria-label="Green laser"></button>
+                <button class="laser-swatch laser-blue" type="button" data-color="blue" title="Blue — reads on a bright slide" aria-label="Blue laser"></button>
               </div>
             </div>
             <details class="help">
@@ -1057,6 +1061,11 @@ try {
          each channel gets its own level instead of fighting over this one).
          Reachable from every tab without a tab switch, on purpose: it is the
          one control for "the room is too loud right now." -->
+    <!-- On a phone's Slides tab, Previous/Next where a thumb rests (Issue
+         #188): these take the volume slider's place there - see the
+         max-width: 640px rules in podium.css. -->
+    <button id="bar-prev" class="bar-deck" type="button" aria-label="Previous slide">◀</button>
+    <button id="bar-next" class="bar-deck" type="button" aria-label="Next slide">▶</button>
     <div class="vol" title="Master volume — everything the room hears">
       <button id="mute" type="button" title="Mute everything" aria-label="Mute everything" aria-pressed="false">🔊</button>
       <input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Master volume — everything the room hears">
@@ -1161,6 +1170,9 @@ try {
 
       <label class="check" style="margin-top:12px;"><input id="pref-help-open" type="checkbox"> Show every explanation open</label>
       <p class="hint">Explanations sit behind "How this works" so the controls come first. Tick this to see them all, always.</p>
+
+      <label class="check" style="margin-top:12px;"><input id="pref-compact" type="checkbox"> Compact controls</label>
+      <p class="hint">Tighter spacing and smaller buttons, with the "How this works" explanations put away - for a small phone or a crowded lectern screen. This device only.</p>
 
       <div class="field" style="margin-top:12px;">
         <label for="pref-theme">Controller theme</label>

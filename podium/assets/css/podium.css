@@ -1504,6 +1504,69 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
   .tiles { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 }
 
+/* --- a layout for each screen size (Issue #188) ----------------------------- */
+
+/* The "On screen" strip, on the Slides tab, while it only repeats Now. */
+.workspace.strip-repeats #preview-pane { display: none; }
+
+/* Previous/Next in the bottom bar: a phone's Slides tab only (below). */
+.bottombar .bar-deck { display: none; }
+
+@media (max-width: 640px) {
+  /* Where a thumb rests, in place of the volume slider (mute stays). */
+  body[data-tab="slides"] .bottombar .bar-deck {
+    display: inline-flex; align-items: center; justify-content: center;
+    flex: 1; min-width: 0; font-size: 22px;
+  }
+  body[data-tab="slides"] .bottombar .vol { flex: none; min-width: 0; }
+  body[data-tab="slides"] .bottombar .vol input[type=range] { display: none; }
+  body[data-tab="slides"] .deck-nav { display: none; }
+  /* Now and Next stay pinned while the notes and the grid scroll under them.
+     Sticky only holds inside its own parent, so the wrappers between the pair
+     and the rest of the tab are flattened here - #deck-live, which holds the
+     notes and the grid too, becomes the box it sticks within.
+     -12px: .panels' own padding, so the pair sits flush with its top edge. */
+  #deck-live { display: flex; flex-direction: column; gap: 14px; }
+  .deck-stage, .deck-stage-main, .deck-stage-notes { display: contents; }
+  .confidence-row {
+    position: sticky; top: -12px; z-index: 3;
+    background: var(--bg); padding: 6px 0 8px; margin-top: -6px;
+  }
+}
+
+/* Slides beside another tab, on a wide screen (toggled from the tab row). */
+body.dual-pane.dual-secondary .panels {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr); gap: 16px; overflow: hidden;
+}
+body.dual-pane.dual-secondary .panels > .panel { overflow: auto; min-height: 0; }
+body.dual-pane.dual-secondary .panel[data-panel="slides"] {
+  order: -1; padding-right: 16px; border-right: 1px solid var(--line);
+}
+/* Slides is open too, in the left column - say so on its tab. */
+body.dual-pane.dual-secondary .tab[data-tab="slides"] { border-color: var(--accent); }
+
+/* --- compact density (Issue #209) -------------------------------------------
+   Per device, from Settings -> Presentation. Smaller, never below 36px a
+   button, and the explanations put away - the controller's only; Settings
+   keeps its own, since that is where you would go to find out what something
+   does. */
+body.compact { --tap: 36px; }
+body.compact #app details.help { display: none; }
+body.compact .topbar { padding: 4px 10px; gap: 8px; }
+body.compact .tabs { gap: 4px; padding: 6px 8px 0; }
+body.compact .tab { min-height: 36px; padding: 0 11px; font-size: 13px; }
+body.compact .panels { padding: 8px; }
+body.compact .panel { gap: 8px; }
+body.compact .tiles { gap: 6px; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+body.compact .tile { padding: 8px 10px; min-height: 64px; font-size: 13px; }
+body.compact .deck-nav button { min-height: 44px; font-size: 15px; }
+body.compact #take { min-height: 46px; }
+body.compact .bottombar { gap: 6px; padding: 6px 8px; padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+@media (max-width: 640px) {
+  body.compact .confidence-row { top: -8px; }
+}
+
 /* ===================== PLANNING ===================================
    The office page. Unlike the controller this is a desk tool: a mouse, a
    keyboard, and a wide screen are all fair assumptions, so it uses a three

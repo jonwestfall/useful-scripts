@@ -912,8 +912,13 @@ const widthFrozen = await nowWidth();
 await pad.click('#freeze');
 await pad.waitForFunction(() => document.querySelector('.workspace').classList.contains('cue-compact'), null, { timeout: 5000 });
 const widthIdle = await nowWidth();
-ok(`with nothing frozen or cued it folds to a strip, and Now/Next get the room (${Math.round(widthFrozen)} -> ${Math.round(widthIdle)})`,
-  widthIdle > widthFrozen && await pad.isVisible('#preview-pane') && !(await pad.isVisible('#take')));
+ok(`with nothing frozen or cued it folds away, and Now/Next get the room (${Math.round(widthFrozen)} -> ${Math.round(widthIdle)})`,
+  widthIdle > widthFrozen && !(await pad.isVisible('#take')));
+// Here on the Slides tab the strip would only repeat Now, so it steps aside
+// altogether (Issue #188); on any other tab it is the thin "On screen" strip.
+ok('on the Slides tab the strip steps aside rather than repeat Now', await pad.isHidden('#preview-pane'));
+await pad.click('.tab[data-tab="library"]');
+ok('on another tab it is the thin "On screen" strip', await pad.isVisible('#preview-pane') && !(await pad.isVisible('#take')));
 
 // Hiding it outright is still there, from the ⋯ menu (Issue #187), and is
 // remembered per device rather than resetting on every visit.
@@ -922,6 +927,7 @@ ok('hiding it removes it from the layout', !(await pad.isVisible('#preview-pane'
 await pad.reload();
 await pad.waitForSelector('.tile');
 await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await pad.click('.tab[data-tab="library"]');
 ok('the choice survives a reload of the controller', !(await pad.isVisible('#preview-pane')));
 await pad.click('#topbar-more'); await pad.click('#preview-toggle');
 ok('and toggling it back shows it again', await pad.isVisible('#preview-pane'));
@@ -1739,7 +1745,8 @@ await notesControl.waitForFunction(
 await notesControl.setInputFiles('#deck-file', notesFixture);
 await notesControl.waitForFunction(() => document.querySelector('#deck-file-note')?.textContent.includes('3 slides'), null, { timeout: 15000 });
 await notesControl.click('.tab[data-tab="slides"]');
-await notesControl.click('#deck-next');
+// On a phone, Next is in the bottom bar (Issue #188).
+await notesControl.click('#bar-next');
 await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.textContent.startsWith('Slide 2'), null, { timeout: 10000 });
 await notesControl.waitForFunction(() => (document.querySelector('#deck-notes')?.textContent.length || 0) > 500, null, { timeout: 10000 });
 
@@ -1753,7 +1760,7 @@ ok(`the long notes actually overflow the panel on this device (${panelsOverflow}
 // actionability checks - that would contaminate exactly the measurement
 // this test is making, so #deck-next is clicked in-page instead, the same
 // way a real tap does not scroll anything on its own.
-const clickDeckNext = () => notesControl.evaluate(() => document.querySelector('#deck-next').click());
+const clickDeckNext = () => notesControl.evaluate(() => document.querySelector('#bar-next').click());
 
 await clickDeckNext(); // onto slide 2's own build fragments
 await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.textContent.includes('build 1'), null, { timeout: 10000 });
@@ -2377,6 +2384,100 @@ ok('a layout that shows B brings up what was set up there', true);
 await oPad.waitForFunction(() => !document.querySelector('.panel-btn:nth-child(2)').classList.contains('is-offscreen'), null, { timeout: 5000 });
 ok('and B is no longer marked off screen', true);
 await octx.close();
+}
+
+if (want('a layout for each screen size')) {
+console.log('\n-- a layout for each screen size (Issue #188) and compact density (Issue #209) --');
+const SHOTS = process.env.PODIUM_SHOTS || '';
+const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `${name}.png`) }); };
+const lctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+await lctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'layouts-room', passphrase: 'one size does not fit' }));
+const lScreen = await lctx.newPage();
+trap(lScreen, 'layouts display');
+await lScreen.goto(`${BASE}/display.html`);
+await lScreen.click('#arm-button');
+await lScreen.waitForSelector('#hud[data-status="online"]');
+
+// Desktop: Slides beside another tab.
+const desk = await lctx.newPage();
+trap(desk, 'layouts desk');
+await desk.goto(`${BASE}/control.html`);
+await desk.waitForSelector('.tile');
+await desk.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await desk.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
+await lScreen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-deck'), null, { timeout: 15000 });
+ok('a wide screen offers Slides beside another tab', await desk.isVisible('#dual-pane-toggle'));
+await desk.click('.tab[data-tab="slides"]');
+await desk.waitForSelector('#deck-live:not([hidden])');
+ok('on the Slides tab the "On screen" strip steps aside, since Now already says it', await desk.isHidden('#preview-pane'));
+await desk.click('.tab[data-tab="library"]');
+ok('it is back on every other tab', await desk.isVisible('#preview-pane'));
+await desk.click('#dual-pane-toggle');
+await desk.click('.tab[data-tab="library"]');
+const cols = await desk.evaluate(() => {
+  const r = (q) => document.querySelector(q).getBoundingClientRect();
+  return { slides: r('.panel[data-panel="slides"]'), lib: r('.panel[data-panel="library"]') };
+});
+ok(`with it on, Slides sits on the left and the Library on the right (${Math.round(cols.slides.x)} / ${Math.round(cols.lib.x)})`,
+  cols.slides.width > 300 && cols.lib.width > 300 && cols.slides.x < cols.lib.x && Math.abs(cols.slides.y - cols.lib.y) < 4);
+await shot(desk, 'desk-dual');
+await desk.click('.tab[data-tab="slides"]');
+ok('the Slides tab itself goes back to one full-width column',
+  await desk.evaluate(() => document.querySelector('.panel[data-panel="slides"]').getBoundingClientRect().width > 1000));
+await desk.click('.tab[data-tab="library"]');
+await desk.setViewportSize({ width: 900, height: 900 });
+await desk.waitForFunction(() => !document.body.classList.contains('dual-pane'), null, { timeout: 5000 });
+ok('narrowed past two columns, it goes back to one, and the toggle goes', await desk.isHidden('#dual-pane-toggle'));
+await desk.setViewportSize({ width: 1400, height: 900 });
+await desk.waitForFunction(() => document.body.classList.contains('dual-pane'), null, { timeout: 5000 });
+ok('widened again, it remembers', true);
+
+// Phone: Previous/Next where a thumb rests, Now/Next pinned.
+const phone = await lctx.newPage();
+await phone.setViewportSize({ width: 375, height: 740 });
+trap(phone, 'layouts phone');
+await phone.goto(`${BASE}/control.html`);
+await phone.waitForSelector('.tile');
+await phone.click('.tab[data-tab="slides"]');
+await phone.waitForSelector('#deck-live:not([hidden])');
+ok('on a phone\'s Slides tab, Previous/Next are in the bottom bar', await phone.isVisible('#bar-prev') && await phone.isVisible('#bar-next'));
+ok('in place of the volume slider (mute stays), and not again on the page',
+  await phone.isHidden('#volume') && await phone.isVisible('#mute') && await phone.isHidden('.deck-nav'));
+const before = await phone.textContent('#deck-count');
+await phone.click('#bar-next');
+await phone.waitForFunction((was) => document.querySelector('#deck-count').textContent !== was, before, { timeout: 5000 });
+ok('and they page the deck', true);
+await phone.evaluate(() => { document.querySelector('.panels').scrollTop = 600; });
+const pinned = await phone.evaluate(() => {
+  const row = document.querySelector('.confidence-row').getBoundingClientRect();
+  const panels = document.querySelector('.panels').getBoundingClientRect();
+  return { rowTop: row.top, panelsTop: panels.top, rowH: row.height };
+});
+ok(`scrolled down to the notes, Now and Next stay pinned at the top (${Math.round(pinned.rowTop - pinned.panelsTop)}px, ${Math.round(pinned.rowH)}px tall)`,
+  Math.abs(pinned.rowTop - pinned.panelsTop) < 2 && pinned.rowH < 260);
+await shot(phone, 'phone-slides');
+await phone.click('.tab[data-tab="library"]');
+ok('other tabs keep the volume slider', await phone.isVisible('#volume') && await phone.isHidden('#bar-next'));
+
+// Compact density.
+const tapBefore = await phone.evaluate(() => document.querySelector('#freeze').getBoundingClientRect().height);
+await phone.click('#topbar-more'); await phone.click('#open-settings');
+await phone.click('[data-settings-tab="presentation"]');
+ok('Compact is off unless asked for', !(await phone.isChecked('#pref-compact')));
+await phone.check('#pref-compact');
+await phone.evaluate(() => { const c = document.querySelector('#setup-close-top'); (c && !c.hidden ? c : document.querySelector('#setup-close')).click(); });
+await phone.waitForSelector('#setup', { state: 'hidden', timeout: 5000 });
+const tapAfter = await phone.evaluate(() => document.querySelector('#freeze').getBoundingClientRect().height);
+ok(`Compact makes the controls smaller (${Math.round(tapBefore)} -> ${Math.round(tapAfter)}px), never under 36px`, tapAfter < tapBefore && tapAfter >= 36);
+await phone.click('.tab[data-tab="slides"]');
+ok('and puts the "How this works" explanations away',
+  await phone.evaluate(() => [...document.querySelectorAll('#app details.help')].every((d) => getComputedStyle(d).display === 'none')));
+await shot(phone, 'phone-compact');
+await phone.reload();
+await phone.waitForSelector('.tile');
+ok('it is remembered on this device', await phone.evaluate(() => document.body.classList.contains('compact')));
+await lctx.close();
 }
 
 reportErrors();
