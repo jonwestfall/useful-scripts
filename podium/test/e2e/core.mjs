@@ -1761,6 +1761,16 @@ await notesControl.waitForFunction(() => document.querySelector('#deck-count')?.
 // The presenter scrolls back up to read notes / reach Prev-Next, exactly
 // the recovery the bug report describes ("pulling down from the gutter
 // allows you to scroll back up temporarily").
+// After the follow-scroll that slide change started has finished - it is
+// smooth, and setting scrollTop does not cancel one still running, so a
+// reset made mid-glide would be carried straight back down by the browser
+// rather than by anything this test is checking. A presenter scrolls back up
+// after the jump, not during it.
+await notesControl.waitForFunction(() => new Promise((resolve) => {
+  const p = document.querySelector('.panels');
+  const at = p.scrollTop;
+  setTimeout(() => resolve(p.scrollTop === at), 300);
+}), null, { timeout: 10000 });
 await notesControl.evaluate(() => { document.querySelector('.panels').scrollTop = 0; });
 ok('scrolled back to the top manually', (await notesControl.evaluate(() => document.querySelector('.panels').scrollTop)) === 0);
 
