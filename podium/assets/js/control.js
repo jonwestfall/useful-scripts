@@ -1142,6 +1142,13 @@ let gridBuildPromise = null;
 let activeSectionFilter = null;
 let lastScrolledSlideIndex = null;
 let lastScrolledSectionId = null;
+// Opening the Slides tab starts it at its own top, with Now/Next in view
+// (see showTab) - so the first highlight after opening only notes where the
+// deck is rather than scrolling the panel down to the thumbnail grid, which
+// on a wide screen sits below the fold now the cue bar folds away when idle
+// (Issue #186). A slide or section change after that is still followed.
+let quietGridFollow = false;
+let quietChipFollow = false;
 let selectedChipSection = null;
 
 function getSlideSectionIndex(sections, slideIndex) {
@@ -1312,6 +1319,7 @@ function updateActiveSectionChip(slideIndex) {
   // issue describes, on every render rather than only a genuine change.
   if (lastScrolledSectionId !== targetId) {
     lastScrolledSectionId = targetId;
+    if (quietChipFollow) { quietChipFollow = false; return; }
     const activeChip = container.querySelector(`.deck-chip[data-section="${targetId}"]`);
     activeChip?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
   }
@@ -1485,7 +1493,8 @@ function highlightGrid(index, deckId = (deckView.id || (workItem()?.type === 'de
     const slidesPanel = $('[data-panel="slides"]');
     if (slidesPanel && !slidesPanel.hidden) {
       lastScrolledSlideIndex = index;
-      activeCell.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      if (quietGridFollow) quietGridFollow = false;
+      else activeCell.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
     }
   }
 
@@ -5195,6 +5204,8 @@ function tab(name) {
   if (name === 'slides') {
     lastScrolledSlideIndex = null;
     lastScrolledSectionId = null;
+    quietGridFollow = true;
+    quietChipFollow = true;
     renderSlides();
   }
 }
