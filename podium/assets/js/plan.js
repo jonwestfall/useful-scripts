@@ -37,7 +37,6 @@ let preview = { renderer: null, key: null, slide: 0, step: 0, count: 0, fragment
 // from the server or pushing one there, cleared by anything that swaps the
 // plan out for a different one (a new lecture, a different local lecture, an
 // imported file, a duplicate). What "Update the copy already there" acts on.
-let currentServerPlanId = null;
 
 const selected = () => plan?.items.find((i) => i.id === selectedId) || null;
 const fmtBytes = (n) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
@@ -75,6 +74,8 @@ async function commit() {
     $('#save-state').textContent = `Saved ${new Date().toLocaleTimeString()}`;
     renderSize();
     renderPlanList();
+    if (serverMode) scheduleServerSave(plan);
+    else renderSync();
   } catch (err) {
     $('#save-state').textContent = 'NOT saved';
     warn(`This lecture could not be saved: ${err.message}`);
@@ -90,42 +91,58 @@ function renderSize() {
 
 // --- the list of lectures ----------------------------------------------------
 
+// One list (Issue #204): this browser's lectures, each saying where it lives,
+// then - on a server - the server's lectures this browser has no copy of yet
+// (another device's, or a co-instructor's), which open with a tap.
 async function renderPlanList() {
   const list = $('#plan-list');
   let rows;
   try { rows = await allPlans(); } catch (err) { warn(err.message); return; }
-  list.replaceChildren(...rows.map((row) => {
-    const button = el('button', {
-      class: `plan-row${row.id === plan?.id ? ' is-on' : ''}`,
-      type: 'button',
-      onclick: () => openPlan(row.id),
-    },
-      el('span', { class: 'plan-row-title' }, row.title || 'Untitled lecture'),
-      el('span', { class: 'plan-row-meta' },
-        `${row.items?.length || 0} item${(row.items?.length || 0) === 1 ? '' : 's'}`
-        + (row.course ? ` · ${row.course}` : '')
-        + ` · ${new Date(row.updated || 0).toLocaleDateString()}`));
-    return button;
-  }));
-  if (!rows.length) list.append(el('p', { class: 'empty' }, 'No lectures yet.'));
+  const where = (row) => {
+    if (!serverMode) return 'this browser';
+    return row.server?.id ? 'on the server' : 'this browser';
+  };
+  const local = rows.map((row) => el('button', {
+    class: `plan-row${row.id === plan?.id ? ' is-on' : ''}`,
+    type: 'button',
+    onclick: () => openPlan(row.id),
+  },
+    el('span', { class: 'plan-row-title' }, row.title || 'Untitled lecture'),
+    el('span', { class: 'plan-row-meta' },
+      el('span', { class: `plan-row-where${row.server?.id && serverMode ? ' is-server' : ''}` }, where(row)),
+      ` · ${row.items?.length || 0} item${(row.items?.length || 0) === 1 ? '' : 's'}`
+      + (row.course ? ` · ${row.course}` : '')
+      + ` · ${new Date(row.updated || 0).toLocaleDateString()}`)));
+  const linked = new Set(rows.map((r) => r.server?.id && String(r.server.id)).filter(Boolean));
+  const remote = serverMode ? serverRows.filter((r) => !linked.has(String(r.id))).map((r) => el('button', {
+    class: 'plan-row is-remote',
+    type: 'button',
+    onclick: () => openServerPlan(r.id),
+  },
+    el('span', { class: 'plan-row-title' }, r.title || 'Untitled lecture'),
+    el('span', { class: 'plan-row-meta' },
+      el('span', { class: 'plan-row-where' }, 'on the server only'),
+      [r.course && ` · ${r.course}`, r.owner && ` · ${r.owner}`, ' · tap to open'].filter(Boolean).join('')))) : [];
+  list.replaceChildren(...local, ...remote);
+  if (!rows.length && !remote.length) list.append(el('p', { class: 'empty' }, 'No lectures yet.'));
 }
 
 async function openPlan(id) {
   await commit();
+  await flushServerSave();
   const found = await loadPlan(id);
   if (!found) return;
   plan = found;
   selectedId = plan.items[0]?.id || null;
-  setCurrentServerPlanId(null);
   warn('');
   renderAll();
 }
 
 async function newPlan(seed = null) {
   await commit();
+  await flushServerSave();
   plan = seed || emptyPlan();
   selectedId = plan.items[0]?.id || null;
-  setCurrentServerPlanId(null);
   try { await savePlan(plan); } catch (err) { warn(`This lecture could not be saved: ${err.message}`); }
   renderAll();
 }
@@ -236,6 +253,8 @@ $('#order').addEventListener('drop', (ev) => {
   touch();
   renderOrder();
 });
+
+$('#order-settings').addEventListener('click', () => select(null));
 
 function select(id) {
   selectedId = id;
@@ -376,9 +395,14 @@ function renderEditor() {
   const item = selected();
   const fields = $('#item-fields');
   fields.replaceChildren();
+  // No item picked: this column holds the whole lecture's settings (Issue
+  // #205) instead of a "Nothing selected" placeholder.
+  $('#lecture-settings').hidden = !!item;
+  $('#order-settings').classList.toggle('is-on', !item);
+  $('#order-settings').setAttribute('aria-pressed', String(!item));
   if (!item) {
-    $('#item-heading').textContent = 'Nothing selected';
-    $('#item-blurb').textContent = 'Pick something from the running order, or add one.';
+    $('#item-heading').textContent = 'Lecture settings';
+    $('#item-blurb').textContent = 'For the whole lecture. Pick something in the running order to edit it instead.';
     $('#item-preview-wrap').hidden = true;
     teardownPreview();
     return;
@@ -1269,23 +1293,159 @@ $('#plan-import-file').addEventListener('change', async (ev) => {
   }
 });
 
-// --- and the same two things, to a server that keeps them --------------------
+// --- saving to a server that keeps lectures (Issue #204) ----------------------
 //
-// Deliberately beside the file rather than instead of it. A plan file is still
-// the only thing that works on GitHub Pages, from a folder, or on a train.
+// On a Podium with a server, a lecture saves itself there the way it already
+// saves itself in this browser: no Send button, just a line saying it is
+// saved, where, and who else can see it. The plan file is still offered - it
+// is the only thing that works on GitHub Pages, from a folder, or on a train -
+// just no longer as a competing main action.
+//
+// Each local lecture remembers the server row it is (plan.server: id and the
+// updatedAt this device last saw). A save is staged against that updatedAt
+// (Issue #117), so a copy changed elsewhere since is never silently replaced:
+// saving pauses and asks instead (see showConflict).
 
+let serverMode = false;
 let serverCourses = [];
-// What #plan-push-update stages its save against (Issue #117) - the update
-// this device last saw, not "now", so the server can tell a save that has
-// not drifted from one that has.
-let currentServerPlanUpdatedAt = null;
+let serverRows = [];
+const SERVER_SAVE_MS = 1500;
+let serverSaveTimer = null;
+let serverSavePending = null;     // the plan object a scheduled save is for
+let serverSaving = null;          // the save in flight, so a switch can wait for it
+let conflictPlanId = null;        // whose autosave is paused, waiting on Keep mine / Open theirs
+let sync = { state: 'idle', at: 0, note: '' };
 
-function setCurrentServerPlanId(id, updatedAt = null) {
-  currentServerPlanId = id;
-  currentServerPlanUpdatedAt = updatedAt;
-  const btn = $('#plan-push-update');
-  if (btn) btn.hidden = !id;
+// A brand-new lecture nobody has touched yet is not worth a server row.
+const worthSaving = (p) => {
+  if (!p) return false;
+  const title = String(p.title || '').trim();
+  return !!(p.items?.length || (title && title !== 'Untitled lecture') || String(p.notes || '').trim());
+};
+
+function courseFor(p) {
+  const wanted = String(p?.course || '').trim().toLowerCase();
+  return { wanted, matched: serverCourses.find((c) => c.code === wanted) || null };
 }
+
+function setSync(state, note = '') {
+  sync = { state, at: Date.now(), note };
+  renderSync();
+}
+
+function renderSync() {
+  const line = $('#plan-sync');
+  if (!line || !plan) return;
+  const time = (at) => new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const conflicted = serverMode && conflictPlanId === plan.id;
+  $('#plan-conflict').hidden = !conflicted;
+  line.className = 'plan-sync';
+  if (!serverMode) {
+    line.textContent = plan.updated ? `Saved in this browser · ${time(plan.updated)}` : '';
+    return;
+  }
+  if (conflicted) { line.textContent = 'Not saved to the server - see below'; line.classList.add('is-warn'); return; }
+  if (!plan.server?.id && !worthSaving(plan)) { line.textContent = 'Saves to the server once it has a title or something in it'; return; }
+  if (sync.state === 'saving') { line.textContent = 'Saving to the server…'; return; }
+  if (sync.state === 'error') { line.textContent = `Not saved to the server: ${sync.note} It is still saved in this browser.`; line.classList.add('is-warn'); return; }
+  if (plan.server?.id) {
+    const { wanted, matched } = courseFor(plan);
+    line.textContent = `Saved to the server · ${time(plan.server.savedAt || sync.at || Date.now())} · `
+      + (matched ? `shared with ${matched.code}` : `yours alone${wanted ? ` (there is no course "${wanted}" here to file it under)` : ''}`);
+    line.classList.add('is-ok');
+    return;
+  }
+  line.textContent = 'Saving to the server…';
+}
+
+function scheduleServerSave(p) {
+  if (!serverMode || !p || conflictPlanId === p.id || !worthSaving(p)) { renderSync(); return; }
+  serverSavePending = p;
+  clearTimeout(serverSaveTimer);
+  serverSaveTimer = setTimeout(() => { serverSaving = serverSave(p); }, SERVER_SAVE_MS);
+  if (p === plan) setSync('saving');
+}
+
+// Before switching lectures: the outgoing one's save goes now, not never.
+async function flushServerSave() {
+  if (serverSaveTimer && serverSavePending) {
+    clearTimeout(serverSaveTimer);
+    serverSaveTimer = null;
+    serverSaving = serverSave(serverSavePending);
+  }
+  try { await serverSaving; } catch { /* reported on the sync line */ }
+}
+
+async function serverSave(p, { force = false } = {}) {
+  serverSaveTimer = null;
+  if (serverSavePending === p) serverSavePending = null;
+  if (!serverMode || !p || (conflictPlanId === p.id && !force)) return;
+  const { matched } = courseFor(p);
+  const payload = { title: p.title, course: matched?.code || '', doc: planToJson(p) };
+  try {
+    let res;
+    if (p.server?.id) {
+      res = await fetch(`/api/plans/${encodeURIComponent(p.server.id)}`, {
+        method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...payload, ...(force ? {} : { baseUpdatedAt: p.server.updatedAt }) }),
+      });
+      // Deleted from the server elsewhere: this is still a lecture someone is
+      // editing, so it goes back up as a new row rather than vanishing.
+      if (res.status === 404) { p.server = null; return serverSave(p); }
+      if (res.status === 409) { showConflict(p); return; }
+    } else {
+      res = await fetch('/api/plans', {
+        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `the server said ${res.status}.`);
+    p.server = { id: String(body.plan.id), updatedAt: body.plan.updatedAt, savedAt: Date.now() };
+    await savePlan(p);
+    if (p === plan) setSync('saved');
+    refreshServerPlans();
+  } catch (err) {
+    if (p === plan) setSync('error', /[.!?]$/.test(err.message) ? err.message : `${err.message}.`);
+  }
+}
+
+function showConflict(p) {
+  conflictPlanId = p.id;
+  if (p === plan) setSync('conflict');
+}
+
+$('#plan-conflict-mine').addEventListener('click', async () => {
+  conflictPlanId = null;
+  setSync('saving');
+  await serverSave(plan, { force: true });
+});
+
+$('#plan-conflict-theirs').addEventListener('click', async () => {
+  const mine = plan;
+  try {
+    const res = await fetch(`/api/plans/${encodeURIComponent(mine.server.id)}`, { credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'that did not open');
+    const { plan: theirs, warnings } = readPlan(typeof body.plan.doc === 'string' ? body.plan.doc : JSON.stringify(body.plan.doc));
+    // Yours stays, as its own lecture in this browser, no longer tied to
+    // the server row; theirs takes over that row (and this lecture's place).
+    const copy = { ...structuredClone(mine), id: uid(10), server: null, title: `${mine.title || 'Untitled lecture'} (my copy)`, updated: Date.now() };
+    await savePlan(copy);
+    theirs.id = mine.id;
+    // The row's title is the one every list shows; a rename made through the
+    // server is still theirs even when the document inside predates it.
+    if (body.plan.title) theirs.title = body.plan.title;
+    theirs.server = { id: String(body.plan.id), updatedAt: body.plan.updatedAt, savedAt: Date.now() };
+    conflictPlanId = null;
+    plan = null;                     // so newPlan's commit() cannot write mine back over it
+    await newPlan(theirs);
+    setSync('saved');
+    warn(warnings.length ? `Opened with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}` : '');
+  } catch (err) {
+    warn(`The server's copy did not open: ${err.message}`);
+  }
+});
 
 async function refreshServerPlans() {
   try {
@@ -1293,140 +1453,56 @@ async function refreshServerPlans() {
     if (!res.ok) return;
     const data = await res.json();
     serverCourses = data.courses || [];
-    const pick = $('#plan-pull-pick');
-    pick.replaceChildren();
-    for (const row of data.plans || []) {
-      const label = [row.title, row.course && `(${row.course})`, row.owner && `— ${row.owner}`]
-        .filter(Boolean).join(' ');
-      pick.append(el('option', { value: String(row.id) }, label));
-    }
-    if (!(data.plans || []).length) pick.append(el('option', { value: '' }, 'Nothing saved here yet'));
-    // The plan this page is showing may itself be the one just deleted from
-    // elsewhere (another tab, another device) - the picker's own list is the
-    // one place that would notice, so check it here rather than only after
-    // this page's own Delete button.
-    if (currentServerPlanId && !(data.plans || []).some((r) => String(r.id) === String(currentServerPlanId))) {
-      setCurrentServerPlanId(null);
-    }
-  } catch { /* the file buttons above still work, which is the point */ }
+    serverRows = data.plans || [];
+    renderPlanList();
+    renderSync();
+  } catch { /* this browser's own copy still works, which is the point */ }
 }
 
-$('#plan-push').addEventListener('click', async () => {
-  await commit();
-  const note = $('#plan-push-note');
-  // The planning page's Course box is free text; the server only accepts a
-  // course you are a member of. Rather than silently dropping it or silently
-  // saving somewhere unexpected, match what we can and say what happened.
-  const wanted = String(plan.course || '').trim().toLowerCase();
-  const matched = serverCourses.find((c) => c.code === wanted);
-  try {
-    const res = await fetch('/api/plans', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: plan.title, course: matched?.code || '', doc: planToJson(plan) }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || 'that did not work');
-    note.textContent = matched
-      ? `Sent — on the iPad now, shared with ${matched.code}.`
-      : `Sent — on the iPad now, and yours alone${wanted ? ` (there is no course "${wanted}" here to file it under)` : ''}.`;
-    // This copy IS the one just created - a follow-up edit can now update it
-    // in place instead of sending yet another new row.
-    setCurrentServerPlanId(body.plan.id, body.plan.updatedAt);
-    await refreshServerPlans();
-  } catch (err) {
-    note.textContent = err.message;
-  }
-});
-
-// Only ever visible once currentServerPlanId is known - see setCurrentServerPlanId
-// and #plan-server's markup, which starts this button [hidden].
-//
-// Staged against currentServerPlanUpdatedAt (Issue #117): if someone else -
-// another device, another tab, a co-instructor with the same course - saved
-// this plan since it was last opened or pushed here, the server refuses with
-// 409 rather than one save silently erasing the other. `force` retries with
-// no base at all, which the server takes as "skip the check" - the explicit,
-// deliberate way to say "overwrite it anyway" once a person has agreed to that.
-async function pushPlanUpdate({ force = false } = {}) {
-  const note = $('#plan-push-note');
-  if (!currentServerPlanId) return;
-  const wanted = String(plan.course || '').trim().toLowerCase();
-  const matched = serverCourses.find((c) => c.code === wanted);
-  try {
-    const res = await fetch(`/api/plans/${encodeURIComponent(currentServerPlanId)}`, {
-      method: 'PUT',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        title: plan.title, course: matched?.code || '', doc: planToJson(plan),
-        ...(force ? {} : { baseUpdatedAt: currentServerPlanUpdatedAt }),
-      }),
-    });
-    if (res.status === 409) {
-      if (confirm('This lecture changed on the server since it was opened here - probably from another device or tab. '
-        + 'Overwrite the server\'s copy with what is on this one?')) {
-        await pushPlanUpdate({ force: true });
-      } else {
-        note.textContent = 'Not sent. Pull the server\'s copy first to see what changed, or push again once you are sure.';
-      }
-      return;
-    }
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || 'that did not work');
-    currentServerPlanUpdatedAt = body.plan.updatedAt;
-    note.textContent = `Updated — the copy already on the server now matches this${matched ? `, shared with ${matched.code}` : ''}.`;
-    await refreshServerPlans();
-  } catch (err) {
-    note.textContent = err.message;
-  }
-}
-$('#plan-push-update').addEventListener('click', async () => {
-  await commit();
-  await pushPlanUpdate();
-});
-
-$('#plan-pull').addEventListener('click', async () => {
-  const id = $('#plan-pull-pick').value;
-  if (!id) return;
+// A lecture on the server this browser has no copy of: open it, and it is
+// tied to that row from then on, so editing it saves back there.
+async function openServerPlan(id) {
   try {
     const res = await fetch(`/api/plans/${encodeURIComponent(id)}`, { credentials: 'same-origin' });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || 'that did not open');
     const { plan: loaded, warnings } = readPlan(typeof body.plan.doc === 'string' ? body.plan.doc : JSON.stringify(body.plan.doc));
+    loaded.id = uid(10);
+    if (body.plan.title) loaded.title = body.plan.title;
+    loaded.server = { id: String(body.plan.id), updatedAt: body.plan.updatedAt, savedAt: Date.now() };
     await newPlan(loaded);
-    // newPlan() resets this (it resets for every OTHER caller too - a new
-    // blank lecture, a local one, an import), so it is set back only here,
-    // once the pulled plan is actually the one on screen.
-    setCurrentServerPlanId(id, body.plan.updatedAt);
     warn(warnings.length ? `Opened with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}` : '');
   } catch (err) {
     warn(`That lecture did not open: ${err.message}`);
   }
-});
+}
 
-// wireDangerButton leaves the button disabled after the action, which is
-// wrong here for the same reason it is wrong for #plan-delete above: deleting
-// one server lecture must not lock the button against the next one picked.
-let deleteServerPlanButton;
-deleteServerPlanButton = wireDangerButton($('#plan-pull-delete'), 'Delete from server', async () => {
-  const id = $('#plan-pull-pick').value;
-  const note = $('#plan-push-note');
-  if (!id) { $('#plan-pull-delete').disabled = false; deleteServerPlanButton.disarm(); return; }
-  try {
-    const res = await fetch(`/api/plans/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin' });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || 'that did not delete');
-    if (String(id) === String(currentServerPlanId)) setCurrentServerPlanId(null);
-    note.textContent = 'Removed from the server. The file on your own machine, if you saved one, is untouched.';
-    await refreshServerPlans();
-  } catch (err) {
-    note.textContent = err.message;
-  }
-  $('#plan-pull-delete').disabled = false;
-  deleteServerPlanButton.disarm();
-}, { armedLabel: 'Tap again to delete' });
+// Which one main action the rail offers (Issue #204), and what its footer says.
+function setServerMode(on) {
+  serverMode = on;
+  $('#plan-new').classList.toggle('is-primary', on);
+  $('#plan-new-more').classList.toggle('is-primary', on);
+  $('#plan-export').classList.toggle('big-button', !on);
+  $('#plan-export').textContent = on ? 'Export plan file' : 'Save a plan file for the iPad';
+  $('#plan-where-hint').textContent = on
+    ? 'Lectures save to this server as you work, so they are on the iPad in class with no file to carry: Library → Lectures on the server. Export a plan file for a machine with no server, or to keep a copy.'
+    : 'Plans live in this browser on this machine. To teach from one, save a plan file and open it on the iPad: Library → Load a lecture plan in the controller.';
+  renderPlanList();
+  renderSync();
+}
+
+// "+ New lecture ▾": the other two ways to start one.
+function setNewMenu(open) {
+  $('#plan-new-menu').hidden = !open;
+  $('#plan-new-more').setAttribute('aria-expanded', String(open));
+}
+$('#plan-new-more').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  setNewMenu($('#plan-new-menu').hidden);
+});
+$('#plan-new-menu').addEventListener('click', () => setNewMenu(false));
+document.addEventListener('click', (ev) => { if (!ev.target.closest('.plan-new-wrap')) setNewMenu(false); });
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') setNewMenu(false); });
 
 // --- course plan templates (Issue #80) ---------------------------------
 //
@@ -1520,8 +1596,8 @@ serverInfo().then((info) => {
     mountPlanZipImport();
   }
   if (!info.features.includes('plans')) return;
-  $('#plan-server').hidden = false;
-  refreshServerPlans();
+  setServerMode(true);
+  refreshServerPlans().then(() => { if (plan) scheduleServerSave(plan); });
   if (info.features.includes('templates')) refreshTemplates();
 });
 
@@ -1532,6 +1608,7 @@ $('#plan-duplicate').addEventListener('click', async () => {
   copy.id = uid(10);
   copy.title = `${plan.title} (copy)`;
   copy.created = Date.now();
+  copy.server = null;
   await newPlan(copy);
 });
 
@@ -1540,6 +1617,24 @@ $('#plan-duplicate').addEventListener('click', async () => {
 // here: deleting one lecture must not lock the button for the next one.
 let deleteButton;
 deleteButton = wireDangerButton($('#plan-delete'), 'Delete this lecture', async () => {
+  // On a server, "this lecture" is both copies (Issue #204) - the tap-again
+  // label says so. An exported plan file is untouched either way.
+  if (serverMode && plan.server?.id) {
+    try {
+      const res = await fetch(`/api/plans/${encodeURIComponent(plan.server.id)}`, { method: 'DELETE', credentials: 'same-origin' });
+      if (!res.ok && res.status !== 404) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `the server said ${res.status}.`);
+      }
+    } catch (err) {
+      warn(`Not deleted - the server's copy could not be removed: ${err.message}`);
+      $('#plan-delete').disabled = false;
+      deleteButton.disarm();
+      return;
+    }
+  }
+  clearTimeout(serverSaveTimer);
+  serverSavePending = null;
   const doomed = plan.id;
   const rows = (await allPlans()).filter((r) => r.id !== doomed);
   plan = null;                       // so commit() cannot write it back
@@ -1548,7 +1643,14 @@ deleteButton = wireDangerButton($('#plan-delete'), 'Delete this lecture', async 
   else await newPlan();
   $('#plan-delete').disabled = false;
   deleteButton.disarm();
+  refreshServerPlans();
 }, { armedLabel: 'Tap again to delete' });
+// The confirmation names both copies when there are two.
+$('#plan-delete').addEventListener('click', () => {
+  if ($('#plan-delete').classList.contains('is-danger') && serverMode && plan?.server?.id) {
+    $('#plan-delete').textContent = 'Tap again: delete here and on the server';
+  }
+});
 
 // --- boot --------------------------------------------------------------------
 
@@ -1560,6 +1662,7 @@ function renderAll() {
   renderEditor();
   renderSize();
   renderPlanList();
+  renderSync();
 }
 
 loadMusicPlaylists();

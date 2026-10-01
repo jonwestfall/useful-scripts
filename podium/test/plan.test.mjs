@@ -353,5 +353,13 @@ chk('invalid autoLaunch fields are sanitized and warned', (() => {
   chk('and it round-trips', again.images === deck.images && again.title === 'Week 3');
 }
 
+console.log('-- a lecture\'s server link stays in this browser (Issue #204) --');
+{
+  const linked = { ...emptyPlan('Saved to a server'), server: { id: '42', updatedAt: 1234 } };
+  const json = planToJson(linked);
+  chk('an exported plan file does not carry which server row it saves to', !json.includes('"server"') && JSON.parse(json).title === 'Saved to a server');
+  chk('and the lecture itself still knows', linked.server.id === '42');
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

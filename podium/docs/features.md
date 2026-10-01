@@ -407,12 +407,16 @@ Do the fiddly part at your desk, not in front of forty people.
 The **Plan** page (`plan.html`) is designed for your office computer:
 - Drag-and-drop your slides, PDFs, YouTube URLs, and notes into an ordered running order.
 - Set a **target length** (30 minutes to 3 hours) and watch the running order's planned minutes add up against it.
+- **Lecture settings** (Issue #205): the pinned row at the top of the running order opens what applies to the whole lecture (its countdowns, the screen layout to start in, auto-launch and notes to yourself) in the right-hand column, where an item's details go when you pick one.
 - Save **countdowns** for this lecture; each *Countdown* item gets its own timer, up to the room's four. They replace the iPad's preset buttons.
 - Write **notes to yourself** per item, and optional [pre-scripted captions](#pre-scripted-captions).
 - **Auto-launch on plan load**: stage what each pane shows, start background music and a countdown, and choose whether it all opens **live**, **staged in the cue** (behind Freeze), or **blacked out**.
 - Upload files straight to the server library from an item 🖥️, and start a new lecture from your course's **template** 🖥️.
-- Export as a single `.podium` file to load onto your iPad, or sync directly via the self-hosted server.
-- On a self-hosted server, **Update the copy already there** overwrites a lecture you previously sent instead of leaving a duplicate behind, and **Delete from server** removes one you no longer need — the plan file on your own machine, if you saved one, is untouched either way.
+- **On a self-hosted server, lectures save themselves to the server** as you work (Issue #204), the same way they already save in your browser. The left column says *Saved to the server* and who it's shared with: the course you typed, if the server has it, or *yours alone*. The lecture is then on the iPad in class with no file to carry. A brand-new lecture saves once it has a title or something in it.
+- **One list**: your lectures in this browser and the ones on the server are one list, each row saying where it lives. A lecture saved from another device, or by a co-instructor, shows as *on the server only*; tap it to open it here.
+- **Nothing is overwritten silently.** If the server's copy changed somewhere else since you opened it, saving to the server pauses and says so: **Keep mine** replaces the server's copy with yours, and **Open theirs** opens the server's, keeping yours here as a copy.
+- **Delete this lecture** on a server removes it here *and* from the server, and its confirmation says so. A plan file you exported is untouched.
+- **One main button.** On a server that's **New lecture** (its ▾ also offers your course's template and *Open a plan file*), and **Export plan file** is there for a machine with no server, or to keep a copy. Without a server, **Save a plan file for the iPad** is the main button, since a plan file is how a lecture gets onto the iPad there.
 - **Start in picture-in-picture.** Under *Screen layout to start in*, the PiP layout lets a plan choose which pane fills the screen, which is the inset, the inset's corner and its size. Auto-launch then stages what each pane shows when the plan is opened in class.
 
 #### Importing a whole folder (ZIP)

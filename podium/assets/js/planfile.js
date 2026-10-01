@@ -350,7 +350,10 @@ export function planFileName(plan) {
 }
 
 export function planToJson(plan) {
-  return JSON.stringify(pruneAssets({ ...plan, v: PLAN_VERSION, podium: 'plan' }), null, 2);
+  // `server` is this browser's own note of which server row a lecture saves
+  // to (Issue #204) - it means nothing in a file carried somewhere else.
+  const { server: _server, ...rest } = plan;
+  return JSON.stringify(pruneAssets({ ...rest, v: PLAN_VERSION, podium: 'plan' }), null, 2);
 }
 
 // A plan is a file that arrived from somewhere else, which makes its `src`

@@ -122,6 +122,17 @@ await desk.click('#order .order-row:nth-child(2) [title="Move down"]');
 ok('and back down', /Weighing the Evidence/.test(await desk.textContent('#order .order-row:nth-child(3) .order-title')));
 
 await desk.fill('#item-fields textarea:last-of-type', 'ask about the confound');
+// The lecture's own settings open in the right column, like an item (Issue #205).
+ok('without a server, the one main action is the plan file for the iPad (Issue #204)',
+  (await desk.$$('#col-plans .big-button')).length === 1 && (await desk.textContent('#col-plans .big-button')) === 'Save a plan file for the iPad'
+  && !(await desk.$eval('#plan-new', (b) => b.classList.contains('is-primary'))));
+ok('and it says the lecture is saved in this browser', /Saved in this browser/.test(await desk.textContent('#plan-sync')));
+ok('with an item open, the lecture settings are out of the way', await desk.isHidden('#lecture-settings'));
+await desk.click('#order-settings');
+ok('"Lecture settings" opens them in the right column, in the item\'s place',
+  await desk.isVisible('#lecture-settings') && await desk.isHidden('#item-fields > *')
+  && (await desk.textContent('#item-heading')) === 'Lecture settings'
+  && await desk.evaluate(() => document.querySelector('#col-item').contains(document.querySelector('#timer-new-label'))));
 await desk.fill('#timer-new-label', 'Group work');
 await desk.fill('#timer-new-mins', '8');
 await desk.click('#timer-add');
@@ -412,17 +423,21 @@ ok('a fifth Countdown item finds no free slot left, and asks which of the four t
 
 // Naming and sizing a timer happens right there in the Timers list - it used
 // to be a static line, unrenamable and unresizable once created.
+// The Timers list is with the lecture's own settings (Issue #205).
+await desk.click('#order-settings');
 await desk.fill('#timers .timer-row:nth-child(1) input[type=text]', 'Group work');
 await desk.fill('#timers .timer-row:nth-child(1) input[type=number]', '12');
-ok(`renaming and resizing a timer in place reaches every item's picker immediately (${(await timerPickOptions()).join(', ')})`,
+await desk.click('#order .order-row:first-child .order-open');
+ok(`renaming and resizing a timer in place reaches every item's picker (${(await timerPickOptions()).join(', ')})`,
   (await timerPickOptions()).includes('Group work · 12m'));
 
 // Removing a timer a Countdown item was actually using leaves that item
 // honestly unassigned - not silently pointed at whatever is left. The very
 // first Countdown item above was assigned to the very first timer created,
 // still the first row in the Timers list (renaming does not reorder it).
+await desk.click('#order-settings');
 await desk.click('#timers .timer-row:nth-child(1) button');
-await desk.click('#order .order-row:first-child');
+await desk.click('#order .order-row:first-child .order-open');
 ok('and its picker comes back asking again, rather than pointing at a timer that no longer exists',
   (await timerPickOptions())[0] === 'Choose a timer…');
 
@@ -1369,8 +1384,10 @@ ok('and picking it puts it on the projector, rendered from the uploaded bytes', 
 const planner = await acctCtx.newPage();
 trap(planner, 'acct plan');
 await planner.goto(`${acctBase}/plan.html`);
-await planner.waitForSelector('#plan-server:not([hidden])');
-ok('the planning page offers the server when there is one', true);
+await planner.waitForSelector('#plan-new.is-primary');
+ok('on a server, the planning page has one main action - New lecture (Issue #204)',
+  (await planner.$$('#col-plans .big-button')).length === 0
+  && (await planner.textContent('#plan-export')) === 'Export plan file');
 
 // Issue #108: a PDF/video/audio item can upload straight to this server's
 // library from the planner too, not just from the controller - the same
@@ -1398,22 +1415,19 @@ await planner.click('#plan-new');
 // was already empty, or the title typed next gets wiped by that re-render.
 await planner.waitForFunction(() => !document.querySelector('#order .order-row'), null, { timeout: 5000 });
 
+const syncText = () => planner.textContent('#plan-sync');
+const serverPlans = () => planner.evaluate(async () => {
+  const res = await fetch('/api/plans', { credentials: 'same-origin' });
+  return (await res.json()).plans;
+});
 await planner.fill('#plan-title', 'Day 6 — sent, not carried');
 await planner.fill('#plan-course', 'psy415');
-await planner.click('#plan-push');
-await planner.waitForFunction(() => /Sent/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
-ok(`sending it says where it went ("${(await planner.textContent('#plan-push-note')).trim()}")`,
-  /shared with psy415/.test(await planner.textContent('#plan-push-note')));
-
-// A course the server has never heard of must not silently become a share.
-await planner.fill('#plan-course', 'not-a-real-course');
-await planner.click('#plan-push');
-await planner.waitForFunction(() => /yours alone/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
-ok('a course this server does not have is saved privately, and says so rather than guessing',
-  /no course "not-a-real-course"/.test(await planner.textContent('#plan-push-note')));
+await planner.waitForFunction(() => /Saved to the server.*shared with psy415/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
+ok(`it saves itself to the server, and says where it went ("${(await syncText()).trim()}")`, true);
+ok('and the list says it lives there', /on the server/.test(await planner.textContent('#plan-list .plan-row.is-on')));
 
 // And in class. Opening the Library tab is what re-reads the list, which is
-// the point: this controller was already open before the plan was sent, and
+// the point: this controller was already open before the plan was saved, and
 // must not need a reload to see it.
 await pad.click('.tab[data-tab="library"]');
 await pad.waitForSelector('#plan-server:not([hidden])', { timeout: 8000 });
@@ -1431,117 +1445,119 @@ await pad.waitForFunction(() => /Loaded/.test(document.querySelector('#plan-note
 ok(`opening it in class needs no file at all ("${(await pad.textContent('#plan-note')).trim()}")`,
   /Day 6 — sent, not carried/.test(await pad.textContent('#plan-note')));
 
-// -- Issue #88: overwrite and delete a plan already on the server ------------
-//
-// planner's second push above (the "not-a-real-course" one) is the plan under
-// test here - a private one nothing else in this section reads from, so
-// updating and deleting it cannot disturb "Day 6 — sent, not carried" itself,
-// which the controller just opened and the rest of this section still needs.
-ok('pushing a second time left Update visible for what it just created',
-  await planner.isVisible('#plan-push-update'));
+// A course the server has never heard of must not silently become a share.
+await planner.click('#plan-new');
+await planner.waitForFunction(() => document.querySelector('#plan-course').value === '' && !document.querySelector('#order .order-row'), null, { timeout: 5000 });
+await planner.fill('#plan-title', 'Day 6 — private draft');
+await planner.fill('#plan-course', 'not-a-real-course');
+await planner.waitForFunction(() => /yours alone/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
+ok('a course this server does not have is saved privately, and says so rather than guessing',
+  /no course "not-a-real-course"/.test(await syncText()));
 
-await planner.fill('#plan-title', 'Day 6 — sent, not carried (revised)');
-await planner.click('#plan-push-update');
-await planner.waitForFunction(() => /Updated/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
-
-const afterUpdate = await planner.evaluate(async () => {
+// -- Issue #88 / #204: later edits update the same server row ---------------
+await planner.fill('#plan-title', 'Day 6 — private draft (revised)');
+await planner.waitForFunction(async () => {
   const res = await fetch('/api/plans', { credentials: 'same-origin' });
-  return (await res.json()).plans;
-});
-ok('Update overwrote the same server row rather than creating another (still 2 of planner\'s own plans)',
-  afterUpdate.filter((p) => /sent, not carried/.test(p.title)).length === 2);
-ok('and the title on the server actually changed',
-  afterUpdate.some((p) => p.title === 'Day 6 — sent, not carried (revised)'));
+  return (await res.json()).plans.some((p) => p.title === 'Day 6 — private draft (revised)');
+}, null, { timeout: 10000, polling: 500 });
+const afterEdit = await serverPlans();
+ok('an edit saves over the same server row rather than adding another',
+  afterEdit.filter((p) => /private draft/.test(p.title)).length === 1);
+ok('and the lecture the controller opened is untouched', afterEdit.some((p) => p.title === 'Day 6 — sent, not carried'));
 
-const revisedId = afterUpdate.find((p) => p.title === 'Day 6 — sent, not carried (revised)').id;
-await planner.selectOption('#plan-pull-pick', String(revisedId));
-await planner.click('#plan-pull-delete');
-await planner.waitForFunction(() => /Tap again to delete/.test(document.querySelector('#plan-pull-delete')?.textContent || ''), null, { timeout: 3000 });
-ok('deleting a server plan asks twice, like other destructive buttons here', true);
-await planner.click('#plan-pull-delete');
-await planner.waitForFunction(() => /Removed/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
-
-const afterDelete = await planner.evaluate(async () => {
-  const res = await fetch('/api/plans', { credentials: 'same-origin' });
-  return (await res.json()).plans;
+// -- one list: a lecture saved from another device shows up, and opens -------
+await planner.evaluate(async () => {
+  await fetch('/api/plans', {
+    method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'From another device', course: '', doc: JSON.stringify({ podium: 'plan', v: 1, title: 'From another device', items: [] }) }),
+  });
 });
-ok('the deleted plan is actually gone from the server, not just the picker',
-  !afterDelete.some((p) => p.id === revisedId));
-ok('and the OTHER plan this section still needs is untouched',
-  afterDelete.some((p) => p.title === 'Day 6 — sent, not carried'));
-ok('Update button hides itself once the plan it pointed at is gone',
-  await planner.isHidden('#plan-push-update'));
+await planner.reload();
+await planner.waitForSelector('#plan-list .plan-row.is-remote:has-text("From another device")', { timeout: 10000 });
+ok('a lecture on the server this browser has no copy of is in the same list, marked as such',
+  /on the server only/.test(await planner.textContent('#plan-list .plan-row.is-remote:has-text("From another device")')));
+await planner.click('#plan-list .plan-row.is-remote:has-text("From another device")');
+await planner.waitForFunction(() => document.querySelector('#plan-title').value === 'From another device', null, { timeout: 8000 });
+ok('tapping it opens it here', true);
+ok('and it is no longer listed twice', (await planner.$$('#plan-list .plan-row.is-remote:has-text("From another device")')).length === 0
+  && (await planner.$$('#plan-list .plan-row:has-text("From another device")')).length === 1);
+
+// -- Delete removes both copies, and says so ---------------------------------
+await planner.click('#plan-delete');
+ok('deleting asks twice, naming both copies', (await planner.textContent('#plan-delete')) === 'Tap again: delete here and on the server');
+await planner.click('#plan-delete');
+await planner.waitForFunction(() => !document.querySelector('#plan-list').textContent.includes('From another device'), null, { timeout: 8000 });
+ok('it is gone from this browser\'s list', true);
+ok('and from the server', !(await serverPlans()).some((p) => p.title === 'From another device'));
 ok('and the button re-arms for the next lecture rather than staying locked',
-  await planner.isEnabled('#plan-pull-delete') && await planner.textContent('#plan-pull-delete') === 'Delete from server');
+  await planner.isEnabled('#plan-delete') && (await planner.textContent('#plan-delete')) === 'Delete this lecture');
 
-// -- Issue #117: warn before one save silently erases another -------------
+// -- Issue #117 / #204: a copy changed elsewhere pauses saving, and asks -----
 //
 // A second device (or tab) saving the same plan in between is simulated by
 // calling the API directly, exactly what actually happens when someone else
-// is the one who does it - this page's own Update button has no way to tell
-// the difference, which is the point.
+// is the one who does it.
 await planner.click('#plan-new');
-await planner.waitForFunction(() => document.querySelector('#plan-course').value === '', null, { timeout: 5000 });
+await planner.waitForFunction(() => document.querySelector('#plan-course').value === '' && !document.querySelector('#order .order-row'), null, { timeout: 5000 });
 await planner.fill('#plan-title', 'Two tabs, one lecture');
 await planner.fill('#plan-course', 'psy415');
-await planner.click('#plan-push');
-await planner.waitForFunction(() => /Sent/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
-const conflictPlanId = await planner.evaluate(async () => {
-  const res = await fetch('/api/plans', { credentials: 'same-origin' });
-  const { plans: rows } = await res.json();
-  return rows.find((p) => p.title === 'Two tabs, one lecture').id;
-});
-await planner.evaluate(async (id) => {
+await planner.waitForFunction(() => /Saved to the server/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
+const conflictPlanId = (await serverPlans()).find((p) => p.title === 'Two tabs, one lecture').id;
+const otherTabSaves = (title) => planner.evaluate(async ([id, t]) => {
   await fetch(`/api/plans/${id}`, {
     method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ title: 'Two tabs, one lecture (saved from the other tab)' }),
+    body: JSON.stringify({ title: t }),
   });
+}, [conflictPlanId, title]);
+const serverTitle = () => planner.evaluate(async (id) => {
+  const res = await fetch(`/api/plans/${id}`, { credentials: 'same-origin' });
+  return (await res.json()).plan.title;
 }, conflictPlanId);
 
-await planner.fill('#plan-title', 'Two tabs, one lecture (this one)');
-// Both clicks below stage their PUT against the same now-stale
-// updatedAt (declining does not update it, so the retry after accepting
-// hits the same 409 before its own force-retry gets past it) - two
-// deliberate conflicts, not one.
+await otherTabSaves('Two tabs, one lecture (saved from the other tab)');
 expecting.planConflict = true;
-planner.once('dialog', (d) => d.dismiss());
-await planner.click('#plan-push-update');
-await planner.waitForFunction(() => /Not sent/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
-ok('declining the overwrite prompt leaves the server copy alone, not silently applied anyway', true);
-const stillTheOtherTabs = await planner.evaluate(async (id) => {
-  const res = await fetch(`/api/plans/${id}`, { credentials: 'same-origin' });
-  return (await res.json()).plan.title;
-}, conflictPlanId);
-ok('the server still has what the "other tab" saved, not this one\'s title',
-  stillTheOtherTabs === 'Two tabs, one lecture (saved from the other tab)');
+await planner.fill('#plan-title', 'Two tabs, one lecture (this one)');
+await planner.waitForSelector('#plan-conflict:not([hidden])', { timeout: 10000 });
+ok('the next autosave notices, pauses, and says so instead of overwriting', /paused/.test(await planner.textContent('#plan-conflict')));
+ok('the server still has what the "other tab" saved', (await serverTitle()) === 'Two tabs, one lecture (saved from the other tab)');
+await planner.fill('#plan-notes', 'still typing while paused').catch(async () => {
+  await planner.click('#order-settings');
+  await planner.fill('#plan-notes', 'still typing while paused');
+});
+await planner.waitForTimeout(2500);
+ok('and keeps not overwriting while you carry on editing', (await serverTitle()) === 'Two tabs, one lecture (saved from the other tab)');
 
-planner.once('dialog', (d) => d.accept());
-await planner.click('#plan-push-update');
-await planner.waitForFunction(() => /Updated/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+await planner.click('#plan-conflict-mine');
+await planner.waitForFunction(() => /Saved to the server/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
+ok('Keep mine puts this one on the server', (await serverTitle()) === 'Two tabs, one lecture (this one)');
+ok('and the warning goes', await planner.isHidden('#plan-conflict'));
+
+await otherTabSaves('Two tabs, one lecture (theirs)');
+await planner.fill('#plan-title', 'Two tabs, one lecture (mine again)');
+await planner.waitForSelector('#plan-conflict:not([hidden])', { timeout: 10000 });
+await planner.click('#plan-conflict-theirs');
+await planner.waitForFunction(() => document.querySelector('#plan-title').value === 'Two tabs, one lecture (theirs)', null, { timeout: 8000 });
 expecting.planConflict = false;
-const afterForce = await planner.evaluate(async (id) => {
-  const res = await fetch(`/api/plans/${id}`, { credentials: 'same-origin' });
-  return (await res.json()).plan.title;
-}, conflictPlanId);
-ok('agreeing to overwrite it forces the save through, this device\'s title now on the server',
-  afterForce === 'Two tabs, one lecture (this one)');
+ok('Open theirs opens the server\'s copy', (await serverTitle()) === 'Two tabs, one lecture (theirs)');
+ok('and keeps yours here as a copy rather than throwing it away',
+  (await planner.textContent('#plan-list')).includes('Two tabs, one lecture (mine again) (my copy)'));
 
-await planner.selectOption('#plan-pull-pick', String(conflictPlanId));
-await planner.click('#plan-pull-delete');
-await planner.waitForFunction(() => /Tap again to delete/.test(document.querySelector('#plan-pull-delete')?.textContent || ''), null, { timeout: 3000 });
-await planner.click('#plan-pull-delete');
-await planner.waitForFunction(() => /Removed/.test(document.querySelector('#plan-push-note')?.textContent || ''), null, { timeout: 8000 });
+await planner.click('#plan-delete');
+await planner.click('#plan-delete');
+await planner.waitForFunction(() => !document.querySelector('#plan-list').textContent.includes('(theirs)'), null, { timeout: 8000 });
 
 // -- Issue #80: a course's plan template ----------------------------------
 await planner.fill('#plan-course', 'psy415');
-ok('no template yet, so "New lecture from template" is not offered', await planner.isHidden('#plan-new-from-template'));
+ok('no template yet, so "New lecture from template" is not offered', await planner.$eval('#plan-new-from-template', (b) => b.hidden));
 ok('but the row itself is, once a course is named, so Save is reachable', await planner.isVisible('#plan-template-row'));
 
 await planner.fill('#plan-title', "This week's shape");
 await planner.click('#plan-save-template');
 await planner.waitForFunction(() => /can start from this/.test(document.querySelector('#plan-template-note')?.textContent || ''), null, { timeout: 8000 });
 ok('saving the current lecture as psy415\'s template works', true);
-ok('and "New lecture from template" now offers it', await planner.isVisible('#plan-new-from-template'));
+await planner.click('#plan-new-more');
+ok('and "New lecture from template" now offers it, under New lecture ▾', await planner.isVisible('#plan-new-from-template'));
+await planner.keyboard.press('Escape');
 ok('and Remove appears alongside Save now that there is something to remove',
   await planner.isVisible('#plan-remove-template'));
 
@@ -1553,6 +1569,7 @@ await planner.click('#plan-new');
 // lecture' default) before touching it again.
 await planner.waitForFunction(() => document.querySelector('#plan-course').value === '', null, { timeout: 5000 });
 await planner.fill('#plan-course', 'psy415');
+await planner.click('#plan-new-more');
 await planner.click('#plan-new-from-template');
 await planner.waitForFunction(() => document.querySelector('#plan-title').value === "This week's shape", null, { timeout: 5000 });
 ok('starting a new lecture from the template loads its content, not a blank one', true);
@@ -1580,7 +1597,7 @@ await Promise.all([memberPlanner.waitForURL(/index\.html/), memberPlanner.click(
 await memberPlanner.goto(`${acctBase}/plan.html`);
 await memberPlanner.fill('#plan-course', 'psy415');
 ok('a member sees the template is there to use',
-  await memberPlanner.waitForSelector('#plan-new-from-template:not([hidden])', { timeout: 5000 }).then(() => true, () => false));
+  await memberPlanner.waitForSelector('#plan-new-from-template:not([hidden])', { state: 'attached', timeout: 5000 }).then(() => true, () => false));
 expecting.templateWriteForbidden = true;
 await memberPlanner.click('#plan-save-template');
 await memberPlanner.waitForFunction(() => (document.querySelector('#plan-template-note')?.textContent || '').length > 0, null, { timeout: 8000 });
