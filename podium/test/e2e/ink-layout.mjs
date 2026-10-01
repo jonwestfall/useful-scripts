@@ -1029,8 +1029,10 @@ const slotDisplay = await screen.evaluate(() => ({
   d: getComputedStyle(document.querySelector('[data-panel="d"]')).display,
 }));
 ok('the 3-panel layout shows A/B/C and leaves D hidden', slotDisplay.a === 'block' && slotDisplay.b === 'block' && slotDisplay.c === 'block' && slotDisplay.d === 'none');
-await pad.waitForFunction(() => document.querySelectorAll('.panel-btn').length === 3, null, { timeout: 3000 });
-ok('the panel picker offers exactly 3 panels for a 3-panel layout', true);
+await pad.waitForFunction(() => document.querySelectorAll('.panel-btn').length === 4
+  && document.querySelectorAll('.panel-btn.is-offscreen').length === 1
+  && document.querySelector('.panel-btn:nth-child(4)').classList.contains('is-offscreen'), null, { timeout: 3000 });
+ok('the panel picker offers all four, with D - not in a 3-panel layout - marked off screen (Issue #215)', true);
 
 await pad.click('.panel-btn:nth-child(2)');
 await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'B', null, { timeout: 3000 });

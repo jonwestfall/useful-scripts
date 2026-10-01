@@ -87,6 +87,7 @@ The **Slides** tab provides an integrated confidence monitor:
 - **Jump to Slide Grid**: Tap "Jump to a slide" to view thumbnails of the entire presentation with captions. Slides that have ink drawings display an indicator badge.
 - **Pop-out Preview**: **press and hold** a thumbnail to open that slide large, fully built, with its notes. Nothing is sent to the display, so it's safe mid-lecture. **Go to this slide** jumps there; **Close** (or Escape, or a tap outside) doesn't.
 - **While frozen**, this tab works on the cue (see [Freeze is a Cue](#the-core-model-freeze-is-a-cue)). The Now box is relabelled **Cued**, and Laser and Spotlight are put away, since they point at what the room sees.
+- **Slides stay put while something else is up** (Issue #216): put a video, a whiteboard or a timer up after a deck and the Slides tab keeps that deck, marked **Off screen**, at the slide you left. Page through it and read its notes freely; that only moves your copy, not what the room sees. **Back to slides** puts it up again at whichever slide you're on (or cues it, if the screen is frozen). Each panel keeps its own deck, until it gets a different one or the session is cleared.
 
 The **Now** tab always opens with a large live view of what the focused pane is showing the room. It never shows the cue, frozen or not. Below it are the transport controls for media, and paging and PDF zoom for documents. While frozen, a note says those controls are working on the cue.
 
@@ -106,7 +107,7 @@ Divide the classroom projector into multiple simultaneous panels using the layou
 - **4 (Quad Grid)**: Four equal quadrants.
 - **PiP (Picture-in-Picture)**: One pane fills the screen and another sits as a small inset in a corner you choose, at the size you choose. Good for a document camera over a slide, or a timer over a video.
 
-Each panel independently maintains its own focused item, zoom level, and ink annotations. The **A/B/C/D** buttons in the top bar pick which panel your next Library tap, deck navigation and ink go to. **⛶ Full screen this** takes whatever is in a focused B/C/D panel and makes it the single full-screen item in one tap.
+Each panel independently maintains its own focused item, zoom level, and ink annotations. The **A/B/C/D** buttons in the top bar pick which panel your next Library tap, deck navigation and ink go to. All four are always there, whatever the layout (Issue #215): a panel the layout isn't showing is drawn dimmed with a dashed outline, and you can still pick it and set it up unseen while A is full screen. A panel off screen stays silent until a layout shows it. A clicker's Next and Back always move what the room sees, never an off-screen panel. **⛶ Full screen this** takes whatever is in a focused B/C/D panel and makes it the single full-screen item in one tap.
 
 ---
 

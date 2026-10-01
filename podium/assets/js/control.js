@@ -5,7 +5,7 @@
 import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, wireRevealButtons, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, workingItem,
+import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, workingItem, PANEL_COUNT, panelOnScreen, deckStep,
   inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
@@ -1421,7 +1421,7 @@ async function buildGridNow(deck) {
     cap.className = 'cap';
     cap.textContent = title;
     cell.append(thumb, cap);
-    cell.addEventListener('click', () => send({ op: 'nav', dir: 'goto', value: i }));
+    cell.addEventListener('click', () => deckNav('goto', i));
     // Hold for a closer look without going anywhere (Issue #174). The tap
     // that ends the hold is swallowed, so it does not also jump.
     onLongPress(cell, SLIDE_POPOUT_HOLD_MS, () => openSlidePopout(i));
@@ -1545,7 +1545,7 @@ let slidePopoutMirror = null;
 let slidePopoutIndex = null;
 
 function openSlidePopout(index) {
-  const item = workItem();
+  const item = slidesView()?.item;
   const deck = deckView.deck;
   if (item?.type !== 'deck' || !deck || deckView.id !== item.deckId) return;
   slidePopoutIndex = index;
@@ -1570,7 +1570,7 @@ function closeSlidePopout() {
 
 $('#slide-popout-close').addEventListener('click', closeSlidePopout);
 $('#slide-popout-go').addEventListener('click', () => {
-  if (slidePopoutIndex !== null) send({ op: 'nav', dir: 'goto', value: slidePopoutIndex });
+  if (slidePopoutIndex !== null) deckNav('goto', slidePopoutIndex);
   closeSlidePopout();
 });
 $('#slide-popout').addEventListener('click', (ev) => { if (ev.target === $('#slide-popout')) closeSlidePopout(); });
@@ -1578,8 +1578,58 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && !$('#slide-popout').hidden) closeSlidePopout();
 });
 
+// --- a deck kept for reference (Issue #216) -----------------------------------
+//
+// When the panel you are working on has moved on from a deck to something
+// else (a video, a timer), the display keeps that deck in state.recall and
+// the Slides tab keeps showing it. Paging it then moves only this copy - the
+// room is watching the video - and "Back to slides" puts it up at whichever
+// slide you are on here, through stage() like any pick (so a frozen screen
+// cues it for TAKE).
+let recallBrowse = null;   // { panel, key, slide, step } - this controller's own place in it
+
+/** What the Slides tab shows: the deck being worked on, or the one kept for reference. */
+function slidesView() {
+  const live = workItem();
+  if (live?.type === 'deck') return { item: live, recalled: false };
+  const kept = state.recall?.[state.focus];
+  if (kept?.type !== 'deck') return null;
+  if (recallBrowse?.panel !== state.focus || recallBrowse.key !== kept.key) {
+    recallBrowse = { panel: state.focus, key: kept.key, slide: kept.slide || 0, step: kept.step || 0 };
+  }
+  return { item: { ...kept, slide: recallBrowse.slide, step: recallBrowse.step }, recalled: true };
+}
+
+/** Next/Previous/a thumbnail on the Slides tab - local while the deck is only kept. */
+function deckNav(dir, value) {
+  const view = slidesView();
+  if (!view?.recalled) { send(value === undefined ? { op: 'nav', dir } : { op: 'nav', dir, value }); return; }
+  const item = view.item;
+  const deck = deckView.id === item.deckId ? deckView.deck : null;
+  const fragments = item.fragments || deck?.fragments;
+  const total = deck?.count || item.slideCount || 1;
+  if (dir === 'goto') {
+    recallBrowse.slide = Math.min(total - 1, Math.max(0, Number(value) || 0));
+    recallBrowse.step = (fragments && fragments[recallBrowse.slide]) || 0;
+  } else {
+    const pos = deckStep(recallBrowse, dir, fragments, total);
+    recallBrowse.slide = pos.slide;
+    recallBrowse.step = pos.step;
+  }
+  renderSlides();
+}
+
+function putDeckBack() {
+  const view = slidesView();
+  if (!view?.recalled) return;
+  const { key: _key, ...item } = view.item;
+  stage(item);
+}
+
 function renderSlides() {
-  const item = workItem()?.type === 'deck' ? workItem() : null;
+  const view = slidesView();
+  const item = view?.item || null;
+  const recalled = !!view?.recalled;
   $('#deck-none').hidden = !!item;
   $('#deck-live').hidden = !item;
   if (!item) return;
@@ -1589,11 +1639,22 @@ function renderSlides() {
   // laser and spotlight point at what the room sees, which this is not.
   const onCue = item === state.preview;
   $('#deck-cued-note').hidden = !onCue;
-  $('#deck-now-label').textContent = onCue ? 'Cued' : 'Now';
-  $('#deck-laser').disabled = onCue;
-  $('#deck-spotlight').disabled = onCue;
-  if (onCue && laserActive) setLaserActive(false);
-  if (onCue && spotlightActive) setSpotlightActive(false);
+  $('#deck-recall').hidden = !recalled;
+  if (recalled) {
+    const onNow = workItem();
+    $('#deck-recall-what').textContent = onNow && onNow.type !== 'black'
+      ? `Off screen - ${itemTitle(onNow)} is up instead. Paging here does not change the room.`
+      : 'Off screen. Paging here does not change the room.';
+    $('#deck-back').textContent = state.focus === 0 && state.frozen ? 'Cue these slides' : 'Back to slides';
+  }
+  $('#deck-now-label').textContent = recalled ? 'Off screen' : (onCue ? 'Cued' : 'Now');
+  // The pointers point at what the room sees, and Markup draws on it.
+  const notLive = onCue || recalled;
+  $('#deck-laser').disabled = notLive;
+  $('#deck-spotlight').disabled = notLive;
+  $('#deck-markup').disabled = recalled;
+  if (notLive && laserActive) setLaserActive(false);
+  if (notLive && spotlightActive) setSpotlightActive(false);
   const deck = deckView.id === item.deckId ? deckView.deck : null;
   const total = deck?.count || item.slideCount || 1;
   const index = Math.min(total - 1, Math.max(0, item.slide || 0));
@@ -1606,7 +1667,7 @@ function renderSlides() {
   $('#deck-count').textContent = fragCount
     ? `Slide ${index + 1} / ${total} · build ${step}/${fragCount}${fitNote}`
     : `Slide ${index + 1} / ${total}${fitNote}`;
-  renderDeckProgress(item.deckId, index, total, onCue);
+  renderDeckProgress(item.deckId, index, total, notLive);
   // A slide mid-build still has Next/Previous left to do even at slide 0 or
   // the very last slide, so the ends of a build - not just of the deck -
   // decide when the buttons actually go grey.
@@ -2248,7 +2309,7 @@ async function exportDeck() {
   } catch (err) {
     status.textContent = `Export failed: ${err.message}`;
   } finally {
-    btn.disabled = !(deckView.deck && workItem()?.type === 'deck');
+    btn.disabled = !(deckView.deck && slidesView());
   }
 }
 
@@ -2462,12 +2523,13 @@ function renderLayoutBar() {
   }
   current.classList.toggle('is-cued', state.previewLayout !== null);
   $('#panel-promote').hidden = state.focus === 0;
-  const count = LAYOUTS[state.layout] || 1;
+  // All four, whatever the layout (Issue #215): B can be set up while A is
+  // full screen. One the layout is not showing is drawn dimmed, so "the
+  // panel you are working on" and "what the room sees" stay told apart.
   const picker = $('#panel-picker');
-  picker.hidden = count <= 1;
-  if (count <= 1) return;
-  if (picker.childElementCount !== count) {
-    picker.replaceChildren(...Array.from({ length: count }, (_, i) => {
+  picker.hidden = false;
+  if (picker.childElementCount !== PANEL_COUNT) {
+    picker.replaceChildren(...Array.from({ length: PANEL_COUNT }, (_, i) => {
       const button = el('button', {
         class: 'panel-btn',
         type: 'button',
@@ -2477,11 +2539,21 @@ function renderLayoutBar() {
       // Tap to focus, hold to keep a photo of what is in it - ink and all.
       // The same button, because the panel you want a photo of is the one you
       // are already pointing at.
-      onLongPress(button, HOLD_PANEL_MS, () => askForShot(i, `panel ${PANEL_LABELS[i]}`));
+      // A panel off screen is not mounted on the display - nothing to photograph.
+      onLongPress(button, HOLD_PANEL_MS, () => { if (panelOnScreen(state, i)) askForShot(i, `panel ${PANEL_LABELS[i]}`); });
       return button;
     }));
   }
-  $$('.panel-btn', picker).forEach((b, i) => b.classList.toggle('is-on', i === state.focus));
+  $$('.panel-btn', picker).forEach((b, i) => {
+    const shown = panelOnScreen(state, i);
+    b.classList.toggle('is-on', i === state.focus);
+    b.classList.toggle('is-offscreen', !shown);
+    b.setAttribute('aria-pressed', String(i === state.focus));
+    b.title = shown
+      ? `Work on panel ${PANEL_LABELS[i]} — hold to photograph it`
+      : `Work on panel ${PANEL_LABELS[i]} — not on screen in this layout`;
+    b.setAttribute('aria-label', shown ? `Panel ${PANEL_LABELS[i]}` : `Panel ${PANEL_LABELS[i]}, off screen`);
+  });
 }
 
 let mixerSliding = null;   // which fader, if any, is being dragged right now
@@ -3237,7 +3309,7 @@ function renderAll() {
   renderTimers();
   renderSlides();
   renderLayoutBar();
-  ensureDeckView(workItem());
+  ensureDeckView(slidesView()?.item ?? workItem());
   const autosave = $('#ink-autosave');
   if (autosave && document.activeElement !== autosave) autosave.checked = !!state.autoSaveInk;
 }
@@ -5423,8 +5495,9 @@ $('#scrub').addEventListener('change', (ev) => {
   scrubbing = false;
   send({ op: 'media', action: 'seek', value: Number(ev.target.value) });
 });
-$('#deck-prev').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
-$('#deck-next').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
+$('#deck-prev').addEventListener('click', () => deckNav('prev'));
+$('#deck-next').addEventListener('click', () => deckNav('next'));
+$('#deck-back').addEventListener('click', putDeckBack);
 $('#deck-export').addEventListener('click', exportDeck);
 $('#deck-grid-filter').addEventListener('input', filterGrid);
 
