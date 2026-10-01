@@ -533,6 +533,7 @@ await pad.click('#open-settings');
 await pad.waitForSelector('#setup:not([hidden])');
 ok('Close is offered while the device is configured', !(await pad.isHidden('#setup-close')));
 
+await pad.click('.settings-tabs .tab[data-settings-tab="connection"]');
 await pad.click('#reset-device');
 ok('one tap only arms the reset', (await pad.textContent('#reset-device')).includes('Tap again'));
 ok('and nothing is cleared yet', await pad.evaluate(() => !!localStorage.getItem('podium.config.v2')));
@@ -622,11 +623,19 @@ await screen.waitForFunction(() => !document.querySelector('#blank').classList.c
 
 await pad.click('#open-settings');
 await pad.waitForSelector('#setup:not([hidden])');
-ok('Settings opens on the Connection tab', await pad.evaluate(() =>
-  document.querySelector('.settings-tabs .tab[data-settings-tab="connection"]').classList.contains('is-on')
-  && !document.querySelector('[data-settings-panel="connection"]').hidden
-  && document.querySelector('[data-settings-panel="presentation"]').hidden));
+// Issue #200: a device that is already set up opens on Presentation - the
+// connection matters once, at setup.
+ok('Settings opens on the Presentation tab once this device is set up', await pad.evaluate(() =>
+  document.querySelector('.settings-tabs .tab[data-settings-tab="presentation"]').classList.contains('is-on')
+  && !document.querySelector('[data-settings-panel="presentation"]').hidden
+  && document.querySelector('[data-settings-panel="connection"]').hidden));
 
+await pad.click('.settings-tabs .tab[data-settings-tab="connection"]');
+ok('and the passphrase there is dots until asked for (Issue #200)',
+  (await pad.getAttribute('#c-pass', 'type')) === 'password' && (await pad.inputValue('#c-pass')) === 'tabbed settings');
+await pad.click('[data-reveal="c-pass"]');
+ok('Show reveals it, and says so to a screen reader',
+  (await pad.getAttribute('#c-pass', 'type')) === 'text' && (await pad.getAttribute('[data-reveal="c-pass"]', 'aria-pressed')) === 'true');
 await pad.click('.settings-tabs .tab[data-settings-tab="presentation"]');
 ok('and switches to Presentation without disturbing the connection form underneath', await pad.evaluate(() =>
   !document.querySelector('[data-settings-panel="presentation"]').hidden
@@ -1435,6 +1444,16 @@ await screen2.keyboard.press('f');
 await screen2.waitForFunction(() => !!document.fullscreenElement, null, { timeout: 5000 });
 ok('and f puts it back', true);
 
+// S while live, then Close: back to the live screen, not a reload that drops
+// fullscreen and the relay and puts the room on the arming screen (#201).
+await screen2.evaluate(() => { window.__sameLoad = true; });
+await screen2.keyboard.press('s');
+await screen2.waitForSelector('#setup:not([hidden])');
+await screen2.click('#setup-close');
+ok('closing Settings while live goes straight back to the live screen, with no reload (Issue #201)',
+  await screen2.evaluate(() => window.__sameLoad === true && document.querySelector('#setup').hidden
+    && document.querySelector('#arm').hidden && document.body.classList.contains('is-live')));
+
 await screen2.keyboard.press('e');
 await screen2.waitForFunction(() => !document.fullscreenElement && !document.querySelector('#arm').hidden, null, { timeout: 5000 });
 ok('e leaves fullscreen and comes back to the Go live screen', true);
@@ -1447,6 +1466,16 @@ await screen2.type('#d-room', 'seminar-f');
 ok('and the same keys typed into Settings are just text',
   (await screen2.inputValue('#d-room')).endsWith('seminar-f')
   && await screen2.isHidden('#pair') && await screen2.isHidden('#keys'));
+const savedRoom = await screen2.evaluate(() => JSON.parse(localStorage.getItem('podium.config.v2')).room);
+await screen2.keyboard.press('Escape');
+await screen2.waitForSelector('#setup', { state: 'hidden' });
+ok('Escape closes Settings even from inside a field, back to the Go live screen',
+  await screen2.evaluate(() => window.__sameLoad === true && !document.querySelector('#arm').hidden));
+await screen2.keyboard.press('s');
+await screen2.waitForSelector('#setup:not([hidden])');
+ok('and an edit closed without saving is gone the next time Settings opens',
+  (await screen2.inputValue('#d-room')) === savedRoom);
+await screen2.keyboard.press('Escape');
 
 // G is a second door onto the same goLive() as the button - a fresh page,
 // because the one above has already left the arm screen behind.
@@ -1737,14 +1766,14 @@ await small.waitForSelector('#app:not([hidden])');
 await small.click('#open-settings');
 await small.waitForSelector('#setup:not([hidden])');
 ok('the top actions row is shown on a phone-width screen', await small.isVisible('.setup-top-actions'));
-ok('Save is visible by default (Connection is the starting tab)', await small.isVisible('#setup-save-top'));
 ok('Close is offered too, same as the one at the bottom, while this device is configured',
   await small.isVisible('#setup-close-top') && await small.isVisible('#setup-close'));
 
-await small.click('.tab[data-settings-tab="presentation"]');
-ok('Save hides on the Presentation tab - there is nothing there to submit', await small.isHidden('#setup-save-top'));
+// Opens on Presentation once set up (Issue #200), where there is nothing to submit.
+ok('Save is hidden on the Presentation tab it opens on - there is nothing there to submit', await small.isHidden('#setup-save-top'));
 await small.click('.tab[data-settings-tab="connection"]');
 ok('and comes back on Connection', await small.isVisible('#setup-save-top'));
+await small.click('[data-reveal="c-pass"]');   // left showing, to prove it does not stay that way
 
 // The top Save button reaches the SAME form validation as the real one -
 // not a silent no-op, and not a second copy of the check.
@@ -1769,6 +1798,7 @@ await small.setViewportSize({ width: 1280, height: 900 });
 await small.click('#open-settings');
 await small.waitForSelector('#setup:not([hidden])');
 ok('an edit closed without saving is gone when Settings opens again', (await small.inputValue('#c-pass')) === 'reach it without scrolling');
+ok('and the passphrase is back to dots, however it was left', (await small.getAttribute('#c-pass', 'type')) === 'password');
 ok('and stays hidden on a screen wide enough not to need it', await small.isHidden('.setup-top-actions'));
 
 await smallCtx.close();
@@ -2028,6 +2058,64 @@ const savedKiosk = await formPage.evaluate(() => JSON.parse(localStorage.getItem
 ok(`and the saved config really has kiosk: true, not a stray checkbox string (${JSON.stringify(savedKiosk)})`,
   savedKiosk === true);
 await formCtx.close();
+}
+
+if (want('the controller follows what goes on screen, and remembers its tab')) {
+console.log('\n-- the controller follows what goes on screen (Issue #185), and remembers its tab (Issue #198) --');
+const fctx = await browser.newContext({ podiumRealDefaults: true, viewport: { width: 1280, height: 900 } });
+await fctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'follow-room', passphrase: 'follow the pick' }));
+const fScreen = await fctx.newPage();
+trap(fScreen, 'follow display');
+await fScreen.goto(`${BASE}/display.html`);
+await fScreen.click('#arm-button');
+await fScreen.waitForSelector('#hud[data-status="online"]');
+const fPad = await fctx.newPage();
+trap(fPad, 'follow pad');
+await fPad.goto(`${BASE}/control.html`);
+await fPad.waitForSelector('.tile');
+await fPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+const onTab = () => fPad.evaluate(() => document.querySelector('.tab[data-tab].is-on')?.dataset.tab);
+const fTile = (title) => fPad.click(`.tile:has(.tile-title:text-is("${title}"))`);
+
+await fTile('Whiteboard');
+await fScreen.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-whiteboard'), null, { timeout: 5000 });
+await fPad.waitForFunction(() => document.querySelector('.tab[data-tab].is-on')?.dataset.tab === 'ink', null, { timeout: 5000 });
+ok('putting a whiteboard on screen from the Library goes to Ink', true);
+
+await fPad.click('.tab[data-tab="library"]');
+await fTile('Opening slide');
+await fPad.waitForTimeout(500);
+ok('something with nothing to drive once it is up leaves the controller where it was', (await onTab()) === 'library');
+
+await fPad.click('#freeze');
+await fTile('Whiteboard');
+await fPad.waitForFunction(() => !!document.querySelector('#take:not([disabled])'), null, { timeout: 5000 });
+ok('a pick that only went to the cue does not switch tabs', (await onTab()) === 'library');
+await fPad.click('#take');
+
+await fPad.click('#open-settings');
+ok('the preference is there, and on by default', await fPad.isChecked('#pref-auto-switch-tab'));
+await fPad.uncheck('#pref-auto-switch-tab');
+await fPad.click('#setup-close');
+await fTile('Whiteboard');
+await fPad.waitForTimeout(500);
+ok('and with it turned off, the controller stays on the Library', (await onTab()) === 'library');
+
+// Issue #198: a reload of this tab comes back where it was; a new tab starts fresh.
+await fPad.click('.tab[data-tab="timer"]');
+await fPad.reload();
+// Not '.tile': those are on the Library, which is exactly where this should NOT land.
+await fPad.waitForSelector('#app:not([hidden])');
+await fPad.waitForFunction(() => document.querySelector('.tab[data-tab].is-on')?.dataset.tab === 'timer', null, { timeout: 10000 });
+ok('reloading the controller comes back on the tab it was on', true);
+const fNew = await fctx.newPage();
+trap(fNew, 'follow pad (new tab)');
+await fNew.goto(`${BASE}/control.html`);
+await fNew.waitForSelector('.tile');
+ok('while a brand-new controller tab still starts on the Library',
+  (await fNew.evaluate(() => document.querySelector('.tab[data-tab].is-on')?.dataset.tab)) === 'library');
+await fctx.close();
 }
 
 reportErrors();

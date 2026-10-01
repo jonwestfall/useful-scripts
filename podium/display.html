@@ -172,7 +172,11 @@
       </div>
       <div class="field">
         <label for="d-pass">Passphrase (encrypts everything; must match on every device)</label>
-        <input id="d-pass" name="passphrase" type="text" autocomplete="off" spellcheck="false">
+        <!-- Dots until asked (Issue #200): this sheet is open ON the projector. -->
+        <div class="inline">
+          <input id="d-pass" class="grow" name="passphrase" type="password" autocomplete="off" spellcheck="false">
+          <button type="button" class="reveal-btn" data-reveal="d-pass" aria-controls="d-pass" aria-pressed="false">Show</button>
+        </div>
       </div>
       <div class="field">
         <!-- Issue #151: a device checked off here skips the arm screen and

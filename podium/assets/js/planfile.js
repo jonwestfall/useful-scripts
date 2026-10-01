@@ -129,7 +129,7 @@ export const PLAN_TYPES = {
   },
   pdf: {
     label: 'PDF', icon: '\u{1F4C4}',
-    blurb: 'A handout or a figure, by path on your server - or upload one straight in (Issue #108).',
+    blurb: 'A handout or a figure, by path on your server - or upload one straight in.',
     fields: [
       // Issue #108: uploads a real file to this server's library (the same
       // endpoint admin.html and the controller's own PDF upload use), not a
@@ -148,7 +148,7 @@ export const PLAN_TYPES = {
   },
   video: {
     label: 'Video', icon: '▶',
-    blurb: 'A clip on your server, too big to carry inside a plan - or upload one straight in (Issue #108).',
+    blurb: 'A clip on your server, too big to carry inside a plan - or upload one straight in.',
     fields: [
       { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.mp4,.webm,video/mp4,video/webm',
         hint: 'Stored on the server - works from any signed-in device, nothing to carry.' },
@@ -157,7 +157,7 @@ export const PLAN_TYPES = {
   },
   audio: {
     label: 'Audio', icon: '♪',
-    blurb: 'Waiting music, or a clip to play with the screen black - or upload one straight in (Issue #108).',
+    blurb: 'Waiting music, or a clip to play with the screen black - or upload one straight in.',
     fields: [
       { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.mp3,.m4a,.ogg,.wav,audio/*',
         hint: 'Stored on the server - works from any signed-in device, nothing to carry.' },

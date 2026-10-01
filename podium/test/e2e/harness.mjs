@@ -354,6 +354,32 @@ const browser = await chromium.launch({
   ],
 });
 
+// Two controller behaviours every section written before them assumed were
+// absent, and none of those sections is about: following a Library pick to
+// the tab that drives it (Issue #185 - on by default for real presenters), and
+// coming back to the last tab after a reload (Issue #198). A section that
+// clicks one tile and then the next, or reloads and expects the Library, would
+// otherwise be testing those two instead of its own subject. So every context
+// starts with both off, the way those sections were written - and the one
+// section that tests them asks for the real defaults with
+// `browser.newContext({ podiumRealDefaults: true, ... })`.
+const newContextAsShipped = browser.newContext.bind(browser);
+browser.newContext = async (options = {}) => {
+  const { podiumRealDefaults, ...rest } = options;
+  const context = await newContextAsShipped(rest);
+  if (!podiumRealDefaults) {
+    await context.addInitScript(() => {
+      try {
+        const key = 'podium.presentation.v1';
+        const saved = JSON.parse(localStorage.getItem(key) || '{}');
+        if (saved.autoSwitchTab === undefined) localStorage.setItem(key, JSON.stringify({ ...saved, autoSwitchTab: false }));
+        sessionStorage.removeItem('podium.ui.tab');
+      } catch { /* a page with no storage: nothing to set */ }
+    });
+  }
+  return context;
+};
+
 // Themes may pull webfonts from the internet (gaia imports one, KaTeX fetches
 // its glyph fonts). A sandbox with no outbound network fails those requests and
 // the slides still render, so they are noise rather than a result.

@@ -527,6 +527,7 @@ ok('a second open and close still does not reload', await pad.evaluate(() => win
 // Save with the connection unchanged is a Close, not a reload - and it is
 // wired once, however many times Settings has been opened.
 await pad.click('#open-settings');
+await pad.click('[data-settings-tab="connection"]');
 await pad.click('#setup-form button[type="submit"]');
 await pad.waitForSelector('#app:not([hidden])');
 ok('Save with nothing changed in the connection does not reload either', await pad.evaluate(() => window.__sameDocument === true));

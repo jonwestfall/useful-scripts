@@ -9,7 +9,7 @@
 // (see LAYOUTS in protocol.js); B/C/D are simpler; set directly, no preview.
 
 import {
-  $, $$, el, uid, throttle, wireDangerButton, servedBuild, createRelayLog, installOfflineShell,
+  $, $$, el, uid, throttle, wireDangerButton, wireRevealButtons, servedBuild, createRelayLog, installOfflineShell,
   enterFullscreen, exitFullscreen, toggleFullscreen, isFullscreen, onFullscreenChange,
   safeStorageSet,
 } from './util.js';
@@ -2872,30 +2872,55 @@ async function standDown() {
 
 // --- setup screen -----------------------------------------------------------
 
-let setupWired = false;
 
 function showSetup() {
+  // What was showing behind it - the live stage, or the arming screen -
+  // so closing goes back there rather than reloading (Issue #201).
+  setupReturnsTo = armEl.hidden && document.body.classList.contains('is-live') ? 'live' : 'arm';
   setupEl.hidden = false;
   armEl.hidden = true;
   $('#setup-close').hidden = !isConfigured(cfg);
+  $('#setup-error').textContent = '';
+  hidePassphrase();
   const form = $('#setup-form');
-  if (setupWired) return;
-  setupWired = true;
+  // Filled from the saved config every time it opens, which is also what
+  // throws away a half-finished edit that was closed without saving.
   for (const [key, value] of Object.entries(cfg)) {
     const field = form.elements[key];
     if (!field) continue;
     if (field.type === 'checkbox') field.checked = !!value;
     else if (typeof value !== 'boolean') field.value = value;
   }
-  const onTransport = () => {
-    const t = form.elements.transport.value;
-    form.querySelectorAll('[data-for]').forEach((row) => {
-      row.hidden = !row.dataset.for.split(' ').includes(t);
-    });
-  };
-  form.elements.transport.addEventListener('change', onTransport);
-  onTransport();
+  onSetupTransport();
+}
 
+let setupReturnsTo = 'arm';
+// Not on view.html, which has no Settings - a no-op there (Issue #200).
+let hidePassphrase = () => {};
+
+function onSetupTransport() {
+  const form = $('#setup-form');
+  const t = form.elements.transport.value;
+  form.querySelectorAll('[data-for]').forEach((row) => {
+    row.hidden = !row.dataset.for.split(' ').includes(t);
+  });
+}
+
+// Closing Settings goes straight back to what was on this screen (Issue #201,
+// the display's half of what #178 did for the controller). It used to reload,
+// which on a projector is the worst kind of cancel: the S key opens Settings
+// while LIVE, and closing it again dropped fullscreen, the relay and the
+// recording, and put the room back on the arming screen mid-lecture.
+function closeSetup() {
+  if (!isConfigured(cfg)) return;
+  setupEl.hidden = true;
+  $('#setup-error').textContent = '';
+  armEl.hidden = setupReturnsTo === 'live';
+}
+
+function wireSetup() {
+  const form = $('#setup-form');
+  form.elements.transport.addEventListener('change', onSetupTransport);
   form.addEventListener('submit', (ev) => {
     ev.preventDefault();
     // `generated: null` because submitting this form IS the choice: the room
@@ -2909,6 +2934,17 @@ function showSetup() {
       else if (typeof field.value === 'string') next[key] = field.value.trim();
     }
     if (!isConfigured(next)) { $('#setup-error').textContent = 'Fill in the fields for the transport you picked.'; return; }
+    // Nothing this form holds changed: there is nothing to reconnect, so Save
+    // is just Close - the same rule the controller's Settings follows. Only a
+    // real change (a new room, relay or the kiosk switch) needs the reload
+    // that reconnects with it.
+    if (isConfigured(cfg) && Object.keys(DEFAULTS).every((key) => {
+      const field = form.elements[key];
+      return !field || String(next[key] ?? '') === String(cfg[key] ?? '');
+    })) {
+      closeSetup();
+      return;
+    }
     cfg = next;
     saveConfig(cfg);
     location.reload();
@@ -3186,9 +3222,9 @@ if (VIEWER) {
   $('#arm-button').addEventListener('click', goLive);
   $('#arm-settings').addEventListener('click', showSetup);
 
-  // Reloading is the honest "cancel": it throws away half-finished edits and
-  // puts the page back into whatever state the saved settings describe.
-  $('#setup-close').addEventListener('click', reloadClean);
+  wireSetup();
+  hidePassphrase = wireRevealButtons(setupEl);
+  $('#setup-close').addEventListener('click', closeSetup);
 
   wireDangerButton($('#reset-device'), 'Clear settings & reload', async () => {
     const removed = await resetDevice();
@@ -3231,6 +3267,9 @@ if (VIEWER) {
     // Settings is a form, and this handler is on the document: without this
     // guard a room called "spare" pairs, opens Settings and stands the display
     // down while you are still typing it.
+    // Escape closes Settings even from inside one of its fields - the one key
+    // the guard below must not swallow (Issue #201).
+    if (ev.key === 'Escape' && !setupEl.hidden) { closeSetup(); return; }
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(ev.target?.tagName)) return;
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
 
