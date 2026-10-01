@@ -1,5 +1,5 @@
 {
-  "_comment": "Your lecture library. Edit this file, commit, and it appears on the iPad. Every entry needs a type and a title; the rest depends on the type. Paths are relative to the podium/ directory, so podium/content/slides/week1/index.html is referenced as content/slides/week1/index.html. The 'Working examples' group below actually plays, out of the box, with files that ship in this repo - open one to see what a real entry looks like. The 'Template - point these at your files' group are illustrations of the format for content that has to be yours (a PDF, a photo, a video); their src paths do not exist yet and picking one will show an error until you replace it or delete the entry.",
+  "_comment": "Your lecture library. Edit this file, commit, and it appears on the iPad. Every entry needs a type and a title; the rest depends on the type. Paths are relative to the podium/ directory, so podium/content/slides/week1/index.html is referenced as content/slides/week1/index.html. The 'Working examples' group below actually plays, out of the box, with files that ship in this repo - open one to see what a real entry looks like. The 'Template - point these at your files' group are illustrations of the format for content that has to be yours (a PDF, a photo, a video); their src paths do not exist yet and picking one will show an error until you replace it or delete the entry. \"thumbnail\": false stops the Library trying to draw a picture of a file that is not there yet - drop it once the src points at something real.",
   "items": [
     {
       "group": "Working examples",
@@ -57,12 +57,14 @@
     },
     {
       "group": "Template - point these at your files",
+      "thumbnail": false,
       "title": "Lecture deck (HTML slides)",
       "type": "slides",
       "src": "content/slides/week1/index.html"
     },
     {
       "group": "Template - point these at your files",
+      "thumbnail": false,
       "title": "Chapter 4 handout (PDF)",
       "type": "pdf",
       "src": "content/handouts/ch4.pdf",
@@ -70,6 +72,7 @@
     },
     {
       "group": "Template - point these at your files",
+      "thumbnail": false,
       "title": "Stroop demo (image)",
       "type": "image",
       "src": "content/img/stroop.png",
@@ -77,6 +80,7 @@
     },
     {
       "group": "Template - point these at your files",
+      "thumbnail": false,
       "title": "Reaction-time clip (video)",
       "type": "video",
       "src": "content/video/reaction.mp4"

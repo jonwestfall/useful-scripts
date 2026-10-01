@@ -354,7 +354,7 @@ const browser = await chromium.launch({
   ],
 });
 
-// Two controller behaviours every section written before them assumed were
+// Controller behaviours every section written before them assumed were
 // absent, and none of those sections is about: following a Library pick to
 // the tab that drives it (Issue #185 - on by default for real presenters), and
 // coming back to the last tab after a reload (Issue #198). A section that
@@ -374,6 +374,14 @@ browser.newContext = async (options = {}) => {
         const saved = JSON.parse(localStorage.getItem(key) || '{}');
         if (saved.autoSwitchTab === undefined) localStorage.setItem(key, JSON.stringify({ ...saved, autoSwitchTab: false }));
         sessionStorage.removeItem('podium.ui.tab');
+        // And, from the UI batches (#189, #190): the Library's "+ Add" open,
+        // the way the import controls always were before it existed, and the
+        // two first-use notes already seen, so a section that starts live
+        // captions or amplifies a mic is not stopped by a question it is not
+        // about.
+        if (localStorage.getItem('podium.ui.libraryAddOpen') === null) localStorage.setItem('podium.ui.libraryAddOpen', '1');
+        localStorage.setItem('podium.ack.captions', '1');
+        localStorage.setItem('podium.ack.amplify', '1');
       } catch { /* a page with no storage: nothing to set */ }
     });
   }
