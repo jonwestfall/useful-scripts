@@ -303,6 +303,18 @@ async function sweep(dataDir, { now = Date.now(), userId = null, keep = MAX_JOBS
 
 // --- stage ----------------------------------------------------------------------------
 
+// createdAt is what sweep() ranks one person's uploads by, so two of them must
+// never share a value. Plain Date.now() does not promise that: two small ZIPs
+// staged back to back can finish inside the same millisecond, and the clock
+// can step backwards when it is corrected. A tie then falls back to the order
+// readdir lists the folders in - random hex names, so effectively random - and
+// sweep() could throw away the upload somebody just made while keeping an
+// older one. Each stamp is therefore at least one past the last, which costs
+// at most a few milliseconds of drift on a two-hour lifetime. This only holds
+// within one process; across a restart the clock has long since moved on.
+let lastCreatedAt = 0;
+const nextCreatedAt = () => (lastCreatedAt = Math.max(Date.now(), lastCreatedAt + 1));
+
 /**
  * Take an upload, inspect it, and keep it for review. Resolves to what the
  * review screen shows.
@@ -359,7 +371,7 @@ async function stage({ db, dataDir, user, surface, archiveName, stream, uploadMb
       }
     }
 
-    const job = { id, userId: user.id, surface, archiveName: name, createdAt: Date.now(), manifest };
+    const job = { id, userId: user.id, surface, archiveName: name, createdAt: nextCreatedAt(), manifest };
     await fsp.writeFile(path.join(dir, 'job.json'), JSON.stringify(job), { mode: 0o600 });
     return publicJob(job);
   } catch (err) {
