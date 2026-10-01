@@ -18,7 +18,7 @@
 <script>
 try {
   const p = JSON.parse(localStorage.getItem('podium.presentation.v1') || '{}');
-  const t = p.theme || 'dark';
+  const t = p.theme || 'auto';
   const eff = t === 'auto' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : t;
   if (eff === 'light') document.documentElement.dataset.theme = 'light';
 } catch {}
@@ -1135,14 +1135,15 @@ try {
       <div class="field" style="margin-top:12px;">
         <label for="pref-theme">Controller theme</label>
         <select id="pref-theme" class="grow">
-          <option value="dark">Dark (default)</option>
+          <option value="auto">Match this device (default)</option>
+          <option value="dark">Dark</option>
           <option value="light">Light / High contrast</option>
-          <option value="auto">Auto (match system)</option>
         </select>
         <details class="help">
           <summary>How this works</summary>
           <p class="hint">
           Light theme uses a clean, high-contrast palette for bright classrooms, outdoor lectures, or rooms with window glare.
+          "Match this device" follows the iPad's or computer's own light/dark setting, and changes with it.
         </p>
         </details>
       </div>

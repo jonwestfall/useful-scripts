@@ -659,7 +659,13 @@ await pad.uncheck('#pref-poll-url');
 ok('a preference is saved the moment it changes, with no Save button of its own',
   await pad.evaluate(() => JSON.parse(localStorage.getItem('podium.presentation.v1')).showPollUrl === false));
 
-ok('theme defaults to dark', await pad.evaluate(() => (document.documentElement.dataset.theme || 'dark') === 'dark'));
+// Issue #210: the default follows the device. Playwright's browser reports a
+// light preference, so the default here is the light theme - and choosing
+// Dark outright still wins over it.
+ok('theme defaults to matching the device (light, in this browser)', await pad.evaluate(() =>
+  document.documentElement.dataset.theme === 'light' && (JSON.parse(localStorage.getItem('podium.presentation.v1') || '{}').theme ?? 'auto') === 'auto'));
+await pad.selectOption('#pref-theme', 'dark');
+ok('and choosing Dark outright overrides the device', await pad.evaluate(() => document.documentElement.dataset.theme === 'dark'));
 await pad.selectOption('#pref-theme', 'light');
 ok('picking light theme applies data-theme="light" immediately and persists',
   await pad.evaluate(() => document.documentElement.dataset.theme === 'light' && JSON.parse(localStorage.getItem('podium.presentation.v1')).theme === 'light'));
@@ -1138,6 +1144,8 @@ const alive = (page) => page.$$eval('.layer[data-role="program"]', (n) => n.leng
   const log = await page.$eval('.relay-log', (n) => ({ hidden: n.hidden, text: n.textContent }));
   ok('and keeps a timestamped log of the attempts instead of only the last one',
     !log.hidden && /\d·|\d:\d/.test(log.text) && /error/.test(log.text));
+  ok('and opens "Connection details" by itself, so the log is in view without knowing to look (Issue #202)',
+    await page.$eval('#arm-details', (d) => d.open) && await page.isVisible('.relay-log'));
   const target = await page.$eval('.relay-target', (n) => n.textContent);
   ok(`and states outright what it is dialling ("${target}")`,
     /Self-hosted WebSocket/.test(target) && target.includes(String(dead)) && /room no-relay/.test(target));
@@ -1227,6 +1235,8 @@ const alive = (page) => page.$$eval('.layer[data-role="program"]', (n) => n.leng
   const status = (await page.textContent('#arm-status')).trim();
   ok(`a stale page says it is stale, on its own line ("${build}")`, /build 1 but the server has \d+/.test(build));
   ok(`and does not blame the relay for it ("${status}")`, !/Cannot reach|Lost the relay/.test(status));
+  ok('and with nothing wrong, "Connection details" stays folded away (Issue #202)',
+    !(await page.$eval('#arm-details', (d) => d.open)));
   await close();
 }
 }
@@ -1333,6 +1343,8 @@ ok(`the arming screen says what it is coming back to ("${resumeNote}")`, /Weighi
 // The room's own reset, offered right there rather than only reachable by
 // waiting out the room's usual 12-hour staleness window - this is for a
 // different class about to use the same room, not a crash to recover from.
+// Behind "Connection details" since Issue #202.
+await screen.click('#arm-details > summary');
 await screen.click('#arm-fresh-session');
 ok('clearing the room hides the "coming back to" banner', await screen.$eval('#arm-resume', (n) => n.hidden));
 ok('and says so', /Cleared/.test(await screen.textContent('#arm-fresh-session-note')));

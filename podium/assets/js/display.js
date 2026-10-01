@@ -70,6 +70,29 @@ const armEl = $('#arm');
 const VIEWER = document.body.dataset.viewer === 'yes';
 
 let cfg = VIEWER ? viewerConfig() : await loadConfig();
+
+// The look of this screen's own sheets - Go live, pairing, setup, standby -
+// light or dark (Issue #210). Per device, outside the connection config so a
+// change never needs Save or a reconnect, and following the computer's own
+// setting unless chosen. The stage itself is never themed: see the CSS.
+const SHEET_THEME_KEY = 'podium.display.sheetTheme';
+const lightPreferred = window.matchMedia?.('(prefers-color-scheme: light)');
+function sheetThemeChoice() {
+  try { const t = localStorage.getItem(SHEET_THEME_KEY); return ['auto', 'dark', 'light'].includes(t) ? t : 'auto'; } catch { return 'auto'; }
+}
+function applySheetTheme() {
+  const choice = sheetThemeChoice();
+  document.body.dataset.sheetTheme = choice === 'auto' ? (lightPreferred?.matches ? 'light' : 'dark') : choice;
+}
+applySheetTheme();
+lightPreferred?.addEventListener('change', applySheetTheme);
+if ($('#d-sheet-theme')) {
+  $('#d-sheet-theme').value = sheetThemeChoice();
+  $('#d-sheet-theme').addEventListener('change', (ev) => {
+    safeStorageSet(localStorage, SHEET_THEME_KEY, ev.target.value);
+    applySheetTheme();
+  });
+}
 let bus = null;
 let state = initialState();
 let cameraStream = null;
@@ -2360,6 +2383,11 @@ function setHud(status, detail) {
   // Detail is carried through on every failing state, not just 'error' - an
   // 'offline' that never managed to open a socket in the first place is where
   // the useful text lives.
+  // Trouble opens "Connection details" by itself (Issue #202): the relay
+  // target and its log are what whoever is fixing it needs, and they should
+  // not have to know to look behind a disclosure to find them. Never closed
+  // again from here - someone may be reading it.
+  if (['error', 'offline', 'mismatch'].includes(status) && $('#arm-details')) $('#arm-details').open = true;
   const armStatus = $('#arm-status');   // not on view.html
   if (armStatus) armStatus.textContent = {
     connecting: `Connecting to the relay…${detail ? ` (${detail})` : ''}`,

@@ -63,7 +63,7 @@ The **Library** tab is where everything starts: tap a tile and it goes to the pr
 
 **Built-in quick tools** are always there (an administrator can toggle them on a server): **Black**, **Whiteboard**, **Chalkboard**, **Phone camera**, **Timer** and **We begin in…**.
 
-- **Paste a link** (YouTube, Twitch, image, video, PDF, any page) and press **Show**, or **Save** it to this device's library.
+- **+ Add** opens the ways to bring something in. **Paste a link** (YouTube, Twitch, image, video, PDF, any page) and press **Show**; tick **Keep in Library** to keep it on this device's library too.
 - **Open a Marp deck…** loads a `.md` file straight from the device.
 - **Back to** remembers where you were, including the slide. Wander off to a photo mid-deck, and one tap returns you to the exact slide you left rather than restarting the deck in front of everyone.
 
@@ -358,7 +358,8 @@ Any item in a lecture plan can carry pre-written **caption or audio-description 
 ### Screen Readers, Contrast & Themes
 
 - The controller and display went through an accessibility pass: every control has a name a screen reader can say, toggles announce their state, connection changes and action results are announced through live regions, keyboard focus is always drawn, and text meets WCAG AA contrast. Automated tests keep it that way. The full findings, including what's still open, are in the [accessibility audit](accessibility.md).
-- **Controller theme** (Settings → Presentation): **Dark** (default), **Light / High contrast** for bright rooms and window glare, or **Auto** to match the system.
+- **Controller theme** (Settings → Presentation): **Match this device** (default, following the iPad's or computer's own light/dark setting), **Dark**, or **Light / High contrast** for bright rooms and window glare.
+- **The display's own screens** (Go live, pairing, setup) can be light or dark too, from the display's Settings ("Look of these setup screens", following the computer by default). What the room sees on the stage is never themed.
 - [Guest View](#guest-view-watching-on-your-own-device) puts the projector on a student's own screen, which helps anyone who can't see the wall well.
 - Every lectern action has a [keyboard shortcut](#keyboard-shortcuts).
 
@@ -374,11 +375,11 @@ On the display, press **Pair a device** (or `P`) and choose what to hand out:
 
 | Choice | Gives | QR behaviour |
 | :--- | :--- | :--- |
-| **Full control** (default) | A full controller for the room | Hides itself after 90 seconds |
-| **Guest (Simple Mode)** | A substitute's clicker (below) | Hides itself after 90 seconds |
-| **Guest view (watch only)** | A [Guest View](#guest-view-watching-on-your-own-device) link | Stays up until you close it |
+| **Control this screen** (default) | A full controller for the room | Hides itself after 90 seconds |
+| **Simple clicker** | A substitute's clicker: Next, Back, Blank and the laser ([Simple Mode](#simple-mode-for-substitutes), below) | Hides itself after 90 seconds |
+| **Watch only** | A [Guest View](#guest-view-watching-on-your-own-device) link | Stays up until you close it |
 
-Scanning a control QR opens the controller **already configured**: room, passphrase and connection all arrive in the link, after the `#` so they never reach a server log. Both devices then show the same **four-character code**. Matching codes confirm they can hear each other, and different codes mean a typo somewhere. Full control is the default every time the sheet opens, so a guest link is never left armed by the last person who used the machine.
+Scanning a control QR opens the controller **already configured**: room, passphrase and connection all arrive in the link, after the `#` so they never reach a server log. Both devices then show the same **four-character code**. Matching codes confirm they can hear each other, and different codes mean a typo somewhere. **Control this screen** is the default every time the sheet opens, so a guest link is never left armed by the last person who used the machine.
 
 On a server with accounts, a course can hold its room settings centrally, so a new iPad only needs a sign-in (see [Your Own Server](#part-11--your-own-server)).
 

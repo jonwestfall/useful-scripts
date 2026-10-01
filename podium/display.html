@@ -61,9 +61,18 @@
          link is a deliberate extra tap, never something left armed from the
          last person who used this machine (see showPairing in display.js). -->
     <div class="row" id="pair-mode" role="group" aria-label="What this code grants">
-      <button id="pair-mode-full" type="button" class="is-on">Full control</button>
-      <button id="pair-mode-guest" type="button">Guest (Simple Mode)</button>
-      <button id="pair-mode-view" type="button">Guest view (watch only)</button>
+      <!-- Named for what each lets the person holding the phone DO (Issue
+           #203), with a line saying so - the warning underneath used to be the
+           only place the difference showed, and only after picking one. -->
+      <button id="pair-mode-full" type="button" class="is-on pair-mode-btn">
+        <b>Control this screen</b><span>Everything, from their phone or iPad</span>
+      </button>
+      <button id="pair-mode-guest" type="button" class="pair-mode-btn">
+        <b>Simple clicker</b><span>Next, Back, Blank and the laser</span>
+      </button>
+      <button id="pair-mode-view" type="button" class="pair-mode-btn">
+        <b>Watch only</b><span>See and hear this screen; change nothing</span>
+      </button>
     </div>
     <div class="warn" id="pair-warn">Anyone who scans this can control this screen. It hides itself after 90 seconds.</div>
     <div id="pair-qr"></div>
@@ -83,14 +92,13 @@
 <div id="arm" class="sheet" hidden>
   <div class="card" style="text-align:center">
     <h1>Podium</h1>
-    <p>Click to go live. This grants the page fullscreen, sound and permission to keep the screen awake.</p>
+    <p>Go live takes the screen fullscreen, with sound, and keeps it awake.</p>
     <button id="arm-button" class="big-button">Go live</button>
     <div class="row" style="margin-top:14px">
       <button id="pair-button">Pair a device</button>
       <button id="arm-settings">Settings</button>
     </div>
-    <p class="hint">Room <span id="room-name" class="mono"></span> · code <span id="arm-code" class="mono">····</span></p>
-    <p class="hint">Press <kbd>?</kbd> at any time for the keyboard shortcuts.</p>
+    <p class="hint">Room <span id="room-name" class="mono"></span> · code <span id="arm-code" class="mono">····</span> · <kbd>?</kbd> shortcuts</p>
     <p class="hint" id="arm-status" role="status">Connecting…</p>
     <!-- Only on a server-backed Podium that keeps session records. Saying so
          on the screen the room can see is the point: nobody should have to read
@@ -102,17 +110,24 @@
       <span id="arm-resume-what"></span>
       <button id="arm-resume-clear" type="button">Start black instead</button>
     </p>
-    <!-- Always offered, not just when something is resumable: ink, a
-         watermark, timers and the music queue all outlive a reload on
-         purpose (see restoreInk/restoreState), which is exactly wrong the
-         first time this room is used for a different class. -->
-    <p class="hint">
-      <button id="arm-fresh-session" type="button">Clear this room’s saved session</button>
-      <span id="arm-fresh-session-note" role="status"></span>
-    </p>
-    <p class="hint mono relay-target"></p>
     <p class="hint stale-note" id="arm-build" hidden></p>
-    <pre class="relay-log" hidden></pre>
+    <!-- The rest is for whoever is setting the room up or working out why it
+         will not connect, not for every Go live (Issue #202) - so it sits
+         behind one line, and opens itself when the relay is in trouble (see
+         setHud). -->
+    <details class="help arm-details" id="arm-details">
+      <summary>Connection details</summary>
+      <p class="hint mono relay-target"></p>
+      <pre class="relay-log" hidden></pre>
+      <!-- Always offered, not just when something is resumable: ink, a
+           watermark, timers and the music queue all outlive a reload on
+           purpose (see restoreInk/restoreState), which is exactly wrong the
+           first time this room is used for a different class. -->
+      <p class="hint">
+        <button id="arm-fresh-session" type="button">Clear this room’s saved session</button>
+        <span id="arm-fresh-session-note" role="status"></span>
+      </p>
+    </details>
   </div>
 </div>
 
@@ -197,6 +212,18 @@
         <button type="button" id="setup-close" hidden>Close</button>
       </div>
     </form>
+    <!-- Outside the form on purpose: it is not part of the connection, so it
+         applies the moment it changes and never makes Save reconnect. Only
+         this screen's own sheets change - never the stage the room sees,
+         which stays black (Issue #210). -->
+    <div class="field" style="margin-top:16px">
+      <label for="d-sheet-theme">Look of these setup screens</label>
+      <select id="d-sheet-theme">
+        <option value="auto">Match this computer (default)</option>
+        <option value="dark">Dark</option>
+        <option value="light">Light / High contrast</option>
+      </select>
+    </div>
     <hr style="border:0;border-top:1px solid var(--line);margin:22px 0 16px">
     <button id="reset-device" class="danger-outline" style="width:100%">Clear settings &amp; reload</button>
     <p class="hint" id="reset-note">
