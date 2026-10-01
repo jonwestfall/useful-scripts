@@ -297,7 +297,8 @@ something, GitHub keeps every previous version.
 Podium is built to tell you which of the parts is at fault rather than just failing.
 
 - **"Lost the relay — retrying"** — the broker is not answering. The display shows
-  exactly what it is dialling and what went wrong underneath. Usually the classroom
+  exactly what it is dialling and what went wrong underneath, under **Connection
+  details** on the Go live screen (it opens by itself when something is wrong). Usually the classroom
   wi-fi; occasionally the free broker having a bad day. Settings lets you switch to a
   different one.
 - **The codes do not match** — the four characters on each screen come from the room

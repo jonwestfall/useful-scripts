@@ -6614,7 +6614,8 @@ $('#update-reload').addEventListener('click', () => {
 // (the Presentation tab) rather than a single quick-access toggle.
 const PRESENTATION_KEY = 'podium.presentation.v1';
 const PRESENTATION_DEFAULTS = {
-  theme: 'dark',
+  // Follows the device's own light/dark setting unless chosen here (Issue #210).
+  theme: 'auto',
   showPollUrl: true,
   blankOnConnect: true,
   keepAwake: true,
@@ -6638,7 +6639,7 @@ function loadPresentation() {
   try {
     const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
     const merged = { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
-    if (!['dark', 'light', 'auto'].includes(merged.theme)) merged.theme = 'dark';
+    if (!['dark', 'light', 'auto'].includes(merged.theme)) merged.theme = 'auto';
     if (merged.haptics === undefined) merged.haptics = true;
     if (merged.snapShapes === undefined) merged.snapShapes = true;
     // A saved order is a permutation of whatever TAB_IDS was when it was
@@ -7158,7 +7159,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 applyWakeLock();
 
 function applyTheme() {
-  const theme = presentation.theme || 'dark';
+  const theme = presentation.theme || 'auto';
   let effective = theme;
   if (theme === 'auto') {
     effective = (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
@@ -7302,7 +7303,7 @@ function showSetup() {
   settingsTab(isConfigured(cfg) ? 'presentation' : 'connection');
   hidePassphrase();
   const prefTheme = $('#pref-theme');
-  if (prefTheme) prefTheme.value = presentation.theme || 'dark';
+  if (prefTheme) prefTheme.value = presentation.theme || 'auto';
   $('#pref-poll-url').checked = presentation.showPollUrl;
   $('#pref-blank-on-connect').checked = presentation.blankOnConnect;
   $('#pref-keep-awake').checked = presentation.keepAwake;

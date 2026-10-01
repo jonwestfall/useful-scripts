@@ -100,21 +100,35 @@ const contrast = (a, b) => {
 };
 
 const css = read('assets/css/podium.css');
-const tokens = Object.fromEntries([...css.matchAll(/--([a-z0-9-]+):\s*(#[0-9a-f]{6})\b/gi)].map((m) => [m[1], m[2]]));
-const colourOf = (value) => {
+// Two palettes: the dark one in the first :root block, and the light one
+// (Issue #48, restored for #210) that redefines the same tokens. Read
+// separately - one map over the whole file would let the light values
+// silently replace the dark ones.
+const tokensIn = (block) => Object.fromEntries([...block.matchAll(/--([a-z0-9-]+):\s*(#[0-9a-f]{6})\b/gi)].map((m) => [m[1], m[2]]));
+const tokens = tokensIn(css.match(/:root\s*\{[^}]*\}/)[0]);
+const lightTokens = { ...tokens, ...tokensIn(css.match(/:root\[data-theme="light"\], body\[data-theme="light"\]\s*\{[^}]*\}/)?.[0] || '') };
+const colourOf = (value, palette = tokens) => {
   if (!value) return null;
   const token = value.match(/var\(--([a-z0-9-]+)\)/);
-  if (token) return tokens[token[1]] || null;
+  if (token) return palette[token[1]] || null;
   return value.trim().match(/^#(?:[0-9a-f]{6}|[0-9a-f]{3})\b/i)?.[0] || null;
 };
 
-test('the palette\'s text colours meet WCAG AA on the panels they sit on', () => {
-  for (const [fg, bg] of [['ink', 'bg'], ['ink', 'panel-2'], ['dim', 'bg'], ['dim', 'panel'], ['dim', 'panel-2'],
-    ['accent', 'bg'], ['live', 'bg'], ['live', 'panel-2'], ['cue', 'bg'], ['ok', 'bg']]) {
-    const ratio = contrast(tokens[fg], tokens[bg]);
-    assert.ok(ratio >= 4.5, `--${fg} on --${bg} is ${ratio.toFixed(2)}:1`);
-  }
-  assert.ok(contrast('#ffffff', tokens['live-fill']) >= 4.5, 'white on --live-fill');
+for (const [name, palette] of [['dark', tokens], ['light', lightTokens]]) {
+  test(`the ${name} palette's text colours meet WCAG AA on the panels they sit on`, () => {
+    for (const [fg, bg] of [['ink', 'bg'], ['ink', 'panel-2'], ['dim', 'bg'], ['dim', 'panel'], ['dim', 'panel-2'],
+      ['accent', 'bg'], ['live', 'bg'], ['live', 'panel-2'], ['cue', 'bg'], ['ok', 'bg']]) {
+      const ratio = contrast(palette[fg], palette[bg]);
+      assert.ok(ratio >= 4.5, `${name}: --${fg} on --${bg} is ${ratio.toFixed(2)}:1`);
+    }
+    assert.ok(contrast('#ffffff', palette['live-fill']) >= 4.5, `${name}: white on --live-fill`);
+    assert.ok(contrast(palette['on-accent'], palette.accent) >= 4.5,
+      `${name}: --on-accent on --accent is ${contrast(palette['on-accent'], palette.accent).toFixed(2)}:1`);
+  });
+}
+
+test('the light theme really is defined (it was once lost in a merge)', () => {
+  assert.notEqual(lightTokens.bg, tokens.bg);
 });
 
 // Every rule that sets BOTH a text colour and a background it can be checked
@@ -124,8 +138,10 @@ test('no rule sets a text colour under 4.5:1 against its own background', () => 
   const failing = [];
   for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const body = m[2];
-    const fg = colourOf(body.match(/(?:^|[;\s])color:\s*([^;]+)/)?.[1]);
-    const bg = colourOf(body.match(/background(?:-color)?:\s*([^;]+)/)?.[1]);
+    // A light-theme rule's var(--x) means the light palette's --x.
+    const palette = /data-theme="light"/.test(m[1]) ? lightTokens : tokens;
+    const fg = colourOf(body.match(/(?:^|[;\s])color:\s*([^;]+)/)?.[1], palette);
+    const bg = colourOf(body.match(/background(?:-color)?:\s*([^;]+)/)?.[1], palette);
     if (!fg || !bg) continue;
     const ratio = contrast(fg, bg);
     if (ratio < 4.5) failing.push(`line ${lineOf(css, m.index)} ${m[1].trim()}: ${fg} on ${bg} = ${ratio.toFixed(2)}:1`);

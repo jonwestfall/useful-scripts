@@ -14,6 +14,9 @@
      dark panels, but white on it is 3.27:1 - under WCAG AA's 4.5:1 for text
      this size. This is 4.98:1 (Issue #156). */
   --live-fill: #d32f2f;
+  /* Text on an --accent fill (a selected button, Go live): dark here, white in
+     the light theme, whose accent is a deeper blue (Issue #210). */
+  --on-accent: #07101f;
   --cue: #ffc94d;
   --ok: #45d483;
   --radius: 12px;
@@ -62,7 +65,7 @@ button {
 button:hover { background: #242b33; }
 button:active { transform: translateY(1px); }
 button:disabled { opacity: .4; cursor: default; }
-button.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
+button.is-on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 button.is-danger { background: var(--live-fill); border-color: var(--live-fill); color: #fff; font-weight: 600; }
 button.danger-outline { border-color: #6b2b2b; color: #ff9d9d; }
 
@@ -294,7 +297,7 @@ body.display.is-frozen #stage::after {
 .card p { color: var(--dim); margin: 0 0 18px; }
 .big-button {
   width: 100%; min-height: 66px; font-size: 19px; font-weight: 600;
-  background: var(--accent); border-color: var(--accent); color: #06101f;
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
 }
 .row { display: flex; gap: 10px; flex-wrap: wrap; }
 .row > * { flex: 1; }
@@ -304,6 +307,11 @@ body.display #standby .card { text-align: center; }
 #standby .room b { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 body.display #standby:not(.is-on) { display: none; }
 
+/* The three pairing modes, by what they let someone do (Issue #203). */
+.pair-mode-btn { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 14px; line-height: 1.25; }
+.pair-mode-btn span { font-size: 12px; color: var(--dim); font-weight: 400; }
+.pair-mode-btn.is-on span { color: inherit; opacity: .8; }
+#pair-mode { flex-wrap: wrap; justify-content: center; }
 #pair-qr svg { width: min(56vh, 340px); height: auto; background: #fff; padding: 12px; border-radius: 12px; }
 #pair-url {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
@@ -1112,7 +1120,7 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .ink-tools .ink-tool-btn:last-child { border-right: none; }
 .ink-tools .ink-tool-btn:hover { color: var(--ink); background: #1a2330; }
 .ink-tools .ink-tool-btn.is-on {
-  background: var(--accent); color: #07101f; font-weight: 600;
+  background: var(--accent); color: var(--on-accent); font-weight: 600;
 }
 #pad.is-eraser { cursor: crosshair; }
 .swatch { width: 42px; min-height: 42px; padding: 0; border-radius: 50%; }
@@ -1186,7 +1194,7 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .tab[data-count]:not([data-count=""])::after {
   content: attr(data-count);
   margin-left: 6px; padding: 0 6px; border-radius: 999px;
-  background: var(--accent); color: #07101f; font-size: 11px; font-weight: 700;
+  background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 700;
 }
 
 /* Press and hold (see onLongPress in util.js): the button fills up while you
@@ -1221,7 +1229,7 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 }
 .shot-where {
   position: absolute; right: 4px; bottom: 4px; padding: 1px 6px; border-radius: 6px;
-  background: var(--accent); font: 700 11px/1.7 system-ui, sans-serif; color: #07101f;
+  background: var(--accent); font: 700 11px/1.7 system-ui, sans-serif; color: var(--on-accent);
 }
 /* The two corner actions. Deliberately tap-sized rather than tidy: this gets
    used one-handed, at a lectern, in front of people. */
@@ -1277,7 +1285,7 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .music-transport button { min-height: 58px; font-size: 17px; font-weight: 600; }
 .music-transport .skip { flex: 0 0 72px; font-size: 20px; padding: 0; }
 #music-play {
-  flex: 1; background: var(--accent); border-color: var(--accent); color: #06101f;
+  flex: 1; background: var(--accent); border-color: var(--accent); color: var(--on-accent);
 }
 #music-play:disabled { background: var(--panel-2); border-color: var(--line); color: var(--ink); }
 
@@ -1291,7 +1299,7 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .music-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .music-row-artist { color: var(--dim); font-size: 13px; }
 .music-row-duration { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
-#bar-music.is-on, .bottombar .bar-slot.is-on { background: var(--accent); border-color: var(--accent); color: #07101f; font-weight: 600; }
+#bar-music.is-on, .bottombar .bar-slot.is-on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 .bottombar .bar-slot[data-slot-action="laser"].is-on { background: var(--live-fill); border-color: var(--live-fill); color: #fff; }
 .bottombar .bar-slot[data-slot-action="spotlight"].is-on { background: #d29922; border-color: #d29922; color: #1a1200; }
 .bottombar .bar-slot[data-slot-action="freeze"].is-on { background: var(--cue); border-color: var(--cue); color: #1a1204; }
@@ -1610,7 +1618,7 @@ body.plan .linkish:hover { text-decoration: underline; }
 .pane-badge {
   display: inline-flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 11px; padding: 2px 7px; border-radius: 4px;
-  background: var(--accent); color: #07101f;
+  background: var(--accent); color: var(--on-accent);
 }
 .autolaunch-set-box {
   border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 4px;
@@ -1689,7 +1697,7 @@ body.plan .linkish:hover { text-decoration: underline; }
 }
 .cat-pill.active {
   background: var(--accent);
-  color: #07101f;
+  color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 600;
 }
@@ -1931,3 +1939,224 @@ details.help > .hint { margin-top: 4px; }
 .confirm-once { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; background: var(--panel-2); }
 .confirm-once .hint { margin: 0 0 8px; }
 .confirm-once-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ==========================================================================
+   LIGHT / HIGH-CONTRAST THEME (Issue #48, restored for Issue #210)
+
+   Settings -> Presentation has offered "Light" since #48, but this block was
+   lost in a merge around the 1.1 release, so choosing it changed almost
+   nothing. Restored here, with the colours that carry meaning darkened to
+   meet WCAG AA on these pale panels (Issue #156): accent, live, cue and OK
+   were 3.0-4.6:1 as first written. test/a11y.test.mjs checks this palette
+   as well as the dark one.
+   ========================================================================== */
+
+:root[data-theme="light"], body[data-theme="light"] {
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --panel-2: #f1f5f9;
+  --line: #cbd5e1;
+  --ink: #0f172a;
+  --dim: #475569;
+  --accent: #0369a1;
+  --live: #b91c1c;
+  --cue: #b45309;
+  --ok: #15803d;
+  --live-fill: #b91c1c;
+  --on-accent: #ffffff;
+  color-scheme: light;
+}
+
+:root[data-theme="light"] input[type=text],
+:root[data-theme="light"] input[type=url],
+:root[data-theme="light"] input[type=number],
+:root[data-theme="light"] input[type=password],
+:root[data-theme="light"] select,
+:root[data-theme="light"] textarea {
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+:root[data-theme="light"] button {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+:root[data-theme="light"] button:hover {
+  background: #e2e8f0;
+}
+:root[data-theme="light"] button.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+:root[data-theme="light"] button.danger-outline {
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
+:root[data-theme="light"] body.control.is-frozen {
+  background: #fef3c7;
+}
+
+:root[data-theme="light"] .topbar {
+  border-bottom-color: var(--line);
+  background: var(--panel);
+}
+
+:root[data-theme="light"] .topbar-pacing {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--dim);
+}
+:root[data-theme="light"] .topbar-pacing:hover {
+  background: #e2e8f0;
+  color: var(--ink);
+}
+:root[data-theme="light"] .topbar-pacing.is-running {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+:root[data-theme="light"] .topbar-pacing.is-near-end {
+  border-color: var(--cue);
+  color: #b45309;
+}
+:root[data-theme="light"] .topbar-pacing.is-overtime {
+  border-color: var(--live);
+  color: #991b1b;
+  background: #fee2e2;
+}
+:root[data-theme="light"] .pacing-track {
+  background: rgba(0, 0, 0, .08);
+}
+
+:root[data-theme="light"] .tab.is-on {
+  background: #e2e8f0;
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+:root[data-theme="light"] .layout-btn.is-on,
+:root[data-theme="light"] .panel-btn.is-on,
+:root[data-theme="light"] .music-row.is-on,
+:root[data-theme="light"] button.set-row.is-on,
+:root[data-theme="light"] .order-row.is-on,
+:root[data-theme="light"] .plan-row.is-on,
+:root[data-theme="light"] .music-quick-chip.is-on,
+:root[data-theme="light"] .timer-chip.is-on {
+  border-color: var(--accent);
+  background: #e0f2fe;
+  color: var(--ink);
+}
+
+:root[data-theme="light"] #deck-now-preview,
+:root[data-theme="light"] #deck-next-preview,
+:root[data-theme="light"] .mirror-frame,
+:root[data-theme="light"] .ink-pad-frame {
+  background: #f1f5f9;
+}
+:root[data-theme="light"] #deck-now-preview {
+  border-color: var(--accent);
+}
+
+:root[data-theme="light"] .bottombar {
+  background: var(--panel);
+  border-top-color: var(--line);
+}
+:root[data-theme="light"] #bar-music.is-on,
+:root[data-theme="light"] .bottombar .bar-slot.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+:root[data-theme="light"] .bottombar #blank.is-on,
+:root[data-theme="light"] .bottombar .bar-slot[data-slot-action="blank"].is-on {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #ffffff;
+}
+:root[data-theme="light"] .bottombar #freeze.is-on,
+:root[data-theme="light"] .bottombar .bar-slot[data-slot-action="freeze"].is-on {
+  background: var(--cue);
+  border-color: var(--cue);
+  color: #ffffff;
+}
+
+:root[data-theme="light"] #panic {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
+:root[data-theme="light"] #link-help,
+:root[data-theme="light"] #help-banner {
+  background: #fef3c7;
+  border-bottom-color: #fcd34d;
+  color: #92400e;
+}
+:root[data-theme="light"] #link-help.is-mismatch,
+:root[data-theme="light"] #relay-help .relay-log {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
+
+:root[data-theme="light"] #build-note.is-stale,
+:root[data-theme="light"] .stale-note {
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+
+:root[data-theme="light"] .ink-tools .ink-tool-btn:hover {
+  background: #e2e8f0;
+  color: var(--ink);
+}
+:root[data-theme="light"] .ink-tools .ink-tool-btn.is-on {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+:root[data-theme="light"] .laser-swatch {
+  border-color: #cbd5e1;
+}
+:root[data-theme="light"] .laser-swatch.is-on {
+  border-color: #0f172a;
+}
+
+:root[data-theme="light"] .tile-music:active {
+  background: #e2e8f0;
+}
+
+:root[data-theme="light"] #poll-timer-btns button {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--ink);
+}
+:root[data-theme="light"] #poll-timer-btns button:hover {
+  background: var(--line);
+}
+
+/* The display's own screens in the light theme (Issue #210) - the Go live,
+   pairing, setup and standby sheets only. Scoped to .sheet rather than to the
+   page, so the stage behind them (what the room sees) never turns pale. */
+body.display[data-sheet-theme="light"] .sheet {
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --panel-2: #f1f5f9;
+  --line: #cbd5e1;
+  --ink: #0f172a;
+  --dim: #475569;
+  --accent: #0369a1;
+  --live: #b91c1c;
+  --cue: #b45309;
+  --ok: #15803d;
+  --live-fill: #b91c1c;
+  --on-accent: #ffffff;
+  color-scheme: light;
+  color: var(--ink);
+}
+body.display[data-sheet-theme="light"] .sheet .card { background: var(--panel); color: var(--ink); border-color: var(--line); }
+:root[data-theme="light"] .warn,
+body.display[data-sheet-theme="light"] .sheet .warn { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
