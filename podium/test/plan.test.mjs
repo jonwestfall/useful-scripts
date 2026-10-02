@@ -361,5 +361,13 @@ console.log('-- a lecture\'s server link stays in this browser (Issue #204) --')
   chk('and the lecture itself still knows', linked.server.id === '42');
 }
 
+console.log('-- a text sign\'s colour survives the plan file (Issue #222) --');
+{
+  const p = emptyPlan('Colours');
+  p.items.push({ ...newItem('text'), body: 'Group work', bg: '#0b1e3d', color: '#ffd166' });
+  const back = readPlan(planToJson(p)).plan.items[0];
+  chk('the text colour round-trips with the background', back.color === '#ffd166' && back.bg === '#0b1e3d');
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

@@ -1697,6 +1697,21 @@ try {
           </label>
         </div>
       </div>
+      <!-- Issue #222: the words' own colour, the same way as the background. -->
+      <div class="field">
+        <label>Text colour</label>
+        <div class="inline" id="msg-fg-swatches" role="group" aria-label="Text colour">
+          <button type="button" class="bg-swatch is-on" data-fg="" style="background:#f2f4f7" title="Default" aria-label="Default text colour" aria-pressed="true"></button>
+          <button type="button" class="bg-swatch" data-fg="#0a0d12" style="background:#0a0d12" title="Black" aria-label="Black text" aria-pressed="false"></button>
+          <button type="button" class="bg-swatch" data-fg="#ffd166" style="background:#ffd166" title="Yellow" aria-label="Yellow text" aria-pressed="false"></button>
+          <button type="button" class="bg-swatch" data-fg="#8ecbff" style="background:#8ecbff" title="Sky" aria-label="Sky blue text" aria-pressed="false"></button>
+          <button type="button" class="bg-swatch" data-fg="#ff9d9d" style="background:#ff9d9d" title="Coral" aria-label="Coral text" aria-pressed="false"></button>
+          <label id="msg-fg-custom-label" class="bg-swatch-picker" title="Custom">
+            <span class="bg-swatch-picker-inner"></span>
+            <input id="msg-fg-custom" type="color" value="#f2f4f7" aria-label="Custom text colour">
+          </label>
+        </div>
+      </div>
       <div class="field">
         <label>Picture (optional)</label>
         <div class="inline">

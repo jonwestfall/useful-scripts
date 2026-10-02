@@ -37,8 +37,8 @@ export const BUILD = 78;
 // the server itself read for the build (see servedBuild in util.js and
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
-export const VERSION = '1.1';
-export const COMMIT = '45a2065';
+export const VERSION = '1.2';
+export const COMMIT = '0b020c6';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -384,6 +384,9 @@ function normalizeItem(item) {
     copy.size = ['s', 'm', 'l', 'xl'].includes(copy.size) ? copy.size : 'l';
     copy.align = copy.align === 'left' ? 'left' : 'center';
     copy.bg = String(copy.bg || '').slice(0, 64);
+    // Issue #222: the words' own colour, beside the background's. A hex
+    // colour or nothing (the renderer's default) - it ends up in a style.
+    copy.color = /^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(copy.color || '') ? copy.color : '';
     copy.font = ['serif', 'mono', 'rounded', 'display'].includes(copy.font) ? copy.font : 'sans';
     copy.caption = String(copy.caption || '').slice(0, 200);
   }

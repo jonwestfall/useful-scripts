@@ -15,7 +15,11 @@
   <a class="brand" href="index.html" title="Back to Podium">PODIUM</a>
   <span class="tag">Planning</span>
   <input id="plan-title" class="title-input" type="text" placeholder="Lecture title" aria-label="Lecture title">
+  <!-- On a server, the classes there to file under (Issue #224); New class…
+       shows the text box, to make one. Without a server, just the text box. -->
+  <select id="plan-course-pick" class="course-input" aria-label="Class" hidden></select>
   <input id="plan-course" class="course-input" type="text" placeholder="Course" aria-label="Course">
+  <button id="plan-course-create" type="button" class="course-create" hidden>Create class</button>
   <span class="spacer"></span>
   <span id="plan-version-tag" class="version-tag"></span>
   <span id="save-state" class="hint"></span>

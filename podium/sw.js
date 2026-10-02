@@ -115,7 +115,10 @@ self.addEventListener('fetch', (event) => {
       }
       return fresh;
     } catch (err) {
-      const hit = await caches.match(request, { ignoreSearch: request.mode === 'navigate' });
+      // A static file's query string never changes what it is - a retry of
+      // a failed module import asks under ?retry=… (see importMarp in
+      // deck.js) and must still find the copy cached under its plain name.
+      const hit = await caches.match(request, { ignoreSearch: true });
       if (hit) return hit;
       throw err;
     }

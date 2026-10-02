@@ -59,6 +59,7 @@
     <button type="button" class="tab" id="tab-people" data-target="panel-people" hidden>People</button>
     <button type="button" class="tab" id="tab-server" data-target="panel-server" hidden>Server</button>
     <button type="button" class="tab" id="tab-courses" data-target="panel-courses" hidden>Courses</button>
+    <button type="button" class="tab" id="tab-lectures" data-target="panel-lectures" hidden>Lectures</button>
     <button type="button" class="tab" id="tab-library" data-target="panel-library" hidden>Library</button>
     <button type="button" class="tab" id="tab-content" data-target="panel-content" hidden>Global Content</button>
     <button type="button" class="tab" id="tab-sessions" data-target="panel-sessions" hidden>Sessions</button>
@@ -166,6 +167,20 @@
         <button id="new-course-go" type="button">Add the course</button>
       </div>
     </div>
+  </section>
+  </div>
+
+  <!-- Every lecture on the server, by class (Issue #224) - "No Class
+       Assigned" its own group, so a lecture nobody filed is findable, can be
+       opened, and can be filed under a class from here. Administrators only. -->
+  <div class="admin-panel" id="panel-lectures" hidden>
+  <section class="card" id="lectures-card">
+    <div class="admin-head">
+      <h2>Lectures</h2>
+      <input id="lectures-search" type="search" placeholder="Filter by title, author or class" aria-label="Filter lectures">
+    </div>
+    <div id="lectures"></div>
+    <span class="hint" id="lectures-note" role="status"></span>
   </section>
   </div>
 

@@ -21,6 +21,7 @@ import {
   pollUntil,
   want,
   trap,
+  expecting,
   bgMatches,
   reportErrors,
   teardown,
@@ -1891,6 +1892,8 @@ await msgPad.selectOption('#msg-size', 's');
 await msgPad.selectOption('#msg-align', 'left');
 await msgPad.selectOption('#msg-font', 'display');
 await msgPad.click('#msg-bg-swatches .bg-swatch[title="Navy"]');
+// Issue #222: the words' own colour, the same way as the background's.
+await msgPad.click('#msg-fg-swatches .bg-swatch[title="Yellow"]');
 await msgPad.setInputFiles('#msg-image', msgImage);
 await msgPad.waitForFunction(() => /attached/.test(document.querySelector('#msg-image-note')?.textContent || ''), null, { timeout: 10000 });
 await msgPad.fill('#msg-caption', 'Figure 1: the setup');
@@ -1901,6 +1904,8 @@ ok('...a numbered list', /<ol class="mini-md-list"><li>Read the prompt<\/li><li>
 ok('...the chosen font', (await msgPad.getAttribute('#message-preview-box .r-text', 'data-font')) === 'display');
 ok('...the chosen size', (await msgPad.getAttribute('#message-preview-box .r-text', 'data-size')) === 's');
 ok('...the chosen background', await bgMatches(msgPad, '#message-preview-box .r-text', '#0b1e3d'));
+ok('...the chosen text colour (Issue #222)',
+  (await msgPad.$eval('#message-preview-box .r-text-body', (n) => getComputedStyle(n).color)) === 'rgb(255, 209, 102)');
 ok('...the picture', !!(await msgPad.getAttribute('#message-preview-box .r-text-image', 'src')));
 ok('...and its caption', (await msgPad.textContent('#message-preview-box .r-text-caption')).includes('Figure 1: the setup'));
 ok('picking a preset swatch marks it selected, not the custom picker',
@@ -1914,7 +1919,8 @@ await msgPad.evaluate(() => {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 });
 ok('a custom colour deselects every preset swatch',
-  await msgPad.evaluate(() => ![...document.querySelectorAll('.bg-swatch')].some((b) => b.classList.contains('is-on'))));
+  await msgPad.evaluate(() => ![...document.querySelectorAll('#msg-bg-swatches .bg-swatch')].some((b) => b.classList.contains('is-on'))));
+ok('and leaves the text colour as it was', await msgPad.evaluate(() => document.querySelector('#msg-fg-swatches .bg-swatch[title="Yellow"]').classList.contains('is-on')));
 ok('and switches the custom picker on instead', await msgPad.evaluate(() => document.querySelector('#msg-bg-custom-label').classList.contains('is-on')));
 ok('the preview reflects the custom colour', await bgMatches(msgPad, '#message-preview-box .r-text', '#552266'));
 
@@ -1955,6 +1961,9 @@ ok('the font/size/background reach the projector, the same values chosen in the 
   (await msgScreen.getAttribute('.layer[data-role="program"] .r-text', 'data-font')) === 'display'
   && (await msgScreen.getAttribute('.layer[data-role="program"] .r-text', 'data-size')) === 's'
   && await bgMatches(msgScreen, '.layer[data-role="program"] .r-text', '#552266'));
+ok('and so does the text colour, caption included (Issue #222)',
+  (await msgScreen.$eval('.layer[data-role="program"] .r-text-body', (n) => getComputedStyle(n).color)) === 'rgb(255, 209, 102)'
+  && (await msgScreen.$eval('.layer[data-role="program"] .r-text-caption', (n) => getComputedStyle(n).color)) === 'rgb(255, 209, 102)');
 
 await msgCtx.close();
 }
@@ -2478,6 +2487,52 @@ await phone.reload();
 await phone.waitForSelector('.tile');
 ok('it is remembered on this device', await phone.evaluate(() => document.body.classList.contains('compact')));
 await lctx.close();
+}
+
+if (want('a deck still renders after the engine download fails')) {
+console.log('\n-- a deck still renders after the engine download fails (Issue #221) --');
+// The first download of the 1.1 MB Marp bundle - and the immediate retry -
+// both fail, the way one can on a classroom iPad while a video streams. One
+// failed download used to leave every deck "could not render" until a reload.
+const fctx = await browser.newContext({ viewport: { width: 1280, height: 860 }, serviceWorkers: 'block' });
+await fctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'engine-retry-room', passphrase: 'try, try again' }));
+expecting.marpRetry = true;
+let refused = { display: 0, control: 0 };
+const failFirstTwo = (page, who) => page.route(/marp\.esm\.js/, (route) => {
+  if (refused[who] < 2) { refused[who] += 1; return route.abort('failed'); }
+  return route.continue();
+});
+const fScreen = await fctx.newPage();
+trap(fScreen, 'engine-retry display');
+await failFirstTwo(fScreen, 'display');
+await fScreen.goto(`${BASE}/display.html`);
+await fScreen.click('#arm-button');
+await fScreen.waitForSelector('#hud[data-status="online"]');
+const fPad = await fctx.newPage();
+trap(fPad, 'engine-retry pad');
+await failFirstTwo(fPad, 'control');
+await fPad.goto(`${BASE}/control.html`);
+await fPad.waitForSelector('.tile');
+await fPad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+const pickDeck = () => fPad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+await pickDeck();
+await fPad.waitForFunction(() => /Could not open that deck/.test(document.querySelector('#deck-file-note')?.textContent || ''), null, { timeout: 15000 });
+ok('with the download refused twice, the pick says it could not open the deck', true);
+// The bug: picking it again used to fail the same way, every time, until a reload.
+await pickDeck();
+await fPad.click('.tab[data-tab="slides"]');
+await fScreen.waitForFunction(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  return (host?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || []).length > 0;
+}, null, { timeout: 30000 });
+ok('picking it again puts it on the projector, with no reload', true);
+await fPad.waitForFunction(() => !/could not render/.test(document.querySelector('#deck-notes')?.textContent || '')
+  && !!document.querySelector('#deck-live:not([hidden])'), null, { timeout: 30000 });
+await fPad.waitForFunction(() => document.querySelector('#deck-theme')?.textContent.startsWith('theme:'), null, { timeout: 30000 });
+ok(`and the controller's Slides tab renders it too (${refused.control} downloads refused first)`, refused.control === 2);
+expecting.marpRetry = false;
+await fctx.close();
 }
 
 reportErrors();

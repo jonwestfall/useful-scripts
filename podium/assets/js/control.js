@@ -1512,6 +1512,9 @@ function highlightGrid(index, deckId = (deckView.id || (workItem()?.type === 'de
   updateActiveSectionChip(index);
 }
 
+const DECK_RETRY_MS = 4000;
+let deckFailed = null;   // { id, at } - the last deck that would not render here
+
 async function ensureDeckView(item) {
   if (!item || item.type !== 'deck') {
     deckView = { id: null, deck: null };
@@ -1522,6 +1525,9 @@ async function ensureDeckView(item) {
     return;
   }
   if (deckView.id === item.deckId) return;
+  // Called on every state broadcast, so a deck that failed to render is
+  // retried a few seconds later rather than twice a second (Issue #221).
+  if (deckFailed?.id === item.deckId && Date.now() - deckFailed.at < DECK_RETRY_MS) return;
   const mine = ++deckGeneration;
   let source;
   try {
@@ -1541,7 +1547,10 @@ async function ensureDeckView(item) {
     // until now and needs to catch up, the same as after a resize.
     if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad();
   } catch (err) {
-    $('#deck-notes').textContent = `Marp could not render this deck: ${err.message}`;
+    // Retried on a later state update (Issue #221) - deckView is still
+    // unset, and deck.js no longer keeps a failed engine around.
+    deckFailed = { id: item.deckId, at: Date.now() };
+    $('#deck-notes').textContent = `Marp could not render this deck: ${err.message} Trying again in a moment…`;
   }
 }
 
@@ -5821,7 +5830,7 @@ $('#photo-upload').addEventListener('change', async (ev) => {
 
 // --- full-screen message editor (Issue #103) --------------------------------
 //
-// One item shape - type 'text' with body/size/align/font/bg/src/caption -
+// One item shape - type 'text' with body/size/align/font/bg/color/src/caption -
 // that normalizeItem() in protocol.js already validates and renderText() in
 // renderers.js already draws; this modal is just a form for it, following
 // the same open/close/Escape/click-outside convention #modal-countdown
@@ -5832,6 +5841,7 @@ $('#photo-upload').addEventListener('change', async (ev) => {
 
 let messageImageSrc = '';  // '' or an asset:<id> reference
 let messageBg = '';        // '' (Default) or a #hex, from a preset or the custom picker
+let messageFg = '';        // the same, for the words themselves (Issue #222)
 let messagePreviewRenderer = null;
 
 function currentMessageItem() {
@@ -5843,6 +5853,7 @@ function currentMessageItem() {
     align: $('#msg-align').value,
     font: $('#msg-font').value,
     bg: messageBg,
+    color: messageFg,
     src: messageImageSrc,
     caption: $('#msg-caption').value,
   };
@@ -5875,6 +5886,21 @@ $$('#msg-bg-swatches .bg-swatch').forEach((b) => b.addEventListener('click', () 
 $('#msg-bg-custom').addEventListener('input', (ev) => {
   $('#msg-bg-custom-label').style.setProperty('--custom-bg-color', ev.target.value);
   selectMessageBg(ev.target.value, null);
+});
+
+function selectMessageFg(value, swatch) {
+  messageFg = value;
+  $$('#msg-fg-swatches .bg-swatch').forEach((b) => {
+    b.classList.toggle('is-on', b === swatch);
+    b.setAttribute('aria-pressed', String(b === swatch));
+  });
+  $('#msg-fg-custom-label').classList.toggle('is-on', !swatch);
+  updateMessagePreview();
+}
+$$('#msg-fg-swatches .bg-swatch').forEach((b) => b.addEventListener('click', () => selectMessageFg(b.dataset.fg, b)));
+$('#msg-fg-custom').addEventListener('input', (ev) => {
+  $('#msg-fg-custom-label').style.setProperty('--custom-bg-color', ev.target.value);
+  selectMessageFg(ev.target.value, null);
 });
 
 function setMessageImage(src, note) {

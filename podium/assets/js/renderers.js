@@ -667,8 +667,12 @@ function renderText(item) {
     node.dataset.align = it.align || 'center';
     node.dataset.font = it.font || 'sans';
     node.style.background = it.bg || '';
+    node.style.color = it.color || '';
     imageWrap.hidden = !it.src;
     if (it.src) image.src = it.src;
+    // A chosen text colour carries the caption with it; the default keeps
+    // the caption a step quieter than the words.
+    caption.style.color = it.color || '';
     caption.textContent = it.caption || '';
     caption.hidden = !it.caption;
   };
@@ -1252,6 +1256,7 @@ function renderDeck(item, opts) {
     applyStep(slides[clamped], current.step);
   }
 
+  let failedAt = 0;
   async function mount(it) {
     const mine = ++generation;
     let source;
@@ -1290,7 +1295,10 @@ function renderDeck(item, opts) {
       // that there is a real box to redo it against.
       opts.onReady?.();
     } catch (err) {
-      setStatus(`Marp could not render this deck.\n${err.message}`);
+      // Not the end of it (Issue #221): mountedId is still unset, so a later
+      // update() mounts again, and deck.js no longer keeps a failed engine.
+      failedAt = Date.now();
+      setStatus(`Marp could not render this deck.\n${err.message}\nTrying again in a moment…`);
     }
   }
 
@@ -1299,7 +1307,13 @@ function renderDeck(item, opts) {
   return {
     el: host,
     update(it) {
-      if (it.deckId !== mountedId) { mount(it); return; }
+      // A deck that would not render is mounted again on a later update
+      // (Issue #221) - a few seconds apart, not on every one.
+      if (it.deckId !== mountedId) {
+        if (Date.now() - failedAt < 4000) return;
+        mount(it);
+        return;
+      }
       if ((it.slide || 0) !== current.slide || (it.step || 0) !== current.step) showSlide(it.slide, it.step);
     },
     reconcile() {},

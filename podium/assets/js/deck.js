@@ -92,8 +92,23 @@ export const MATH_CSS = `
   }
 `;
 
+// The 1.1 MB bundle is the one big download a deck needs, and on a classroom
+// iPad it can lose a race with a video streaming on the same Wi-Fi (Issue
+// #221: "Importing a module script failed"). A browser then remembers that
+// failure under the module's URL for the life of the page - WebKit does - so
+// asking again under the same URL fails again without even trying. The retry
+// asks under a fresh one; the service worker answers either from its cache.
+async function importMarp() {
+  try {
+    return await import(/* @vite-ignore */ MARP_URL);
+  } catch {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return import(/* @vite-ignore */ `${MARP_URL}?retry=${Date.now()}`);
+  }
+}
+
 async function loadEngine() {
-  const { Marp, browser } = await import(/* @vite-ignore */ MARP_URL);
+  const { Marp, browser } = await importMarp();
 
   // Register every theme in marp-themes/. A broken one is reported rather than
   // taking the whole deck down with it.
@@ -120,8 +135,16 @@ async function loadEngine() {
   return { Marp, browser, themeCss };
 }
 
+// A failed load is not kept (Issue #221): it used to be, so one bad download
+// left every deck saying "could not render" until the page was reloaded, however
+// many times it was picked again. The next call simply tries again; whatever
+// retries on its own (a re-render on every state broadcast) spaces itself out -
+// see DECK_RETRY_MS in control.js and the deck renderer in renderers.js.
 function engine() {
-  enginePromise ??= loadEngine();
+  enginePromise ??= loadEngine().catch((err) => {
+    enginePromise = null;
+    throw err;
+  });
   return enginePromise;
 }
 

@@ -239,7 +239,7 @@ Put words on the projector without touching your slides — "Back in 5", a discu
 - Tap **Compose a message…** in the Say tab. A dedicated editor opens with a live preview, rendered by the same code that draws the projector, so what you see is what the room gets.
 - Write with a light markdown: `# Heading` / `## Subheading`, `**bold**`, `*italic*`, `` `code` ``, `- bullet` (or `*`) lists, and `1. numbered` lists. Line breaks are kept as written.
 - Choose a size (Small–Huge), left or centred alignment, and one of five fonts (Sans, Serif, Monospace, Rounded, Bold display).
-- Pick a background from five presets or a custom colour picker.
+- Pick a background from five presets or a custom colour picker, and a **text colour** the same way (Issue #222); a picture's caption takes the text colour too. A planner's **Text sign** item has the same two colours.
 - Optionally attach a picture with a caption underneath the text — the same resizing pipeline as any other photo in Podium, so it survives the trip over the relay.
 - Tap **Show** to stage it; **Cancel** or Escape closes the editor without changing what's on screen.
 
@@ -563,9 +563,9 @@ Optional. Everything above still works without it.
 Running Podium's own server (`server/podium-server.js` with a `DATA_DIR`) adds a memory to the system. Everything below is optional, and every page still works without a server. The full design and reasoning is in [vps.md](vps.md), and installation is in [deploy/README.md](../deploy/README.md).
 
 - **Accounts**: instructors and TAs sign in on a proper login page (no browser Basic Auth prompts). Administrators manage people; the CLI (`podium-admin`) is the recovery path.
-- **Courses** are the unit of sharing. Library items and plans filed under a course are visible to its members. A course can hold its **room settings** (connection, room, passphrase), so a new device is just a sign-in, a **default watermark**, and a **plan template**.
-- **The admin page** (`admin.html`) has tabs for **People** (accounts, audit log CSV, poll name policy, ZIP size limit), **Courses**, **Library** (browser uploads), **Global Content** (the library manifest, Marp themes with a live preview editor, pre-load files, music playlists, built-in tools), **Sessions**, **Storage** (with a disk-pressure warning on every tab), and **Kiosks**.
-- **Plans on the server**: send a lecture from the planner and it's on the iPad in class without a file to carry. Update or delete it later; a plan file you saved stays untouched either way. Two edits to the same plan are caught rather than silently overwriting each other.
+- **Courses** are the unit of sharing. Library items and plans filed under a course are visible to its members. In the planner, the **Course** box is a dropdown of the classes you can file under (Issue #224), with **No class assigned** and **New class…**. A new class is made on the spot with you as its owner, and the Courses tab says it was made from the planner and by whom. A course can hold its **room settings** (connection, room, passphrase), so a new device is just a sign-in, a **default watermark**, and a **plan template**.
+- **The admin page** (`admin.html`) has tabs for **People** (accounts, audit log CSV, poll name policy, ZIP size limit), **Courses**, **Lectures** (every lecture on the server by class, with **No Class Assigned** as its own group; each opens in the planner and can be filed under a class from there), **Library** (browser uploads), **Global Content** (the library manifest, Marp themes with a live preview editor, pre-load files, music playlists, built-in tools), **Sessions**, **Storage** (with a disk-pressure warning on every tab), and **Kiosks**.
+- **Plans on the server**: a lecture saves itself to the server from the planner and is on the iPad in class without a file to carry. A plan file you exported stays untouched either way. Two edits to the same plan are caught rather than silently overwriting each other.
 
 ### Kiosks & Unattended Signage
 

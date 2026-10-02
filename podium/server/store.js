@@ -462,6 +462,15 @@ const MIGRATIONS = [
       ALTER TABLE courses ADD COLUMN branding TEXT NOT NULL DEFAULT '{}';
     `);
   },
+  (db) => {
+    db.exec(`
+      -- Who made a course, when it was not an administrator (Issue #224): an
+      -- instructor typing a class the server did not have yet into the
+      -- planner. NULL for every course an administrator made, which is every
+      -- course that existed before this.
+      ALTER TABLE courses ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+    `);
+  },
 ];
 
 function migrate(db) {

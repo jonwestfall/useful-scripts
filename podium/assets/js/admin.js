@@ -1283,7 +1283,9 @@ function renderCourses() {
       el('span', { class: 'admin-title' }, course.title),
       el('span', { class: 'admin-meta' },
         [course.code, `${course.members} member${course.members === 1 ? '' : 's'}`,
-          course.role, course.archived ? 'archived' : ''].filter(Boolean).join(' · ')));
+          course.role, course.archived ? 'archived' : '',
+          // Issue #224: made by an instructor typing it into the planner.
+          course.createdBy ? `made from the planner by ${course.createdBy}` : ''].filter(Boolean).join(' · ')));
     if (course.people) {
       row.append(el('button', {
         class: 'admin-small', type: 'button',
@@ -1318,6 +1320,89 @@ async function addCourse() {
     sayCourses(err.message, true);
   } finally {
     $('#new-course-go').disabled = false;
+  }
+}
+
+// --- lectures, by class (Issue #224) --------------------------------------------
+//
+// Every lecture plan on the server - an administrator sees them all - grouped
+// under the class it is filed under, with the ones filed under none as "No
+// Class Assigned". Each opens in the planner (plan.html?open=<id>) and can be
+// filed under a class right here, which is how an orphan stops being one.
+
+let serverLectures = [];
+const NO_CLASS = 'No Class Assigned';
+
+function sayLectures(text, bad = false) {
+  const note = $('#lectures-note');
+  note.textContent = text || '';
+  note.classList.toggle('is-bad', !!bad);
+}
+
+async function refreshLectures() {
+  try {
+    const res = await fetch('/api/plans', { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`the server said ${res.status}`);
+    serverLectures = (await res.json()).plans || [];
+  } catch (err) {
+    sayLectures(`Lectures did not load: ${err.message}`, true);
+    return;
+  }
+  renderLectures();
+}
+
+function renderLectures() {
+  const holder = $('#lectures');
+  const filter = $('#lectures-search').value.trim().toLowerCase();
+  const shown = serverLectures.filter((p) => !filter
+    || [p.title, p.owner, p.course || NO_CLASS].some((v) => String(v || '').toLowerCase().includes(filter)));
+  const groups = new Map([[NO_CLASS, []]]);
+  for (const p of shown) {
+    const key = p.course || NO_CLASS;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  const classes = serverCourses.filter((c) => !c.archived);
+  holder.replaceChildren();
+  if (!serverLectures.length) { holder.append(el('p', { class: 'hint' }, 'No lectures on this server yet.')); return; }
+  for (const [name, rows] of groups) {
+    if (!rows.length && name !== NO_CLASS) continue;
+    holder.append(el('h3', { class: 'lectures-group' }, `${name} (${rows.length})`));
+    if (!rows.length) { holder.append(el('p', { class: 'hint' }, filter ? 'None match.' : 'Every lecture is filed under a class.')); continue; }
+    for (const p of rows) {
+      const pick = el('select', {
+        'aria-label': `Class for ${p.title}`,
+        onchange: (ev) => fileLecture(p, ev.target.value, ev.target),
+      },
+        el('option', { value: '' }, NO_CLASS),
+        ...classes.map((c) => el('option', { value: c.code }, c.code)));
+      pick.value = p.course || '';
+      holder.append(el('div', { class: 'admin-row lecture-row' },
+        el('span', { class: 'admin-title' }, p.title),
+        el('span', { class: 'admin-meta' },
+          [p.owner || 'unknown author', `saved ${new Date(p.updatedAt).toLocaleString()}`].join(' · ')),
+        el('a', { class: 'admin-small linkish', href: `plan.html?open=${encodeURIComponent(p.id)}` }, 'Open in planner'),
+        pick));
+    }
+  }
+}
+
+async function fileLecture(p, code, select) {
+  select.disabled = true;
+  try {
+    const res = await fetch(`/api/plans/${encodeURIComponent(p.id)}`, {
+      method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ course: code }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `the server said ${res.status}`);
+    sayLectures(`“${p.title}” is now ${code ? `filed under ${code}` : 'not filed under any class'}.`);
+    await refreshLectures();
+  } catch (err) {
+    sayLectures(`Not moved: ${err.message}`, true);
+    select.value = p.course || '';
+  } finally {
+    select.disabled = false;
   }
 }
 
@@ -1943,8 +2028,12 @@ async function commitManifest() {
 
 // 2. Marp Themes
 async function getMarpEngine() {
+  // Not kept when it fails (Issue #221), and retried under a fresh URL - see
+  // importMarp in deck.js for why the same URL would just fail again.
   if (!marpEnginePromise) {
-    marpEnginePromise = import('../vendor/marp.esm.js');
+    marpEnginePromise = import('../vendor/marp.esm.js')
+      .catch(() => import(`../vendor/marp.esm.js?retry=${Date.now()}`))
+      .catch((err) => { marpEnginePromise = null; throw err; });
   }
   return marpEnginePromise;
 }
@@ -2679,6 +2768,13 @@ if (!info.features.includes('library')) {
       await Promise.all([refreshPeople(), refreshStorage(), refreshSystemSettings()]);
     }
     await refreshCourses();
+  }
+
+  // Lectures by class, including the ones filed under none (Issue #224).
+  if (info.features.includes('plans') && me?.isAdmin) {
+    $('#tab-lectures').hidden = false;
+    $('#lectures-search').addEventListener('input', renderLectures);
+    await refreshLectures();
   }
 
   // Kiosks, like content management, are for administrators only - a device
