@@ -500,6 +500,9 @@ const expecting = {
   kioskOffscopeWarm: false,
   // Guest View (Issue #150): a viewer's pass being refused a page and the API.
   viewerRefused: false,
+  // Issue #221: the Marp bundle's download deliberately refused, to prove a
+  // deck still renders once it gets through.
+  marpRetry: false,
 };
 
 const trap = (page, tag) => {
@@ -550,6 +553,7 @@ const trap = (page, tag) => {
     if (expecting.planConflict && /responded with a status of 409/.test(text)) return;
     if (expecting.kioskOffscopeWarm && KIOSK_OFFSCOPE_WARM.test(text)) return;
     if (expecting.viewerRefused && /responded with a status of 401/.test(text)) return;
+    if (expecting.marpRetry && /marp\.esm\.js|ERR_FAILED/.test(where)) return;
     // Killing and restarting a relay process (Issue #115's e2e section) is
     // its own brief burst of expected noise: a connection-refused while the
     // old process is down and the new one is not up yet, then a 404 once it

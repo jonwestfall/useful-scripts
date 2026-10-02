@@ -79,6 +79,8 @@ export const PLAN_TYPES = {
       { key: 'font', label: 'Font', kind: 'select', def: 'sans',
         options: [['sans', 'Sans'], ['serif', 'Serif'], ['mono', 'Monospace'], ['rounded', 'Rounded'], ['display', 'Bold display']] },
       { key: 'bg', label: 'Background', kind: 'color', def: '' },
+      // Issue #222: the words' own colour, beside the background.
+      { key: 'color', label: 'Text colour', kind: 'color', def: '' },
       // Same field, same key ('src'), same kind ('image') the 'image' type
       // above already uses - imageField() already supports an upload or a
       // typed server path either way, so this needs nothing new there.

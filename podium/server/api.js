@@ -349,6 +349,16 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'courses' && !rest.length && req.method === 'POST') {
       const body = await readJson(req, 8 * 1024);
+      // Issue #224: a class typed into the planner, which any signed-in
+      // account may make (and then owns) - see courses.createFromPlanner.
+      if (body.fromPlanner) {
+        const course = courses.createFromPlanner(ctx.db, user, { name: body.title || body.code });
+        if (!course.existed) {
+          auditLog(ctx, req, user, 'course_created', { courseCode: course.code, title: course.title, fromPlanner: true });
+        }
+        json(res, 200, { course });
+        return true;
+      }
       const course = courses.create(ctx.db, user, { code: body.code, title: body.title });
       auditLog(ctx, req, user, 'course_created', { courseCode: course.code, title: course.title });
       json(res, 200, { course });

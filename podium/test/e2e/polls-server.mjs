@@ -1421,7 +1421,11 @@ const serverPlans = () => planner.evaluate(async () => {
   return (await res.json()).plans;
 });
 await planner.fill('#plan-title', 'Day 6 — sent, not carried');
-await planner.fill('#plan-course', 'psy415');
+const classOptions = await planner.$$eval('#plan-course-pick option', (os) => os.map((o) => o.textContent));
+ok(`on a server, the Course field is a dropdown of classes to file under (Issue #224: ${classOptions.join(' | ')})`,
+  await planner.isVisible('#plan-course-pick') && await planner.isHidden('#plan-course')
+  && classOptions[0] === 'No class assigned' && classOptions.some((t) => t.startsWith('psy415')) && classOptions.at(-1) === 'New class…');
+await planner.selectOption('#plan-course-pick', 'psy415');
 await planner.waitForFunction(() => /Saved to the server.*shared with psy415/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
 ok(`it saves itself to the server, and says where it went ("${(await syncText()).trim()}")`, true);
 ok('and the list says it lives there', /on the server/.test(await planner.textContent('#plan-list .plan-row.is-on')));
@@ -1449,10 +1453,9 @@ ok(`opening it in class needs no file at all ("${(await pad.textContent('#plan-n
 await planner.click('#plan-new');
 await planner.waitForFunction(() => document.querySelector('#plan-course').value === '' && !document.querySelector('#order .order-row'), null, { timeout: 5000 });
 await planner.fill('#plan-title', 'Day 6 — private draft');
-await planner.fill('#plan-course', 'not-a-real-course');
+// No class assigned: saved, but to its author alone.
 await planner.waitForFunction(() => /yours alone/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
-ok('a course this server does not have is saved privately, and says so rather than guessing',
-  /no course "not-a-real-course"/.test(await syncText()));
+ok('a lecture with no class assigned is saved to its author alone, and says so', /yours alone/.test(await syncText()));
 
 // -- Issue #88 / #204: later edits update the same server row ---------------
 await planner.fill('#plan-title', 'Day 6 — private draft (revised)');
@@ -1464,6 +1467,39 @@ const afterEdit = await serverPlans();
 ok('an edit saves over the same server row rather than adding another',
   afterEdit.filter((p) => /private draft/.test(p.title)).length === 1);
 ok('and the lecture the controller opened is untouched', afterEdit.some((p) => p.title === 'Day 6 — sent, not carried'));
+
+// -- Issue #224: a class typed in the planner is made, and the lecture filed under it --
+await planner.selectOption('#plan-course-pick', '__new');
+ok('New class… shows a box to type one, and a Create button', await planner.isVisible('#plan-course') && await planner.isVisible('#plan-course-create'));
+await planner.fill('#plan-course', 'Intro to Statistics');
+await planner.click('#plan-course-create');
+await planner.waitForFunction(() => document.querySelector('#plan-course-pick').value === 'intro-to-statistics', null, { timeout: 8000 });
+ok('Create class makes it and files this lecture under it', await planner.isHidden('#plan-course-create'));
+await planner.waitForFunction(() => /shared with intro-to-statistics/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
+ok('and the lecture saves to the server under it', true);
+const madeClass = await planner.evaluate(async () => {
+  const res = await fetch('/api/courses', { credentials: 'same-origin' });
+  return (await res.json()).courses.find((c) => c.code === 'intro-to-statistics');
+});
+ok(`Administration sees the class, and who made it (${madeClass?.createdBy})`, !!madeClass && !!madeClass.createdBy);
+
+// -- Issue #224: Administration → Lectures, unfiled ones included -----------
+const adminPage = await acctCtx.newPage();
+trap(adminPage, 'acct admin lectures');
+await adminPage.goto(`${acctBase}/admin.html`);
+await adminPage.click('#tab-lectures');
+await adminPage.waitForSelector('#lectures .lectures-group', { timeout: 10000 });
+const lectureGroups = await adminPage.$$eval('#lectures .lectures-group', (hs) => hs.map((h) => h.textContent));
+ok(`the Lectures tab groups every lecture by class, "No Class Assigned" first (${lectureGroups.join(', ')})`,
+  /^No Class Assigned \(\d+\)$/.test(lectureGroups[0]) && lectureGroups.some((g) => g.startsWith('psy415')) && lectureGroups.some((g) => g.startsWith('intro-to-statistics')));
+const orphanRow = adminPage.locator('#lectures .lecture-row').first();
+const orphanTitle = await orphanRow.locator('.admin-title').textContent();
+ok('each lecture opens in the planner', /plan\.html\?open=\d+/.test(await orphanRow.locator('a').getAttribute('href')));
+await orphanRow.locator('select').selectOption('psy415');
+await adminPage.waitForFunction(() => /filed under psy415/.test(document.querySelector('#lectures-note')?.textContent || ''), null, { timeout: 8000 });
+const refiled = (await serverPlans()).find((p) => p.title === orphanTitle);
+ok(`an administrator can file an unfiled lecture under a class from there ("${orphanTitle}")`, refiled?.course === 'psy415');
+await adminPage.close();
 
 // -- one list: a lecture saved from another device shows up, and opens -------
 await planner.evaluate(async () => {
@@ -1500,7 +1536,7 @@ ok('and the button re-arms for the next lecture rather than staying locked',
 await planner.click('#plan-new');
 await planner.waitForFunction(() => document.querySelector('#plan-course').value === '' && !document.querySelector('#order .order-row'), null, { timeout: 5000 });
 await planner.fill('#plan-title', 'Two tabs, one lecture');
-await planner.fill('#plan-course', 'psy415');
+await planner.selectOption('#plan-course-pick', 'psy415');
 await planner.waitForFunction(() => /Saved to the server/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
 const conflictPlanId = (await serverPlans()).find((p) => p.title === 'Two tabs, one lecture').id;
 const otherTabSaves = (title) => planner.evaluate(async ([id, t]) => {
@@ -1547,7 +1583,7 @@ await planner.click('#plan-delete');
 await planner.waitForFunction(() => !document.querySelector('#plan-list').textContent.includes('(theirs)'), null, { timeout: 8000 });
 
 // -- Issue #80: a course's plan template ----------------------------------
-await planner.fill('#plan-course', 'psy415');
+await planner.selectOption('#plan-course-pick', 'psy415');
 ok('no template yet, so "New lecture from template" is not offered', await planner.$eval('#plan-new-from-template', (b) => b.hidden));
 ok('but the row itself is, once a course is named, so Save is reachable', await planner.isVisible('#plan-template-row'));
 
@@ -1568,7 +1604,7 @@ await planner.click('#plan-new');
 // actually go blank (emptyPlan() gives it '', unlike title's 'Untitled
 // lecture' default) before touching it again.
 await planner.waitForFunction(() => document.querySelector('#plan-course').value === '', null, { timeout: 5000 });
-await planner.fill('#plan-course', 'psy415');
+await planner.selectOption('#plan-course-pick', 'psy415');
 await planner.click('#plan-new-more');
 await planner.click('#plan-new-from-template');
 await planner.waitForFunction(() => document.querySelector('#plan-title').value === "This week's shape", null, { timeout: 5000 });
@@ -1595,7 +1631,7 @@ await memberPlanner.fill('#username', 'ta');
 await memberPlanner.fill('#password', 'a good long password too');
 await Promise.all([memberPlanner.waitForURL(/index\.html/), memberPlanner.click('#go')]);
 await memberPlanner.goto(`${acctBase}/plan.html`);
-await memberPlanner.fill('#plan-course', 'psy415');
+await memberPlanner.selectOption('#plan-course-pick', 'psy415');
 ok('a member sees the template is there to use',
   await memberPlanner.waitForSelector('#plan-new-from-template:not([hidden])', { state: 'attached', timeout: 5000 }).then(() => true, () => false));
 expecting.templateWriteForbidden = true;

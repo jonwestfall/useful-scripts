@@ -58,6 +58,10 @@ function touch({ now = false } = {}) {
   if (!plan) return;
   plan.updated = Date.now();
   $('#save-state').textContent = 'Saving…';
+  // Not "Saved to the server" for an edit that has not got there yet - the
+  // line names the class this lecture is filed under, and that is only true
+  // once the save that files it has landed.
+  if (serverMode && conflictPlanId !== plan.id && worthSaving(plan)) setSync('saving');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(commit, now ? 0 : 400);
 }
@@ -114,7 +118,12 @@ async function renderPlanList() {
       + (row.course ? ` · ${row.course}` : '')
       + ` · ${new Date(row.updated || 0).toLocaleDateString()}`)));
   const linked = new Set(rows.map((r) => r.server?.id && String(r.server.id)).filter(Boolean));
-  const remote = serverMode ? serverRows.filter((r) => !linked.has(String(r.id))).map((r) => el('button', {
+  // Only mine, or filed under a class I am in: an administrator can read
+  // every lecture on the server, and the place to look through all of those
+  // - the unfiled ones included - is Administration → Lectures (Issue #224),
+  // not this list.
+  const relevant = (r) => !me || r.ownerId === me.id || (!!r.course && (!myClasses || myClasses.has(r.course)));
+  const remote = serverMode ? serverRows.filter((r) => !linked.has(String(r.id)) && relevant(r)).map((r) => el('button', {
     class: 'plan-row is-remote',
     type: 'button',
     onclick: () => openServerPlan(r.id),
@@ -889,6 +898,7 @@ $('#deck-next').addEventListener('click', () => stepPreview('next'));
 function renderHeader() {
   $('#plan-title').value = plan.title || '';
   $('#plan-course').value = plan.course || '';
+  renderCoursePick();
   renderTemplateControls();
   $('#plan-notes').value = plan.notes || '';
   const targetSelect = $('#plan-target-mins');
@@ -934,7 +944,13 @@ $('#plan-target-mins')?.addEventListener('change', (ev) => {
 });
 
 $('#plan-title').addEventListener('input', (ev) => { plan.title = ev.target.value; touch(); renderPlanList(); });
-$('#plan-course').addEventListener('input', (ev) => { plan.course = ev.target.value; touch(); renderTemplateControls(); });
+$('#plan-course').addEventListener('input', (ev) => {
+  // While New class… is being typed on a server, nothing is filed until
+  // Create class makes it - only the plain-text Course box of file-only mode
+  // writes straight into the lecture.
+  if (serverMode) return;
+  plan.course = ev.target.value; touch(); renderTemplateControls();
+});
 $('#plan-notes').addEventListener('input', (ev) => { plan.notes = ev.target.value; touch(); });
 $('#plan-layout').addEventListener('click', (ev) => {
   const button = ev.target.closest('.layout-btn');
@@ -1307,6 +1323,10 @@ $('#plan-import-file').addEventListener('change', async (ev) => {
 // saving pauses and asks instead (see showConflict).
 
 let serverMode = false;
+let me = null;              // the signed-in account, on a server with accounts
+let myClasses = null;       // codes of the classes I am actually in (Issue #224)
+let markBooted;
+const booted = new Promise((resolve) => { markBooted = resolve; });
 let serverCourses = [];
 let serverRows = [];
 const SERVER_SAVE_MS = 1500;
@@ -1455,6 +1475,7 @@ async function refreshServerPlans() {
     serverCourses = data.courses || [];
     serverRows = data.plans || [];
     renderPlanList();
+    renderCoursePick();
     renderSync();
   } catch { /* this browser's own copy still works, which is the point */ }
 }
@@ -1488,8 +1509,83 @@ function setServerMode(on) {
     ? 'Lectures save to this server as you work, so they are on the iPad in class with no file to carry: Library → Lectures on the server. Export a plan file for a machine with no server, or to keep a copy.'
     : 'Plans live in this browser on this machine. To teach from one, save a plan file and open it on the iPad: Library → Load a lecture plan in the controller.';
   renderPlanList();
+  renderCoursePick();
   renderSync();
 }
+
+// --- the Course field, on a server (Issue #224) -------------------------------
+//
+// A dropdown of the classes this account can file under, so a lecture always
+// lands under a class that exists, plus No class assigned and New class… -
+// which shows the text box and makes the class (owned by whoever typed it)
+// when Create class is pressed. A lecture opened from a file can name a class
+// this server does not have; that stays visible as such until it is changed.
+const NEW_CLASS = '__new';
+let creatingClass = false;
+
+function renderCoursePick() {
+  const pick = $('#plan-course-pick');
+  pick.hidden = !serverMode;
+  if (!serverMode) { $('#plan-course').hidden = false; $('#plan-course-create').hidden = true; return; }
+  const current = String(plan?.course || '').trim().toLowerCase();
+  const known = serverCourses.some((c) => c.code === current);
+  pick.replaceChildren(
+    el('option', { value: '' }, 'No class assigned'),
+    ...serverCourses.map((c) => el('option', { value: c.code }, c.title && c.title !== c.code ? `${c.code} — ${c.title}` : c.code)),
+    ...(current && !known ? [el('option', { value: current }, `${current} (not a class here yet)`)] : []),
+    el('option', { value: NEW_CLASS }, 'New class…'),
+  );
+  pick.value = creatingClass ? NEW_CLASS : current;
+  // The text box always holds the lecture's class while it is not being
+  // used to type a new one, the same as without a server.
+  if (!creatingClass) $('#plan-course').value = plan?.course || '';
+  $('#plan-course').hidden = !creatingClass;
+  $('#plan-course').placeholder = creatingClass ? 'New class name' : 'Course';
+  $('#plan-course-create').hidden = !creatingClass;
+}
+
+$('#plan-course-pick').addEventListener('change', (ev) => {
+  if (ev.target.value === NEW_CLASS) {
+    creatingClass = true;
+    $('#plan-course').value = '';
+    renderCoursePick();
+    $('#plan-course').focus();
+    return;
+  }
+  creatingClass = false;
+  plan.course = ev.target.value;
+  touch();
+  renderCoursePick();
+  renderTemplateControls();
+  renderSync();
+});
+
+async function createClass() {
+  const name = $('#plan-course').value.trim();
+  if (!name) { $('#plan-course').focus(); return; }
+  try {
+    const res = await fetch('/api/courses', {
+      method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: name, fromPlanner: true }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `the server said ${res.status}.`);
+    creatingClass = false;
+    plan.course = body.course.code;
+    warn('');
+    await refreshServerPlans();
+    touch();
+    renderCoursePick();
+    renderTemplateControls();
+  } catch (err) {
+    warn(`That class was not made: ${err.message}`);
+  }
+}
+$('#plan-course-create').addEventListener('click', createClass);
+$('#plan-course').addEventListener('keydown', (ev) => {
+  if (serverMode && creatingClass && ev.key === 'Enter') { ev.preventDefault(); createClass(); }
+  if (serverMode && creatingClass && ev.key === 'Escape') { creatingClass = false; renderCoursePick(); }
+});
 
 // "+ New lecture ▾": the other two ways to start one.
 function setNewMenu(open) {
@@ -1519,7 +1615,7 @@ function templateForCourse(code) {
 }
 
 function renderTemplateControls() {
-  const wanted = String($('#plan-course').value || '').trim();
+  const wanted = String(plan?.course || '').trim();
   const existing = templateForCourse(wanted);
   $('#plan-new-from-template').hidden = !existing;
   if (existing) $('#plan-new-from-template').textContent = `New lecture from ${existing.course}'s template…`;
@@ -1537,7 +1633,7 @@ async function refreshTemplates() {
 }
 
 $('#plan-new-from-template').addEventListener('click', async () => {
-  const existing = templateForCourse($('#plan-course').value);
+  const existing = templateForCourse(plan?.course);
   if (!existing?.doc) return;
   try {
     const { plan: loaded, warnings } = readPlan(typeof existing.doc === 'string' ? existing.doc : JSON.stringify(existing.doc));
@@ -1551,7 +1647,7 @@ $('#plan-new-from-template').addEventListener('click', async () => {
 $('#plan-save-template').addEventListener('click', async () => {
   await commit();
   const note = $('#plan-template-note');
-  const course = String($('#plan-course').value || '').trim();
+  const course = String(plan?.course || '').trim();
   if (!course) { note.textContent = "Type a course above first - a template belongs to one."; return; }
   try {
     const res = await fetch(`/api/templates/${encodeURIComponent(course)}`, {
@@ -1571,7 +1667,7 @@ $('#plan-save-template').addEventListener('click', async () => {
 
 $('#plan-remove-template').addEventListener('click', async () => {
   const note = $('#plan-template-note');
-  const course = String($('#plan-course').value || '').trim();
+  const course = String(plan?.course || '').trim();
   if (!course) return;
   try {
     const res = await fetch(`/api/templates/${encodeURIComponent(course)}`, { method: 'DELETE', credentials: 'same-origin' });
@@ -1596,8 +1692,31 @@ serverInfo().then((info) => {
     mountPlanZipImport();
   }
   if (!info.features.includes('plans')) return;
+  me = info.user || null;
+  if (me) {
+    fetch('/api/courses', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)).then((data) => {
+      if (!data) return;
+      // An administrator is listed every class, each with its people; anyone
+      // else only the ones they are in.
+      myClasses = new Set((data.courses || [])
+        .filter((c) => !c.people || c.people.some((p) => p.username === me.username))
+        .map((c) => c.code));
+      renderPlanList();
+    }).catch(() => {});
+  }
   setServerMode(true);
-  refreshServerPlans().then(() => { if (plan) scheduleServerSave(plan); });
+  // plan.html?open=<id> (Issue #224): Administration's Lectures list opens
+  // one here. After this page's own lectures are loaded, or loading them
+  // would replace it.
+  const openId = new URLSearchParams(location.search).get('open');
+  refreshServerPlans().then(async () => {
+    if (!openId) { if (plan) scheduleServerSave(plan); return; }
+    await booted;
+    history.replaceState(null, '', location.pathname);
+    const local = (await allPlans()).find((row) => String(row.server?.id) === openId);
+    if (local) await openPlan(local.id);
+    else await openServerPlan(openId);
+  });
   if (info.features.includes('templates')) refreshTemplates();
 });
 
@@ -1655,6 +1774,7 @@ $('#plan-delete').addEventListener('click', () => {
 // --- boot --------------------------------------------------------------------
 
 function renderAll() {
+  creatingClass = false;   // a half-typed new class belongs to the lecture it was typed on
   renderHeader();
   renderOrder();
   renderTimers();
@@ -1685,10 +1805,12 @@ try {
   else plan = emptyPlan();
   renderAll();
   if (!rows.length) await savePlan(plan);
+  markBooted();
 } catch (err) {
   warn(`Plans cannot be stored in this browser: ${err.message} You can still build one and save it to a file, but it will not be here when you come back.`);
   plan = emptyPlan();
   renderAll();
+  markBooted();
 }
 
 // A tab being closed or backgrounded must not take the last few seconds of

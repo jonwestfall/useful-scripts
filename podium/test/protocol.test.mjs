@@ -846,5 +846,16 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
   chk('and the relay can tell one apart', isViewRoom(ch.room) && !isViewRoom('psy415') && !isViewRoom('view.') && !isViewRoom('view.a/b'));
 }
 
+console.log('-- a message\'s text colour (Issue #222) --');
+{
+  const st = initialState();
+  applyCommand(st, { op: 'stage', item: { type: 'text', body: 'Back in 5', color: '#FFD166' } });
+  chk('a hex text colour is kept', st.program.color === '#FFD166');
+  applyCommand(st, { op: 'stage', item: { type: 'text', body: 'x', color: 'red;background:url(evil)' } });
+  chk('anything that is not a hex colour is dropped, not passed into a style', st.program.color === '');
+  applyCommand(st, { op: 'stage', item: { type: 'text', body: 'x' } });
+  chk('no colour means the default', st.program.color === '');
+}
+
 console.log(ok ? '\nALL PASS' : '\nFAILURES');
 process.exit(ok ? 0 : 1);

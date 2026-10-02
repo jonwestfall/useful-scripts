@@ -62,11 +62,15 @@ function courseRow(row) {
     createdAt: row.created_at,
     archived: !!row.archived_at,
     members: row.member_count ?? 0,
+    // Issue #224: set only for a class an instructor made from the planner,
+    // so Administration can say so.
+    createdBy: row.created_by_name || null,
   };
 }
 
 const SELECT_COURSES = `
-  SELECT c.*, (SELECT COUNT(*) FROM course_members cm WHERE cm.course_id = c.id) AS member_count
+  SELECT c.*, (SELECT COUNT(*) FROM course_members cm WHERE cm.course_id = c.id) AS member_count,
+         (SELECT u.username FROM users u WHERE u.id = c.created_by) AS created_by_name
     FROM courses c`;
 
 function find(db, code) {
@@ -146,6 +150,47 @@ function create(db, user, { code, title }) {
     throw err;
   }
   return courseRow(find(db, wanted));
+}
+
+/**
+ * A class typed into the planner's Course field that this server does not
+ * have yet (Issue #224): made on the spot, its author its owner, so the
+ * lecture can be filed under it. Any signed-in account may do this - it is
+ * how a class gets onto an instance an administrator has not set up for yet -
+ * and Administration lists it like any other, saying who made it.
+ *
+ * The name is what the instructor typed; the code is made from it the way a
+ * person would ("PSY 415" -> "psy-415"). A class that already exists under
+ * that code is simply used when this account is in it, and refused - without
+ * saying whose it is - when it is not.
+ */
+const codeFor = (name) => clean(name)
+  .replace(/[^a-z0-9._-]+/g, '-')
+  .replace(/-{2,}/g, '-')
+  .replace(/^[^a-z0-9]+/, '')
+  .replace(/[-._]+$/, '')
+  .slice(0, 64);
+
+function createFromPlanner(db, user, { name }) {
+  const title = String(name || '').trim().slice(0, 200);
+  const code = codeFor(title);
+  if (!CODE_RE.test(code)) {
+    throw Object.assign(new Error('a class name needs at least one letter or number'), { status: 400 });
+  }
+  const existing = db.prepare(`${SELECT_COURSES} WHERE c.code = ?`).get(code);
+  if (existing) {
+    if (!roleOf(db, user, code)) {
+      throw Object.assign(new Error(`there is already a class called ${code} - ask whoever runs it to add you`), { status: 409 });
+    }
+    if (existing.archived_at) {
+      throw Object.assign(new Error(`${code} is archived and cannot be filed under any more`), { status: 409 });
+    }
+    return { ...courseRow(existing), existed: true };
+  }
+  const { lastInsertRowid } = db.prepare('INSERT INTO courses (code, title, created_at, created_by) VALUES (?, ?, ?, ?)')
+    .run(code, title, Date.now(), user.id);
+  db.prepare("INSERT INTO course_members (course_id, user_id, role) VALUES (?, ?, 'owner')").run(lastInsertRowid, user.id);
+  return courseRow(find(db, code));
 }
 
 /**
@@ -266,6 +311,6 @@ function removeMember(db, user, code, username) {
 }
 
 module.exports = {
-  list, members, create, update, addMember, removeMember, roleOf, mayManage, find,
+  list, members, create, createFromPlanner, codeFor, update, addMember, removeMember, roleOf, mayManage, find,
   brandingFor, setBranding, cleanBranding, MAX_BRANDING_IMAGE_CHARS,
 };
