@@ -40,9 +40,10 @@ const marpNotes = (md) => {
   return marp.render(md).comments.map((list) => list.join('\n\n').trim());
 };
 
-console.log('-- every committed deck --');
-const decks = fs.readdirSync(path.join(ROOT, 'content', 'decks')).filter((f) => f.endsWith('.md'))
-  .map((f) => [f, fs.readFileSync(path.join(ROOT, 'content', 'decks', f), 'utf8')]);
+console.log('-- every committed deck, and every built-in template --');
+const decks = ['decks', 'deck-templates'].flatMap((dir) => fs.readdirSync(path.join(ROOT, 'content', dir))
+  .filter((f) => f.endsWith('.md'))
+  .map((f) => [`${dir}/${f}`, fs.readFileSync(path.join(ROOT, 'content', dir, f), 'utf8')]));
 for (const [name, md] of decks) {
   const deck = parseDeck(md);
   chk(`${name}: round-trips byte for byte`, serializeDeck(deck) === md);

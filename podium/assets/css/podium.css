@@ -2441,6 +2441,29 @@ body.deck-editor .topbar { flex: none; }
 .deck-media-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
 .deck-video-preview { display: block; width: 100%; max-height: 240px; background: #000; border-radius: 8px; margin: 0 0 10px; }
 .deck-video-preview[hidden] { display: none; }
+/* Templates (Issue #226). */
+.deck-templates-card { width: min(760px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.deck-templates-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.deck-templates-head h2 { margin: 0; }
+.deck-templates-head button { min-height: 32px; padding: 0 10px; }
+.deck-templates-list { display: grid; gap: 8px; margin: 8px 0 14px; }
+.deck-template {
+  display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 12px; align-items: start;
+  padding: 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+}
+.deck-template.is-hidden { opacity: .6; }
+.deck-template-thumb { position: relative; aspect-ratio: 16 / 9; background: #fff; border-radius: 6px; overflow: hidden; }
+.deck-template-title { font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.deck-template-badge { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--dim); }
+.deck-template-badge.is-course { color: var(--accent); }
+.deck-template-badge.is-mine { color: var(--ok); }
+.deck-template .hint { margin: 2px 0 0; }
+.deck-template-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.deck-template-acts button, .deck-template-acts select { min-height: 30px; font-size: 13px; padding: 0 10px; width: auto; }
+.deck-template-acts button.armed { background: #6b1a1a; border-color: var(--live); }
+.deck-templates-save { border-top: 1px solid var(--line); padding-top: 10px; }
+.deck-templates-save h3 { font-size: 14px; margin: 0 0 6px; }
+@media (max-width: 560px) { .deck-template { grid-template-columns: minmax(0, 1fr); } }
 
 /* Narrow screens: one column, preview under the code. */
 @media (max-width: 960px) {

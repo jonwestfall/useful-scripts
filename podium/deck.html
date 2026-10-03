@@ -29,7 +29,10 @@
       <button id="deck-save-content" type="button" hidden>Save into content/decks…</button>
       <button id="deck-download" type="button">Download the .md file</button>
       <hr>
+      <button id="deck-save-template" type="button">Save as a template…</button>
+      <hr>
       <button id="deck-new" type="button">New deck</button>
+      <button id="deck-new-template" type="button">New deck from a template…</button>
       <button id="deck-open-file" type="button">Open a .md file…</button>
     </div>
   </div>
@@ -174,6 +177,39 @@
   </div>
 </div>
 
+<!-- Templates (Issue #226): slides and whole decks to start from, shipped
+     with Podium, a course's, or your own. See assets/js/deck-templates.js. -->
+<div id="deck-templates-dialog" class="deck-dialog" hidden>
+  <div class="deck-dialog-card deck-templates-card" role="dialog" aria-modal="true" aria-labelledby="deck-templates-heading">
+    <div class="deck-templates-head">
+      <h2 id="deck-templates-heading">Templates</h2>
+      <button id="deck-templates-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="deck-media-tabs" role="tablist" aria-label="Kind of template">
+      <button type="button" role="tab" data-kind="slide" aria-selected="true">Slides</button>
+      <button type="button" role="tab" data-kind="deck" aria-selected="false">Whole decks</button>
+    </div>
+    <p class="hint" id="deck-templates-hint"></p>
+    <div id="deck-templates-list" class="deck-templates-list" role="list"></div>
+    <div id="deck-templates-save" class="deck-templates-save">
+      <h3 id="deck-templates-save-heading">Save this slide as a template</h3>
+      <div class="deck-media-row">
+        <div class="field">
+          <label for="deck-templates-name">Name</label>
+          <input id="deck-templates-name" type="text" autocomplete="off" maxlength="120">
+        </div>
+        <div class="field">
+          <label for="deck-templates-scope">Who can use it</label>
+          <select id="deck-templates-scope"></select>
+        </div>
+      </div>
+      <button id="deck-templates-save-go" type="button" class="primary">Save as a template</button>
+    </div>
+    <p class="hint deck-templates-offline" hidden>Saving templates of your own, or for a course, needs Podium's own server. These come with Podium.</p>
+    <p class="hint" id="deck-templates-note" role="status"></p>
+  </div>
+</div>
+
 <div class="deck-grid">
 
   <!-- Every slide, as the projector draws it. -->
@@ -196,6 +232,7 @@
       <button type="button" data-cmd="build" title="Reveal this slide's bullets one at a time" aria-pressed="false">▶ Build</button>
       <button type="button" data-cmd="image" title="Add a picture">🖼 Picture</button>
       <button type="button" data-cmd="video" title="Make this a video slide">🎬 Video</button>
+      <button type="button" data-cmd="template" title="Add a slide from a template, or manage templates">⧉ Template</button>
       <button type="button" data-cmd="math" title="Math (KaTeX)">∑ Math</button>
       <button type="button" data-cmd="code" title="Code block">&lt;/&gt; Code</button>
       <span class="spacer"></span>

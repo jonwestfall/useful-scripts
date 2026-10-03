@@ -1,0 +1,16 @@
+{
+  "comment": "The deck editor's built-in templates (Issue #226). kind is 'deck' (a whole starting deck) or 'slide' (one slide's layout, inserted after the slide you are on). 'then' opens the picture or video dialog straight after a slide template goes in. An administrator can hide any of these on a server; the files themselves stay as they are.",
+  "templates": [
+    { "id": "lecture", "kind": "deck", "file": "lecture.md", "title": "Lecture", "description": "Title, today's plan, a section, a build, a question for the room and a summary." },
+    { "id": "seminar", "kind": "deck", "file": "seminar.md", "title": "Discussion or seminar", "description": "A reading, three prompts with time for each, and a wrap-up." },
+    { "id": "short-talk", "kind": "deck", "file": "short-talk.md", "title": "Short talk", "description": "Five slides: a title, three points and thanks." },
+    { "id": "title", "kind": "slide", "file": "slide-title.md", "title": "Title slide", "description": "A big centred title with a subtitle." },
+    { "id": "section", "kind": "slide", "file": "slide-section.md", "title": "Section divider", "description": "Starts a new part of the lecture." },
+    { "id": "build-list", "kind": "slide", "file": "slide-build-list.md", "title": "Build list", "description": "Bullets revealed one at a time." },
+    { "id": "two-columns", "kind": "slide", "file": "slide-two-columns.md", "title": "Two columns", "description": "Side by side: compare, contrast, before and after." },
+    { "id": "picture", "kind": "slide", "file": "slide-picture.md", "title": "Picture and caption", "description": "A picture on the right, the words on the left.", "then": "picture" },
+    { "id": "video", "kind": "slide", "file": "slide-video.md", "title": "Video slide", "description": "A video, played from the controller.", "then": "video" },
+    { "id": "quote", "kind": "slide", "file": "slide-quote.md", "title": "Quote", "description": "A quotation and who said it." },
+    { "id": "question", "kind": "slide", "file": "slide-question.md", "title": "Question for the room", "description": "One question, big, with a note for you on how to run it." }
+  ]
+}

@@ -44,7 +44,8 @@ await new Promise((resolve, reject) => {
 
 async function signedIn(username) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  // Guarded: it also runs in a new tab's first about:blank, which has no storage.
+  await ctx.addInitScript((cfg) => { try { localStorage.setItem('podium.config.v2', cfg); } catch { /* about:blank */ } },
     JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${acctPort}/podium`, room: 'editor-room', passphrase: 'decks all the way down' }));
   const page = await ctx.newPage();
   await page.goto(`${base}/login.html?next=/index.html`);
@@ -516,6 +517,146 @@ ok(`a TA cannot add pictures to the course's decks (${refused})`, refused === 40
 await tia.close();
 }
 
+if (want('the deck editor: templates - built-in, a course\'s and your own (#226)')) {
+console.log('\n-- the deck editor: templates - built-in, a course\'s and your own (#226) --');
+const owen = await signedIn('owen');
+const desk = await owen.newPage();
+trap(desk, 'editor templates (owen)');
+await desk.goto(`${base}/index.html`);
+const tplDeck = (await desk.evaluate(async () => (await fetch('/api/library/upload?filename=templated.md&course=psy415&title=Templated', {
+  method: 'POST', body: '---\nmarp: true\ntitle: Templated\n---\n\n# Templated\n\n---\n\n## Second\n',
+})).json())).item;
+await desk.goto(`${base}/deck.html?library=${tplDeck.id}`);
+await desk.waitForFunction(() => document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length === 2, null, { timeout: 20000 });
+const card = (title) => desk.locator('.deck-template', { has: desk.locator('.deck-template-title', { hasText: title }) });
+const openTemplates = async () => {
+  await desk.click('.deck-toolbar [data-cmd="template"]');
+  await desk.waitForSelector('#deck-templates-dialog:not([hidden]) .deck-template', { timeout: 10000 });
+};
+
+await pickSlide(desk, 0);
+await openTemplates();
+ok('⧉ Template lists the built-in slide templates', await card('Build list').count() === 1 && await card('Title slide').count() === 1);
+ok('and not the whole-deck ones on the Slides tab', await card('Lecture').count() === 0);
+await desk.waitForFunction(() => !!document.querySelector('.deck-template .deck-template-thumb')?.shadowRoot?.querySelector('svg[data-marpit-svg]'), null, { timeout: 15000 })
+  .then(() => ok('each shows its slide, drawn by Marp', true))
+  .catch(() => ok('each shows its slide, drawn by Marp', false));
+await card('Build list').locator('[data-act="use"]').click();
+await desk.waitForFunction(() => document.querySelector('#deck-strip').shadowRoot.querySelectorAll('.cell').length === 3, null, { timeout: 5000 });
+ok(`a slide template goes in after the slide you are on (${(await stripTitles(desk)).join(' | ')})`, (await stripTitles(desk))[1] === 'Three things to remember');
+ok('and the cursor goes with it', /^Slide 2/.test(await desk.textContent('#deck-slide-heading')));
+await openTemplates();
+await card('Picture and caption').locator('[data-act="use"]').click();
+await desk.waitForSelector('#deck-image-dialog:not([hidden])', { timeout: 5000 })
+  .then(() => ok('"Picture and caption" goes in and asks for its picture', true))
+  .catch(() => ok('"Picture and caption" goes in and asks for its picture', false));
+await desk.click('#deck-image-cancel');
+
+// The slide you are on, saved for the course.
+await pickSlide(desk, 1);
+await openTemplates();
+ok('saving a template offers the course the deck is in', (await desk.inputValue('#deck-templates-scope')) === 'course:psy415');
+ok('named after the slide to begin with', (await desk.inputValue('#deck-templates-name')) === 'Three things to remember');
+await desk.fill('#deck-templates-name', 'PSY 415 builds');
+await desk.click('#deck-templates-save-go');
+await card('PSY 415 builds').waitFor({ timeout: 5000 });
+ok('"Save this slide as a template" adds it for the course', /PSY415/.test(await card('PSY 415 builds').locator('.deck-template-badge').textContent()));
+desk.once('dialog', (d) => d.accept('PSY 415 build list'));
+await card('PSY 415 builds').locator('[data-act="rename"]').click();
+await card('PSY 415 build list').waitFor({ timeout: 5000 });
+ok('Rename renames it', await card('PSY 415 builds').count() === 0);
+await card('Quote').locator('[data-act="copy"]').selectOption('mine');
+await desk.locator('.deck-template', { has: desk.locator('.deck-template-badge', { hasText: 'Mine' }) }).first().waitFor({ timeout: 5000 });
+ok('a built-in copied to Mine is yours to change', await desk.locator('.deck-template:has(.deck-template-badge:text-is("Mine"))').locator('[data-act="edit"]').count() === 1);
+ok('the built-in itself cannot be changed', await card('Quote').first().locator('[data-act="edit"]').count() === 0
+  || await desk.locator('.deck-template:has(.deck-template-badge:text-is("Built-in")):has-text("Quote") [data-act="edit"]').count() === 0);
+const mineQuote = desk.locator('.deck-template:has(.deck-template-badge:text-is("Mine"))');
+await mineQuote.locator('[data-act="delete"]').click();
+ok('Delete asks again first', (await mineQuote.locator('[data-act="delete"]').textContent()) === 'Sure?');
+await mineQuote.locator('[data-act="delete"]').click();
+await desk.waitForFunction(() => !document.querySelector('.deck-template .deck-template-badge.is-mine'), null, { timeout: 5000 })
+  .then(() => ok('and then deletes it', true))
+  .catch(() => ok('and then deletes it', false));
+
+// Edit opens the template itself in the editor, in a new tab, saved back to it.
+const [editor] = await Promise.all([owen.waitForEvent('page'), card('PSY 415 build list').locator('[data-act="edit"]').click()]);
+trap(editor, 'editor templates (owen, template tab)');
+await editor.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 1, null, { timeout: 20000 });
+ok(`Edit opens the template in the editor ("${await editor.textContent('#deck-where')}")`, /^Template · PSY415 · PSY 415 build list \(a slide\)$/.test(await editor.textContent('#deck-where')));
+await editor.fill('#deck-slide-notes', 'Reveal these one at a time.');
+await editor.click('#deck-slide-class');
+await editor.click('#deck-save');
+await waitSaved(editor);
+const listed = await editor.evaluate(() => fetch('/api/deck-templates').then((r) => r.json()));
+ok('and Save writes it back to the template', listed.templates.find((t) => t.title === 'PSY 415 build list')?.markdown.includes('Reveal these one at a time.'));
+await editor.close();
+
+// A whole deck from a template, and the open deck saved as one.
+await desk.click('#deck-templates-close');
+await desk.click('#deck-save-more');
+await desk.click('#deck-new-template');
+await desk.waitForSelector('#deck-templates-dialog:not([hidden]) .deck-template', { timeout: 10000 });
+ok('"New deck from a template" lists the whole-deck templates', await card('Lecture').count() === 1 && await card('Build list').count() === 0);
+await desk.fill('#deck-templates-name', 'Owen\'s three-slide deck');
+await desk.selectOption('#deck-templates-scope', 'mine');
+await desk.click('#deck-templates-save-go');
+await card('Owen\'s three-slide deck').waitFor({ timeout: 5000 });
+ok('the open deck can be saved as a deck template of your own', await card('Owen\'s three-slide deck').count() === 1);
+await card('Lecture').locator('[data-act="use"]').click();
+await desk.waitForURL(/from=b%3Alecture|from=b:lecture/, { timeout: 10000 }).catch(() => {});
+await desk.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 6, null, { timeout: 20000 })
+  .then(() => ok('a deck template starts a new deck, the open one kept as a draft', true))
+  .catch(async () => ok(`a deck template starts a new deck (${await stripCount(desk)} slides)`, false));
+ok('which is not saved anywhere yet', /New deck/.test(await desk.textContent('#deck-where')));
+await owen.close();
+
+// A TA uses the course's templates but does not change them, and never sees
+// anyone else's own.
+const tia = await signedIn('tia');
+const tiaPage = await tia.newPage();
+trap(tiaPage, 'editor templates (tia)');
+await tiaPage.goto(`${base}/deck.html`);
+await tiaPage.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 2, null, { timeout: 20000 });
+await tiaPage.click('.deck-toolbar [data-cmd="template"]');
+await tiaPage.waitForSelector('#deck-templates-dialog:not([hidden]) .deck-template', { timeout: 10000 });
+const tiaCard = tiaPage.locator('.deck-template', { has: tiaPage.locator('.deck-template-title', { hasText: 'PSY 415 build list' }) });
+await tiaCard.waitFor({ timeout: 5000 });
+ok('a TA sees the course\'s templates', await tiaCard.count() === 1);
+ok('can use them, but not change them', await tiaCard.locator('[data-act="use"]').count() === 1
+  && await tiaCard.locator('[data-act="edit"], [data-act="rename"], [data-act="delete"]').count() === 0);
+ok('and can only save templates for themselves', JSON.stringify(await tiaPage.$$eval('#deck-templates-scope option', (os) => os.map((o) => o.value))) === '["mine"]');
+await tiaPage.click('.deck-media-tabs [data-kind="deck"]');
+ok('nobody else\'s own templates show', await tiaPage.locator('.deck-template', { hasText: 'Owen\'s three-slide deck' }).count() === 0);
+const courseTpl = (await tiaPage.evaluate(() => fetch('/api/deck-templates').then((r) => r.json()))).templates.find((t) => t.title === 'PSY 415 build list');
+expecting.deckForbidden = true;
+const refused = await tiaPage.evaluate((id) => fetch(`/api/deck-templates/${id}`, { method: 'DELETE' }).then((r) => r.status), courseTpl.id);
+expecting.deckForbidden = false;
+ok(`and the server refuses a TA deleting one (${refused})`, refused === 403);
+
+// An administrator can hide a built-in for everyone.
+const root = await signedIn('root');
+const rootPage = await root.newPage();
+trap(rootPage, 'editor templates (root)');
+await rootPage.goto(`${base}/deck.html`);
+await rootPage.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 2, null, { timeout: 20000 });
+await rootPage.click('.deck-toolbar [data-cmd="template"]');
+await rootPage.waitForSelector('#deck-templates-dialog:not([hidden]) .deck-template', { timeout: 10000 });
+const quote = rootPage.locator('.deck-template', { has: rootPage.locator('.deck-template-title', { hasText: 'Quote' }) });
+await quote.locator('[data-act="hide"]').click();
+await rootPage.waitForFunction(() => [...document.querySelectorAll('.deck-template-badge')].some((b) => b.textContent === 'Built-in · hidden'), null, { timeout: 5000 })
+  .then(() => ok('an administrator can hide a built-in, and still sees it, marked hidden', true))
+  .catch(() => ok('an administrator can hide a built-in, and still sees it, marked hidden', false));
+await tiaPage.click('#deck-templates-close');
+await tiaPage.click('.deck-toolbar [data-cmd="template"]');
+await tiaPage.waitForSelector('#deck-templates-dialog:not([hidden]) .deck-template', { timeout: 10000 });
+await tiaPage.waitForTimeout(500);
+ok('then nobody else sees it', await tiaPage.locator('.deck-template', { has: tiaPage.locator('.deck-template-title', { hasText: 'Quote' }) }).count() === 0);
+await quote.locator('[data-act="hide"]').click();
+await rootPage.waitForFunction(() => ![...document.querySelectorAll('.deck-template-badge')].some((b) => b.textContent === 'Built-in · hidden'), null, { timeout: 5000 });
+await tia.close();
+await root.close();
+}
+
 if (want('the deck editor: drafts, downloads, completion and checks (#226)')) {
 console.log('\n-- the deck editor: drafts, downloads, completion and checks (#226) --');
 // The plain relay (no accounts, no library): the editor still works.
@@ -529,6 +670,15 @@ await page.click('.deck-toolbar [data-cmd="image"]');
 ok('and a picture can only come from an address', await page.isHidden('#deck-image-dialog [data-from="device"]')
   && await page.isVisible('#deck-image-dialog .deck-media-offline'));
 await page.click('#deck-image-cancel');
+await page.click('.deck-toolbar [data-cmd="template"]');
+await page.waitForSelector('#deck-templates-dialog:not([hidden]) .deck-template', { timeout: 10000 });
+ok('the built-in templates are there with no server', await page.locator('.deck-template', { hasText: 'Question for the room' }).count() === 1);
+ok('with nowhere to save new ones, and saying why', await page.isHidden('#deck-templates-save') && await page.isVisible('.deck-templates-offline'));
+await page.locator('.deck-template', { hasText: 'Question for the room' }).locator('[data-act="use"]').click();
+await page.waitForFunction(() => document.querySelector('#deck-strip').shadowRoot.querySelectorAll('.cell').length === 3, null, { timeout: 5000 })
+  .then(() => ok('and one goes in', true))
+  .catch(() => ok('and one goes in', false));
+await page.keyboard.press('Control+z');
 await pickSlide(page, 1);
 await page.keyboard.type('<!-- _cl');
 await page.waitForSelector('.cm-tooltip-autocomplete', { timeout: 5000 }).catch(() => {});
