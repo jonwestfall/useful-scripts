@@ -26,6 +26,8 @@ function surfaceLinks(cls) {
     el('a', { href: 'display.html', class: cls }, 'Display'),
     el('a', { href: 'control.html', class: cls }, 'Controller'),
     el('a', { href: 'plan.html', class: cls }, 'Planning'),
+    // Issue #226: the deck editor, its own page (opened from the planner too).
+    el('a', { href: 'deck.html', class: cls }, 'Deck editor'),
     // Issue #161: reachable, but only ever functional once paired from the
     // display's own pairing sheet - see the comment beside its own link in
     // control.html's Settings. Not gated on any server feature: Guest

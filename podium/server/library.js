@@ -23,6 +23,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { Readable } = require('node:stream');
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -96,7 +97,22 @@ function itemRow(row) {
     createdAt: row.created_at,
     createdBy: row.created_by,
     ...(row.sha256 ? { src: `/media/${row.sha256}/${encodeURIComponent(row.filename || 'file')}` } : {}),
+    // A deck can be edited (Issue #226), and everything that points at one -
+    // a plan, the manifest, a controller's library - should see the edit. So a
+    // deck's src is a stable address that always serves its current version,
+    // and `version` (the sha of what is there now) is what an editor checks
+    // before saving over it. The content-addressed URL above still answers
+    // for anyone holding it; it is just no longer what a deck hands out.
+    ...(row.sha256 && row.kind === 'deck' ? {
+      src: deckSrc(row.id, row.filename),
+      version: row.sha256,
+    } : {}),
   };
+}
+
+/** The address a deck is always reachable at, whatever its current contents. */
+function deckSrc(id, filename) {
+  return `/media/deck/${Number(id)}/${encodeURIComponent(filename || 'deck.md')}`;
 }
 
 const SELECT_ITEMS = `
@@ -109,7 +125,10 @@ const SELECT_ITEMS = `
 function listItems(db, user) {
   return db.prepare(`${SELECT_ITEMS} AND ${VISIBLE} ORDER BY li.created_at DESC`)
     .all(user.id, user.isAdmin ? 1 : 0)
-    .map(itemRow);
+    .map(itemRow)
+    // Said per deck, so the planner and controller can offer Edit only where
+    // saving would be allowed (Issue #226).
+    .map((item) => (item.type === 'deck' ? { ...item, editable: mayEditDeck(db, user, item) } : item));
 }
 
 function getItem(db, user, id) {
@@ -386,6 +405,59 @@ function mayDelete(db, user, item) {
 }
 
 /**
+ * Who may change a deck's contents (Issue #226): an admin; for a deck filed
+ * under a course, that course's owners; for one filed under none, the person
+ * who added it. "Everyone connected to the deck except TAs" - and a TA is
+ * what a plain course member is, so a member who uploaded a course deck can
+ * present it but not rewrite it. Narrower than mayDelete on purpose.
+ */
+function mayEditDeck(db, user, item) {
+  if (user.isAdmin) return true;
+  if (!item.course) return item.createdBy === user.id;
+  const row = db.prepare(`SELECT cm.role FROM course_members cm
+      JOIN courses c ON c.id = cm.course_id
+     WHERE c.code = ? AND cm.user_id = ?`).get(item.course, user.id);
+  return row?.role === 'owner';
+}
+
+// Generous for markdown - a deck is text; its pictures live beside it.
+const MAX_DECK_SOURCE_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Replace a deck's markdown, keeping the item (Issue #226). The new text is
+ * stored as new content-addressed media and the item re-pointed at it, so the
+ * deck's stable src serves the edit from now on. The old bytes are left where
+ * they are: another item may share them, and they are what a later "previous
+ * versions" would list.
+ *
+ * `ifMatch` is the version the editor opened. If the deck has changed since,
+ * nothing is written and the 412 carries the version that is there now, so
+ * the editor can offer overwrite / save a copy / reload.
+ */
+async function replaceDeckContent(db, user, dataDir, id, text, { ifMatch = '' } = {}) {
+  const item = getItem(db, user, id);
+  if (!item) throw Object.assign(new Error('no such item'), { status: 404 });
+  if (item.type !== 'deck') throw Object.assign(new Error('only a deck can be edited this way'), { status: 400 });
+  if (!mayEditDeck(db, user, item)) {
+    throw Object.assign(new Error(item.course
+      ? `only an owner of ${item.course.toUpperCase()} or an admin can change this deck`
+      : 'only the person who added this deck, or an admin, can change it'), { status: 403 });
+  }
+  const wanted = String(ifMatch || '').replace(/^W\//, '').replace(/"/g, '');
+  if (wanted && wanted !== item.version) {
+    throw Object.assign(new Error('this deck was changed by someone else since you opened it'), { status: 412, version: item.version });
+  }
+  const buf = Buffer.from(String(text ?? ''), 'utf8');
+  if (buf.length > MAX_DECK_SOURCE_BYTES) {
+    throw Object.assign(new Error(`a deck can be at most ${MAX_DECK_SOURCE_BYTES / (1024 * 1024)} MB of text`), { status: 413 });
+  }
+  const { sha256, bytes } = await storeUpload(dataDir, Readable.from([buf]), { limit: MAX_DECK_SOURCE_BYTES });
+  const mediaId = rememberMedia(db, user, { sha256, bytes, contentType: UPLOADABLE.get('.md').type });
+  db.prepare('UPDATE library_items SET media_id = ?, updated_at = ? WHERE id = ?').run(mediaId, Date.now(), Number(id));
+  return getItem(db, user, id);
+}
+
+/**
  * Soft delete. The bytes stay: another item may point at the same hash, and
  * sweeping unreferenced media is a job for a scheduled task that can afford to
  * be careful, not for a click in a web page.
@@ -413,4 +485,5 @@ module.exports = {
   listItems, getItem, listCourses, mayReadMedia, courseIdFor,
   addItem, setItemFiles, findDuplicate, storeUpload, rememberMedia, forgetMediaIfUnused,
   renameItem, deleteItem, mayDelete, usage,
+  mayEditDeck, replaceDeckContent, deckSrc, MAX_DECK_SOURCE_BYTES,
 };

@@ -10,7 +10,7 @@ import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIM
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
 import { createCameraSender, createMicSender } from './rtc.js';
-import { render as renderDeckSource, deckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
+import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
@@ -229,8 +229,20 @@ function getDeckSource(item) {
   return deckFetches.get(item.deckId);
 }
 
+// A deck at an address, fetched fresh - not from deckStore - because the deck
+// editor may have changed it since this device last looked (Issue #226). The
+// server answers an unchanged deck with a 304, so this costs next to nothing.
+async function loadServerDeck(src) {
+  const res = await fetch(src, { cache: 'no-cache', credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`${src} — HTTP ${res.status}`);
+  const source = await res.text();
+  const id = await srcDeckId(src, source);
+  deckStore.set(id, source);
+  return { id, source };
+}
+
 async function stageDeck({ source, name, src }) {
-  const id = src ? `src:${src}` : await deckId(source);
+  const id = src ? await srcDeckId(src, source) : await deckId(source);
   deckStore.set(id, source);
   const deck = await renderDeckSource(source, id);
   // Populate deckView with the SAME parse used to stage it, rather than
@@ -444,6 +456,18 @@ function renderLibrary() {
           },
         }, '×'));
       }
+      // A library deck this account may edit opens in the deck editor (Issue
+      // #226) - in a new tab, so the lecture on this one is left alone.
+      if (item.type === 'deck' && item.editable && item.serverId) {
+        tile.append(el('span', {
+          class: 'tile-edit',
+          title: 'Edit this deck in the deck editor',
+          onclick: (ev) => {
+            ev.stopPropagation();
+            window.open(`deck.html?${new URLSearchParams({ library: String(item.serverId) })}`, '_blank', 'noopener');
+          },
+        }, '✎'));
+      }
       // Audio is the one type that can honestly be two different things: a
       // title card the room sees, or something playing behind everything
       // else that it never does. This is the second one, without leaving
@@ -493,7 +517,7 @@ const thumbnails = createThumbnailer(async (item) => {
     return src || null;
   }
   if (item.type === 'deck') {
-    const ref = item.deckId ? item : (item.src ? { deckId: `src:${item.src}`, src: item.src } : null);
+    const ref = item.deckId ? item : (item.src ? await loadServerDeck(item.src).then(({ id }) => ({ deckId: id, src: item.src })) : null);
     const source = ref && await getDeckSource(ref);
     if (typeof source !== 'string') return null;
     const deck = await renderDeckSource(source, ref.deckId);
@@ -999,7 +1023,9 @@ async function pick(item, where = 'auto') {
     // An uploaded deck (from a lecture plan, or dropped on this device) is
     // already in deckStore under its content hash; a library deck is fetched
     // by path. getDeckSource handles both, given the right reference.
-    const source = await getDeckSource(item.deckId ? item : { deckId: `src:${item.src}`, src: item.src });
+    // A deck already on screen or in Recent (it has an id) is the version it
+    // was; one picked from the library is whatever the library holds now.
+    const source = item.deckId ? await getDeckSource(item) : (await loadServerDeck(item.src)).source;
     await stageDeck({ source, name: item.title, src: item.src });
     note.textContent = '';
     followToTab(item, where);
@@ -1900,8 +1926,8 @@ async function mountDeckForExport(deck) {
 /** The markdown behind a deck id, from this device's cache or the server. */
 async function deckSourceById(id) {
   if (deckStore.has(id)) return deckStore.get(id);
-  if (!String(id).startsWith('src:')) return null;
-  const src = String(id).slice(4);
+  const src = srcOfDeckId(id);
+  if (!src) return null;
   try {
     const res = await fetch(src, { cache: 'no-cache' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -4726,8 +4752,12 @@ async function addWholeDeckToDraft(item) {
   flashSetNote(`Opening “${item.title || 'deck'}”…`);
   let deck; let source; let deckIdRef;
   try {
-    deckIdRef = item.deckId || `src:${item.src}`;
-    source = await getDeckSource(item.deckId ? item : { deckId: deckIdRef, src: item.src });
+    if (item.deckId) {
+      deckIdRef = item.deckId;
+      source = await getDeckSource(item);
+    } else {
+      ({ id: deckIdRef, source } = await loadServerDeck(item.src));
+    }
     if (source == null) throw new Error('could not load that deck');
     deck = await renderDeckSource(source, deckIdRef);
   } catch (err) {

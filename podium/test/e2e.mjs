@@ -21,7 +21,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GROUPS = ['core', 'ink-layout', 'media', 'polls-server'];
+const GROUPS = ['core', 'ink-layout', 'media', 'polls-server', 'editor'];
 
 const args = process.argv.slice(2);
 let picked = GROUPS;

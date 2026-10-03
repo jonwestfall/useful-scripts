@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Podium — Deck editor</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="assets/css/podium.css">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0b0d10">
+</head>
+<!-- The deck editor (Issue #226): a Marp deck's markdown in a real code
+     editor, beside the projector's own renderer. See assets/js/deck-editor.js,
+     and assets/js/deck-source.js for the model of a deck it edits through. -->
+<body class="plan deck-editor">
+
+<div class="topbar">
+  <a class="brand" href="index.html" title="Back to Podium">PODIUM</a>
+  <span class="tag">Deck editor</span>
+  <input id="deck-title" class="title-input" type="text" placeholder="Deck title" aria-label="Deck title">
+  <span id="deck-where" class="hint deck-where"></span>
+  <span class="spacer"></span>
+  <span id="deck-save-state" class="hint" role="status"></span>
+  <div class="deck-menu-wrap">
+    <button id="deck-save" type="button" class="primary">Save</button>
+    <button id="deck-save-more" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="deck-save-menu" aria-label="More ways to save">▾</button>
+    <div id="deck-save-menu" class="deck-menu" hidden>
+      <button id="deck-save-library" type="button" hidden>Save as a new deck in the library…</button>
+      <button id="deck-save-content" type="button" hidden>Save into content/decks…</button>
+      <button id="deck-download" type="button">Download the .md file</button>
+      <hr>
+      <button id="deck-new" type="button">New deck</button>
+      <button id="deck-open-file" type="button">Open a .md file…</button>
+    </div>
+  </div>
+  <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
+  <span id="session-badge" class="session-badge" hidden></span>
+  <a href="plan.html" class="linkish">Planning</a>
+  <a href="control.html" class="linkish">Controller</a>
+</div>
+
+<div id="deck-warn" role="alert" hidden></div>
+
+<!-- Saving as a new library deck: which course it is filed under. -->
+<div id="deck-library-dialog" class="deck-dialog" hidden>
+  <div class="deck-dialog-card">
+    <h2>Save as a new deck in the library</h2>
+    <div class="field">
+      <label for="deck-library-course">Course</label>
+      <select id="deck-library-course"></select>
+      <p class="hint" id="deck-library-course-hint"></p>
+    </div>
+    <div class="field">
+      <label for="deck-library-name">File name</label>
+      <input id="deck-library-name" type="text" autocomplete="off">
+    </div>
+    <div class="inline">
+      <button id="deck-library-go" type="button" class="primary">Save</button>
+      <button id="deck-library-cancel" type="button">Cancel</button>
+    </div>
+    <p class="hint" id="deck-library-note" role="status"></p>
+  </div>
+</div>
+
+<!-- A picture from an address. Uploading one into the library is Phase 2. -->
+<div id="deck-image-dialog" class="deck-dialog" hidden>
+  <div class="deck-dialog-card">
+    <h2>Add a picture</h2>
+    <div class="field">
+      <label for="deck-image-src">Address</label>
+      <input id="deck-image-src" type="text" inputmode="url" autocomplete="off" placeholder="/media/… or https://…">
+      <p class="hint">A picture already on this server (the library) or on the web. Uploading from this device comes next.</p>
+    </div>
+    <div class="field">
+      <label for="deck-image-alt">Description (alt text)</label>
+      <input id="deck-image-alt" type="text" autocomplete="off" placeholder="What the picture shows">
+    </div>
+    <div class="field">
+      <label for="deck-image-place">Placement</label>
+      <select id="deck-image-place">
+        <option value="inline">In the slide</option>
+        <option value="bg">Background, filling the slide</option>
+        <option value="bg contain">Background, whole picture showing</option>
+        <option value="bg left:40%">Left 40%, text on the right</option>
+        <option value="bg right:40%">Right 40%, text on the left</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="deck-image-width">Width (pixels, optional)</label>
+      <input id="deck-image-width" type="number" min="20" max="4000" step="10">
+    </div>
+    <div class="inline">
+      <button id="deck-image-go" type="button" class="primary">Add</button>
+      <button id="deck-image-cancel" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="deck-grid">
+
+  <!-- Every slide, as the projector draws it. -->
+  <aside class="deck-col deck-strip-col">
+    <div class="deck-col-head">
+      <h2>Slides <span id="deck-count" class="hint"></span></h2>
+      <button id="deck-add-slide" type="button" title="Add a slide after this one">+ Slide</button>
+    </div>
+    <div id="deck-strip" class="deck-strip" role="list" aria-label="Slides"></div>
+  </aside>
+
+  <!-- The markdown. -->
+  <section class="deck-col deck-code-col">
+    <div class="deck-toolbar" role="toolbar" aria-label="Formatting">
+      <button type="button" data-cmd="heading" aria-label="Heading" title="Heading (cycles # to ###)">H</button>
+      <button type="button" data-cmd="bold" aria-label="Bold" title="Bold (Ctrl/Cmd+B)"><b>B</b></button>
+      <button type="button" data-cmd="italic" aria-label="Italic" title="Italic (Ctrl/Cmd+I)"><i>I</i></button>
+      <button type="button" data-cmd="list" title="Bulleted list">• List</button>
+      <button type="button" data-cmd="numbered" title="Numbered list">1. List</button>
+      <button type="button" data-cmd="build" title="Reveal this slide's bullets one at a time" aria-pressed="false">▶ Build</button>
+      <button type="button" data-cmd="image" title="Add a picture">🖼 Picture</button>
+      <button type="button" data-cmd="math" title="Math (KaTeX)">∑ Math</button>
+      <button type="button" data-cmd="code" title="Code block">&lt;/&gt; Code</button>
+      <span class="spacer"></span>
+      <label class="check" title="Fold every slide but the one you are on"><input id="deck-focus" type="checkbox"> Focus slide</label>
+    </div>
+    <div id="deck-code" class="deck-code"></div>
+
+    <div class="deck-slide-panel">
+      <h3 id="deck-slide-heading">Slide</h3>
+      <div class="deck-slide-row">
+        <label class="check"><input id="deck-slide-build" type="checkbox"> Build (bullets one at a time)</label>
+        <label for="deck-slide-class">Class</label>
+        <input id="deck-slide-class" type="text" list="deck-classes" autocomplete="off" placeholder="e.g. lead">
+        <datalist id="deck-classes"></datalist>
+        <label for="deck-slide-bg">Background</label>
+        <input id="deck-slide-bg" type="color" value="#ffffff">
+        <button id="deck-slide-bg-clear" type="button" title="Use the theme's background">Theme</button>
+        <label for="deck-slide-paginate">Page number</label>
+        <select id="deck-slide-paginate">
+          <option value="">As the deck</option>
+          <option value="true">Show</option>
+          <option value="false">Hide</option>
+        </select>
+      </div>
+      <label for="deck-slide-notes" class="sub-label">Presenter notes (only the controller shows these)</label>
+      <textarea id="deck-slide-notes" rows="3" placeholder="What to say on this slide."></textarea>
+    </div>
+  </section>
+
+  <!-- What the room sees. -->
+  <section class="deck-col deck-view-col">
+    <h3>What the class sees</h3>
+    <div id="deck-preview-viewport" class="deck-preview-viewport"><div id="deck-preview"></div></div>
+    <div class="inline deck-nav">
+      <button id="deck-prev" type="button" aria-label="Previous slide or build step">◀</button>
+      <span class="hint" id="deck-position"></span>
+      <button id="deck-next" type="button" aria-label="Next slide or build step">▶</button>
+    </div>
+    <p class="hint deck-build" id="deck-build" role="status" hidden></p>
+
+    <h3>Check before class <span id="deck-problem-count" class="hint"></span></h3>
+    <ul id="deck-problems" class="deck-problems"></ul>
+
+    <h3>Deck</h3>
+    <div class="deck-settings">
+      <label for="deck-theme">Theme</label>
+      <select id="deck-theme"></select>
+      <label for="deck-size">Shape</label>
+      <select id="deck-size">
+        <option value="">16:9 (default)</option>
+        <option value="16:9">16:9</option>
+        <option value="4:3">4:3</option>
+      </select>
+      <label for="deck-paginate">Page numbers</label>
+      <select id="deck-paginate">
+        <option value="">Off</option>
+        <option value="true">On</option>
+      </select>
+      <label for="deck-header">Header</label>
+      <input id="deck-header" type="text" autocomplete="off">
+      <label for="deck-footer">Footer</label>
+      <input id="deck-footer" type="text" autocomplete="off">
+    </div>
+    <p class="hint" id="deck-theme-note"></p>
+  </section>
+
+</div>
+
+<script type="module" src="assets/js/deck-editor.js"></script>
+</body>
+</html>

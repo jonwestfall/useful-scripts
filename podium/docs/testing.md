@@ -44,7 +44,8 @@ podium/test/
     ├── core.mjs          # Switching, connection, settings, offline, the display basics
     ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen
     ├── media.mjs         # Camera, music, audio, clocks, captions, PDFs
-    └── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
+    ├── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
+    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226)
 ```
 
 ---

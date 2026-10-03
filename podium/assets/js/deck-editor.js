@@ -1,0 +1,1253 @@
+// The deck editor (Issue #226): a Marp deck's markdown in a real code editor
+// (CodeMirror, vendored), beside the projector's own renderer.
+//
+// The markdown is the document - this page never keeps a second copy of the
+// deck in any other shape. deck-source.js is how it knows where slides start
+// and which comments are notes, and every structural edit (move a slide, set
+// a directive, write the notes) is computed there and applied to the editor
+// as one change, so it is one undo step and the cursor stays put.
+//
+// Where a deck comes from decides where Save puts it:
+//   ?library=<id>  a deck in this server's library - saved with If-Match, so
+//                  two people never silently overwrite each other
+//   ?content=<f>   content/decks/<f>, an administrator's
+//   ?plan&item     a deck carried inside a lecture plan, handed over by the
+//                  planner tab that opened this one and handed back to it
+//   ?src=<url>     anything else at an address: opened, then saved somewhere
+//   (nothing)      a new deck
+// A draft of unsaved work is kept on this device the whole time.
+
+import { $, $$, el, safeStorageSet } from './util.js';
+import { createRenderer } from './renderers.js';
+import { render as renderDeckSource, deckId, describeBuild, forgetDeck, applyFits } from './deck.js';
+import { deckStep } from './protocol.js';
+import { serverInfo, mountSessionBadge } from './server.js';
+import { downloadText } from './store.js';
+import * as DS from './deck-source.js';
+import * as CM from '../vendor/codemirror.esm.js';
+
+const params = new URLSearchParams(location.search);
+const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('podium-decks') : null;
+
+const STARTER = `---
+marp: true
+paginate: true
+title: Untitled deck
+---
+
+# Untitled deck
+
+Your name · Course
+
+---
+
+## A first slide
+
+- A point worth making
+- And another
+`;
+
+const BUILT_IN_THEMES = ['default', 'gaia', 'uncover'];
+const BASE_CLASSES = ['lead', 'invert', 'build'];
+const DRAFT_PREFIX = 'podium.deckdraft.';
+const MAX_DRAFT_CHARS = 1024 * 1024;
+
+let info = null;
+let origin = { kind: 'new' };   // where this deck lives - see the file comment
+let savedText = '';             // what that place holds, as far as this page knows
+let deck = DS.parseDeck('');
+let rendered = null;            // the last render, from deck.js
+let renderedId = null;
+let current = 0;                // the slide the cursor is in
+let step = null;                // the preview's build step; null = fully built
+let view = null;
+let problems = [];
+let themeNames = [...BUILT_IN_THEMES];
+let themeClasses = new Set(BASE_CLASSES);
+let libraryCourses = [];
+let saving = false;
+
+// --- small helpers -------------------------------------------------------------
+
+const text = () => view.state.doc.toString();
+const dirty = () => view && text() !== savedText;
+
+function warn(message, actions = []) {
+  const box = $('#deck-warn');
+  if (!message) { box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false;
+  box.replaceChildren(el('span', {}, message), ...actions.map(([label, fn]) => el('button', { type: 'button', onclick: fn }, label)));
+}
+
+function setSaveState(textValue) {
+  $('#deck-save-state').textContent = textValue;
+}
+
+function refreshSaveState() {
+  if (saving) return;
+  setSaveState(dirty() ? 'Unsaved changes (a draft is kept on this device)' : 'Saved');
+  document.title = `${dirty() ? '• ' : ''}${deck.frontMatter.fields.title || origin.title || 'Deck'} — Podium deck editor`;
+}
+
+function destination() {
+  return { library: 'library', content: 'content', plan: 'plan' }[origin.kind] || 'file';
+}
+
+function draftKey() {
+  if (origin.kind === 'library') return `${DRAFT_PREFIX}library:${origin.id}`;
+  if (origin.kind === 'content') return `${DRAFT_PREFIX}content:${origin.name}`;
+  if (origin.kind === 'plan') return `${DRAFT_PREFIX}plan:${origin.planId}:${origin.itemId}`;
+  if (origin.kind === 'file' && origin.src) return `${DRAFT_PREFIX}src:${origin.src}`;
+  return `${DRAFT_PREFIX}new`;
+}
+
+let draftTimer = null;
+function keepDraftSoon() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    try {
+      if (!dirty()) { localStorage.removeItem(draftKey()); return; }
+      const value = text();
+      if (value.length > MAX_DRAFT_CHARS) return;
+      safeStorageSet(localStorage, draftKey(), JSON.stringify({ text: value, base: savedText, at: Date.now() }));
+    } catch { /* no storage: the draft is just not kept */ }
+  }, 1500);
+}
+
+function dropDraft() {
+  try { localStorage.removeItem(draftKey()); } catch { /* nothing to drop */ }
+}
+
+// The first character of a slide's own content, past its directives and blank
+// lines - where the cursor goes when you pick that slide.
+function slideCursorPos(parsed, index) {
+  const slide = parsed.slides[Math.max(0, Math.min(parsed.slides.length - 1, index))];
+  if (!slide) return 0;
+  const raw = slide.raw;
+  const re = /^[ \t]*(?:<!--[\s\S]*?-->[ \t]*)?\r?\n/y;
+  let at = 0;
+  for (;;) {
+    re.lastIndex = at;
+    const m = re.exec(raw);
+    if (!m || !m[0]) break;
+    if (m[0].includes('<!--') && !commentIsDirective(m[0])) break;
+    at = re.lastIndex;
+  }
+  return slide.start + at;
+}
+
+function commentIsDirective(chunk) {
+  return DS.commentsIn(chunk).every((c) => c.directive);
+}
+
+/**
+ * Replace the whole document with `next`, as the smallest change that gets
+ * there: one undo step, and the cursor and scroll stay where they were
+ * unless `selectSlide` says to go to a slide.
+ */
+function applyText(next, { selectSlide } = {}) {
+  const prev = text();
+  if (next === prev && selectSlide === undefined) return;
+  let a = 0;
+  while (a < prev.length && a < next.length && prev[a] === next[a]) a++;
+  let b = 0;
+  while (b < prev.length - a && b < next.length - a && prev[prev.length - 1 - b] === next[next.length - 1 - b]) b++;
+  const spec = { userEvent: 'input.podium' };
+  if (next !== prev) spec.changes = { from: a, to: prev.length - b, insert: next.slice(a, next.length - b) };
+  if (selectSlide !== undefined) {
+    spec.selection = { anchor: slideCursorPos(DS.parseDeck(next), selectSlide) };
+    spec.scrollIntoView = true;
+  }
+  view.dispatch(spec);
+}
+
+// --- the code editor ------------------------------------------------------------
+
+const sepLine = CM.Decoration.line({ class: 'cm-marp-sep' });
+const currentLine = CM.Decoration.line({ class: 'cm-marp-current' });
+const directiveMark = CM.Decoration.mark({ class: 'cm-marp-directive' });
+const noteMark = CM.Decoration.mark({ class: 'cm-marp-note' });
+
+// Slide separators, directives, notes and the slide you are on, picked out
+// so the structure of the deck is visible at a glance.
+const marpDecorations = CM.ViewPlugin.fromClass(class {
+  constructor(v) { this.decorations = this.build(v); }
+  update(u) { if (u.docChanged || u.selectionSet || u.viewportChanged) this.decorations = this.build(u.view); }
+  build(v) {
+    const builder = new CM.RangeSetBuilder();
+    const doc = v.state.doc;
+    const ranges = [];
+    for (const slide of deck.slides) {
+      if (slide.index > 0 && slide.sep) ranges.push({ from: slide.start - slide.sep.length, deco: sepLine, line: true });
+      if (slide.index === current) {
+        const first = doc.lineAt(Math.min(slide.start, doc.length));
+        const last = doc.lineAt(Math.min(Math.max(slide.start, slide.end - 1), doc.length));
+        for (let n = first.number; n <= last.number; n++) ranges.push({ from: doc.line(n).from, deco: currentLine, line: true });
+      }
+      for (const c of DS.commentsIn(slide.raw)) {
+        ranges.push({ from: slide.start + c.start, to: slide.start + c.end, deco: c.directive ? directiveMark : noteMark });
+      }
+    }
+    // Line decorations first at any one position, then marks - the order a
+    // RangeSetBuilder insists on.
+    ranges.sort((x, y) => x.from - y.from || (x.line === y.line ? 0 : x.line ? -1 : 1));
+    for (const r of ranges) {
+      if (r.from > doc.length) continue;
+      if (r.line) builder.add(r.from, r.from, r.deco);
+      else if (r.to > r.from) builder.add(r.from, Math.min(r.to, doc.length), r.deco);
+    }
+    return builder.finish();
+  }
+}, { decorations: (v) => v.decorations });
+
+// Each slide folds from the end of its first line to its end.
+const slideFolds = CM.foldService.of((state, lineStart, lineEnd) => {
+  for (const slide of deck.slides) {
+    const head = slide.index === 0 ? slide.start : slide.start - slide.sep.length;
+    if (head !== lineStart) continue;
+    const end = Math.max(lineEnd, slide.end - 1);
+    return end > lineEnd ? { from: lineEnd, to: end } : null;
+  }
+  return null;
+});
+
+function inFrontMatter(pos) {
+  return deck.frontMatter.raw && pos < deck.frontMatter.raw.length;
+}
+
+const IMAGE_OPTIONS = ['bg', 'bg contain', 'bg cover', 'bg fit', 'bg left', 'bg right', 'bg left:40%', 'bg right:40%', 'w:600', 'h:400', 'contain', 'cover', 'grayscale', 'sepia', 'blur'];
+const VALUES = {
+  theme: () => themeNames,
+  size: () => ['16:9', '4:3'],
+  paginate: () => ['true', 'false'],
+  math: () => ['katex'],
+  class: () => [...themeClasses],
+};
+
+// Directive names, their values, theme names and picture options - the bits
+// of Marp nobody remembers the spelling of.
+function marpCompletions(ctx) {
+  const line = ctx.state.doc.lineAt(ctx.pos);
+  const before = line.text.slice(0, ctx.pos - line.from);
+
+  const img = /!\[([^\]]*?)([\w:%-]*)$/.exec(before);
+  if (img) {
+    return { from: ctx.pos - img[2].length, options: IMAGE_OPTIONS.map((label) => ({ label, type: 'keyword' })) };
+  }
+  const value = /(?:^|<!--|\s)(_?)([A-Za-z]+)\s*:\s*([\w:#.-]*)$/.exec(before);
+  if (value) {
+    const key = value[2];
+    const list = VALUES[key]?.();
+    if (list && (inFrontMatter(ctx.pos) || /<!--/.test(before) || insideComment(ctx.state, ctx.pos))) {
+      return { from: ctx.pos - value[3].length, options: list.map((label) => ({ label, type: 'value' })) };
+    }
+  }
+  const key = /(?:<!--\s*|^\s*)(_?)([A-Za-z]*)$/.exec(before);
+  if (key && (/<!--/.test(before) || insideComment(ctx.state, ctx.pos) || inFrontMatter(ctx.pos))) {
+    if (!key[2] && !ctx.explicit && !/<!--\s*_?$/.test(before)) return null;
+    const names = inFrontMatter(ctx.pos) ? [...DS.GLOBAL_DIRECTIVES, ...DS.LOCAL_DIRECTIVES] : DS.LOCAL_DIRECTIVES;
+    return {
+      from: ctx.pos - key[2].length,
+      options: names.map((name) => ({
+        label: name, type: 'property', apply: `${name}: `,
+        detail: key[1] === '_' ? 'this slide only' : (DS.LOCAL_DIRECTIVES.includes(name) && !inFrontMatter(ctx.pos) ? 'this slide and after' : 'whole deck'),
+      })),
+    };
+  }
+  return null;
+}
+
+function insideComment(state, pos) {
+  const head = state.doc.sliceString(Math.max(0, pos - 2000), pos);
+  return head.lastIndexOf('<!--') > head.lastIndexOf('-->');
+}
+
+const editorTheme = CM.EditorView.theme({
+  '&': { height: '100%', fontSize: '14px', backgroundColor: 'var(--panel)', color: 'var(--ink)' },
+  '.cm-content': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', caretColor: 'var(--accent)' },
+  '.cm-gutters': { backgroundColor: 'var(--bg)', color: 'var(--dim)', borderRight: '1px solid var(--line)' },
+  '.cm-activeLine': { backgroundColor: 'rgba(110, 168, 254, 0.07)' },
+  '.cm-activeLineGutter': { backgroundColor: 'rgba(110, 168, 254, 0.12)' },
+  '&.cm-focused .cm-cursor': { borderLeftColor: 'var(--accent)' },
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: 'rgba(110, 168, 254, 0.3) !important' },
+  '.cm-marp-sep': { backgroundColor: 'rgba(255, 201, 77, 0.10)', borderTop: '1px solid rgba(255, 201, 77, 0.35)' },
+  '.cm-marp-current': { backgroundColor: 'rgba(255, 255, 255, 0.025)' },
+  // The markdown highlighter colours a comment's inner spans too; these win.
+  '.cm-marp-directive, .cm-marp-directive *': { color: '#c49bff !important' },
+  '.cm-marp-note, .cm-marp-note *': { color: '#7fc8a9 !important', fontStyle: 'italic' },
+  '.cm-tooltip': { backgroundColor: 'var(--panel)', border: '1px solid var(--line)', color: 'var(--ink)' },
+  '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: 'var(--accent)', color: 'var(--on-accent)' },
+  '.cm-panels': { backgroundColor: 'var(--bg)', color: 'var(--ink)' },
+  '.cm-foldPlaceholder': { backgroundColor: 'var(--panel-2)', border: '1px solid var(--line)', color: 'var(--dim)' },
+}, { dark: true });
+
+const highlight = CM.HighlightStyle.define([
+  { tag: CM.tags.heading, color: '#ffd166', fontWeight: '700' },
+  { tag: CM.tags.strong, fontWeight: '700' },
+  { tag: CM.tags.emphasis, fontStyle: 'italic' },
+  { tag: CM.tags.link, color: '#6ea8fe' },
+  { tag: CM.tags.url, color: '#6ea8fe' },
+  { tag: CM.tags.monospace, color: '#ffb38a' },
+  { tag: CM.tags.list, color: '#97a2b0' },
+  { tag: CM.tags.quote, color: '#b7c0cc', fontStyle: 'italic' },
+  { tag: CM.tags.comment, color: '#7fc8a9' },
+  { tag: CM.tags.meta, color: '#97a2b0' },
+  { tag: CM.tags.processingInstruction, color: '#97a2b0' },
+  { tag: CM.tags.contentSeparator, color: '#ffc94d', fontWeight: '700' },
+  { tag: CM.tags.tagName, color: '#ff8fa3' },
+  { tag: CM.tags.attributeName, color: '#ffb38a' },
+  { tag: CM.tags.string, color: '#a5d6a7' },
+]);
+
+const editorKeys = [
+  { key: 'Mod-s', preventDefault: true, run: () => { save(); return true; } },
+  { key: 'Mod-b', run: () => { wrapSelection('**'); return true; } },
+  { key: 'Mod-i', run: () => { wrapSelection('*'); return true; } },
+];
+
+function createEditor(initial) {
+  const state = CM.EditorState.create({
+    doc: initial,
+    extensions: [
+      CM.lineNumbers(),
+      CM.highlightActiveLineGutter(),
+      CM.foldGutter(),
+      CM.history(),
+      CM.drawSelection(),
+      CM.dropCursor(),
+      CM.indentOnInput(),
+      CM.bracketMatching(),
+      CM.closeBrackets(),
+      CM.highlightActiveLine(),
+      CM.highlightSelectionMatches(),
+      CM.EditorView.lineWrapping,
+      CM.markdown({ base: CM.markdownLanguage }),
+      CM.syntaxHighlighting(highlight),
+      CM.syntaxHighlighting(CM.defaultHighlightStyle, { fallback: true }),
+      CM.autocompletion({ override: [marpCompletions], activateOnTyping: true }),
+      CM.lintGutter(),
+      CM.search({ top: true }),
+      slideFolds,
+      marpDecorations,
+      editorTheme,
+      CM.keymap.of([
+        ...editorKeys,
+        ...CM.closeBracketsKeymap, ...CM.defaultKeymap, ...CM.searchKeymap, ...CM.historyKeymap,
+        ...CM.foldKeymap, ...CM.completionKeymap, CM.indentWithTab,
+      ]),
+      CM.EditorView.updateListener.of(onEditorUpdate),
+    ],
+  });
+  const editor = new CM.EditorView({ state, parent: $('#deck-code') });
+  return editor;
+}
+
+/** A fresh document: new undo history, cursor at the top. */
+function setDocument(value) {
+  deck = DS.parseDeck(value);
+  current = 0;
+  step = null;
+  view?.destroy();
+  view = createEditor(value);
+}
+
+function onEditorUpdate(update) {
+  if (update.docChanged) {
+    deck = DS.parseDeck(update.state.doc.toString());
+    renderSoon();
+    keepDraftSoon();
+    refreshSaveState();
+  }
+  if (update.docChanged || update.selectionSet) {
+    const at = DS.slideAt(deck, update.state.selection.main.head);
+    if (at !== current) {
+      current = at;
+      step = null;
+      if ($('#deck-focus').checked) focusSlide();
+      showCurrent();
+    } else if (update.docChanged) {
+      renderSlidePanel();
+    }
+  }
+}
+
+// --- rendering --------------------------------------------------------------------
+
+let renderTimer = null;
+let renderGeneration = 0;
+const sources = new Map();   // preview deck id -> markdown, for the renderer to ask for
+let previewRenderer = null;
+
+function renderSoon(ms = 300) {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(renderNow, ms);
+}
+
+async function renderNow() {
+  const mine = ++renderGeneration;
+  const value = text();
+  const id = `edit:${await deckId(value)}`;
+  if (mine !== renderGeneration) return;
+  sources.set(id, value);
+  let result;
+  try {
+    result = await renderDeckSource(value, id);
+  } catch (err) {
+    if (mine !== renderGeneration) return;
+    problems = [{ slide: 0, offset: 0, severity: 'warning', message: `Marp could not render this: ${err.message}` }];
+    renderProblems();
+    return;
+  }
+  if (mine !== renderGeneration) return;
+  const previous = renderedId;
+  rendered = result;
+  renderedId = id;
+  if (previous && previous !== id) {
+    // The renderer may still be mounting the last version; let it finish first.
+    setTimeout(() => { if (renderedId !== previous) { forgetDeck(previous); sources.delete(previous); } }, 5000);
+  }
+  updatePreview();
+  buildStrip();
+  computeProblems();
+  renderSlidePanel();
+}
+
+function previewItem() {
+  const fragments = rendered?.fragments || [];
+  const slide = Math.min(current, Math.max(0, (rendered?.count || 1) - 1));
+  return {
+    type: 'deck', deckId: renderedId, slide,
+    step: step === null ? (fragments[slide] || 0) : step,
+    slideCount: rendered?.count || 1, fragments,
+  };
+}
+
+function updatePreview() {
+  if (!renderedId) return;
+  const item = previewItem();
+  if (!previewRenderer) {
+    previewRenderer = createRenderer(item, { preview: true, getDeckSource: (it) => sources.get(it.deckId) ?? null });
+    $('#deck-preview').append(previewRenderer.el);
+    wirePreviewClicks(previewRenderer.el);
+  } else {
+    previewRenderer.update(item);
+  }
+  const steps = item.fragments[item.slide] || 0;
+  $('#deck-position').textContent = `Slide ${item.slide + 1} of ${item.slideCount}`
+    + (steps ? ` · ${item.step} of ${steps} revealed` : '');
+  const { text: note, warn: bad } = describeBuild(rendered?.builds?.[item.slide]);
+  const box = $('#deck-build');
+  box.hidden = !note;
+  box.textContent = note;
+  box.classList.toggle('is-warn', bad);
+  $$('.deck-toolbar [data-cmd="build"]').forEach((b) => b.setAttribute('aria-pressed', String(!!deck.slides[current]?.hasBuild)));
+}
+
+// Clicking a heading or a line of text on the preview puts the cursor on it
+// in the markdown, as near as text matching can find it.
+function wirePreviewClicks(host) {
+  host.addEventListener('click', (ev) => {
+    const target = ev.composedPath()[0];
+    const words = (target?.textContent || '').trim().replace(/\s+/g, ' ');
+    const slide = deck.slides[current];
+    if (!slide) return;
+    let at = -1;
+    if (words) {
+      const probe = words.slice(0, 40);
+      at = slide.raw.indexOf(probe);
+      if (at === -1) {
+        // Formatting (**, `, links) breaks a straight match; try the first word run.
+        const first = probe.split(' ').slice(0, 3).join(' ');
+        at = first ? slide.raw.indexOf(first) : -1;
+      }
+    }
+    if (target?.tagName === 'IMG') {
+      const src = target.getAttribute('src');
+      const m = slide.media.find((x) => src && (src.endsWith(x.src) || x.src.endsWith(src)));
+      if (m) at = m.start;
+    }
+    const pos = at >= 0 ? slide.start + at : slideCursorPos(deck, current);
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+    view.focus();
+  });
+}
+
+// --- the slide strip -----------------------------------------------------------------
+
+let stripShadow = null;
+let stripBuiltFor = null;
+
+function buildStrip() {
+  if (!rendered || stripBuiltFor === renderedId) { markStrip(); return; }
+  stripBuiltFor = renderedId;
+  stripShadow ??= $('#deck-strip').attachShadow({ mode: 'open' });
+  stripShadow.innerHTML = `<style>
+    :host { display: block; }
+    .cell { display: block; width: 100%; margin: 0 0 10px; padding: 0; text-align: left; background: none; border: 0; color: inherit; cursor: pointer; }
+    .thumb { position: relative; aspect-ratio: ${rendered.aspects?.[0] || 16 / 9}; overflow: hidden; background: #fff; border: 2px solid #2a3038; border-radius: 8px; }
+    .cell.on .thumb { border-color: #6ea8fe; }
+    .cell.drop .thumb { border-color: #ffc94d; border-style: dashed; }
+    .thumb .marpit { position: absolute; inset: 0; }
+    .thumb svg { display: block; width: 100%; height: 100%; }
+    .podium-fragment { opacity: 1 !important; }
+    .num { position: absolute; right: 3px; bottom: 3px; padding: 0 5px; border-radius: 4px; background: rgba(0,0,0,.65); color: #fff; font: 600 11px/1.6 system-ui, sans-serif; }
+    .badges { position: absolute; left: 3px; bottom: 3px; display: flex; gap: 3px; }
+    .badge { padding: 0 4px; border-radius: 4px; font: 700 11px/1.6 system-ui, sans-serif; background: rgba(0,0,0,.65); color: #fff; }
+    .badge.warn { background: #ffc94d; color: #151b23; }
+    .cap { margin-top: 4px; font: 12px/1.3 system-ui, sans-serif; color: #b7c0cc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cell.on .cap { color: #e7ecf2; font-weight: 600; }
+    .acts { display: none; gap: 4px; margin-top: 4px; }
+    .cell.on .acts { display: flex; }
+    .acts button { flex: 1; min-height: 28px; font: 12px system-ui, sans-serif; color: #e8ecf1; background: #1b2027; border: 1px solid #2a3038; border-radius: 6px; cursor: pointer; }
+    .acts button:disabled { opacity: .4; cursor: default; }
+    .acts button.armed { background: #6b1a1a; border-color: #ff4d4f; }
+  </style><style>${rendered.css}</style><div id="cells"></div>`;
+  const holder = document.createElement('div');
+  holder.innerHTML = rendered.html;
+  applyFits(holder, rendered.fits);
+  const cells = stripShadow.getElementById('cells');
+  Array.from(holder.querySelectorAll('svg[data-marpit-svg]')).forEach((svg, i) => {
+    const cell = el('div', { class: 'cell', role: 'listitem', tabindex: '0', draggable: 'true', 'data-index': String(i) });
+    const marpit = el('div', { class: 'marpit' });
+    marpit.append(svg);
+    const thumb = el('div', { class: 'thumb' }, marpit, el('span', { class: 'num' }, String(i + 1)), el('span', { class: 'badges' }));
+    cell.append(thumb, el('div', { class: 'cap' }), el('div', { class: 'acts' },
+      el('button', { type: 'button', title: 'Move up', 'data-act': 'up' }, '↑'),
+      el('button', { type: 'button', title: 'Move down', 'data-act': 'down' }, '↓'),
+      el('button', { type: 'button', title: 'Duplicate', 'data-act': 'dup' }, '⧉'),
+      el('button', { type: 'button', title: 'Delete this slide', 'data-act': 'del' }, '🗑')));
+    cells.append(cell);
+  });
+  cells.addEventListener('click', onStripClick);
+  cells.addEventListener('keydown', (ev) => {
+    const cell = ev.target.closest?.('.cell');
+    if (cell && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); goToSlide(Number(cell.dataset.index)); }
+  });
+  cells.addEventListener('dragstart', (ev) => {
+    const cell = ev.target.closest?.('.cell');
+    if (!cell) return;
+    ev.dataTransfer.setData('text/x-podium-slide', cell.dataset.index);
+    ev.dataTransfer.effectAllowed = 'move';
+  });
+  cells.addEventListener('dragover', (ev) => {
+    const cell = ev.target.closest?.('.cell');
+    if (!cell || !ev.dataTransfer.types.includes('text/x-podium-slide')) return;
+    ev.preventDefault();
+    stripShadow.querySelectorAll('.cell.drop').forEach((c) => c.classList.toggle('drop', c === cell));
+    cell.classList.add('drop');
+  });
+  cells.addEventListener('dragleave', (ev) => ev.target.closest?.('.cell')?.classList.remove('drop'));
+  cells.addEventListener('drop', (ev) => {
+    const cell = ev.target.closest?.('.cell');
+    stripShadow.querySelectorAll('.cell.drop').forEach((c) => c.classList.remove('drop'));
+    if (!cell) return;
+    ev.preventDefault();
+    const from = Number(ev.dataTransfer.getData('text/x-podium-slide'));
+    const to = Number(cell.dataset.index);
+    moveSlide(from, to);
+  });
+  markStrip();
+}
+
+function markStrip() {
+  if (!stripShadow) return;
+  $('#deck-count').textContent = `${deck.slides.length}`;
+  const slideProblems = new Set(problems.filter((p) => p.severity === 'warning').map((p) => p.slide));
+  stripShadow.querySelectorAll('.cell').forEach((cell) => {
+    const i = Number(cell.dataset.index);
+    const slide = deck.slides[i];
+    cell.classList.toggle('on', i === current);
+    cell.setAttribute('aria-current', i === current ? 'true' : 'false');
+    cell.querySelector('.cap').textContent = slide?.title || `Slide ${i + 1}`;
+    const badges = cell.querySelector('.badges');
+    badges.replaceChildren(
+      ...(slide?.hasBuild ? [el('span', { class: 'badge', title: 'Builds' }, '▶')] : []),
+      ...(slide?.notes ? [el('span', { class: 'badge', title: 'Has presenter notes' }, '✎')] : []),
+      ...(slideProblems.has(i) ? [el('span', { class: 'badge warn', title: 'Something to check' }, '!')] : []),
+    );
+    const acts = cell.querySelector('.acts');
+    acts.querySelector('[data-act="up"]').disabled = i === 0 || deck.headingDivider;
+    acts.querySelector('[data-act="down"]').disabled = i >= deck.slides.length - 1 || deck.headingDivider;
+    acts.querySelector('[data-act="dup"]').disabled = deck.headingDivider;
+    acts.querySelector('[data-act="del"]').disabled = deck.slides.length < 2 || deck.headingDivider;
+  });
+  const on = stripShadow.querySelector('.cell.on');
+  on?.scrollIntoView({ block: 'nearest' });
+}
+
+let deleteArmed = null;
+function onStripClick(ev) {
+  const button = ev.target.closest?.('button[data-act]');
+  const cell = ev.target.closest?.('.cell');
+  if (!cell) return;
+  const i = Number(cell.dataset.index);
+  if (!button) { goToSlide(i); return; }
+  ev.stopPropagation();
+  const act = button.dataset.act;
+  if (act === 'up') moveSlide(i, i - 1);
+  else if (act === 'down') moveSlide(i, i + 1);
+  else if (act === 'dup') applyText(DS.duplicateSlide(text(), i), { selectSlide: i + 1 });
+  else if (act === 'del') {
+    // Two taps, like every other irreversible button in Podium - and Undo
+    // (Ctrl/Cmd+Z) brings it back regardless.
+    if (deleteArmed === i) {
+      deleteArmed = null;
+      applyText(DS.deleteSlide(text(), i), { selectSlide: Math.max(0, i - 1) });
+    } else {
+      deleteArmed = i;
+      button.classList.add('armed');
+      button.textContent = 'Sure?';
+      setTimeout(() => { if (deleteArmed === i) { deleteArmed = null; markStrip(); button.classList.remove('armed'); button.textContent = '🗑'; } }, 4000);
+    }
+  }
+}
+
+function moveSlide(from, to) {
+  if (deck.headingDivider || from === to || to < 0 || to >= deck.slides.length) return;
+  applyText(DS.moveSlide(text(), from, to), { selectSlide: to });
+}
+
+function goToSlide(i) {
+  const pos = slideCursorPos(deck, i);
+  view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+  view.focus();
+}
+
+function showCurrent() {
+  markStrip();
+  updatePreview();
+  renderSlidePanel();
+  // Re-draw the current-slide band in the editor.
+  view.dispatch({});
+}
+
+// --- the slide panel (directives and notes for the slide you are on) ----------------
+
+function renderSlidePanel() {
+  const slide = deck.slides[current];
+  if (!slide) return;
+  $('#deck-slide-heading').textContent = `Slide ${current + 1}${slide.title ? ` — ${slide.title}` : ''}`;
+  const build = $('#deck-slide-build');
+  build.checked = slide.hasBuild;
+  build.disabled = deck.headingDivider;
+  const cls = $('#deck-slide-class');
+  if (document.activeElement !== cls) {
+    cls.value = slide.spot.class !== undefined ? slide.spot.class : '';
+    cls.placeholder = slide.spot.class === undefined && slide.classes.length ? `${slide.classes.join(' ')} (carried from before)` : 'e.g. lead';
+  }
+  const bg = slide.directives.backgroundColor;
+  $('#deck-slide-bg').value = /^#[0-9a-f]{6}$/i.test(bg || '') ? bg : '#ffffff';
+  $('#deck-slide-bg-clear').disabled = !slide.spot.backgroundColor;
+  $('#deck-slide-paginate').value = slide.spot.paginate ?? '';
+  const notes = $('#deck-slide-notes');
+  if (document.activeElement !== notes) notes.value = slide.notes;
+  $$('.deck-toolbar [data-cmd="build"]').forEach((b) => b.setAttribute('aria-pressed', String(slide.hasBuild)));
+}
+
+function wireSlidePanel() {
+  $('#deck-slide-build').addEventListener('change', (ev) => applyText(DS.setSlideBuild(text(), current, ev.target.checked)));
+  $('#deck-slide-class').addEventListener('change', (ev) => applyText(DS.setSlideDirective(text(), current, 'class', ev.target.value.trim() || null)));
+  $('#deck-slide-bg').addEventListener('change', (ev) => applyText(DS.setSlideDirective(text(), current, 'backgroundColor', ev.target.value)));
+  $('#deck-slide-bg-clear').addEventListener('click', () => applyText(DS.setSlideDirective(text(), current, 'backgroundColor', null)));
+  $('#deck-slide-paginate').addEventListener('change', (ev) => applyText(DS.setSlideDirective(text(), current, 'paginate', ev.target.value || null)));
+  let notesTimer = null;
+  const notes = $('#deck-slide-notes');
+  const writeNotes = () => {
+    clearTimeout(notesTimer);
+    const slide = deck.slides[current];
+    if (!slide || slide.notes === notes.value.trim()) return;
+    applyText(DS.setSlideNotes(text(), current, notes.value));
+  };
+  notes.addEventListener('input', () => { clearTimeout(notesTimer); notesTimer = setTimeout(writeNotes, 700); });
+  notes.addEventListener('blur', writeNotes);
+}
+
+// --- deck settings (front matter) ----------------------------------------------------
+
+function renderDeckSettings() {
+  const f = deck.frontMatter.fields;
+  const title = $('#deck-title');
+  if (document.activeElement !== title) title.value = f.title || '';
+  const theme = $('#deck-theme');
+  const names = [...new Set([...themeNames, ...(f.theme ? [f.theme] : [])])];
+  theme.replaceChildren(el('option', { value: '' }, 'Marp default'), ...names.filter((n) => n !== 'default').map((n) => el('option', { value: n }, n)));
+  theme.value = f.theme && f.theme !== 'default' ? f.theme : '';
+  $('#deck-size').value = ['16:9', '4:3'].includes(f.size) ? f.size : '';
+  $('#deck-paginate').value = f.paginate === 'true' ? 'true' : '';
+  for (const key of ['header', 'footer']) {
+    const input = $(`#deck-${key}`);
+    if (document.activeElement !== input) input.value = f[key] || '';
+  }
+  $('#deck-theme-note').textContent = rendered?.themeWarning || '';
+}
+
+function wireDeckSettings() {
+  const set = (key, value) => applyText(DS.setFrontMatter(text(), key, value));
+  $('#deck-title').addEventListener('change', (ev) => set('title', ev.target.value.trim() || null));
+  $('#deck-theme').addEventListener('change', (ev) => set('theme', ev.target.value || null));
+  $('#deck-size').addEventListener('change', (ev) => set('size', ev.target.value || null));
+  $('#deck-paginate').addEventListener('change', (ev) => set('paginate', ev.target.value || null));
+  $('#deck-header').addEventListener('change', (ev) => set('header', ev.target.value.trim() || null));
+  $('#deck-footer').addEventListener('change', (ev) => set('footer', ev.target.value.trim() || null));
+}
+
+// --- problems ------------------------------------------------------------------------
+
+function computeProblems() {
+  const found = DS.checkDeck(text(), { destination: destination(), pageProtocol: location.protocol });
+  if (rendered?.themeWarning) found.push({ slide: 0, offset: 0, severity: 'warning', message: rendered.themeWarning });
+  (rendered?.fits || []).forEach((fit, i) => {
+    if (fit < 0.98 && deck.slides[i]) {
+      found.push({ slide: i, offset: deck.slides[i].start, severity: 'info', message: `Shrunk to ${Math.round(fit * 100)}% to fit. Consider splitting this slide.` });
+    }
+  });
+  (rendered?.builds || []).forEach((b, i) => {
+    const said = describeBuild(b);
+    if (said.warn && deck.slides[i]) found.push({ slide: i, offset: deck.slides[i].start, severity: 'warning', message: said.text });
+  });
+  problems = found.sort((a, b) => a.offset - b.offset);
+  renderProblems();
+  markStrip();
+  renderDeckSettings();
+}
+
+function renderProblems() {
+  const list = $('#deck-problems');
+  $('#deck-problem-count').textContent = problems.length ? `(${problems.length})` : '';
+  list.replaceChildren(...(problems.length ? problems.map((p) => el('li', { class: `is-${p.severity}` },
+    el('button', { type: 'button', onclick: () => { view.dispatch({ selection: { anchor: Math.min(p.offset, view.state.doc.length) }, scrollIntoView: true }); view.focus(); } },
+      `Slide ${p.slide + 1}: `), p.message)) : [el('li', { class: 'is-ok' }, 'Nothing to fix.')]));
+  if (!view) return;
+  const doc = view.state.doc;
+  const diagnostics = problems.map((p) => {
+    const from = Math.min(p.offset, doc.length);
+    const line = doc.lineAt(from);
+    return { from, to: Math.max(from, Math.min(line.to, from + 200)), severity: p.severity, message: p.message };
+  });
+  view.dispatch(CM.setDiagnostics(view.state, diagnostics));
+}
+
+// --- toolbar --------------------------------------------------------------------------
+
+function wrapSelection(marker) {
+  const { from, to } = view.state.selection.main;
+  const chosen = view.state.sliceDoc(from, to);
+  view.dispatch({
+    changes: { from, to, insert: `${marker}${chosen}${marker}` },
+    selection: chosen ? { anchor: from, head: to + marker.length * 2 } : { anchor: from + marker.length },
+  });
+  view.focus();
+}
+
+function prefixLines(make) {
+  const { from, to } = view.state.selection.main;
+  const doc = view.state.doc;
+  const first = doc.lineAt(from).number;
+  const last = doc.lineAt(to).number;
+  const changes = [];
+  for (let n = first; n <= last; n++) {
+    const line = doc.line(n);
+    const next = make(line.text, n - first);
+    if (next !== line.text) changes.push({ from: line.from, to: line.to, insert: next });
+  }
+  view.dispatch({ changes });
+  view.focus();
+}
+
+function insertBlock(textToInsert, cursorOffset) {
+  const { from } = view.state.selection.main;
+  const line = view.state.doc.lineAt(from);
+  const at = line.text.trim() ? line.to : line.from;
+  const lead = line.text.trim() ? '\n\n' : '';
+  view.dispatch({ changes: { from: at, insert: lead + textToInsert }, selection: { anchor: at + lead.length + cursorOffset } });
+  view.focus();
+}
+
+const COMMANDS = {
+  heading: () => prefixLines((t) => {
+    const m = /^(#{1,6})\s+/.exec(t);
+    if (!m) return `# ${t}`;
+    return m[1].length >= 3 ? t.slice(m[0].length) : `${m[1]}# ${t.slice(m[0].length)}`;
+  }),
+  bold: () => wrapSelection('**'),
+  italic: () => wrapSelection('*'),
+  list: () => prefixLines((t) => (/^\s*[-*+]\s/.test(t) ? t.replace(/^(\s*)[-*+]\s/, '$1') : `- ${t}`)),
+  numbered: () => prefixLines((t, i) => (/^\s*\d+[.)]\s/.test(t) ? t.replace(/^(\s*)\d+[.)]\s/, '$1') : `${i + 1}. ${t}`)),
+  build: () => applyText(DS.setSlideBuild(text(), current, !deck.slides[current]?.hasBuild)),
+  image: () => openImageDialog(),
+  math: () => insertBlock('$$\n\n$$\n', 3),
+  code: () => insertBlock('```\n\n```\n', 4),
+};
+
+function wireToolbar() {
+  $$('.deck-toolbar [data-cmd]').forEach((button) => button.addEventListener('click', () => COMMANDS[button.dataset.cmd]?.()));
+  $('#deck-add-slide').addEventListener('click', addSlide);
+  $('#deck-focus').addEventListener('change', (ev) => (ev.target.checked ? focusSlide() : view.dispatch({ effects: unfoldEverything() })));
+  $('#deck-prev').addEventListener('click', () => stepPreview('prev'));
+  $('#deck-next').addEventListener('click', () => stepPreview('next'));
+}
+
+// A new slide after this one, its title selected so typing names it - and the
+// editor focused, so typing goes there rather than to the button.
+function addSlide() {
+  if (deck.headingDivider) return;
+  const at = current + 1;
+  const next = DS.insertSlide(text(), at, '\n## New slide\n\n');
+  applyText(next, { selectSlide: at });
+  const slide = DS.parseDeck(next).slides[at];
+  const title = slide ? slide.raw.indexOf('New slide') : -1;
+  if (title >= 0) view.dispatch({ selection: { anchor: slide.start + title, head: slide.start + title + 'New slide'.length } });
+  view.focus();
+}
+
+function stepPreview(dir) {
+  if (!rendered) return;
+  const item = previewItem();
+  const pos = deckStep(item, dir, item.fragments, item.slideCount);
+  step = pos.step;
+  if (pos.slide !== current) {
+    // Moving the preview moves the cursor too, keeping the two in step.
+    const keep = pos.step;
+    goToSlide(pos.slide);
+    step = keep;
+  }
+  updatePreview();
+}
+
+function unfoldEverything() {
+  const effects = [];
+  CM.foldedRanges(view.state).between(0, view.state.doc.length, (from, to) => { effects.push(CM.unfoldEffect.of({ from, to })); });
+  return effects;
+}
+
+function focusSlide() {
+  const effects = unfoldEverything();
+  const doc = view.state.doc;
+  for (const slide of deck.slides) {
+    if (slide.index === current) continue;
+    const head = slide.index === 0 ? slide.start : slide.start - slide.sep.length;
+    const line = doc.lineAt(Math.min(head, doc.length));
+    const end = Math.min(slide.end - 1, doc.length);
+    if (end > line.to) effects.push(CM.foldEffect.of({ from: line.to, to: end }));
+  }
+  view.dispatch({ effects });
+}
+
+function openImageDialog() {
+  const dialog = $('#deck-image-dialog');
+  dialog.hidden = false;
+  $('#deck-image-src').value = '';
+  $('#deck-image-alt').value = '';
+  $('#deck-image-width').value = '';
+  $('#deck-image-src').focus();
+}
+
+function wireImageDialog() {
+  const close = () => { $('#deck-image-dialog').hidden = true; view.focus(); };
+  $('#deck-image-cancel').addEventListener('click', close);
+  $('#deck-image-go').addEventListener('click', () => {
+    const src = $('#deck-image-src').value.trim();
+    if (!src) { $('#deck-image-src').focus(); return; }
+    const place = $('#deck-image-place').value;
+    const width = Number($('#deck-image-width').value);
+    const words = [place === 'inline' ? '' : place, width > 0 ? `w:${Math.round(width)}` : '', $('#deck-image-alt').value.trim()].filter(Boolean);
+    const tag = `![${words.join(' ')}](${src.replace(/\s/g, '%20')})`;
+    close();
+    insertBlock(`${tag}\n`, tag.length + 1);
+  });
+}
+
+// --- opening ---------------------------------------------------------------------------
+
+async function loadLibraryCourses() {
+  try {
+    const res = await fetch('/api/library', { credentials: 'same-origin' });
+    if (!res.ok) return [];
+    const body = await res.json();
+    libraryCourses = body.courses || [];
+    return body.items || [];
+  } catch { return []; }
+}
+
+async function openLibrary(id) {
+  const items = await loadLibraryCourses();
+  const item = items.find((i) => String(i.id) === String(id));
+  if (!item || item.type !== 'deck') throw new Error('That deck is not in the library, or you cannot see it.');
+  const res = await fetch(item.src, { cache: 'no-cache', credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`Could not read that deck (HTTP ${res.status}).`);
+  const value = await res.text();
+  origin = { kind: 'library', id: item.id, item, version: item.version, editable: !!item.editable, name: item.filename, title: item.title, course: item.course };
+  return value;
+}
+
+async function openContent(name) {
+  const res = await fetch(`/api/content/files/decks/${encodeURIComponent(name)}`, { credentials: 'same-origin' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Could not read content/decks/${name}.`);
+  origin = { kind: 'content', name: body.file.filename, mtime: body.file.mtime, editable: true, title: body.file.filename };
+  return body.file.text;
+}
+
+async function openSrc(src) {
+  const res = await fetch(src, { cache: 'no-cache', credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`Could not read ${src} (HTTP ${res.status}).`);
+  origin = { kind: 'file', src, name: decodeURIComponent(src.split('/').pop() || 'deck.md'), title: '' };
+  return res.text();
+}
+
+// A deck inside a lecture plan lives in the planner tab that opened this one;
+// ask it for the markdown, and hand it back the same way on Save.
+function askPlanner(message, { timeout = 2500 } = {}) {
+  return new Promise((resolve, reject) => {
+    if (!channel) { reject(new Error('This browser cannot talk to the planner tab.')); return; }
+    const nonce = Math.random().toString(36).slice(2);
+    const timer = setTimeout(() => { channel.removeEventListener('message', onReply); reject(new Error('The planner tab did not answer. Keep the lecture open in the planner while you edit its deck.')); }, timeout);
+    const onReply = (ev) => {
+      if (ev.data?.nonce !== nonce || ev.data?.from !== 'planner') return;
+      clearTimeout(timer);
+      channel.removeEventListener('message', onReply);
+      if (ev.data.error) reject(new Error(ev.data.error));
+      else resolve(ev.data);
+    };
+    channel.addEventListener('message', onReply);
+    channel.postMessage({ ...message, nonce, from: 'editor' });
+  });
+}
+
+async function openPlan(planId, itemId) {
+  const reply = await askPlanner({ type: 'plan-deck-get', planId, itemId });
+  origin = { kind: 'plan', planId, itemId, name: reply.name || 'deck.md', title: reply.title || '', planTitle: reply.planTitle || '', course: reply.course || '', editable: true };
+  return reply.markdown ?? '';
+}
+
+function describeOrigin() {
+  const where = $('#deck-where');
+  const label = {
+    library: () => `Library${origin.course ? ` · ${origin.course.toUpperCase()}` : ''} · ${origin.name}${origin.editable ? '' : ' · view only'}`,
+    content: () => `content/decks/${origin.name}`,
+    plan: () => `Inside the lecture “${origin.planTitle || 'plan'}”`,
+    file: () => (origin.src ? `Opened from ${origin.src}` : `${origin.name || 'A file'} · not saved anywhere yet`),
+    new: () => 'New deck · not saved anywhere yet',
+  }[origin.kind];
+  where.textContent = label ? label() : '';
+  const canSaveHere = (origin.kind === 'library' && origin.editable) || origin.kind === 'content' || origin.kind === 'plan';
+  $('#deck-save').textContent = canSaveHere ? 'Save' : 'Save…';
+  $('#deck-save-library').hidden = !(info?.features.includes('library') && info?.user);
+  $('#deck-save-content').hidden = !info?.user?.isAdmin;
+  if (origin.kind === 'library' && !origin.editable) {
+    warn(origin.course
+      ? `You can change this deck here and present it, but only an owner of ${origin.course.toUpperCase()} or an admin can save over it. Save a copy instead.`
+      : 'Only the person who added this deck, or an admin, can save over it. Save a copy instead.');
+  }
+}
+
+async function start() {
+  info = await serverInfo();
+  mountSessionBadge($('#session-badge'));
+  loadThemes();
+  let initial = STARTER;
+  try {
+    if (params.get('plan') && params.get('item') && params.get('embedded')) initial = await openPlan(params.get('plan'), params.get('item'));
+    else if (params.get('library')) initial = await openLibrary(params.get('library'));
+    else if (params.get('content')) initial = await openContent(params.get('content'));
+    else if (params.get('src')) initial = await openSrc(params.get('src'));
+    else {
+      origin = { kind: 'new' };
+      const title = params.get('title');
+      if (title) initial = DS.setFrontMatter(STARTER, 'title', title).replace('# Untitled deck', `# ${title}`);
+    }
+  } catch (err) {
+    origin = { kind: 'new' };
+    warn(`${err.message} Starting a new deck instead.`);
+  }
+  if (info.features.includes('library') && info.user && !libraryCourses.length) loadLibraryCourses();
+  setDocument(initial);
+  savedText = origin.kind === 'new' ? '' : initial;
+  describeOrigin();
+  offerDraft(initial);
+  refreshSaveState();
+  renderNow();
+  renderDeckSettings();
+  renderSlidePanel();
+}
+
+function offerDraft(loaded) {
+  let draft = null;
+  try { draft = JSON.parse(localStorage.getItem(draftKey()) || 'null'); } catch { /* none */ }
+  if (!draft?.text || draft.text === loaded) return;
+  const when = new Date(draft.at).toLocaleString();
+  const stale = draft.base !== loaded && origin.kind !== 'new';
+  warn(`There are unsaved changes to this deck from ${when}${stale ? ', made to an older version than the one that is there now' : ''}.`, [
+    ['Restore them', () => { applyText(draft.text); warn(''); }],
+    ['Throw them away', () => { dropDraft(); warn(''); }],
+  ]);
+}
+
+async function loadThemes() {
+  try {
+    const res = await fetch('marp-themes/themes.json', { cache: 'no-cache' });
+    if (!res.ok) return;
+    const data = await res.json();
+    const files = Array.isArray(data) ? data : data.themes || [];
+    for (const file of files) {
+      try {
+        const css = await (await fetch(`marp-themes/${file}`, { cache: 'no-cache' })).text();
+        const name = /@theme\s+([\w-]+)/.exec(css)?.[1];
+        if (name && !themeNames.includes(name)) themeNames.push(name);
+        for (const m of css.matchAll(/section\.([A-Za-z][\w-]*)/g)) themeClasses.add(m[1]);
+      } catch { /* one broken theme does not stop the rest */ }
+    }
+  } catch { /* no themes folder: the built-ins are still there */ }
+  $('#deck-classes').replaceChildren(...[...themeClasses].map((c) => el('option', { value: c })));
+  renderDeckSettings();
+}
+
+// --- saving -------------------------------------------------------------------------------
+
+async function save() {
+  if (saving) return;
+  if (origin.kind === 'library' && origin.editable) return saveLibrary();
+  if (origin.kind === 'content') return saveContent();
+  if (origin.kind === 'plan') return savePlan();
+  // Nowhere to save back to yet: the library if there is one, else a file.
+  if (!$('#deck-save-library').hidden) openLibraryDialog();
+  else downloadDeck();
+}
+
+function savedOk(message = 'Saved') {
+  savedText = text();
+  dropDraft();
+  saving = false;
+  setSaveState(message);
+  setTimeout(refreshSaveState, 2500);
+  describeOrigin();
+}
+
+async function saveLibrary({ force = false } = {}) {
+  saving = true;
+  setSaveState('Saving…');
+  const value = text();
+  try {
+    const res = await fetch(`/api/library/${origin.id}/content`, {
+      method: 'PUT', credentials: 'same-origin',
+      headers: { 'content-type': 'text/markdown; charset=utf-8', ...(force ? {} : { 'if-match': `"${origin.version}"` }) },
+      body: value,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 412) {
+      saving = false;
+      refreshSaveState();
+      conflict(body.version);
+      return;
+    }
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    origin.version = body.item.version;
+    origin.item = body.item;
+    savedOk();
+    channel?.postMessage({ type: 'deck-saved', src: body.item.src, from: 'editor' });
+  } catch (err) {
+    saving = false;
+    refreshSaveState();
+    warn(`That did not save: ${err.message}`);
+  }
+}
+
+function conflict(theirVersion) {
+  warn('Someone else saved this deck since you opened it.', [
+    ['Save mine over theirs', () => { warn(''); origin.version = theirVersion; saveLibrary({ force: true }); }],
+    ['Save mine as a copy', () => { warn(''); openLibraryDialog(); }],
+    ['Load theirs (mine stays as a draft)', async () => {
+      warn('');
+      keepDraftNow();
+      const fresh = await openLibrary(origin.id);
+      setDocument(fresh);
+      savedText = fresh;
+      describeOrigin();
+      renderNow();
+    }],
+  ]);
+}
+
+function keepDraftNow() {
+  try { safeStorageSet(localStorage, draftKey(), JSON.stringify({ text: text(), base: savedText, at: Date.now() })); } catch { /* no storage */ }
+}
+
+async function saveContent({ name = origin.name, mtime = origin.mtime } = {}) {
+  saving = true;
+  setSaveState('Saving…');
+  try {
+    const query = mtime ? `?ifMtime=${encodeURIComponent(mtime)}` : '';
+    const res = await fetch(`/api/content/files/decks/${encodeURIComponent(name)}${query}`, {
+      method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'text/markdown; charset=utf-8' }, body: text(),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 412) {
+      saving = false;
+      refreshSaveState();
+      warn(`content/decks/${name} was changed since you opened it.`, [
+        ['Save mine over it', () => { warn(''); saveContent({ name, mtime: body.mtime }); }],
+        ['Download mine', () => { warn(''); downloadDeck(); }],
+      ]);
+      return;
+    }
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    origin = { kind: 'content', name: body.saved.filename, mtime: body.saved.mtime, editable: true, title: body.saved.filename };
+    history.replaceState(null, '', `?${new URLSearchParams({ content: origin.name })}`);
+    savedOk();
+    channel?.postMessage({ type: 'deck-saved', src: body.saved.url, from: 'editor' });
+  } catch (err) {
+    saving = false;
+    refreshSaveState();
+    warn(`That did not save: ${err.message}`);
+  }
+}
+
+async function savePlan() {
+  saving = true;
+  setSaveState('Saving into the plan…');
+  try {
+    await askPlanner({ type: 'plan-deck-put', planId: origin.planId, itemId: origin.itemId, markdown: text(), title: deck.frontMatter.fields.title || '' });
+    savedOk('Saved into the plan');
+  } catch (err) {
+    saving = false;
+    refreshSaveState();
+    warn(`That did not save into the plan: ${err.message}`, [['Download it instead', downloadDeck]]);
+  }
+}
+
+function fileName() {
+  const base = origin.name || deck.frontMatter.fields.title || deck.slides[0]?.title || 'deck';
+  const clean = String(base).replace(/\.(md|markdown)$/i, '').replace(/[^\w .-]+/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'deck';
+  return `${clean}.md`;
+}
+
+function downloadDeck() {
+  downloadText(fileName(), text(), 'text/markdown');
+  if (origin.kind === 'new' || (origin.kind === 'file' && !origin.src)) {
+    savedOk('Downloaded');
+  }
+}
+
+function openLibraryDialog() {
+  const dialog = $('#deck-library-dialog');
+  const select = $('#deck-library-course');
+  // Filing a deck under a course you do not own would make one you cannot
+  // edit again - so only courses you own (or every course, for an admin).
+  const owned = libraryCourses.filter((c) => c.role === 'owner');
+  select.replaceChildren(
+    ...owned.map((c) => el('option', { value: c.code }, `${c.code.toUpperCase()} — ${c.title}`)),
+    el('option', { value: '' }, 'No course'),
+  );
+  const wanted = (origin.course || params.get('course') || '').toLowerCase();
+  select.value = owned.some((c) => c.code === wanted) ? wanted : (owned[0]?.code || '');
+  const hint = () => {
+    $('#deck-library-course-hint').textContent = select.value
+      ? `Everyone in ${select.value.toUpperCase()} can present it; its owners can edit it.`
+      : 'With no course, every signed-in account on this server can see it, and only you (or an admin) can edit it.';
+  };
+  select.onchange = hint;
+  hint();
+  $('#deck-library-name').value = fileName();
+  $('#deck-library-note').textContent = '';
+  dialog.hidden = false;
+}
+
+function wireLibraryDialog() {
+  $('#deck-library-cancel').addEventListener('click', () => { $('#deck-library-dialog').hidden = true; });
+  $('#deck-library-go').addEventListener('click', async () => {
+    const note = $('#deck-library-note');
+    let filename = $('#deck-library-name').value.trim() || fileName();
+    if (!/\.(md|markdown)$/i.test(filename)) filename += '.md';
+    note.textContent = 'Saving…';
+    try {
+      const query = new URLSearchParams({
+        filename, course: $('#deck-library-course').value, group: '',
+        title: deck.frontMatter.fields.title || deck.slides[0]?.title || filename.replace(/\.\w+$/, ''),
+      });
+      const res = await fetch(`/api/library/upload?${query}`, {
+        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'text/markdown; charset=utf-8' }, body: text(),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      const item = { ...body.item, editable: true };
+      const fromPlan = params.get('plan') && params.get('item') ? { planId: params.get('plan'), itemId: params.get('item') } : null;
+      origin = { kind: 'library', id: item.id, item, version: item.version, editable: true, name: item.filename, title: item.title, course: item.course };
+      const next = new URLSearchParams({ library: String(item.id) });
+      if (fromPlan) { next.set('plan', fromPlan.planId); next.set('item', fromPlan.itemId); }
+      history.replaceState(null, '', `?${next}`);
+      $('#deck-library-dialog').hidden = true;
+      savedOk('Saved to the library');
+      warn('');
+      // The lecture that opened this now points at the library deck.
+      if (fromPlan) channel?.postMessage({ type: 'deck-linked', ...fromPlan, src: item.src, title: item.title, from: 'editor' });
+    } catch (err) {
+      note.textContent = `That did not save: ${err.message}`;
+    }
+  });
+}
+
+function wireSaveMenu() {
+  const menu = $('#deck-save-menu');
+  const toggle = $('#deck-save-more');
+  const close = () => { menu.hidden = true; toggle.setAttribute('aria-expanded', 'false'); };
+  toggle.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    menu.hidden = !menu.hidden;
+    toggle.setAttribute('aria-expanded', String(!menu.hidden));
+  });
+  document.addEventListener('click', (ev) => { if (!menu.hidden && !ev.target.closest('.deck-menu-wrap')) close(); });
+  $('#deck-save').addEventListener('click', () => save());
+  $('#deck-save-library').addEventListener('click', () => { close(); openLibraryDialog(); });
+  $('#deck-save-content').addEventListener('click', async () => {
+    close();
+    const name = (prompt('File name in content/decks:', fileName()) || '').trim();
+    if (!name) return;
+    const exists = await fetch(`/api/content/files/decks/${encodeURIComponent(name)}`, { credentials: 'same-origin' }).then((r) => r.ok).catch(() => false);
+    if (exists && !confirm(`content/decks/${name} already exists. Replace it?`)) return;
+    saveContent({ name, mtime: null });
+  });
+  $('#deck-download').addEventListener('click', () => { close(); downloadDeck(); });
+  $('#deck-new').addEventListener('click', () => {
+    close();
+    if (dirty() && !confirm('Start a new deck? Your unsaved changes stay as a draft for this deck.')) return;
+    location.href = 'deck.html';
+  });
+  $('#deck-open-file').addEventListener('click', () => { close(); $('#deck-file').click(); });
+  $('#deck-file').addEventListener('change', async (ev) => {
+    const file = ev.target.files?.[0];
+    ev.target.value = '';
+    if (!file) return;
+    if (dirty() && !confirm('Open another deck? Your unsaved changes stay as a draft for this one.')) return;
+    keepDraftNow();
+    const value = await file.text();
+    origin = { kind: 'file', name: file.name, title: file.name };
+    history.replaceState(null, '', location.pathname);
+    setDocument(value);
+    savedText = value;
+    describeOrigin();
+    refreshSaveState();
+    renderNow();
+  });
+}
+
+// The planner tab may say a deck it shows changed (or ask whether one is open).
+channel?.addEventListener('message', (ev) => {
+  if (ev.data?.type === 'editor-ping' && ev.data.from === 'planner') {
+    channel.postMessage({ type: 'editor-here', nonce: ev.data.nonce, origin: { kind: origin.kind, id: origin.id, planId: origin.planId, itemId: origin.itemId }, from: 'editor' });
+  }
+});
+
+window.addEventListener('beforeunload', (ev) => {
+  if (!dirty()) return;
+  keepDraftNow();
+  ev.preventDefault();
+  ev.returnValue = '';
+});
+
+wireToolbar();
+wireSlidePanel();
+wireDeckSettings();
+wireImageDialog();
+wireLibraryDialog();
+wireSaveMenu();
+start();

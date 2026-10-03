@@ -308,7 +308,10 @@ const forEveryone = library.addItem(db, owner, {
 });
 
 ok('an item carries the course it was filed under', forCourse.course === 'psy415');
-ok('and a URL for its bytes, named by hash', forCourse.src === `/media/${uploaded.sha256}/week1.md`);
+// A deck's src is its stable address (Issue #226), so a plan that points at it
+// sees edits; `version` is the hash of what is there now.
+ok('a deck has a stable address, by item id', forCourse.src === `/media/deck/${forCourse.id}/week1.md`);
+ok('and a version naming its current bytes', forCourse.version === uploaded.sha256);
 ok('an item with no media has no src', !('src' in forEveryone));
 ok('type-specific fields survive the round trip', forEveryone.body === 'Back in 5');
 ok('the group is left empty rather than defaulted, so the client can file it by course',
@@ -359,12 +362,54 @@ const backed = library.addItem(db, owner, {
   courseCode: '', kind: 'deck', title: 'Real deck', filename: 'real.md', mediaId,
   props: { src: 'https://evil.example/not-the-bytes' },
 });
-ok('but an item backed by stored bytes always points at those bytes',
-  backed.src === `/media/${uploaded.sha256}/real.md`);
+ok('but an item backed by stored bytes always points at those bytes - a deck at its own stable address',
+  backed.src === `/media/deck/${backed.id}/real.md` && backed.version === uploaded.sha256);
 // Removed again straight away: it exists only for the assertion above, and
 // leaving it pointing at the shared media would change what the usage and
 // deletion checks below are measuring.
 library.deleteItem(db, owner, backed.id);
+
+console.log('\n-- the library: editing a deck (Issue #226) --');
+{
+  ok('a course owner may edit a course deck', library.mayEditDeck(db, owner, forCourse) === true);
+  ok('an admin may', library.mayEditDeck(db, admin, forCourse) === true);
+  ok('a TA (a plain member) may not, not even one who uploaded it',
+    library.mayEditDeck(db, ta, { ...forCourse, createdBy: ta.id }) === false);
+  ok('someone outside the course may not', library.mayEditDeck(db, outsider, forCourse) === false);
+  const own = library.addItem(db, ta, { courseCode: '', kind: 'deck', title: 'Mine', filename: 'mine.md', mediaId });
+  ok('the person who added a deck with no course may edit it', library.mayEditDeck(db, ta, own) === true);
+  ok('and nobody else but an admin', library.mayEditDeck(db, outsider, own) === false && library.mayEditDeck(db, admin, own) === true);
+  ok('the deck list says which decks this person may edit',
+    library.listItems(db, owner).find((i) => i.id === forCourse.id).editable === true
+    && library.listItems(db, ta).find((i) => i.id === forCourse.id).editable === false);
+
+  const edited = await library.replaceDeckContent(db, owner, dataDir, forCourse.id, '# A deck\n\nedited\n', { ifMatch: forCourse.version });
+  ok('saving new text keeps the item and its address', edited.id === forCourse.id && edited.src === forCourse.src);
+  ok('and moves its version on', edited.version !== forCourse.version
+    && edited.version === createHash('sha256').update('# A deck\n\nedited\n').digest('hex'));
+  ok('the new bytes are on disk', existsSync(library.mediaPath(dataDir, edited.version)));
+  ok('the old bytes are kept, for whatever else points at them', existsSync(library.mediaPath(dataDir, forCourse.version)));
+  ok('and a member can still read the deck it now holds', library.mayReadMedia(db, ta, edited.version));
+
+  let stale = null;
+  try { await library.replaceDeckContent(db, owner, dataDir, forCourse.id, 'lost', { ifMatch: forCourse.version }); }
+  catch (err) { stale = err; }
+  ok('saving over a version someone else has replaced is refused (412)', stale?.status === 412);
+  ok('with the version that is there now', stale?.version === edited.version);
+  ok('ETag quoting is accepted', (await library.replaceDeckContent(db, owner, dataDir, forCourse.id, '# A deck\n\nedited\n',
+    { ifMatch: `"${edited.version}"` })).version === edited.version);
+  let denied = null;
+  try { await library.replaceDeckContent(db, ta, dataDir, forCourse.id, 'nope'); } catch (err) { denied = err; }
+  ok(`a TA saving is refused (${denied?.message})`, denied?.status === 403);
+  let notDeck = null;
+  try { await library.replaceDeckContent(db, owner, dataDir, forEveryone.id, 'x'); } catch (err) { notDeck = err; }
+  ok('only a deck can be edited this way', notDeck?.status === 400);
+  let huge = null;
+  try { await library.replaceDeckContent(db, owner, dataDir, forCourse.id, 'x'.repeat(library.MAX_DECK_SOURCE_BYTES + 1)); }
+  catch (err) { huge = err; }
+  ok('and a deck has a size cap', huge?.status === 413);
+  library.deleteItem(db, admin, own.id);
+}
 
 console.log('\n-- the library: who may remove --');
 

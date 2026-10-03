@@ -81,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [core, ink-layout, media, polls-server]
+        group: [core, ink-layout, media, polls-server, editor]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

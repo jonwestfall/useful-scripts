@@ -38,6 +38,7 @@ Podium splits the job across a few web pages. Each page has one job.
 | **Display** · [`display.html`](display.html) | Classroom PC | Fullscreen on the projector, with no toolbars, cursor or notifications. It shows what it's told and resumes the lecture after a reload. |
 | **Controller** · [`control.html`](control.html) | iPad · iPhone · laptop | Your remote: library, presenter notes, ink, timers, polls, music, mixer and camera. Several controllers can share one room. |
 | **Planning desk** · [`plan.html`](plan.html) | Office computer | Build a lecture's running order and carry it to class as one `.podium` file, or send it to your server. |
+| **Deck editor** · [`deck.html`](deck.html) | Office computer | Write and edit Marp decks beside the projector's own preview, then save them to the library, a plan, or a `.md` file. |
 | **Simple Mode** · [`guest.html`](guest.html) | A substitute's device | A big-button clicker with Next, Previous, Play, Blank and a laser, and no cueing to get wrong. |
 | **Join** · [`join.html`](join.html) | Students' phones | Answer polls and ask questions. No app, no login, and no access to the room. |
 | **Guest View** · [`view.html`](view.html) | Anyone's device | Watch the live screen with its sound. Watch-only. |
@@ -62,7 +63,7 @@ Features marked **🖥️** need Podium's own self-hosted server. Everything els
 ### 🎬 [Presenting](docs/features.md#part-1--presenting)
 - **Freeze is a cue.** Freeze holds the projector while you open and page through a deck, scrub a video, find a PDF page, or mark something up. **TAKE** cuts it live (ink and all), **Swap** trades live and cued, and **Blank** blacks out the room with everything still loaded.
 - **Now / Next / Notes.** A confidence monitor on your device, with a searchable thumbnail grid. Hold a thumbnail for a pop-out preview.
-- **Marp slides in Markdown**, with KaTeX math, progressive builds, presenter notes and custom CSS themes.
+- **Marp slides in Markdown**, with KaTeX math, progressive builds, presenter notes and custom CSS themes, plus a **deck editor** with a live projector preview.
 - **PDFs, with projector zoom and pan.** PowerPoint uploads are converted to PDF automatically 🖥️.
 - **A library of anything:** decks, picture decks, HTML slides, video, audio, YouTube, live streams, photos, web pages, text signs, QR codes, whiteboards, chalkboards and timers. You can also paste any link or upload a photo.
 - **Split screen and picture-in-picture** (single, side-by-side, stacked, 3-up, quad, or a PiP inset). Each panel keeps its own item, zoom and ink.

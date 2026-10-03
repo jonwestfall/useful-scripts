@@ -34,15 +34,19 @@ const SHELL = /\.(?:html|css|js|mjs|webmanifest|json|woff2?)$/;
 // included - a deck that cannot render is the difference between a lecture and
 // no lecture.
 const WARM = [
-  './', 'index.html', 'display.html', 'control.html', 'plan.html', 'admin.html', 'config.json',
+  './', 'index.html', 'display.html', 'control.html', 'plan.html', 'deck.html', 'admin.html', 'config.json',
   'manifest-control.webmanifest', 'manifest-display.webmanifest',
   'assets/css/podium.css',
   'assets/vendor/qrcode.js', 'assets/vendor/marp.esm.js', 'assets/vendor/pdf.min.js',
+  // The deck editor's code editor (Issue #226), ~600 KB.
+  'assets/vendor/codemirror.esm.js',
   'assets/icons/icon-192.png', 'assets/icons/apple-touch-icon.png',
-  // Kept complete by test/offline-shell.test.mjs: a module control.js or
-  // display.js imports that is missing here fails the whole page offline.
+  // Kept complete by test/offline-shell.test.mjs: a module control.js,
+  // display.js or deck-editor.js imports that is missing here fails the whole
+  // page offline.
   ...[
-    'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'defaults', 'display', 'duration-probe',
+    'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-editor', 'deck-source',
+    'defaults', 'display', 'duration-probe',
     'index', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'recap', 'renderers',
     'rtc', 'server', 'store', 'thumbs', 'util', 'watermark', 'zip', 'zip-review',
   ].map((name) => `assets/js/${name}.js`),

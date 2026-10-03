@@ -498,6 +498,24 @@ async function handleApi(req, res, url, ctx) {
       return true;
     }
 
+    // A deck's new markdown, from the deck editor (Issue #226). The body IS the
+    // text; If-Match carries the version the editor opened, so two people
+    // saving over each other is a 412 with the current version rather than a
+    // silent overwrite.
+    if (head === 'library' && rest.length === 2 && rest[1] === 'content' && req.method === 'PUT') {
+      const text = (await readBuffer(req, library.MAX_DECK_SOURCE_BYTES)).toString('utf8');
+      try {
+        const item = await library.replaceDeckContent(ctx.db, user, ctx.dataDir, rest[0], text, {
+          ifMatch: req.headers['if-match'] || '',
+        });
+        json(res, 200, { item });
+      } catch (err) {
+        if (err.status === 412) { json(res, 412, { error: err.message, version: err.version }); return true; }
+        throw err;
+      }
+      return true;
+    }
+
     if (head === 'library' && rest.length === 1 && req.method === 'PATCH') {
       const body = await readJson(req);
       const item = library.renameItem(ctx.db, user, rest[0], {
@@ -955,6 +973,17 @@ async function handleApi(req, res, url, ctx) {
         if (rest.length === 3 && req.method === 'PUT') {
           const category = rest[1];
           const filename = decodeURIComponent(rest[2]);
+          // The deck editor (Issue #226) says which version it opened, as the
+          // file's mtime; a file changed since is a 412 rather than lost work.
+          const expected = url.searchParams.get('ifMtime');
+          if (expected) {
+            let current = null;
+            try { current = content.getContentFile(ctx, category, filename).mtime; } catch { /* a new file */ }
+            if (current !== null && String(current) !== String(expected)) {
+              json(res, 412, { error: 'this file was changed by someone else since you opened it', mtime: current });
+              return true;
+            }
+          }
           const isJson = (req.headers['content-type'] || '').includes('application/json');
           let data;
           if (isJson) {
