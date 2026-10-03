@@ -21,7 +21,8 @@
 // renderers.js).
 
 import { $, $$, el } from './util.js';
-import { encodeToFit } from './store.js';
+import { encodeToFit, downscaleImage } from './store.js';
+import { MAX_ASSET_CHARS } from './planfile.js';
 import { parseTimecode, formatTimecode } from './deck-source.js';
 
 // A projector is 1920 wide; a little more leaves room for zooming into a
@@ -128,6 +129,9 @@ export async function uploadDeckMedia(blob, { filename, course = '', deckName = 
  *
  * @param {object} deps
  * @param {() => boolean} deps.canUpload - signed in to a server with a library
+ * @param {() => ((dataUrl: string, name: string) => Promise<string>)|null} [deps.keepInPlan] - with no
+ *   server, for a deck that lives in a lecture plan: keeps a picture in the
+ *   plan and resolves to its `asset:<id>`
  * @param {() => {code: string, title: string, role: string}[]} deps.courses
  * @param {() => string} deps.deckCourse - the course the deck is filed under, if any
  * @param {() => string} deps.deckName - what the uploads say they are for
@@ -162,10 +166,22 @@ export function createDeckMedia(deps) {
     return pick;
   }
 
+  // No server, but a deck that lives in a lecture plan (Issue #226): a
+  // picture from this device can still go in, kept inside the plan.
+  const inPlan = () => !deps.canUpload() && !!deps.keepInPlan?.();
+
   function prepareDialog(dialog, kind) {
     const online = deps.canUpload();
-    for (const tab of $$('[role="tab"]', dialog)) tab.hidden = !online && tab.dataset.from !== 'address';
-    $('.deck-media-offline', dialog).hidden = online;
+    const plan = kind === 'image' && inPlan();
+    for (const tab of $$('[role="tab"]', dialog)) {
+      tab.hidden = !online && tab.dataset.from !== 'address' && !(plan && tab.dataset.from === 'device');
+    }
+    const offline = $('.deck-media-offline', dialog);
+    offline.dataset.said ??= offline.textContent;
+    offline.textContent = plan
+      ? 'With no server, a picture from this device is kept inside the lecture plan, made small enough to travel to the projector.'
+      : offline.dataset.said;
+    offline.hidden = online;
     $('.deck-media-course', dialog).hidden = !online;
     if (online) fillCourses($(`#deck-${kind}-course`), $(`#deck-${kind}-course-hint`), kind);
     $(`#deck-${kind}-note`).textContent = '';
@@ -242,9 +258,10 @@ export function createDeckMedia(deps) {
     $('#deck-image-width').value = '';
     $('#deck-image-place').value = 'inline';
     prepareDialog(pictureDialog, 'image');
-    pickPictureFrom(deps.canUpload() ? 'device' : 'address');
+    const local = deps.canUpload() || inPlan();
+    pickPictureFrom(local ? 'device' : 'address');
     chosePicture(file ? { file } : {});
-    if (!file) (deps.canUpload() ? $('#deck-image-file') : $('#deck-image-src')).focus();
+    if (!file) (local ? $('#deck-image-file') : $('#deck-image-src')).focus();
   }
 
   function closePicture() {
@@ -275,7 +292,12 @@ export function createDeckMedia(deps) {
     let src;
     picture.busy = true;
     try {
-      if (from === 'device') {
+      if (from === 'device' && inPlan()) {
+        note.textContent = 'Adding it to the lecture plan…';
+        const shrunk = await downscaleImage(picture.file, MAX_ASSET_CHARS);
+        if (shrunk.tooBig) throw new Error('it is still too big to travel to the projector after scaling it down; crop it first');
+        src = await deps.keepInPlan()(shrunk.dataUrl, pictureName(picture.file));
+      } else if (from === 'device') {
         note.textContent = 'Adding it to the library…';
         const ready = await prepareImage(picture.file);
         const item = await uploadDeckMedia(ready.blob, { filename: ready.filename, course: $('#deck-image-course').value, deckName: deps.deckName() });
@@ -411,6 +433,7 @@ export function createDeckMedia(deps) {
     const image = list.find((f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
     const clip = list.find((f) => /^video\/(mp4|webm)$/.test(f.type) || /\.(mp4|webm)$/i.test(f.name || ''));
     if (!image && !clip) return false;
+    if (image && inPlan()) { openPicture({ file: image }); return true; }
     if (!deps.canUpload()) return false;
     if (image) openPicture({ file: image });
     else openVideo({ file: clip });

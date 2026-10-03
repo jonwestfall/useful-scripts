@@ -300,6 +300,13 @@ try {
                   <span id="deck-recall-what" class="hint"></span>
                   <button id="deck-back" type="button" class="big-button">Back to slides</button>
                 </div>
+                <!-- Issue #226: the library deck up here was changed in the
+                     deck editor since it went up. It keeps the version it
+                     went up with until you say. -->
+                <div id="deck-edited" class="deck-edited" role="status" hidden>
+                  <span>This deck was edited since it went up.</span>
+                  <button id="deck-reload" type="button">Reload it</button>
+                </div>
                 <div id="deck-theme" class="hint"></div>
               </div>
               <div class="deck-head-right">

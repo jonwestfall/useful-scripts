@@ -14,6 +14,7 @@
 
 import { uid } from './util.js';
 import { MAX_TIMERS } from './protocol.js';
+import { assetRefsIn } from './deck-source.js';
 
 export const PLAN_VERSION = 1;
 
@@ -325,6 +326,13 @@ export function referencedAssets(plan) {
       if (!field.asset) continue;
       const id = field.key === 'asset' ? item.asset : assetIdOf(item[field.key]);
       if (id) used.add(id);
+    }
+  }
+  // A deck kept in the plan uses the pictures it points at, too (Issue #226).
+  for (const id of [...used]) {
+    const asset = plan.assets?.[id];
+    if (typeof asset?.data === 'string' && /^text\/markdown/.test(asset.mime || '')) {
+      for (const picture of assetRefsIn(asset.data)) used.add(picture);
     }
   }
   return used;

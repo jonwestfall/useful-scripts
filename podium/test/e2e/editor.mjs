@@ -657,6 +657,171 @@ await tia.close();
 await root.close();
 }
 
+if (want('the deck editor: versions, an edited deck on the projector, .zip and PDF (#226)')) {
+console.log('\n-- the deck editor: versions, an edited deck on the projector, .zip and PDF (#226) --');
+const owen = await signedIn('owen');
+await owen.grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => {});
+const desk = await owen.newPage();
+trap(desk, 'editor polish (owen)');
+await desk.goto(`${base}/index.html`);
+const original = '---\nmarp: true\ntitle: Versions\n---\n\n# Versions\n\n---\n\n## One\n\n---\n\n## Two\n';
+const vDeck = (await desk.evaluate(async (md) => (await fetch('/api/library/upload?filename=versions.md&course=psy415&title=Versions', { method: 'POST', body: md })).json(), original)).item;
+await desk.goto(`${base}/deck.html?library=${vDeck.id}`);
+await desk.waitForFunction(() => document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length === 3, null, { timeout: 20000 });
+
+// Two saves, then the first version back.
+for (const n of [1, 2]) {
+  await pickSlide(desk, 2);
+  await desk.click('#deck-add-slide');
+  await desk.keyboard.type(`Added ${n}`);
+  await desk.waitForTimeout(400);
+  await desk.click('#deck-save');
+  await waitSaved(desk);
+}
+await desk.click('#deck-save-more');
+ok('a library deck offers its previous versions', await desk.isVisible('#deck-versions'));
+await desk.click('#deck-versions');
+await desk.waitForSelector('#deck-versions-list li', { timeout: 5000 });
+ok(`each save kept the version it replaced (${await desk.locator('#deck-versions-list li').count()})`, await desk.locator('#deck-versions-list li').count() === 2);
+ok('saying who saved over it', /Owen Owner saved over it/.test(await desk.textContent('#deck-versions-list li')));
+await desk.locator('#deck-versions-list li').last().locator('button').click();
+await desk.waitForFunction(() => document.querySelector('#deck-strip').shadowRoot.querySelectorAll('.cell').length === 3, null, { timeout: 5000 })
+  .then(() => ok('opening the oldest puts it in the editor', true))
+  .catch(() => ok('opening the oldest puts it in the editor', false));
+ok('saying how to keep it or undo it', /Save to make it the deck again/.test(await desk.textContent('#deck-warn')));
+ok('as unsaved changes, until Save', /Unsaved/.test(await desk.textContent('#deck-save-state')));
+
+// The deck goes up; then it is saved again, and the controller says so.
+const screen = await owen.newPage();
+trap(screen, 'editor polish display');
+await screen.goto(`${base}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await owen.newPage();
+trap(pad, 'editor polish controller');
+await pad.goto(`${base}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.click('.tile:has(.tile-title:text-is("Versions"))');
+const wall = '.layer[data-role="program"] .r-deck';
+const slidesUp = () => screen.evaluate((sel) => document.querySelector(sel)?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length || 0, wall);
+await until(async () => (await slidesUp()) === 5);
+await pad.click('.tab[data-tab="slides"]');
+await pad.click('#deck-next');
+await pad.click('#deck-next');
+ok('nothing to say while the library has the deck as it went up', await pad.isHidden('#deck-edited'));
+await desk.click('#deck-save');
+await waitSaved(desk);
+await pad.waitForSelector('#deck-edited:not([hidden])', { timeout: 10000 })
+  .then(() => ok('saved again in the editor, the controller says the deck on screen was edited', true))
+  .catch(() => ok('saved again in the editor, the controller says the deck on screen was edited', false));
+ok('and the room still sees the version it went up with', (await slidesUp()) === 5);
+await pad.click('#deck-reload');
+await until(async () => (await slidesUp()) === 3)
+  .then(() => ok('"Reload it" puts the new version up', true))
+  .catch(async () => ok(`"Reload it" puts the new version up (${await slidesUp()} slides)`, false));
+await pad.waitForFunction(() => /^Slide 3 \//.test(document.querySelector('#deck-count').textContent), null, { timeout: 5000 })
+  .then(() => ok('at the slide it was on', true))
+  .catch(async () => ok(`at the slide it was on (${await pad.textContent('#deck-count')})`, false));
+ok('and the note goes', await pad.isHidden('#deck-edited'));
+await screen.close();
+await pad.close();
+
+// A picture on a slide, then out as a .zip and back in.
+await pickSlide(desk, 1);
+await desk.evaluate(async () => {
+  const c = document.createElement('canvas');
+  c.width = 200; c.height = 120;
+  const g = c.getContext('2d');
+  g.fillStyle = '#2a6'; g.fillRect(0, 0, 200, 120);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  const dt = new DataTransfer();
+  dt.items.add(new File([blob], 'green.png', { type: 'image/png' }));
+  document.querySelector('.cm-content').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+});
+await desk.waitForSelector('#deck-image-dialog:not([hidden])');
+await desk.fill('#deck-image-alt', 'A green rectangle');
+await desk.click('#deck-image-go');
+await desk.waitForFunction(() => document.querySelector('#deck-image-dialog').hidden, null, { timeout: 10000 });
+await desk.click('#deck-save');
+await waitSaved(desk);
+await desk.click('#deck-save-more');
+const [zipDownload] = await Promise.all([desk.waitForEvent('download'), desk.click('#deck-download-zip')]);
+const zipBytes = fs.readFileSync(await zipDownload.path());
+const zipped = await desk.evaluate(async (bytes) => {
+  const { readZip } = await import('/assets/js/zip.js');
+  const files = await readZip(new Blob([new Uint8Array(bytes)]));
+  const md = files.find((f) => f.name.endsWith('.md'));
+  return { names: files.map((f) => f.name), md: new TextDecoder().decode(await md.read()) };
+}, [...zipBytes]);
+ok(`the .zip holds the deck and its picture (${zipped.names.join(', ')})`, zipped.names.some((n) => /\.md$/.test(n)) && zipped.names.includes('media/green.png'));
+ok('with the deck pointing at the picture beside it', /!\[A green rectangle\]\(media\/green\.png\)/.test(zipped.md));
+await desk.goto(`${base}/deck.html`);
+await desk.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 2, null, { timeout: 20000 });
+desk.once('dialog', (d) => d.accept());
+await desk.setInputFiles('#deck-file', { name: 'versions.zip', mimeType: 'application/zip', buffer: zipBytes });
+await desk.waitForFunction(() => /versions\.md/.test(document.querySelector('#deck-where').textContent), null, { timeout: 15000 })
+  .then(() => ok('opening the .zip opens the deck in it', true))
+  .catch(async () => ok(`opening the .zip opens the deck in it ("${await desk.textContent('#deck-where')}")`, false));
+const reopened = await desk.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map((l) => l.textContent).join('\n'));
+ok('its picture back in the library, the deck pointing there', /!\[A green rectangle\]\(\/media\/[0-9a-f]{64}\/green\.png\)/.test(reopened));
+ok('and says where the pictures went', /went into the library with no course/.test(await desk.textContent('#deck-warn')));
+await desk.waitForFunction(() => {
+  const img = document.querySelector('#deck-preview .r-deck')?.shadowRoot?.querySelector('svg.podium-on img');
+  return !img || img.complete;
+}, null, { timeout: 10000 }).catch(() => {});
+
+// The whole deck as a PDF, a page a slide.
+await desk.click('#deck-save-more');
+const [pdfDownload] = await Promise.all([desk.waitForEvent('download', { timeout: 60000 }), desk.click('#deck-download-pdf')]);
+const pdf = fs.readFileSync(await pdfDownload.path()).toString('latin1');
+const pages = (pdf.match(/\/Type \/Page\b/g) || []).length;
+const slideCount = await stripCount(desk);
+ok(`"Download as a PDF" makes one page a slide (${pages} pages for ${slideCount} slides, ${pdfDownload.suggestedFilename()})`, pdf.startsWith('%PDF') && pages === slideCount && slideCount === 3 && /\.pdf$/.test(pdfDownload.suggestedFilename()));
+await owen.close();
+}
+
+if (want('the deck editor: pictures inside a lecture plan, with no server (#226)')) {
+console.log('\n-- the deck editor: pictures inside a lecture plan, with no server (#226) --');
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+const planner = await ctx.newPage();
+trap(planner, 'planner (no server)');
+await planner.goto(`${BASE}/plan.html`);
+await planner.waitForSelector('#type-picker .type-btn');
+await planner.click('#type-picker .type-btn:has-text("Marp deck")');
+const [editor] = await Promise.all([ctx.waitForEvent('page'), planner.click('button:has-text("Write a new deck")')]);
+trap(editor, 'editor (plan, no server)');
+await editor.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 2, null, { timeout: 20000 });
+await pickSlide(editor, 0);
+await editor.click('.deck-toolbar [data-cmd="image"]');
+ok('with no server, a deck in a plan can still take a picture from this device', await editor.isVisible('#deck-image-dialog [data-from="device"]')
+  && /kept inside the lecture plan/.test(await editor.textContent('#deck-image-dialog .deck-media-offline')));
+const png = await editor.evaluate(async () => {
+  const c = document.createElement('canvas');
+  c.width = 160; c.height = 90;
+  const g = c.getContext('2d');
+  g.fillStyle = '#c33'; g.fillRect(0, 0, 160, 90);
+  return [...new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer())];
+});
+await editor.setInputFiles('#deck-image-file', { name: 'red.png', mimeType: 'image/png', buffer: Buffer.from(png) });
+await editor.fill('#deck-image-alt', 'A red box');
+await editor.click('#deck-image-go');
+await editor.waitForFunction(() => document.querySelector('#deck-image-dialog').hidden, null, { timeout: 10000 })
+  .catch(async () => ok(`the picture went in (${await editor.textContent('#deck-image-note')})`, false));
+const md = await editor.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map((l) => l.textContent).join('\n'));
+ok('it is kept in the plan, the slide pointing at it by asset:', /!\[A red box\]\(asset:[\w-]+\)/.test(md));
+ok('and the editor\'s preview shows it', await editor.waitForFunction(() => {
+  const img = document.querySelector('#deck-preview .r-deck')?.shadowRoot?.querySelector('svg.podium-on img');
+  return img && img.complete && img.naturalWidth > 0 && img.src.startsWith('data:image/');
+}, null, { timeout: 10000 }).then(() => true).catch(() => false));
+await editor.click('#deck-save');
+await editor.waitForFunction(() => /Saved into the plan/.test(document.querySelector('#deck-save-state').textContent), null, { timeout: 8000 });
+ok('handed back, the planner\'s preview shows it too', await planner.waitForFunction(() => {
+  const img = document.querySelector('#item-preview .r-deck')?.shadowRoot?.querySelector('svg.podium-on img');
+  return img && img.complete && img.naturalWidth > 0 && img.src.startsWith('data:image/');
+}, null, { timeout: 10000 }).then(() => true).catch(() => false));
+await ctx.close();
+}
+
 if (want('the deck editor: drafts, downloads, completion and checks (#226)')) {
 console.log('\n-- the deck editor: drafts, downloads, completion and checks (#226) --');
 // The plain relay (no accounts, no library): the editor still works.

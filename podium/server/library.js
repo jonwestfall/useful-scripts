@@ -158,6 +158,14 @@ function mayReadMedia(db, user, sha256) {
      WHERE m.sha256 = ?3 AND li.deleted_at IS NULL AND ${VISIBLE} LIMIT 1`)
     .get(user.id, user.isAdmin ? 1 : 0, String(sha256));
   if (slide) return true;
+  // An earlier version of a deck you can see (Issue #226): what it used to say.
+  const revision = db.prepare(`SELECT 1 AS ok FROM deck_revisions dr
+      JOIN media m ON m.id = dr.media_id
+      JOIN library_items li ON li.id = dr.item_id
+      LEFT JOIN courses c ON c.id = li.course_id
+     WHERE m.sha256 = ?3 AND li.deleted_at IS NULL AND ${VISIBLE} LIMIT 1`)
+    .get(user.id, user.isAdmin ? 1 : 0, String(sha256));
+  if (revision) return true;
   // The other way to be allowed at these bytes: they are a file kept by a
   // lecture you can see. The lecture's own visibility rule is the one that
   // decides (see the VISIBLE comment in server/lectures.js) - deliberately
@@ -322,6 +330,8 @@ function forgetMediaIfUnused(db, dataDir, sha256) {
       WHERE lif.media_id = ?1 AND li.deleted_at IS NULL
       UNION ALL
      SELECT 1 AS ok FROM lecture_files WHERE media_id = ?1
+      UNION ALL
+     SELECT 1 AS ok FROM deck_revisions WHERE media_id = ?1
      LIMIT 1`,
   ).get(row.id);
   if (inUse) return false;
@@ -487,9 +497,43 @@ async function replaceDeckContent(db, user, dataDir, id, text, { ifMatch = '' } 
     throw Object.assign(new Error(`a deck can be at most ${MAX_DECK_SOURCE_BYTES / (1024 * 1024)} MB of text`), { status: 413 });
   }
   const { sha256, bytes } = await storeUpload(dataDir, Readable.from([buf]), { limit: MAX_DECK_SOURCE_BYTES });
+  if (sha256 === item.version) return item;   // nothing changed: no new version to keep
   const mediaId = rememberMedia(db, user, { sha256, bytes, contentType: UPLOADABLE.get('.md').type });
-  db.prepare('UPDATE library_items SET media_id = ?, updated_at = ? WHERE id = ?').run(mediaId, Date.now(), Number(id));
+  const now = Date.now();
+  const was = db.prepare('SELECT media_id FROM library_items WHERE id = ?').get(Number(id)).media_id;
+  // The version being replaced becomes a revision, then the oldest beyond
+  // the last few are let go (their bytes too, if nothing else holds them).
+  if (was) {
+    db.prepare('INSERT INTO deck_revisions (item_id, media_id, saved_at, saved_by) VALUES (?, ?, ?, ?)')
+      .run(Number(id), was, now, user.id);
+  }
+  db.prepare('UPDATE library_items SET media_id = ?, updated_at = ? WHERE id = ?').run(mediaId, now, Number(id));
+  const old = db.prepare(`SELECT dr.id, m.sha256 FROM deck_revisions dr JOIN media m ON m.id = dr.media_id
+      WHERE dr.item_id = ? ORDER BY dr.saved_at DESC, dr.id DESC LIMIT -1 OFFSET ?`).all(Number(id), MAX_DECK_REVISIONS);
+  for (const row of old) {
+    db.prepare('DELETE FROM deck_revisions WHERE id = ?').run(row.id);
+    forgetMediaIfUnused(db, dataDir, row.sha256);
+  }
   return getItem(db, user, id);
+}
+
+// How many earlier versions of a deck are kept. A deck is a few kilobytes of
+// text, so this is about keeping the list useful, not about disk.
+const MAX_DECK_REVISIONS = 20;
+
+/**
+ * A deck's earlier versions, newest first (Issue #226): each one the version
+ * that was there until someone saved over it, when, and who saved over it.
+ * Anyone who can see the deck can see them - they are what it used to say.
+ */
+function deckRevisions(db, user, id) {
+  const item = getItem(db, user, id);
+  if (!item) throw Object.assign(new Error('no such item'), { status: 404 });
+  if (item.type !== 'deck') throw Object.assign(new Error('only a deck has versions'), { status: 400 });
+  return db.prepare(`SELECT m.sha256, m.bytes, dr.saved_at, u.display_name, u.username
+      FROM deck_revisions dr JOIN media m ON m.id = dr.media_id LEFT JOIN users u ON u.id = dr.saved_by
+     WHERE dr.item_id = ? ORDER BY dr.saved_at DESC, dr.id DESC`).all(Number(id))
+    .map((row) => ({ version: row.sha256, bytes: row.bytes, replacedAt: row.saved_at, replacedBy: row.display_name || row.username || null }));
 }
 
 /**
@@ -517,7 +561,7 @@ function usage(db) {
 
 module.exports = {
   MAX_UPLOAD_BYTES, UPLOADABLE, uploadKindFor, mediaPath,
-  DECK_MEDIA_GROUP, mayAddDeckMedia, findSameMedia,
+  DECK_MEDIA_GROUP, mayAddDeckMedia, findSameMedia, deckRevisions, MAX_DECK_REVISIONS,
   listItems, getItem, listCourses, mayReadMedia, courseIdFor,
   addItem, setItemFiles, findDuplicate, storeUpload, rememberMedia, forgetMediaIfUnused,
   renameItem, deleteItem, mayDelete, usage,

@@ -14,6 +14,7 @@ import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatter
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
+import { assetRefsIn } from './deck-source.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
 import { mountSessionBadge, serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
@@ -110,6 +111,10 @@ const workItem = () => workingItem(state);
 // What has a transport (play/pause on the Now tab, Space, the dock's Play
 // slot) is isPlayable() in protocol.js: a clip, a track, a stream, or a deck
 // on one of its video slides (Issue #226).
+// A library deck edited while it is up (Issue #226) - see checkDeckEdited.
+let editedDeckId = null;     // the deckId on screen that the library has moved past
+let editedCheckedFor = null; // which deckId the last check was about
+let editedCheckAt = 0;
 const hasCue = () => !!state.preview || state.previewLayout !== null || (state.ink?.held || 0) > 0;
 const heldInkOnly = () => !state.preview && state.previewLayout === null && (state.ink?.held || 0) > 0;
 
@@ -242,7 +247,7 @@ async function loadServerDeck(src) {
   return { id, source };
 }
 
-async function stageDeck({ source, name, src }) {
+async function stageDeck({ source, name, src, slide = 0 }) {
   const id = src ? await srcDeckId(src, source) : await deckId(source);
   deckStore.set(id, source);
   const deck = await renderDeckSource(source, id);
@@ -261,15 +266,18 @@ async function stageDeck({ source, name, src }) {
   // ensureDeckView(), which now also nudges the pad once it resolves.
   deckGeneration++;
   deckView = { id, deck };
-  // Hand it to the display up front rather than making it ask.
+  // Hand it to the display up front rather than making it ask - and any
+  // pictures it keeps in the lecture plan (Issue #226) with it.
   if (!src) bus?.send({ t: 'deck', id, source });
+  for (const asset of assetRefsIn(source)) pushAssetIfHeld(assetRef(asset));
   stage({
     type: 'deck',
     title: frontMatterTitle(source, name || 'Deck'),
     deckId: id,
     src,
-    slide: 0,
-    step: 0,
+    // Reloading an edited deck (Issue #226) keeps your place, fully built.
+    slide: Math.min(Math.max(0, slide), Math.max(0, deck.count - 1)),
+    step: slide > 0 ? (deck.fragments[Math.min(slide, deck.count - 1)] || 0) : 0,
     slideCount: deck.count,
     fragments: deck.fragments,
     videoSlides: videoSlides(deck),
@@ -1655,6 +1663,66 @@ document.addEventListener('keydown', (ev) => {
 let recallBrowse = null;   // { panel, key, slide, step } - this controller's own place in it
 
 /** What the Slides tab shows: the deck being worked on, or the one kept for reference. */
+// --- a library deck edited while it is up (Issue #226) ------------------------
+//
+// A deck on screen keeps the version it went up with - swapping slides out
+// from under a lecture is not something to do without being asked. But the
+// Slides tab says so when the library holds a newer one: checked every half
+// minute while a library deck is up, when this tab comes back into view, and
+// straight away when the deck editor in this browser saves one.
+
+function libraryDeckSrc(item) {
+  const src = item?.type === 'deck' ? (item.src || srcOfDeckId(item.deckId)) : null;
+  return src && src.startsWith('/media/deck/') ? src : null;
+}
+
+async function checkDeckEdited({ force = false } = {}) {
+  const view = slidesView();
+  const item = view && !view.recalled ? view.item : null;
+  const src = libraryDeckSrc(item);
+  if (!src) {
+    if (editedDeckId) { editedDeckId = null; renderSlides(); }
+    return;
+  }
+  if (!force && editedCheckedFor === item.deckId && Date.now() - editedCheckAt < 25000) return;
+  editedCheckedFor = item.deckId;
+  editedCheckAt = Date.now();
+  try {
+    const res = await fetch(src, { cache: 'no-cache', credentials: 'same-origin' });
+    if (!res.ok) return;
+    const now = await srcDeckId(src, await res.text());
+    const was = editedDeckId;
+    editedDeckId = now !== item.deckId ? item.deckId : null;
+    if (was !== editedDeckId) renderSlides();
+  } catch { /* offline: say nothing rather than something wrong */ }
+}
+
+setInterval(() => { if (!document.hidden) checkDeckEdited(); }, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDeckEdited({ force: true }); });
+if (typeof BroadcastChannel === 'function') {
+  new BroadcastChannel('podium-decks').addEventListener('message', (ev) => {
+    if (ev.data?.type === 'deck-saved' && ev.data.from === 'editor') checkDeckEdited({ force: true });
+  });
+}
+
+async function reloadEditedDeck() {
+  const view = slidesView();
+  const item = view && !view.recalled ? view.item : null;
+  const src = libraryDeckSrc(item);
+  if (!src) return;
+  $('#deck-reload').disabled = true;
+  try {
+    const { source } = await loadServerDeck(src);
+    await stageDeck({ source, name: item.title, src, slide: item.slide || 0 });
+    editedDeckId = null;
+  } catch (err) {
+    $('#deck-file-note').textContent = `Could not reload that deck: ${err.message}`;
+  } finally {
+    $('#deck-reload').disabled = false;
+    renderSlides();
+  }
+}
+
 function slidesView() {
   const live = workItem();
   if (live?.type === 'deck') return { item: live, recalled: false };
@@ -1701,6 +1769,8 @@ function renderSlides() {
   if (!item) { $('#bar-prev').disabled = true; $('#bar-next').disabled = true; return; }
 
   $('#deck-title').textContent = itemTitle(item);
+  $('#deck-edited').hidden = recalled || !editedDeckId || editedDeckId !== item.deckId;
+  if (!recalled && libraryDeckSrc(item) && editedCheckedFor !== item.deckId) checkDeckEdited({ force: true });
   // Working on the cue (Issue #174): say so, and put the pointers away - the
   // laser and spotlight point at what the room sees, which this is not.
   const onCue = item === state.preview;
@@ -5590,6 +5660,7 @@ $('#scrub').addEventListener('change', (ev) => {
 $('#deck-prev').addEventListener('click', () => deckNav('prev'));
 $('#deck-next').addEventListener('click', () => deckNav('next'));
 $('#deck-back').addEventListener('click', putDeckBack);
+$('#deck-reload').addEventListener('click', reloadEditedDeck);
 $('#bar-prev').addEventListener('click', () => deckNav('prev'));
 $('#bar-next').addEventListener('click', () => deckNav('next'));
 $('#deck-export').addEventListener('click', exportDeck);

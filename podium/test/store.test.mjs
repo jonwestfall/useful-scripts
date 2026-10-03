@@ -398,6 +398,25 @@ console.log('\n-- the library: editing a deck (Issue #226) --');
   ok('with the version that is there now', stale?.version === edited.version);
   ok('ETag quoting is accepted', (await library.replaceDeckContent(db, owner, dataDir, forCourse.id, '# A deck\n\nedited\n',
     { ifMatch: `"${edited.version}"` })).version === edited.version);
+  const kept = library.deckRevisions(db, ta, forCourse.id);
+  ok('the version saved over is kept as a revision', kept.length === 1 && kept[0].version === forCourse.version && kept[0].replacedBy === 'owner');
+  ok('saving the same text again keeps no new one', library.deckRevisions(db, owner, forCourse.id).length === 1);
+  ok('anyone who can see the deck can read an earlier version', library.mayReadMedia(db, ta, forCourse.version));
+  for (let i = 0; i < library.MAX_DECK_REVISIONS + 3; i++) {
+    const at = library.getItem(db, owner, forCourse.id).version;
+    await library.replaceDeckContent(db, owner, dataDir, forCourse.id, `# A deck\n\nversion ${i}\n`, { ifMatch: at });
+  }
+  const trimmed = library.deckRevisions(db, owner, forCourse.id);
+  ok(`only the newest ${library.MAX_DECK_REVISIONS} are kept`, trimmed.length === library.MAX_DECK_REVISIONS);
+  ok('newest first', trimmed[0].replacedAt >= trimmed.at(-1).replacedAt);
+  const dropped = createHash('sha256').update('# A deck\n\nversion 0\n').digest('hex');
+  ok('and the bytes of one let go are gone, nothing else holding them', !existsSync(library.mediaPath(dataDir, dropped)));
+  ok('while a kept one\'s are still there', existsSync(library.mediaPath(dataDir, trimmed[0].version)));
+  ok('someone who cannot see the deck cannot read its earlier versions', !library.mayReadMedia(db, outsider, trimmed[0].version)
+    && library.mayReadMedia(db, ta, trimmed[0].version));
+  let notDeckRevisions = null;
+  try { library.deckRevisions(db, owner, forEveryone.id); } catch (err) { notDeckRevisions = err; }
+  ok('only a deck has versions', notDeckRevisions?.status === 400);
   let denied = null;
   try { await library.replaceDeckContent(db, ta, dataDir, forCourse.id, 'nope'); } catch (err) { denied = err; }
   ok(`a TA saving is refused (${denied?.message})`, denied?.status === 403);

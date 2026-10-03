@@ -498,6 +498,25 @@ const MIGRATIONS = [
       CREATE INDEX deck_templates_by_user ON deck_templates(user_id);
     `);
   },
+  (db) => {
+    db.exec(`
+      -- A library deck's earlier versions (Issue #226): each time the deck
+      -- editor saves over one, the version it replaced is kept here, so
+      -- "previous versions" is a list of what the item pointed at before.
+      -- The bytes are already content-addressed media, so a revision is only
+      -- a pointer; forgetMediaIfUnused (and the doctor) count it as a use.
+      -- Trimmed to the newest few per deck as new ones arrive.
+      CREATE TABLE deck_revisions (
+        id       INTEGER PRIMARY KEY,
+        item_id  INTEGER NOT NULL REFERENCES library_items(id) ON DELETE CASCADE,
+        media_id INTEGER NOT NULL REFERENCES media(id),
+        saved_at INTEGER NOT NULL,
+        saved_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX deck_revisions_by_item ON deck_revisions(item_id, saved_at);
+      CREATE INDEX deck_revisions_by_media ON deck_revisions(media_id);
+    `);
+  },
 ];
 
 function migrate(db) {

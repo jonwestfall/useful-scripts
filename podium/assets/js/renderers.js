@@ -21,6 +21,8 @@
 import { el, miniMarkdown, fmtTime } from './util.js';
 import { parseStreamSource, streamLabel } from './protocol.js';
 import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
+import { ASSET_REF } from './deck-source.js';
+import { BLANK_PIXEL } from './assets.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -92,7 +94,7 @@ function drawFitted(ctx, rect, source, sw, sh, fit) {
 const objectFitOf = (node) => getComputedStyle(node).objectFit || 'fill';
 
 /** An <svg> element, standalone, as a decoded image - the deck and QR route. */
-function svgToImage(svg, css, width, height) {
+export function svgToImage(svg, css, width, height) {
   const clone = svg.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.setAttribute('width', String(width));
@@ -1320,6 +1322,26 @@ function renderDeck(item, opts) {
     document.addEventListener('keydown', retry, { once: true, capture: true });
   });
 
+  // A deck inside a lecture plan, with no server, keeps its pictures in the
+  // plan as `asset:<id>` (Issue #226). They are swapped for their bytes here,
+  // the same way an image item's are, before Marp sees the markdown - and any
+  // this device does not hold yet are asked for, and the deck drawn again
+  // once they arrive (see update below).
+  let missingAssets = [];
+  const resolved = (ref) => {
+    const got = opts.resolveAssets?.({ src: ref })?.src;
+    return got && got !== ref && got !== BLANK_PIXEL ? got : null;
+  };
+  function withAssets(source) {
+    missingAssets = [];
+    if (!opts.resolveAssets || !source.includes('asset:')) return source;
+    return source.replace(ASSET_REF, (ref) => {
+      const got = resolved(ref);
+      if (!got) { missingAssets.push(ref); return BLANK_PIXEL; }
+      return got;
+    });
+  }
+
   let failedAt = 0;
   async function mount(it) {
     const mine = ++generation;
@@ -1334,7 +1356,11 @@ function renderDeck(item, opts) {
     if (source == null) { setStatus('Waiting for the deck…'); return; }
 
     try {
-      const deck = await renderDeckSource(source, it.deckId);
+      const drawn = withAssets(source);
+      // Keyed by the deck alone when nothing was swapped in, as always; by
+      // what was actually drawn when something was, so a picture arriving
+      // later is a different render rather than the cached one without it.
+      const deck = await renderDeckSource(drawn, drawn === source ? it.deckId : undefined);
       if (mine !== generation) return;
       wrap.innerHTML = `<style>${deck.css}</style>${deck.html}`;
       videos = deck.videos || [];
@@ -1374,6 +1400,7 @@ function renderDeck(item, opts) {
   return {
     el: host,
     update(it) {
+      if (missingAssets.length && it.deckId === mountedId && missingAssets.some(resolved)) { mount(it); return; }
       // A deck that would not render is mounted again on a later update
       // (Issue #221) - a few seconds apart, not on every one.
       if (it.deckId !== mountedId) {

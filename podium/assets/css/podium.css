@@ -893,6 +893,10 @@ body.guest {
 }
 .tile-edit:hover, .tile-edit:active { background: var(--panel-2); color: var(--accent); }
 /* Issue #226: the pictures and videos used in decks, kept out of the tiles until asked for. */
+/* Issue #226: the deck on screen was edited since it went up. */
+.deck-edited { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 10px; border: 1px solid var(--cue); border-radius: 10px; color: var(--cue); font-size: 13px; }
+.deck-edited[hidden] { display: none; }
+.deck-edited button { min-height: 32px; padding: 0 12px; font-size: 13px; }
 .lib-deck-media { display: block; margin: 12px auto 4px; background: none; border: 0; color: var(--accent); font-size: 13px; cursor: pointer; }
 .lib-deck-media:hover { text-decoration: underline; }
 .empty { color: var(--dim); }
@@ -2441,6 +2445,10 @@ body.deck-editor .topbar { flex: none; }
 .deck-media-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
 .deck-video-preview { display: block; width: 100%; max-height: 240px; background: #000; border-radius: 8px; margin: 0 0 10px; }
 .deck-video-preview[hidden] { display: none; }
+/* A deck's earlier versions (Issue #226). */
+.deck-versions-list { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 6px; }
+.deck-versions-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.deck-versions-list button { min-height: 30px; font-size: 13px; padding: 0 10px; width: auto; flex: none; }
 /* Templates (Issue #226). */
 .deck-templates-card { width: min(760px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
 .deck-templates-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
