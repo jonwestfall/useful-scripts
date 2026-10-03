@@ -8,7 +8,7 @@ Podium is built for real classroom lectures. It gives you complete control of th
 
 ## Contents
 
-1. **[Presenting](#part-1--presenting)**: Freeze is a cue · The library · Marp decks · Now/Next/Notes · PDFs · Layouts & PiP
+1. **[Presenting](#part-1--presenting)**: Freeze is a cue · The library · Marp decks · The deck editor · Now/Next/Notes · PDFs · Layouts & PiP
 2. **[Drawing & Pointing](#part-2--drawing--pointing)**: Live ink · Whiteboards · Laser · Spotlight
 3. **[Media & Sound](#part-3--media--sound)**: Transport · Background music · Mixer · Controller microphone
 4. **[On-Screen Tools](#part-4--on-screen-tools)**: Timers · Messages · QR codes · Watermarks · Automated sets
@@ -76,6 +76,20 @@ Podium natively renders [Marp](https://marp.app/) Markdown decks directly inside
 - **Presenter Notes**: Use HTML comments (`<!-- presenter notes go here -->`) to display notes privately on your iPad that the audience never sees.
 - **Progressive Builds**: Put `<!-- _class: build -->` on a slide to reveal its list bullets one at a time, or mark exactly what should build with `class="build"` (see `content/decks/example-builds.md`). The planning page's *What the class sees* preview steps through each build the same way Next will in class, says what the current slide builds, lists which slides build at all, and flags a slide with the class but nothing to reveal or a near-miss class name such as `Build` (Issue #177).
 - **Custom CSS Themes**: Add custom styles and CSS themes to the top of your markdown files.
+
+### The Deck Editor (`deck.html`)
+
+The deck editor writes and edits Marp decks without leaving Podium (Issue #226). It shows the markdown in a real code editor next to the projector's own renderer, so what you see is what the room will see.
+
+- **Three columns**: every slide as a thumbnail strip (drag to reorder, or use ↑ ↓, duplicate and delete), the markdown, and *What the class sees*. Clicking a slide in the strip, or moving the cursor in the markdown, keeps the two in step. ◀ ▶ step through a slide's builds the way Next does in class.
+- **A code editor that knows Marp**: slide separators, directives and presenter notes are coloured; directives such as `_class:`, `paginate:` and `backgroundColor:` complete as you type; *Focus slide* folds every slide except the one you are on; and the toolbar adds headings, lists, builds, pictures, math and code.
+- **No markdown needed for the common settings**: the slide panel sets a slide's build, class, background, page number and presenter notes, and the *Deck* panel sets the theme, shape, page numbers, header and footer.
+- **Check before class** lists anything that will look wrong in the room: text that overflows its slide, a picture with no description, a build with nothing to reveal, a theme the server doesn't have, a code block that is never closed, a picture address the projector can't load (a relative path in a library deck, or `http:` from an `https:` page), or a deck too big to send from a controller. Each problem is also marked in the editor's gutter.
+- **Where a deck is saved**:
+  - **The library** 🖥️: a library deck keeps one address while you edit it, so every plan that uses it picks up the change and no projector shows a cached copy of the old one. If someone else saved in the meantime, the editor asks whether to save over theirs, save yours as a copy, or load theirs.
+  - **Inside a plan**: *Edit this deck* on a deck item in `plan.html` opens it here, and **Save** hands it back to the planner. *Write a new deck* starts a new deck for that item.
+  - **`content/decks`** 🖥️ (administrators), or a downloaded **`.md` file** anywhere else. Unsaved work is kept on the device, and offered back if the page is reloaded.
+- **Who may save**: administrators, the owners of the deck's course, and whoever uploaded a deck that isn't filed under a course. A TA (a course *member*) can open a course deck and present it, but can only save a copy of their own. The controller's library shows ✎ on any deck you may edit.
 
 ### The Presenter View (Now, Next & Notes)
 

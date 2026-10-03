@@ -781,13 +781,23 @@ const COMMANDS = {
 
 function wireToolbar() {
   $$('.deck-toolbar [data-cmd]').forEach((button) => button.addEventListener('click', () => COMMANDS[button.dataset.cmd]?.()));
-  $('#deck-add-slide').addEventListener('click', () => {
-    if (deck.headingDivider) return;
-    applyText(DS.insertSlide(text(), current + 1, '\n## New slide\n\n'), { selectSlide: current + 1 });
-  });
+  $('#deck-add-slide').addEventListener('click', addSlide);
   $('#deck-focus').addEventListener('change', (ev) => (ev.target.checked ? focusSlide() : view.dispatch({ effects: unfoldEverything() })));
   $('#deck-prev').addEventListener('click', () => stepPreview('prev'));
   $('#deck-next').addEventListener('click', () => stepPreview('next'));
+}
+
+// A new slide after this one, its title selected so typing names it - and the
+// editor focused, so typing goes there rather than to the button.
+function addSlide() {
+  if (deck.headingDivider) return;
+  const at = current + 1;
+  const next = DS.insertSlide(text(), at, '\n## New slide\n\n');
+  applyText(next, { selectSlide: at });
+  const slide = DS.parseDeck(next).slides[at];
+  const title = slide ? slide.raw.indexOf('New slide') : -1;
+  if (title >= 0) view.dispatch({ selection: { anchor: slide.start + title, head: slide.start + title + 'New slide'.length } });
+  view.focus();
 }
 
 function stepPreview(dir) {
