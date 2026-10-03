@@ -277,6 +277,17 @@ function describe(deck) {
   return deck;
 }
 
+/**
+ * The `asset:<id>` pictures a deck points at (Issue #226): pictures kept
+ * inside a lecture plan rather than in a library, for a deck that lives in a
+ * plan on a setup with no server. Whatever shows the deck swaps each for the
+ * picture's bytes before Marp sees it.
+ */
+export const ASSET_REF = /asset:([\w-]{1,64})/g;
+export function assetRefsIn(md) {
+  return [...new Set(Array.from(String(md ?? '').matchAll(ASSET_REF), (m) => m[1]))];
+}
+
 /** Images (markdown and <img>) a slide uses, with where each one is. */
 export function mediaIn(raw) {
   const masked = maskCode(raw).replace(/<!--[\s\S]*?-->/g, (m) => ' '.repeat(m.length));
@@ -580,6 +591,8 @@ export function checkDeck(md, { destination = 'file', pageProtocol = '' } = {}) 
       const src = m.src;
       if (/^data:/i.test(src)) {
         add(slide.index, at, 'warning', 'A picture pasted into the deck itself makes it too big to send to the projector. Add it from the library instead.');
+      } else if (/^asset:/i.test(src) && (destination === 'library' || destination === 'content')) {
+        add(slide.index, at, 'warning', 'This picture is kept inside a lecture plan, where a deck saved here cannot reach it. Add it again from the library.');
       } else if (!/^(https?:|\/|asset:|#)/i.test(src)) {
         if (destination === 'library') add(slide.index, at, 'warning', `"${src}" is a relative path, which does not resolve for a deck in the library. Use the picture's full address.`);
       }

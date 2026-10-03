@@ -20,6 +20,7 @@ import {
 } from './store.js';
 import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle, describeBuild } from './deck.js';
+import { assetRefsIn } from './deck-source.js';
 import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS, deckStep } from './protocol.js';
 import { mountSessionBadge, serverInfo } from './server.js';
 import { mountZipImport } from './zip-review.js';
@@ -527,7 +528,21 @@ deckChannel?.addEventListener('message', (ev) => {
     if (!item) { if (plan?.id === msg.planId) reply({ error: 'That deck is no longer in this lecture.' }); return; }
     const asset = plan.assets[item.asset];
     if (!asset) { reply({ error: 'That item does not carry a deck inside the plan.' }); return; }
-    reply({ markdown: asset.data, name: asset.name, title: item.title || '', planTitle: plan.title || '', course: plan.course || '' });
+    // The deck's own pictures kept in this plan, so the editor can show them.
+    const pictures = Object.fromEntries(assetRefsIn(asset.data).filter((id) => plan.assets[id]).map((id) => [id, plan.assets[id].data]));
+    reply({ markdown: asset.data, name: asset.name, title: item.title || '', planTitle: plan.title || '', course: plan.course || '', pictures });
+    return;
+  }
+  // A picture for a deck that lives in this plan, with no server to keep it
+  // (Issue #226): it becomes one of the plan's assets, like any photo item's.
+  if (msg.type === 'plan-asset-put') {
+    const item = itemHere();
+    if (!item) { if (plan?.id === msg.planId) reply({ error: 'That deck is no longer in this lecture.' }); return; }
+    if (typeof msg.data !== 'string' || !/^data:image\/(png|jpeg|gif|webp);base64,/.test(msg.data)) { reply({ error: 'That is not a picture.' }); return; }
+    const id = uid(10);
+    plan.assets[id] = { name: String(msg.name || 'picture.jpg').slice(0, 120), mime: /^data:([^;]+)/.exec(msg.data)[1], data: msg.data };
+    touch();
+    reply({ id });
     return;
   }
   if (msg.type === 'plan-deck-put') {
@@ -919,6 +934,11 @@ function renderPreview({ remount = false } = {}) {
     preview.renderer = createRenderer(forRender, {
       preview: true,
       getDeckSource: previewDeckSource,
+      // A deck's pictures kept in this plan (Issue #226).
+      resolveAssets: (it) => {
+        const id = assetIdOf(it?.src);
+        return id && plan.assets[id] ? { ...it, src: plan.assets[id].data } : it;
+      },
       // A plausible countdown, so the preview shows the size of the digits
       // rather than a permanent 0:00.
       // A plausible countdown, so the preview shows the size of the digits

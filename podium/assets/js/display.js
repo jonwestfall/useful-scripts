@@ -31,6 +31,7 @@ import { createCameraReceiver, createMicReceiver } from './rtc.js';
 import { serverInfo } from './server.js';
 import { createAssetResolver } from './assets.js';
 import { deckId } from './deck.js';
+import { assetRefsIn } from './deck-source.js';
 import { createCaptionLog } from './caption-log.js';
 import { createDurationProber } from './duration-probe.js';
 import { makeSigningKey, importSigningKey, importVerifyKey, signText, verifyText } from './crypto.js';
@@ -171,6 +172,11 @@ function referencedAssetIds() {
   note(state.program);
   note(state.preview);
   for (const panel of state.panels) note(panel);
+  // A deck's own pictures, when it keeps them in a lecture plan (Issue #226).
+  for (const item of [state.program, state.preview, ...state.panels]) {
+    if (item?.type !== 'deck' || !deckStore.has(item.deckId)) continue;
+    for (const id of assetRefsIn(deckStore.get(item.deckId))) ids.add(id);
+  }
   if (state.watermark?.image?.startsWith('asset:')) ids.add(state.watermark.image.slice(6));
   return ids;
 }

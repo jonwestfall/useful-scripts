@@ -7,7 +7,12 @@
 //
 // The Marp bundle is ~1 MB and is only fetched the first time a deck is used.
 
-import { PODIUM_DIRECTIVES, parseDeck } from './deck-source.js';
+import { PODIUM_DIRECTIVES, parseDeck, ASSET_REF } from './deck-source.js';
+
+// What an `asset:` picture this device has not been given is drawn as (Issue
+// #226) - the same blank as assets.js's, rather than an address no browser
+// can load. Whoever shows a deck swaps in the real ones first.
+const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 const MARP_URL = new URL('../vendor/marp.esm.js', import.meta.url).href;
 const THEMES_MANIFEST = 'marp-themes/themes.json';
@@ -608,7 +613,7 @@ export async function render(source, id) {
   if (cache.has(key)) return cache.get(key);
 
   const marp = await createMarp();
-  const { html, css, comments } = marp.render(source);
+  const { html, css, comments } = marp.render(source.includes('asset:') ? source.replace(ASSET_REF, BLANK) : source);
 
   // Parse once, mutate in place to mark fragments, then re-serialize. Marp's
   // html is one wrapping <div class="marpit"> holding every slide's <svg>.

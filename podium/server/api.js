@@ -517,6 +517,13 @@ async function handleApi(req, res, url, ctx) {
       return true;
     }
 
+    // A deck's earlier versions (Issue #226), each readable at its own
+    // /media/<sha>/ address by anyone who can see the deck.
+    if (head === 'library' && rest.length === 2 && rest[1] === 'revisions' && req.method === 'GET') {
+      json(res, 200, { revisions: library.deckRevisions(ctx.db, user, rest[0]) });
+      return true;
+    }
+
     if (head === 'library' && rest.length === 1 && req.method === 'PATCH') {
       const body = await readJson(req);
       const item = library.renameItem(ctx.db, user, rest[0], {

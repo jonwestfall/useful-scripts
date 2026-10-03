@@ -28,15 +28,18 @@
       <button id="deck-save-library" type="button" hidden>Save as a new deck in the library…</button>
       <button id="deck-save-content" type="button" hidden>Save into content/decks…</button>
       <button id="deck-download" type="button">Download the .md file</button>
+      <button id="deck-download-zip" type="button">Download as a .zip, with its pictures</button>
+      <button id="deck-download-pdf" type="button">Download as a PDF</button>
       <hr>
       <button id="deck-save-template" type="button">Save as a template…</button>
+      <button id="deck-versions" type="button" hidden>Previous versions…</button>
       <hr>
       <button id="deck-new" type="button">New deck</button>
       <button id="deck-new-template" type="button">New deck from a template…</button>
-      <button id="deck-open-file" type="button">Open a .md file…</button>
+      <button id="deck-open-file" type="button">Open a .md or .zip file…</button>
     </div>
   </div>
-  <input id="deck-file" type="file" accept=".md,.markdown,text/markdown,text/plain" hidden>
+  <input id="deck-file" type="file" accept=".md,.markdown,.zip,text/markdown,text/plain,application/zip" hidden>
   <span id="session-badge" class="session-badge" hidden></span>
   <a href="plan.html" class="linkish">Planning</a>
   <a href="control.html" class="linkish">Controller</a>
@@ -174,6 +177,19 @@
       <button id="deck-video-cancel" type="button">Cancel</button>
     </div>
     <p class="hint" id="deck-video-note" role="status"></p>
+  </div>
+</div>
+
+<!-- A library deck's earlier versions (Issue #226): what it said before each save. -->
+<div id="deck-versions-dialog" class="deck-dialog" hidden>
+  <div class="deck-dialog-card deck-media-card" role="dialog" aria-modal="true" aria-labelledby="deck-versions-heading">
+    <div class="deck-templates-head">
+      <h2 id="deck-versions-heading">Previous versions</h2>
+      <button id="deck-versions-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <p class="hint">Each is what this deck said until someone saved over it. Opening one puts it in the editor; Save makes it the deck again, and Undo takes it back out.</p>
+    <ul id="deck-versions-list" class="deck-versions-list"></ul>
+    <p class="hint" id="deck-versions-note" role="status"></p>
   </div>
 </div>
 

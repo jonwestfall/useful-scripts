@@ -27,7 +27,8 @@ import { deckStep } from './protocol.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { downloadText } from './store.js';
 import * as DS from './deck-source.js';
-import { createDeckMedia } from './deck-media.js';
+import { createDeckMedia, uploadDeckMedia } from './deck-media.js';
+import { exportZip, readDeckZip, exportPdf, replaceRef } from './deck-export.js';
 import { createTemplatesPanel, findTemplate, slidesOf } from './deck-templates.js';
 import * as CM from '../vendor/codemirror.esm.js';
 
@@ -71,7 +72,10 @@ let themeNames = [...BUILT_IN_THEMES];
 let themeClasses = new Set(BASE_CLASSES);
 let libraryCourses = [];
 let saving = false;
-let openedWith = '';            // the text this page opened with, to tell an untouched new deck
+let openedWith = '';
+// A deck inside a lecture plan keeps its pictures in the plan when there is
+// no server (Issue #226): `asset:<id>` in the markdown, the bytes here.
+const planPictures = new Map();            // the text this page opened with, to tell an untouched new deck
 
 // --- small helpers -------------------------------------------------------------
 
@@ -410,7 +414,9 @@ function renderSoon(ms = 300) {
 
 async function renderNow() {
   const mine = ++renderGeneration;
-  const value = text();
+  // A picture kept in the lecture plan is drawn from the bytes the planner
+  // handed over; the markdown keeps its `asset:` address.
+  const value = planPictures.size ? text().replace(DS.ASSET_REF, (ref, id) => planPictures.get(id) || ref) : text();
   const id = `edit:${await deckId(value)}`;
   if (mine !== renderGeneration) return;
   sources.set(id, value);
@@ -912,6 +918,7 @@ function deckName() {
 
 const media = createDeckMedia({
   canUpload: () => !!(info?.features.includes('library') && info?.user),
+  keepInPlan: () => (origin.kind === 'plan' ? keepPictureInPlan : null),
   courses: () => libraryCourses,
   deckCourse: () => origin.course || params.get('course') || '',
   deckName,
@@ -920,6 +927,53 @@ const media = createDeckMedia({
   currentVideo: () => deck.slides[current]?.video || null,
   done: () => view.focus(),
 });
+
+// --- a library deck's earlier versions -----------------------------------------------
+
+async function openVersions() {
+  const dialog = $('#deck-versions-dialog');
+  const list = $('#deck-versions-list');
+  const note = $('#deck-versions-note');
+  note.textContent = 'Looking…';
+  list.replaceChildren();
+  dialog.hidden = false;
+  $('#deck-versions-close').focus();
+  try {
+    const res = await fetch(`/api/library/${origin.id}/revisions`, { credentials: 'same-origin', cache: 'no-cache' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    note.textContent = body.revisions.length ? '' : 'There are none yet: every save from now on keeps the version it replaces.';
+    const when = (ms) => new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    list.replaceChildren(...body.revisions.map((r) => el('li', {},
+      el('span', {}, `Until ${when(r.replacedAt)}${r.replacedBy ? `, when ${r.replacedBy} saved over it` : ''}`,
+        el('small', { class: 'hint' }, ` · ${Math.max(1, Math.round(r.bytes / 1024))} KB`)),
+      el('button', {
+        type: 'button',
+        onclick: async () => {
+          try {
+            const file = await fetch(`/media/${r.version}/${encodeURIComponent(origin.name || 'deck.md')}`, { credentials: 'same-origin' });
+            if (!file.ok) throw new Error(`HTTP ${file.status}`);
+            const older = await file.text();
+            dialog.hidden = true;
+            applyText(older);
+            warn(`This is the deck as it was until ${when(r.replacedAt)}. Save to make it the deck again, or Undo (Ctrl/Cmd+Z) to go back.`);
+            view.focus();
+          } catch (err) {
+            note.textContent = `Could not open that version: ${err.message}`;
+          }
+        },
+      }, 'Open this version'))));
+  } catch (err) {
+    note.textContent = `Could not list the versions: ${err.message}`;
+  }
+}
+
+function wireVersions() {
+  const dialog = $('#deck-versions-dialog');
+  const close = () => { dialog.hidden = true; view.focus(); };
+  $('#deck-versions-close').addEventListener('click', close);
+  dialog.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(); } });
+}
 
 // --- templates (see deck-templates.js) -------------------------------------------------
 
@@ -1002,6 +1056,12 @@ async function saveTemplate() {
   }
 }
 
+async function keepPictureInPlan(dataUrl, name) {
+  const reply = await askPlanner({ type: 'plan-asset-put', planId: origin.planId, itemId: origin.itemId, data: dataUrl, name });
+  planPictures.set(reply.id, dataUrl);
+  return `asset:${reply.id}`;
+}
+
 // A picture or video dropped or pasted anywhere on the page that nothing
 // more particular took (the editor and the strip handle their own).
 function wirePageDrops() {
@@ -1078,6 +1138,7 @@ function askPlanner(message, { timeout = 2500 } = {}) {
 async function openPlan(planId, itemId) {
   const reply = await askPlanner({ type: 'plan-deck-get', planId, itemId });
   origin = { kind: 'plan', planId, itemId, name: reply.name || 'deck.md', title: reply.title || '', planTitle: reply.planTitle || '', course: reply.course || '', editable: true };
+  for (const [id, data] of Object.entries(reply.pictures || {})) planPictures.set(id, data);
   return reply.markdown ?? '';
 }
 
@@ -1096,6 +1157,7 @@ function describeOrigin() {
   $('#deck-save').textContent = canSaveHere ? 'Save' : 'Save…';
   $('#deck-save-library').hidden = !(info?.features.includes('library') && info?.user);
   $('#deck-save-content').hidden = !info?.user?.isAdmin;
+  $('#deck-versions').hidden = origin.kind !== 'library';
   if (origin.kind === 'library' && !origin.editable) {
     warn(origin.course
       ? `You can change this deck here and present it, but only an owner of ${origin.course.toUpperCase()} or an admin can save over it. Save a copy instead.`
@@ -1294,6 +1356,73 @@ function fileName() {
   return `${clean}.md`;
 }
 
+function saveBlob(name, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// The deck and the pictures and videos it uses, as one .zip any Marp tool
+// opens (see deck-export.js).
+async function downloadZip() {
+  setSaveState('Packing the .zip…');
+  try {
+    const { blob, packed, skipped } = await exportZip(text(), {
+      name: fileName(),
+      resolve: (src) => (src.startsWith('asset:') ? planPictures.get(src.slice(6)) || null : null),
+    });
+    saveBlob(fileName().replace(/\.md$/, '.zip'), blob);
+    setSaveState(`Downloaded, with ${packed} file${packed === 1 ? '' : 's'}`);
+    if (skipped.length) warn(`Left out of the .zip, because this page could not fetch them: ${skipped.join(', ')}`);
+  } catch (err) {
+    warn(`That did not download: ${err.message}`);
+  }
+  setTimeout(refreshSaveState, 2500);
+}
+
+// Every slide, fully built, one page each - for a handout or to post after class.
+async function downloadPdf() {
+  if (!rendered) return;
+  try {
+    const blob = await exportPdf(rendered, {
+      title: deck.frontMatter.fields.title || origin.title || 'Deck',
+      onProgress: (done, total) => setSaveState(`Making the PDF: slide ${done} of ${total}…`),
+    });
+    saveBlob(fileName().replace(/\.md$/, '.pdf'), blob);
+    setSaveState('PDF downloaded');
+  } catch (err) {
+    warn(`That PDF did not work: ${err.message}`);
+  }
+  setTimeout(refreshSaveState, 2500);
+}
+
+// A deck's .zip, opened: its pictures and videos go into the library as deck
+// media (when there is one), and the markdown is pointed at them there.
+async function openZip(file) {
+  const opened = await readDeckZip(file);
+  let value = opened.markdown;
+  const left = [...opened.missing];
+  if (opened.media.length && media && info?.features.includes('library') && info?.user) {
+    const deckLabel = DS.parseDeck(value).frontMatter.fields.title || opened.name.replace(/\.\w+$/, '');
+    for (const [i, file] of opened.media.entries()) {
+      setSaveState(`Adding ${file.name} to the library (${i + 1} of ${opened.media.length})…`);
+      try {
+        const item = await uploadDeckMedia(file.blob, { filename: file.name, course: '', deckName: deckLabel });
+        value = replaceRef(value, file.ref, item.src);
+      } catch {
+        left.push(file.ref);
+      }
+    }
+    warn(`The deck's pictures and videos went into the library with no course, so every signed-in account here can see them.${left.length ? ` Not found or not added: ${left.join(', ')}.` : ''}`);
+  } else if (opened.media.length || left.length) {
+    warn(`The pictures and videos in that .zip need Podium's own server to come in with it, so the slides still point at ${[...opened.media.map((m) => m.ref), ...left].join(', ')}.`);
+  }
+  return { value, name: opened.name };
+}
+
 function downloadDeck() {
   downloadText(fileName(), text(), 'text/markdown');
   if (origin.kind === 'new' || (origin.kind === 'file' && !origin.src)) {
@@ -1380,7 +1509,10 @@ function wireSaveMenu() {
     saveContent({ name, mtime: null });
   });
   $('#deck-download').addEventListener('click', () => { close(); downloadDeck(); });
+  $('#deck-download-zip').addEventListener('click', () => { close(); downloadZip(); });
+  $('#deck-download-pdf').addEventListener('click', () => { close(); downloadPdf(); });
   $('#deck-save-template').addEventListener('click', () => { close(); templates.open({ kind: 'deck' }); });
+  $('#deck-versions').addEventListener('click', () => { close(); openVersions(); });
   $('#deck-new-template').addEventListener('click', () => { close(); templates.open({ kind: 'deck' }); });
   $('#deck-new').addEventListener('click', () => {
     close();
@@ -1394,8 +1526,15 @@ function wireSaveMenu() {
     if (!file) return;
     if (dirty() && !confirm('Open another deck? Your unsaved changes stay as a draft for this one.')) return;
     keepDraftNow();
-    const value = await file.text();
-    origin = { kind: 'file', name: file.name, title: file.name };
+    let value;
+    let name = file.name;
+    try {
+      ({ value, name } = /\.zip$/i.test(file.name) ? await openZip(file) : { value: await file.text(), name });
+    } catch (err) {
+      warn(`Could not open ${file.name}: ${err.message}`);
+      return;
+    }
+    origin = { kind: 'file', name, title: name };
     history.replaceState(null, '', location.pathname);
     setDocument(value);
     savedText = value;
@@ -1423,6 +1562,7 @@ wireToolbar();
 wireSlidePanel();
 wireDeckSettings();
 wirePageDrops();
+wireVersions();
 wireLibraryDialog();
 wireSaveMenu();
 start();

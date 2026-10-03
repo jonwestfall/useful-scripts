@@ -186,7 +186,8 @@ function checkMedia(db, dataDir) {
       WHERE NOT EXISTS (SELECT 1 FROM library_items li WHERE li.media_id = m.id AND li.deleted_at IS NULL)
         AND NOT EXISTS (SELECT 1 FROM library_item_files lif JOIN library_items li ON li.id = lif.item_id
                          WHERE lif.media_id = m.id AND li.deleted_at IS NULL)
-        AND NOT EXISTS (SELECT 1 FROM lecture_files lf WHERE lf.media_id = m.id)`).get().n;
+        AND NOT EXISTS (SELECT 1 FROM lecture_files lf WHERE lf.media_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM deck_revisions dr WHERE dr.media_id = m.id)`).get().n;
 
   if (missing.length) {
     return say('bad', 'media', `${missing.length} of ${rows.length} stored files are missing from disk`,
