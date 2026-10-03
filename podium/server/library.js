@@ -420,6 +420,41 @@ function mayEditDeck(db, user, item) {
   return row?.role === 'owner';
 }
 
+// --- a deck's pictures and videos (Issue #226) ---------------------------------
+//
+// What the deck editor uploads lands in the library like any other upload,
+// in a "Deck media" group and with a deckMedia prop naming the deck, so the
+// controller can keep it out of the way of the things you would pick to
+// show. Filed under the deck's course, or none.
+
+const DECK_MEDIA_GROUP = 'Deck media';
+
+/**
+ * Whether this user may file deck media under a course: the same people who
+ * may edit that course's decks (its owners, and admins). No course is open to
+ * anyone with an account, as for any upload.
+ */
+function mayAddDeckMedia(db, user, courseCode) {
+  if (!courseCode || user.isAdmin) return true;
+  const row = db.prepare(`SELECT cm.role FROM course_members cm
+      JOIN courses c ON c.id = cm.course_id
+     WHERE c.code = ? AND cm.user_id = ?`).get(String(courseCode).trim().toLowerCase(), user.id);
+  return row?.role === 'owner';
+}
+
+/**
+ * The same bytes already in the library, as the same kind and filed under the
+ * same course (or none), visible to this user - so a photo put on two slides,
+ * or into two decks, is one library item rather than two.
+ */
+function findSameMedia(db, user, { kind, sha256, courseCode }) {
+  const code = String(courseCode || '').trim().toLowerCase();
+  const row = db.prepare(`${SELECT_ITEMS} AND ${VISIBLE} AND li.kind = ?3 AND m.sha256 = ?4
+      AND ${code ? 'c.code = ?5' : 'li.course_id IS NULL'} ORDER BY li.id LIMIT 1`)
+    .get(user.id, user.isAdmin ? 1 : 0, String(kind), String(sha256), ...(code ? [code] : []));
+  return row ? itemRow(row) : null;
+}
+
 // Generous for markdown - a deck is text; its pictures live beside it.
 const MAX_DECK_SOURCE_BYTES = 2 * 1024 * 1024;
 
@@ -482,6 +517,7 @@ function usage(db) {
 
 module.exports = {
   MAX_UPLOAD_BYTES, UPLOADABLE, uploadKindFor, mediaPath,
+  DECK_MEDIA_GROUP, mayAddDeckMedia, findSameMedia,
   listItems, getItem, listCourses, mayReadMedia, courseIdFor,
   addItem, setItemFiles, findDuplicate, storeUpload, rememberMedia, forgetMediaIfUnused,
   renameItem, deleteItem, mayDelete, usage,

@@ -20,19 +20,24 @@ const chk = (label, cond) => {
 
 console.log('-- section parsing in deck.js (parseSections) --');
 {
+  // One <svg> per slide, holding its <section> (deck.js reads each slide's
+  // own section, not every section in the deck - see slideSections).
   const makeMockRoot = (slides) => ({
     querySelectorAll: (sel) => {
-      if (sel === 'svg[data-marpit-svg] section') {
-        return slides.map((s) => ({
-          querySelector: (subSel) => {
-            if (subSel === 'h1, h2') {
-              if (s.h1) return { tagName: 'H1', textContent: s.h1 };
-              if (s.h2) return { tagName: 'H2', textContent: s.h2 };
+      if (sel === 'svg[data-marpit-svg]') {
+        return slides.map((s) => {
+          const section = {
+            querySelector: (subSel) => {
+              if (subSel === 'h1, h2') {
+                if (s.h1) return { tagName: 'H1', textContent: s.h1 };
+                if (s.h2) return { tagName: 'H2', textContent: s.h2 };
+                return null;
+              }
               return null;
-            }
-            return null;
-          },
-        }));
+            },
+          };
+          return { children: [], querySelector: (subSel) => (subSel === 'section' ? section : null) };
+        });
       }
       return [];
     },

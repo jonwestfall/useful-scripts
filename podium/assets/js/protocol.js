@@ -455,6 +455,14 @@ function normalizeItem(item) {
     // Fragment count per slide, for PowerPoint-style progressive bullet
     // reveal. Absent or short arrays just mean "no fragments on this slide".
     copy.fragments = Array.isArray(copy.fragments) ? copy.fragments.map((n) => Math.max(0, Number(n) || 0)) : [];
+    // Which slides are video slides (Issue #226), so a controller can offer
+    // the transport on one; the display finds the video itself. A deck's
+    // video only plays when someone presses Play - unlike a video item,
+    // arriving on the slide is not "start".
+    copy.videoSlides = Array.isArray(copy.videoSlides)
+      ? [...new Set(copy.videoSlides.map((n) => Math.trunc(Number(n))).filter((n) => Number.isInteger(n) && n >= 0))].slice(0, 500)
+      : [];
+    copy.playing = copy.playing === true;
   }
   if (copy.type === 'set') {
     copy.mode = copy.mode === 'random' ? 'random' : 'sequential';
@@ -639,15 +647,28 @@ const MARP_DIRECTIVES = new Set([
   'marp', 'theme', 'style', 'headingDivider', 'lang', 'title', 'description', 'author', 'image',
   'keywords', 'url', 'size', 'math', 'paginate', 'header', 'footer', 'class', 'transition',
   'backgroundColor', 'backgroundImage', 'backgroundPosition', 'backgroundRepeat', 'backgroundSize', 'color',
+  // Podium's own (Issue #226): a video slide, which a viewer plays too.
+  'video', 'videoStart',
 ]);
 
+// --- things that play ----------------------------------------------------------
+
+/** Item types that are themselves something playing: a clip, a track, a stream. */
+export const MEDIA_TYPES = ['video', 'audio', 'youtube', 'stream'];
+
+/** Whether a deck is on one of its video slides (Issue #226). */
+export function deckVideoHere(item) {
+  return item?.type === 'deck' && Array.isArray(item.videoSlides) && item.videoSlides.includes(item.slide || 0);
+}
+
 /**
- * A Marp deck as a guest viewer may have it (Issue #150): the slides, without
- * the presenter's notes. Notes are HTML comments in the source, and the only
- * copy a viewer can get is the one the display sends it - so this is where
- * they come out. Directive comments (`<!-- _class: lead -->`) stay, or the
- * slides would not render the way the room sees them.
+ * Whether an item has a transport right now: Play, Pause, the scrubber. A
+ * clip, a track or a stream always; a deck while it is on a video slide.
  */
+export function isPlayable(item) {
+  return MEDIA_TYPES.includes(item?.type) || deckVideoHere(item);
+}
+
 // --- keeping marked-up screens (Issues #182, #183) ---------------------------
 
 /**
@@ -667,7 +688,9 @@ export function liveInkSurfaces(state) {
     out.push({
       panel, key, item,
       type: item?.type || 'black',
-      playing: item?.playing !== false,
+      // A deck plays only when told to (a video slide, Issue #226).
+      playing: item?.type === 'deck' ? item.playing === true : item?.playing !== false,
+      video: item?.type === 'video' || deckVideoHere(item),
       inked: strokes.length > 0,
       // Enough to tell "the same marks as last time" from new ones.
       sig: `${strokes.length}:${points}`,
@@ -700,7 +723,7 @@ export function inkCapturesFor(before, after, { autoSave = false, saved = new Ma
     const now = after.find((s) => s.panel === was.panel);
     const base = { panel: was.panel, key: was.key, item: was.item, sig: was.sig };
     if (now && now.key === was.key) {
-      if (was.type === 'video' && !was.playing && now.playing) out.push({ ...base, reason: 'resume', clearInk: true });
+      if (was.video && !was.playing && now.playing) out.push({ ...base, reason: 'resume', clearInk: true });
       continue;
     }
     if (autoSave && saved.get(was.key) !== was.sig) out.push({ ...base, reason: 'leave', clearInk: false });
@@ -772,6 +795,13 @@ export function deckStep(pos, dir, fragments, slideCount) {
   return { slide, step };
 }
 
+/**
+ * A Marp deck as a guest viewer may have it (Issue #150): the slides, without
+ * the presenter's notes. Notes are HTML comments in the source, and the only
+ * copy a viewer can get is the one the display sends it - so this is where
+ * they come out. Directive comments (`<!-- _class: lead -->`) stay, or the
+ * slides would not render the way the room sees them.
+ */
 export function stripDeckNotes(source) {
   return String(source || '').replace(/<!--([\s\S]*?)-->/g, (whole, body) => {
     const lines = body.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -1501,6 +1531,7 @@ function applyOp(state, cmd) {
       if (!item) return false;
       const step = cmd.dir === 'prev' ? -1 : 1;
       if (item.type === 'deck') {
+        const was = item.slide || 0;
         const last = Math.max(0, (item.slideCount || 1) - 1);
         const fragsFor = (i) => (item.fragments && item.fragments[i]) || 0;
         if (cmd.dir === 'goto') {
@@ -1513,6 +1544,9 @@ function applyOp(state, cmd) {
           item.slide = pos.slide;
           item.step = pos.step;
         }
+        // Leaving a video slide pauses its video (Issue #226); the display
+        // remembers where, so coming back finds it there.
+        if (item.slide !== was) item.playing = false;
       } else if (item.type === 'imagedeck') {
         const last = Math.max(0, (item.images?.length || 1) - 1);
         const target = cmd.dir === 'goto' ? Number(cmd.value) || 0 : (item.slide || 0) + step;

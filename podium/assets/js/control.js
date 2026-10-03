@@ -7,10 +7,10 @@ import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadC
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, workingItem, PANEL_COUNT, panelOnScreen, deckStep,
   inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
-  detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse } from './protocol.js';
+  detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse, isPlayable, deckVideoHere } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
 import { createCameraSender, createMicSender } from './rtc.js';
-import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill } from './deck.js';
+import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill, videoSlides } from './deck.js';
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
@@ -107,8 +107,9 @@ const send = (cmd) => {
 // protocol.js). And whether anything at all is waiting for TAKE: cued
 // content, a cued layout, or ink held back from the room.
 const workItem = () => workingItem(state);
-// What has a transport: play/pause on the Now tab, Space, the dock's Play slot.
-const MEDIA_TYPES = ['video', 'audio', 'youtube', 'stream'];
+// What has a transport (play/pause on the Now tab, Space, the dock's Play
+// slot) is isPlayable() in protocol.js: a clip, a track, a stream, or a deck
+// on one of its video slides (Issue #226).
 const hasCue = () => !!state.preview || state.previewLayout !== null || (state.ink?.held || 0) > 0;
 const heldInkOnly = () => !state.preview && state.previewLayout === null && (state.ink?.held || 0) > 0;
 
@@ -271,6 +272,7 @@ async function stageDeck({ source, name, src }) {
     step: 0,
     slideCount: deck.count,
     fragments: deck.fragments,
+    videoSlides: videoSlides(deck),
   });
   return deck;
 }
@@ -404,16 +406,23 @@ async function loadLibrary() {
   renderLibrary();
 }
 
+// The pictures and videos put on deck slides (Issue #226) are library items
+// too, but not what you reach for mid-lecture: kept out of the tiles until
+// asked for, or until the filter finds them.
+let showDeckMedia = false;
+
 function renderLibrary() {
   const filter = $('#lib-filter').value.trim().toLowerCase();
   const grid = $('#library');
   grid.replaceChildren();
   const groups = new Map();
+  let hiddenDeckMedia = 0;
   for (const item of library) {
     // The group is in the haystack so that typing a course code narrows the
     // library to that course - the "filter, not a mode switch" the server-side
     // library was designed around (see VPS.md).
-    if (filter && !`${item.title} ${item.type} ${item.group || ''} ${item.note || ''}`.toLowerCase().includes(filter)) continue;
+    if (filter && !`${item.title} ${item.type} ${item.group || ''} ${item.note || ''} ${item.deckMedia || ''}`.toLowerCase().includes(filter)) continue;
+    if (item.deckMedia && !filter && !showDeckMedia) { hiddenDeckMedia++; continue; }
     if (!groups.has(item.group)) groups.set(item.group, []);
     groups.get(item.group).push(item);
   }
@@ -491,6 +500,16 @@ function renderLibrary() {
     grid.append(row);
   }
   if (!grid.children.length) grid.append(el('p', { class: 'empty' }, 'Nothing matches.'));
+  if (hiddenDeckMedia || (showDeckMedia && !filter && library.some((item) => item.deckMedia))) {
+    grid.append(el('button', {
+      id: 'lib-deck-media',
+      class: 'linkish lib-deck-media',
+      type: 'button',
+      onclick: () => { showDeckMedia = !showDeckMedia; renderLibrary(); },
+    }, showDeckMedia
+      ? 'Hide the pictures and videos used in decks'
+      : `Show the pictures and videos used in decks (${hiddenDeckMedia})`));
+  }
 }
 
 // --- library thumbnails (Issue #192) ------------------------------------------
@@ -625,6 +644,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
       const deck = await renderDeckSource(source, id);
       row.slideCount = deck.count;
       row.fragments = deck.fragments;
+      row.videoSlides = videoSlides(deck);
     } catch { /* best-effort - the item still works without a slide count */ }
   }
 
@@ -2388,9 +2408,9 @@ function renderNow() {
   renderNowPreview();
   // Paging and PDF zoom follow the cue while frozen (Issue #174), the same
   // as the Slides tab; transport stays on what is actually playing.
-  const item = MEDIA_TYPES.includes(focusedItem(state)?.type) ? focusedItem(state) : workItem();
+  const item = isPlayable(focusedItem(state)) ? focusedItem(state) : workItem();
   const type = item?.type;
-  const isMedia = MEDIA_TYPES.includes(type);
+  const isMedia = isPlayable(item);
   // A live stream (Issue #175) plays and pauses; there is nothing to scrub,
   // restart or loop, and it has its own Video/Sound switch instead.
   const isStream = type === 'stream';
@@ -3665,7 +3685,7 @@ function updatePadMirror() {
 // paused: following a playing video here would be a second video decoding
 // on the iPad for nothing.
 function showPausedFrame(renderer, item) {
-  if (!renderer?.syncTo || item?.type !== 'video') return;
+  if (!renderer?.syncTo || (item?.type !== 'video' && !deckVideoHere(item))) return;
   const live = focusedItem(state);
   if (!live || live.key !== item.key || telemetry.playing || !Number.isFinite(telemetry.time)) return;
   const last = pausedFrameAt.get(renderer);
@@ -6801,8 +6821,10 @@ document.addEventListener('keydown', (ev) => {
 
   // Space plays or pauses a video, audio clip or YouTube embed the same way
   // it does in every other media player - checked here, above the "has
-  // pages" guard below, because a playable item is never a paged one.
-  if (ev.key === ' ' && MEDIA_TYPES.includes(focusedItem(state)?.type)) {
+  // pages" guard below. Not on a deck's video slide (Issue #226): in a deck
+  // Space is Next, and a presenter who pages with it must not find it
+  // turned into Play on one slide. The transport and the dock play those.
+  if (ev.key === ' ' && isPlayable(focusedItem(state)) && focusedItem(state).type !== 'deck') {
     ev.preventDefault();
     executeSlotAction('play');
     return;
@@ -7224,7 +7246,7 @@ function renderSlotButton(btn, slotType) {
 
     case 'play': {
       const item = focusedItem(state);
-      const isMedia = MEDIA_TYPES.includes(item?.type);
+      const isMedia = isPlayable(item);
       btn.hidden = !isMedia;
       btn.textContent = telemetry.playing ? '⏸' : '▶';
       btn.title = telemetry.playing ? 'Pause media' : 'Play media';

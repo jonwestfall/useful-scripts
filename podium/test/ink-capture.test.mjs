@@ -1,7 +1,7 @@
 // Run with: node podium/test/ink-capture.test.mjs
 // Issues #182 and #183: which marked-up screens the display keeps a photo
 // of, decided by comparing each visible panel before and after a command.
-import { initialState, applyCommand, liveInkSurfaces, inkCapturesFor, inkSurfaceKey } from '../assets/js/protocol.js';
+import { initialState, applyCommand, liveInkSurfaces, inkCapturesFor, inkSurfaceKey, isPlayable, deckVideoHere } from '../assets/js/protocol.js';
 
 let ok = true;
 const chk = (label, cond) => {
@@ -93,6 +93,41 @@ console.log('-- a paused video marked up and played again (#182) --');
   const b = liveInkSurfaces(clean);
   clean.program = video(true);
   chk('a paused video with no marks plays on without a photo', inkCapturesFor(b, liveInkSurfaces(clean), { autoSave: true }).length === 0);
+}
+
+console.log('-- a deck\'s video slide (Issue #226) --');
+{
+  const state = initialState();
+  applyCommand(state, { op: 'stage', where: 'program', item: { type: 'deck', deckId: 'd2', slideCount: 4, videoSlides: [1, '2', -1, 'x'] } });
+  const item = state.program;
+  chk('a staged deck keeps which slides are video slides, and only real ones', JSON.stringify(item.videoSlides) === '[1,2]');
+  chk('and is not playing to begin with', item.playing === false);
+  chk('slide 1 of a deck is not a video slide', !deckVideoHere(item) && !isPlayable(item));
+  applyCommand(state, { op: 'nav', dir: 'next' });
+  chk('on slide 2 it is', deckVideoHere(state.program) && isPlayable(state.program));
+  chk('arriving does not start it', state.program.playing === false);
+  applyCommand(state, { op: 'media', action: 'play' });
+  chk('Play plays it', state.program.playing === true);
+  applyCommand(state, { op: 'media', action: 'seek', value: 30 });
+  chk('the scrubber seeks it', state.program.seekTo === 30 && state.program.seekNonce === 1);
+  applyCommand(state, { op: 'nav', dir: 'next' });
+  chk('moving to another slide pauses it', state.program.playing === false);
+  chk('a video, a track and a stream are always playable', ['video', 'audio', 'youtube', 'stream'].every((type) => isPlayable({ type })));
+  chk('a picture never is', !isPlayable({ type: 'image' }));
+
+  const marked = initialState();
+  marked.program = { ...deck(1), videoSlides: [1], playing: false };
+  draw(marked);
+  const before = liveInkSurfaces(marked);
+  marked.program = { ...marked.program, playing: true };
+  const plans = inkCapturesFor(before, liveInkSurfaces(marked), { autoSave: false });
+  chk('playing a marked-up paused video slide keeps the frame and its marks (#182)', plans.length === 1 && plans[0].reason === 'resume' && plans[0].clearInk);
+  const plain = initialState();
+  plain.program = { ...deck(0), videoSlides: [1], playing: false };
+  draw(plain);
+  const b = liveInkSurfaces(plain);
+  plain.program = { ...plain.program, playing: true };
+  chk('an ordinary slide is never "resumed"', inkCapturesFor(b, liveInkSurfaces(plain), { autoSave: false }).length === 0);
 }
 
 if (!ok) process.exit(1);

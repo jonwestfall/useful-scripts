@@ -63,7 +63,7 @@ Features marked **🖥️** need Podium's own self-hosted server. Everything els
 ### 🎬 [Presenting](docs/features.md#part-1--presenting)
 - **Freeze is a cue.** Freeze holds the projector while you open and page through a deck, scrub a video, find a PDF page, or mark something up. **TAKE** cuts it live (ink and all), **Swap** trades live and cued, and **Blank** blacks out the room with everything still loaded.
 - **Now / Next / Notes.** A confidence monitor on your device, with a searchable thumbnail grid. Hold a thumbnail for a pop-out preview.
-- **Marp slides in Markdown**, with KaTeX math, progressive builds, presenter notes and custom CSS themes, plus a **deck editor** with a live projector preview.
+- **Marp slides in Markdown**, with KaTeX math, progressive builds, presenter notes and custom CSS themes, plus a **deck editor** with a live projector preview, pictures and **video slides** 🖥️.
 - **PDFs, with projector zoom and pan.** PowerPoint uploads are converted to PDF automatically 🖥️.
 - **A library of anything:** decks, picture decks, HTML slides, video, audio, YouTube, live streams, photos, web pages, text signs, QR codes, whiteboards, chalkboards and timers. You can also paste any link or upload a photo.
 - **Split screen and picture-in-picture** (single, side-by-side, stacked, 3-up, quad, or a PiP inset). Each panel keeps its own item, zoom and ink.

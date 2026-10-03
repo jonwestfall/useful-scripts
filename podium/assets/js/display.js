@@ -22,7 +22,7 @@ import {
   initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, PANEL_COUNT, timerById, BUILD, VERSION, versionStamp,
   inkTargetKey, isHeldInkKey, heldInkCount, HELD_INK_PREFIX,
   watermarkForNewLecture, viewerState, viewChannel, stripDeckNotes,
-  MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS, clearStaleMusic, liveInkSurfaces, inkCapturesFor,
+  MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS, clearStaleMusic, liveInkSurfaces, inkCapturesFor, MEDIA_TYPES,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES } from './renderers.js';
 import { encodeToFit } from './store.js';
@@ -923,7 +923,8 @@ function contentIsSounding() {
   return activePanels().some((panel) => {
     // A stream shown as video only is muted (Issue #175) - not competing.
     if (panel.item?.type === 'stream' && panel.item.show === 'video') return false;
-    if (!['video', 'audio', 'youtube', 'stream'].includes(panel.item?.type)) return false;
+    // A deck counts while its video slide plays (Issue #226).
+    if (!MEDIA_TYPES.includes(panel.item?.type) && panel.item?.type !== 'deck') return false;
     return !!panel.renderer?.telemetry?.().playing;
   });
 }
@@ -2891,7 +2892,7 @@ async function standDown() {
   // this keeps the promise above - Go live picks the lecture straight back
   // up, with the clip where the room left it rather than back at the start.
   for (const item of [state.program, ...state.panels]) {
-    if (item && ['video', 'audio', 'youtube', 'stream'].includes(item.type)) item.playing = false;
+    if (item && (MEDIA_TYPES.includes(item.type) || item.type === 'deck')) item.playing = false;
   }
   commit();
   queueRecordingTransition(stopRecording);

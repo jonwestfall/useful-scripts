@@ -411,6 +411,26 @@ console.log('\n-- the library: editing a deck (Issue #226) --');
   library.deleteItem(db, admin, own.id);
 }
 
+console.log('\n-- the library: a deck\'s pictures and videos (Issue #226) --');
+{
+  ok('a course owner may file deck media under the course', library.mayAddDeckMedia(db, owner, 'psy415') === true);
+  ok('so may an admin', library.mayAddDeckMedia(db, admin, 'PSY415') === true);
+  ok('a TA may not - they cannot edit the course\'s decks either', library.mayAddDeckMedia(db, ta, 'psy415') === false);
+  ok('anyone may file it under no course', library.mayAddDeckMedia(db, ta, '') === true);
+  const { sha256, bytes } = await library.storeUpload(dataDir, Readable.from([Buffer.from('a picture')]));
+  const picture = library.rememberMedia(db, owner, { sha256, bytes, contentType: 'image/png' });
+  const first = library.addItem(db, owner, { courseCode: 'psy415', kind: 'image', title: 'chart', filename: 'chart.png', mediaId: picture, group: library.DECK_MEDIA_GROUP, props: { deckMedia: 'Week 1' } });
+  ok('it is kept with the deck it is for', first.deckMedia === 'Week 1' && first.group === 'Deck media');
+  ok('the same picture again, for the same course, is that item',
+    library.findSameMedia(db, owner, { kind: 'image', sha256, courseCode: 'PSY415' })?.id === first.id);
+  ok('but not for no course - that would show a course picture to everyone',
+    library.findSameMedia(db, owner, { kind: 'image', sha256, courseCode: '' }) === null);
+  ok('nor as another kind', library.findSameMedia(db, owner, { kind: 'video', sha256, courseCode: 'psy415' }) === null);
+  ok('nor for someone who cannot see it', library.findSameMedia(db, outsider, { kind: 'image', sha256, courseCode: 'psy415' }) === null);
+  library.deleteItem(db, admin, first.id);
+  ok('nor once it has been removed', library.findSameMedia(db, owner, { kind: 'image', sha256, courseCode: 'psy415' }) === null);
+}
+
 console.log('\n-- the library: who may remove --');
 
 ok('the person who uploaded it may', library.mayDelete(db, owner, forCourse) === true);

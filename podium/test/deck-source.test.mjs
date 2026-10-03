@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import {
   parseDeck, serializeDeck, moveSlide, duplicateSlide, deleteSlide, insertSlide,
   setSlideDirective, setSlideBuild, setSlideNotes, setFrontMatter, slideAt, checkDeck, commentsIn,
+  setSlideVideo, parseTimecode, formatTimecode, PODIUM_DIRECTIVES,
 } from '../assets/js/deck-source.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -24,12 +25,18 @@ const chk = (label, cond) => {
 for (const name of ['HTMLElement', 'HTMLHeadingElement', 'HTMLSpanElement']) globalThis[name] ??= class {};
 globalThis.customElements ??= { define() {}, get() {} };
 const { Marp } = await import('../assets/vendor/marp.esm.js');
-const marpSlides = (md) => {
+// Configured as deck.js configures it, Podium's own directives included.
+const newMarp = () => {
   const marp = new Marp({ inlineSVG: true, html: true, math: 'katex' });
+  for (const key of PODIUM_DIRECTIVES) marp.customDirectives.local[key] = () => ({});
+  return marp;
+};
+const marpSlides = (md) => {
+  const marp = newMarp();
   return (marp.render(md).html.match(/<svg data-marpit-svg/g) || []).length;
 };
 const marpNotes = (md) => {
-  const marp = new Marp({ inlineSVG: true, html: true, math: 'katex' });
+  const marp = newMarp();
   return marp.render(md).comments.map((list) => list.join('\n\n').trim());
 };
 
@@ -186,6 +193,44 @@ console.log('-- checks --');
   chk('relative paths are fine in a plain file', !checkDeck(md, { destination: 'file' }).some((f) => /relative path/.test(f.message)));
   chk('each finding knows its slide and where it is', found.every((f) => f.slide === 0 && Number.isInteger(f.offset)));
   chk('a headingDivider deck says why slide moves are off', checkDeck('---\nheadingDivider: 2\n---\n# A\n## B').some((f) => /headingDivider/.test(f.message)));
+}
+
+console.log('-- video slides (Phase 2) --');
+{
+  chk('1:05 is 65 seconds', parseTimecode('1:05') === 65);
+  chk('1:02:03 is 3723 seconds', parseTimecode('1:02:03') === 3723);
+  chk('a bare number is seconds', parseTimecode('90') === 90 && parseTimecode('2.5') === 2.5);
+  chk('nonsense is 0', parseTimecode('soon') === 0 && parseTimecode('') === 0 && parseTimecode(undefined) === 0);
+  chk('written back as m:ss', formatTimecode(65) === '1:05' && formatTimecode(0) === '0:00' && formatTimecode(3723) === '1:02:03');
+
+  const md = '---\nmarp: true\n---\n\n# One\n\n---\n\n## Two\n\n<!-- What to say. -->\n\n---\n\n# Three\n';
+  const made = setSlideVideo(md, 1, { src: '/media/abc/clip.webm', start: 65, poster: '/media/def/clip-poster.jpg' });
+  const slide = parseDeck(made).slides[1];
+  chk('a video slide knows its video', slide.video?.src === '/media/abc/clip.webm');
+  chk('and where it starts', slide.video?.start === 65);
+  chk('its poster is a background picture', slide.media.some((m) => m.background && m.src === '/media/def/clip-poster.jpg'));
+  chk('the directives are directives, not presenter notes', slide.notes === 'What to say.');
+  chk('Marp agrees: the slide\'s notes are only the note', marpNotes(made)[1] === 'What to say.');
+  chk('and makes no extra slide of it', marpSlides(made) === 3);
+  chk('the other slides are untouched', parseDeck(made).slides[0].raw === parseDeck(md).slides[0].raw && parseDeck(made).slides[2].raw === parseDeck(md).slides[2].raw);
+  chk('a video slide round-trips', serializeDeck(parseDeck(made)) === made);
+  chk('the video is only on its own slide', parseDeck(made).slides[2].video === null);
+  chk('written the way the spec shows it', /<!-- _video: \/media\/abc\/clip\.webm -->\n<!-- _videoStart: "1:05" -->\n!\[bg contain\]\(\/media\/def\/clip-poster\.jpg\)/.test(made));
+
+  const again = setSlideVideo(made, 1, { src: '/media/abc/clip.webm', start: 0, poster: '/media/def/clip-poster.jpg' });
+  chk('setting it again does not add a second poster', parseDeck(again).slides[1].media.length === 1);
+  chk('a start of 0 is no _videoStart', parseDeck(again).slides[1].video.start === 0 && !again.includes('_videoStart'));
+  const removed = setSlideVideo(made, 1, {});
+  chk('removing it takes the directives away', parseDeck(removed).slides[1].video === null && !removed.includes('_video'));
+  chk('and leaves the poster as a plain picture', parseDeck(removed).slides[1].media.length === 1);
+
+  chk('a plain `video:` (not `_video:`) is no video slide', parseDeck('<!-- video: /media/a/b.webm -->\n# A').slides[0].video === null);
+
+  const checks = (text, opts) => checkDeck(text, opts).map((f) => f.message).join('\n');
+  chk('a video slide with no poster is flagged', /no poster/.test(checks('<!-- _video: /media/a/b.webm -->\n# A')));
+  chk('one with a poster is not', !/no poster/.test(checks(made)));
+  chk('a relative video address is flagged', /not a full address/.test(checks('<!-- _video: clip.webm -->\n![bg](/media/p.jpg)')));
+  chk('an http: video on an https: page is flagged', /is http:/.test(checks('<!-- _video: http://example.org/v.mp4 -->\n![bg](/media/p.jpg)', { pageProtocol: 'https:' })));
 }
 
 if (!ok) process.exit(1);

@@ -839,6 +839,9 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
   chk('a deck reaches a viewer without the presenter\'s notes', !bare.includes('exam moved') && !bare.includes('Answer is B'));
   chk('but with the directives the slides need to look right',
     bare.includes('<!-- _class: lead -->') && bare.includes('_paginate: false') && bare.includes('# Week 6') && bare.includes('## H0'));
+  const video = stripDeckNotes('<!-- _video: /media/a/clip.webm -->\n<!-- _videoStart: "0:05" -->\n![bg contain](/media/b/p.jpg)\n<!-- Say why. -->');
+  chk('and a video slide\'s directives, so a viewer plays it too (Issue #226)',
+    video.includes('_video: /media/a/clip.webm') && video.includes('_videoStart') && !video.includes('Say why'));
 
   chk('no view channel until a display has a view id and key', viewChannel({ room: 'r', passphrase: 'p' }) === null);
   const ch = viewChannel({ room: 'psy415', passphrase: 'p', viewId: 'Abc123xyz9', viewKey: 'k' });
