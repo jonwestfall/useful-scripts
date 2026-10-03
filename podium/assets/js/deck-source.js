@@ -541,7 +541,10 @@ export function checkDeck(md, { destination = 'file', pageProtocol = '' } = {}) 
     if (fences % 2) add(slide.index, base, 'warning', 'A code block on this slide is never closed (```), so the rest of the deck is swallowed into it.');
   }
   const bytes = new TextEncoder().encode(text).length;
-  if (destination === 'file' && bytes > RELAY_DECK_BYTES) {
+  // A file may be sent from a controller, and a deck inside a plan always
+  // crosses the relay to reach the projector; library and content decks are
+  // fetched from the server and have no such limit.
+  if ((destination === 'file' || destination === 'plan') && bytes > RELAY_DECK_BYTES) {
     add(0, 0, 'info', `This deck is ${Math.round(bytes / 1024)} KB. Sent from a controller it must be under ${RELAY_DECK_BYTES / 1024} KB; from the library or the server it can be any size.`);
   }
   if (deck.headingDivider) {

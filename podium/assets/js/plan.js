@@ -33,6 +33,9 @@ let selectedId = null;
 let serverLibraryUpload = false;
 let saveTimer = null;
 let preview = { renderer: null, key: null, slide: 0, step: 0, count: 0, fragments: [], builds: [] };
+// Bumped whenever the deck editor (Issue #226) changes a deck this page shows,
+// so the preview's render (cached by id) is made again rather than reused.
+let deckEpoch = 0;
 // The server row this in-memory plan maps to, if any - set after pulling one
 // from the server or pushing one there, cleared by anything that swaps the
 // plan out for a different one (a new lecture, a different local lecture, an
@@ -426,6 +429,7 @@ function renderEditor() {
   }), 'Optional. Left blank, the iPad labels it from its contents.'));
 
   for (const spec2 of spec.fields) fields.append(fieldFor(item, spec2));
+  if (item.type === 'deck') fields.append(deckEditorField(item));
 
   fields.append(field('Planned duration', el('div', { class: 'inline', style: 'align-items: center;' },
     el('input', {
@@ -460,6 +464,107 @@ function renderEditor() {
 
   renderPreview({ remount: true });
 }
+
+// The deck editor (Issue #226) is a page of its own, opened in a new tab from
+// here. Where the deck lives decides how it is opened, and so where Save puts
+// it back: the library deck itself, content/decks for an administrator, or -
+// for a deck carried inside this plan - back into this plan, through this tab
+// (see the podium-decks channel below).
+function deckEditorField(item) {
+  const base = { plan: plan.id, item: item.id };
+  const open = (extra) => window.open(`deck.html?${new URLSearchParams({ ...extra, ...base })}`, '_blank');
+  const libraryId = /^\/media\/deck\/(\d+)\//.exec(item.src || '')?.[1];
+  const contentName = /^content\/decks\/(.+)$/.exec(item.src || '')?.[1];
+  const edit = el('button', {
+    type: 'button',
+    onclick: () => {
+      if (item.asset) open({ embedded: '1' });
+      else if (libraryId) open({ library: libraryId });
+      else if (contentName && me?.isAdmin) open({ content: decodeURIComponent(contentName) });
+      else open({ src: item.src });
+    },
+  }, 'Edit this deck');
+  edit.hidden = !item.asset && !item.src;
+  const fresh = el('button', {
+    type: 'button',
+    onclick: () => {
+      if (serverLibraryUpload) {
+        // Saved into the library from the editor, which then points this
+        // item at it (deck-linked, below).
+        open({ title: item.title || plan.title || '', course: plan.course || '' });
+        return;
+      }
+      // No server to save to: the new deck lives inside this plan.
+      const id = uid(10);
+      plan.assets[id] = { name: 'deck.md', mime: 'text/markdown', data: newDeckMarkdown(item.title || plan.title || 'Untitled deck') };
+      item.asset = id;
+      item.src = '';
+      touch();
+      renderOrder();
+      renderEditor();
+      open({ embedded: '1' });
+    },
+  }, item.asset || item.src ? 'Start a new deck instead' : 'Write a new deck');
+  return field('Deck editor', el('div', { class: 'inline' }, edit, fresh),
+    'Opens in a new tab: the markdown beside the slides as the class will see them. Keep this lecture open here while you edit a deck that lives inside it.');
+}
+
+function newDeckMarkdown(title) {
+  const safe = String(title).replace(/[\r\n]+/g, ' ').trim() || 'Untitled deck';
+  return `---\nmarp: true\npaginate: true\ntitle: ${JSON.stringify(safe)}\n---\n\n# ${safe}\n\n---\n\n## A first slide\n\n- A point worth making\n`;
+}
+
+// What the deck editor asks of, and tells, the planner tab that opened it.
+const deckChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('podium-decks') : null;
+deckChannel?.addEventListener('message', (ev) => {
+  const msg = ev.data || {};
+  if (msg.from !== 'editor') return;
+  const reply = (body) => deckChannel.postMessage({ ...body, nonce: msg.nonce, from: 'planner' });
+  const itemHere = () => (plan && plan.id === msg.planId ? plan.items.find((i) => i.id === msg.itemId) : null);
+
+  if (msg.type === 'plan-deck-get') {
+    const item = itemHere();
+    if (!item) { if (plan?.id === msg.planId) reply({ error: 'That deck is no longer in this lecture.' }); return; }
+    const asset = plan.assets[item.asset];
+    if (!asset) { reply({ error: 'That item does not carry a deck inside the plan.' }); return; }
+    reply({ markdown: asset.data, name: asset.name, title: item.title || '', planTitle: plan.title || '', course: plan.course || '' });
+    return;
+  }
+  if (msg.type === 'plan-deck-put') {
+    const item = itemHere();
+    if (!item) { if (plan?.id === msg.planId) reply({ error: 'That deck is no longer in this lecture.' }); return; }
+    if (!plan.assets[item.asset]) {
+      const id = uid(10);
+      plan.assets[id] = { name: 'deck.md', mime: 'text/markdown', data: '' };
+      item.asset = id;
+    }
+    plan.assets[item.asset].data = String(msg.markdown ?? '');
+    item.src = '';
+    deckEpoch++;
+    touch();
+    renderOrder();
+    if (selectedId === item.id) renderEditor();
+    reply({ ok: true });
+    return;
+  }
+  if (msg.type === 'deck-linked') {
+    const item = itemHere();
+    if (!item) return;
+    item.src = msg.src;
+    item.asset = '';
+    if (!item.title) item.title = msg.title || '';
+    deckEpoch++;
+    touch();
+    renderOrder();
+    if (selectedId === item.id) renderEditor();
+    return;
+  }
+  if (msg.type === 'deck-saved') {
+    deckEpoch++;
+    const item = selected();
+    if (item?.type === 'deck' && item.src === msg.src) renderPreview({ remount: true });
+  }
+});
 
 function field(label, control, hint) {
   return el('div', { class: 'field' },
@@ -790,7 +895,7 @@ function previewDeckSource(item) {
 function forPreview(item) {
   const staged = itemForStage(item);
   if (item.type === 'deck') {
-    return { ...staged, deckId: item.asset ? `asset:${item.asset}` : `src:${item.src}`, slide: preview.slide, step: preview.step };
+    return { ...staged, deckId: `${item.asset ? `asset:${item.asset}` : `src:${item.src}`}#e${deckEpoch}`, slide: preview.slide, step: preview.step };
   }
   if (item.type === 'timer') return { ...staged, timerId: item.timerId || plan.timers[0]?.id || '', label: item.label || '' };
   const id = assetIdOf(staged.src);
@@ -847,7 +952,7 @@ async function countDeck(item) {
       buildNote.hidden = true;
       return;
     }
-    const deck = await renderDeckSource(source, `count:${item.asset || item.src}`);
+    const deck = await renderDeckSource(source, `count:${item.asset || item.src}#e${deckEpoch}`);
     Object.assign(preview, { count: deck.count, fragments: deck.fragments || [], builds: deck.builds || [] });
     const slide = Math.min(preview.slide, Math.max(0, deck.count - 1));
     const steps = preview.fragments[slide] || 0;

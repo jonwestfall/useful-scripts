@@ -189,6 +189,27 @@ export async function applyPolyfill(root) {
   try { return browser(root); } catch { return null; }
 }
 
+/**
+ * The id of a deck that lives at an address (the server library, content/decks):
+ * the address plus a hash of what it holds right now (Issue #226). The deck
+ * editor can change what is at an address, and every cache keyed by a deck id -
+ * the renders here, each device's deckStore, the ink surfaces - must then see
+ * a different deck, not a stale copy of the old one. Unchanged text keeps the
+ * same id, so ink drawn on it earlier in a lecture is still there.
+ */
+export async function srcDeckId(src, source) {
+  return `src:${src}#v=${await deckId(source)}`;
+}
+
+/** The address inside a srcDeckId (or an older plain `src:` id), or null. */
+export function srcOfDeckId(id) {
+  const text = String(id || '');
+  if (!text.startsWith('src:')) return null;
+  const rest = text.slice(4);
+  const at = rest.lastIndexOf('#v=');
+  return at === -1 ? rest : rest.slice(0, at);
+}
+
 /** Stable id for a deck's content, so the same file is only shipped once. */
 export async function deckId(source) {
   const bytes = new TextEncoder().encode(source);
@@ -449,6 +470,15 @@ async function measureFits(html, css) {
 }
 
 const cache = new Map();
+
+/**
+ * Drop one render from the cache. Everywhere else a deck is rendered a few
+ * times a lecture and keeping them is the point; the deck editor (Issue #226)
+ * renders a new version every time typing pauses, and lets go of the last.
+ */
+export function forgetDeck(id) {
+  cache.delete(id);
+}
 
 export function parseSections(root) {
   const sections = [];

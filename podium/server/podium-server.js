@@ -725,7 +725,16 @@ function serveMedia(req, res, url) {
   const user = accounts.sessionUser(db, api.cookieToken(req)) || viewerPassHost(req)?.user || null;
   if (!user) { api.json(res, 401, { error: 'not signed in' }); return; }
 
-  const sha256 = url.pathname.split('/')[2] || '';
+  let sha256 = url.pathname.split('/')[2] || '';
+  // A deck's stable address (Issue #226): /media/deck/<item id>/<name> serves
+  // whatever that deck holds now. Who may read it is the item's own rule, and
+  // the ETag below is the current version's hash, so a browser that has the
+  // current text gets a 304 and one holding an older version gets the new one.
+  if (sha256 === 'deck') {
+    const item = library.getItem(db, user, url.pathname.split('/')[3]);
+    if (!item || item.type !== 'deck' || !item.version) { res.writeHead(404); res.end('not found'); return; }
+    sha256 = item.version;
+  }
   if (!/^[0-9a-f]{64}$/.test(sha256)) { res.writeHead(404); res.end('not found'); return; }
   if (!library.mayReadMedia(db, user, sha256)) { res.writeHead(404); res.end('not found'); return; }
 
@@ -752,7 +761,7 @@ function serveMedia(req, res, url) {
   // whichever type arrived first. Deriving it from the requested filename, and
   // only ever through the same allow-list the upload went through, gives each
   // item the type its own name implies.
-  const byName = library.uploadKindFor(decodeURIComponent(url.pathname.split('/')[3] || ''));
+  const byName = library.uploadKindFor(decodeURIComponent(url.pathname.split('/').at(-1) || ''));
 
   fs.stat(file, (err, info) => {
     if (err || !info.isFile()) { res.writeHead(404); res.end('not found'); return; }

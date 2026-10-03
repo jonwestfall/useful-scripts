@@ -2321,6 +2321,14 @@ function renderContentFiles() {
         class: 'admin-small',
         onclick: () => openFileEditor(file.category, file.filename),
       }, 'Edit') : null,
+      // A deck gets the real deck editor (Issue #226) - the markdown beside
+      // the slides - as well as the plain text box above.
+      file.category === 'decks' ? el('a', {
+        class: 'admin-small linkish',
+        href: `deck.html?${new URLSearchParams({ content: file.filename })}`,
+        target: '_blank',
+        rel: 'noopener',
+      }, 'Open in deck editor') : null,
       el('button', {
         type: 'button',
         class: 'admin-small',
