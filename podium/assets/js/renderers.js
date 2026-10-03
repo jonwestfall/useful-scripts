@@ -1224,11 +1224,28 @@ function renderDeck(item, opts) {
       color: #556; background: #fff; text-align: center; white-space: pre-wrap;
     }
     #status[hidden] { display: none; }
-  </style><div id="status">Loading deck…</div><div id="wrap"></div>`;
+    /* A video slide's video (Issue #226): over the slide's own box, outside
+       Marp's SVG - WebKit will not play a <video> inside a foreignObject
+       properly - and hidden until it has a frame, so the poster the slide
+       draws is what shows until then. */
+    :host { container-type: size; }
+    #video-box {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      width: min(100cqw, calc(100cqh * var(--aspect, 1.7778)));
+      height: min(100cqh, calc(100cqw / var(--aspect, 1.7778)));
+      display: none; pointer-events: none;
+    }
+    #video-box.is-on { display: block; }
+    #video-box video { width: 100%; height: 100%; object-fit: contain; background: transparent; visibility: hidden; }
+    #video-box video.has-frame { visibility: visible; }
+  </style><div id="status">Loading deck…</div><div id="wrap"></div><div id="video-box"><video playsinline></video></div>`;
 
   const statusEl = shadow.getElementById('status');
   const wrap = shadow.getElementById('wrap');
+  const videoBox = shadow.getElementById('video-box');
+  const video = videoBox.querySelector('video');
   let slides = [];
+  let videos = [];
   let mountedId = null;
   let polyfill = null;
   let generation = 0;
@@ -1254,7 +1271,54 @@ function renderDeck(item, opts) {
     current = { slide: clamped, step: step || 0 };
     slides.forEach((svg, i) => svg.classList.toggle('podium-on', i === clamped));
     applyStep(slides[clamped], current.step);
+    showVideo();
   }
+
+  // --- a video slide's video (Issue #226) ---
+  //
+  // One <video>, moved to whichever slide is showing. Each video slide keeps
+  // where it got to, so leaving one (which pauses it - see 'nav' in
+  // protocol.js) and coming back finds it where it was. Playback is driven
+  // the same way as a video item's: reconcile() is the only thing that
+  // presses play, from the item's playing / seekTo / seekNonce.
+  const times = new Map();
+  let videoSlide = -1;
+  let cueTo = 0;
+  let lastSeek = item.seekNonce || 0;
+  video.preload = 'auto';
+  video.muted = !!opts.preview;
+  video.addEventListener('loadedmetadata', () => { if (cueTo) { video.currentTime = cueTo; cueTo = 0; } });
+  video.addEventListener('loadeddata', () => video.classList.add('has-frame'));
+  if (!opts.preview) video.addEventListener('ended', () => opts.onEnded?.());
+
+  function showVideo() {
+    const wanted = videos[current.slide] || null;
+    if (wanted && videoSlide === current.slide) return;
+    if (videoSlide >= 0) { times.set(videoSlide, video.currentTime || 0); video.pause(); }
+    video.classList.remove('has-frame');
+    videoSlide = wanted ? current.slide : -1;
+    videoBox.classList.toggle('is-on', !!wanted);
+    if (!wanted) {
+      if (video.getAttribute('src')) { video.removeAttribute('src'); video.load(); }
+      return;
+    }
+    const box = (slides[current.slide]?.dataset.podiumBox || slides[current.slide]?.getAttribute('viewBox') || '')
+      .trim().split(/\s+/).map(Number).slice(-2);
+    if (box.length === 2 && box[0] > 0 && box[1] > 0) videoBox.style.setProperty('--aspect', String(box[0] / box[1]));
+    cueTo = times.has(current.slide) ? times.get(current.slide) : wanted.start || 0;
+    video.src = wanted.src;
+  }
+
+  // A blocked play() (an autoplay policy the Go Live tap did not satisfy)
+  // retries on the next tap or key anywhere, as a video item's does.
+  let retryArmed = false;
+  const playVideo = () => video.play().catch(() => {
+    if (retryArmed) return;
+    retryArmed = true;
+    const retry = () => { retryArmed = false; if (videoSlide >= 0) playVideo(); };
+    document.addEventListener('pointerdown', retry, { once: true, capture: true });
+    document.addEventListener('keydown', retry, { once: true, capture: true });
+  });
 
   let failedAt = 0;
   async function mount(it) {
@@ -1273,6 +1337,9 @@ function renderDeck(item, opts) {
       const deck = await renderDeckSource(source, it.deckId);
       if (mine !== generation) return;
       wrap.innerHTML = `<style>${deck.css}</style>${deck.html}`;
+      videos = deck.videos || [];
+      times.clear();
+      videoSlide = -1;
       // Before anything is shown, so an over-full slide arrives already shrunk
       // to fit rather than being seen to reflow on the projector.
       applyFits(wrap, deck.fits);
@@ -1316,8 +1383,28 @@ function renderDeck(item, opts) {
       }
       if ((it.slide || 0) !== current.slide || (it.step || 0) !== current.step) showSlide(it.slide, it.step);
     },
-    reconcile() {},
-    telemetry: noTelemetry,
+    reconcile(it, audio) {
+      if (videoSlide < 0) return;
+      if (opts.preview) { video.muted = true; video.pause(); return; }
+      video.volume = audio.muted ? 0 : audio.volume;
+      video.muted = audio.muted;
+      video.loop = !!it.loop;
+      if ((it.seekNonce || 0) !== lastSeek) {
+        lastSeek = it.seekNonce || 0;
+        if (it.seekTo !== undefined) video.currentTime = it.seekTo;
+        else if (it.seekBy !== undefined) video.currentTime = Math.max(0, video.currentTime + it.seekBy);
+      }
+      if (it.playing !== true && !video.paused) video.pause();
+      if (it.playing === true && video.paused) playVideo();
+    },
+    telemetry: () => (videoSlide < 0 ? noTelemetry()
+      : { time: video.currentTime || 0, duration: video.duration || 0, playing: !video.paused }),
+    // A copy on a controller (Issue #182) or a Guest View viewer catching up.
+    syncTo(seconds) {
+      if (videoSlide < 0 || !Number.isFinite(seconds)) return;
+      if (video.readyState >= 1) video.currentTime = Math.max(0, seconds);
+      else cueTo = Math.max(0, seconds);
+    },
     // The slide as it stands, mid-build included: the deck's own CSS and the
     // fragment rules travel with the clone, so a photo taken three bullets in
     // has three bullets on it.
@@ -1332,7 +1419,13 @@ function renderDeck(item, opts) {
       const img = await svgToImage(svg, `${cssForStandaloneSlide(deckCss)}\n${FRAGMENT_CSS}`, width, height);
       ctx.fillStyle = '#000';
       ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-      ctx.drawImage(img, rect.x + (rect.w - width) / 2, rect.y + (rect.h - height) / 2, width, height);
+      const slideRect = { x: rect.x + (rect.w - width) / 2, y: rect.y + (rect.h - height) / 2, w: width, h: height };
+      ctx.drawImage(img, slideRect.x, slideRect.y, width, height);
+      // The frame the video is on, over its poster - what the room is
+      // actually looking at, paused mid-clip with marks on it (#182).
+      if (videoSlide >= 0 && video.classList.contains('has-frame') && video.readyState >= 2) {
+        drawFitted(ctx, slideRect, video, video.videoWidth, video.videoHeight, 'contain');
+      }
       return true;
     },
     // The aspect ratio baked into the visible slide's own viewBox, so ink can
@@ -1346,6 +1439,8 @@ function renderDeck(item, opts) {
     destroy() {
       generation++;
       polyfill?.cleanup?.();
+      video.pause();
+      if (video.getAttribute('src')) { video.removeAttribute('src'); video.load(); }
       host.remove();
     },
   };

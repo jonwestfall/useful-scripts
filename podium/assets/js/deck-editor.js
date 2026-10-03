@@ -24,6 +24,7 @@ import { deckStep } from './protocol.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { downloadText } from './store.js';
 import * as DS from './deck-source.js';
+import { createDeckMedia } from './deck-media.js';
 import * as CM from '../vendor/codemirror.esm.js';
 
 const params = new URLSearchParams(location.search);
@@ -245,7 +246,8 @@ function marpCompletions(ctx) {
   const key = /(?:<!--\s*|^\s*)(_?)([A-Za-z]*)$/.exec(before);
   if (key && (/<!--/.test(before) || insideComment(ctx.state, ctx.pos) || inFrontMatter(ctx.pos))) {
     if (!key[2] && !ctx.explicit && !/<!--\s*_?$/.test(before)) return null;
-    const names = inFrontMatter(ctx.pos) ? [...DS.GLOBAL_DIRECTIVES, ...DS.LOCAL_DIRECTIVES] : DS.LOCAL_DIRECTIVES;
+    const names = inFrontMatter(ctx.pos) ? [...DS.GLOBAL_DIRECTIVES, ...DS.LOCAL_DIRECTIVES]
+      : key[1] === '_' ? [...DS.LOCAL_DIRECTIVES, ...DS.PODIUM_DIRECTIVES] : DS.LOCAL_DIRECTIVES;
     return {
       from: ctx.pos - key[2].length,
       options: names.map((name) => ({
@@ -336,6 +338,23 @@ function createEditor(initial) {
         ...CM.foldKeymap, ...CM.completionKeymap, CM.indentWithTab,
       ]),
       CM.EditorView.updateListener.of(onEditorUpdate),
+      // A pasted screenshot or a dropped photo or video goes to the library
+      // and the slide links to it - never into the markdown itself.
+      CM.EditorView.domEventHandlers({
+        paste(ev) {
+          if (!media.takeFiles(ev.clipboardData?.files)) return false;
+          ev.preventDefault();
+          return true;
+        },
+        drop(ev, editor) {
+          if (!ev.dataTransfer?.files?.length) return false;
+          const pos = editor.posAtCoords({ x: ev.clientX, y: ev.clientY });
+          if (pos !== null) editor.dispatch({ selection: { anchor: pos } });
+          if (!media.takeFiles(ev.dataTransfer.files)) return false;
+          ev.preventDefault();
+          return true;
+        },
+      }),
     ],
   });
   const editor = new CM.EditorView({ state, parent: $('#deck-code') });
@@ -531,7 +550,7 @@ function buildStrip() {
   });
   cells.addEventListener('dragover', (ev) => {
     const cell = ev.target.closest?.('.cell');
-    if (!cell || !ev.dataTransfer.types.includes('text/x-podium-slide')) return;
+    if (!cell || !(ev.dataTransfer.types.includes('text/x-podium-slide') || ev.dataTransfer.types.includes('Files'))) return;
     ev.preventDefault();
     stripShadow.querySelectorAll('.cell.drop').forEach((c) => c.classList.toggle('drop', c === cell));
     cell.classList.add('drop');
@@ -542,6 +561,12 @@ function buildStrip() {
     stripShadow.querySelectorAll('.cell.drop').forEach((c) => c.classList.remove('drop'));
     if (!cell) return;
     ev.preventDefault();
+    // A picture or video dropped on a slide goes on that slide.
+    if (ev.dataTransfer.files?.length) {
+      goToSlide(Number(cell.dataset.index));
+      if (!media.takeFiles(ev.dataTransfer.files)) warn('Only pictures and videos can be dropped on a slide.');
+      return;
+    }
     const from = Number(ev.dataTransfer.getData('text/x-podium-slide'));
     const to = Number(cell.dataset.index);
     moveSlide(from, to);
@@ -561,6 +586,7 @@ function markStrip() {
     cell.querySelector('.cap').textContent = slide?.title || `Slide ${i + 1}`;
     const badges = cell.querySelector('.badges');
     badges.replaceChildren(
+      ...(slide?.video ? [el('span', { class: 'badge', title: 'Video slide' }, '🎬')] : []),
       ...(slide?.hasBuild ? [el('span', { class: 'badge', title: 'Builds' }, '▶')] : []),
       ...(slide?.notes ? [el('span', { class: 'badge', title: 'Has presenter notes' }, '✎')] : []),
       ...(slideProblems.has(i) ? [el('span', { class: 'badge warn', title: 'Something to check' }, '!')] : []),
@@ -641,6 +667,11 @@ function renderSlidePanel() {
   $('#deck-slide-paginate').value = slide.spot.paginate ?? '';
   const notes = $('#deck-slide-notes');
   if (document.activeElement !== notes) notes.value = slide.notes;
+  $('#deck-slide-video').hidden = !slide.video;
+  if (slide.video) {
+    const name = decodeURIComponent(slide.video.src.split(/[?#]/)[0].split('/').pop() || slide.video.src);
+    $('#deck-slide-video-text').textContent = `🎬 Video slide: ${name}${slide.video.start ? `, from ${DS.formatTimecode(slide.video.start)}` : ''}. Played from the controller.`;
+  }
   $$('.deck-toolbar [data-cmd="build"]').forEach((b) => b.setAttribute('aria-pressed', String(slide.hasBuild)));
 }
 
@@ -650,6 +681,10 @@ function wireSlidePanel() {
   $('#deck-slide-bg').addEventListener('change', (ev) => applyText(DS.setSlideDirective(text(), current, 'backgroundColor', ev.target.value)));
   $('#deck-slide-bg-clear').addEventListener('click', () => applyText(DS.setSlideDirective(text(), current, 'backgroundColor', null)));
   $('#deck-slide-paginate').addEventListener('change', (ev) => applyText(DS.setSlideDirective(text(), current, 'paginate', ev.target.value || null)));
+  $('#deck-slide-video-change').addEventListener('click', () => media.openVideo());
+  // The poster stays: it is an ordinary background picture, and the slide may
+  // as well keep showing it. Delete it in the markdown if not.
+  $('#deck-slide-video-remove').addEventListener('click', () => applyText(DS.setSlideVideo(text(), current, {})));
   let notesTimer = null;
   const notes = $('#deck-slide-notes');
   const writeNotes = () => {
@@ -693,8 +728,35 @@ function wireDeckSettings() {
 
 // --- problems ------------------------------------------------------------------------
 
+// Whether each picture and video on this server is really there (Issue #226).
+// Asked once per address with a HEAD request; another site's would need it to
+// allow the request, so those are left alone.
+const mediaFound = new Map();   // src -> true | 'HTTP 404' | null while asking
+function checkMediaSoon() {
+  for (const slide of deck.slides) {
+    for (const src of [...slide.media.map((m) => m.src), slide.video?.src].filter(Boolean)) {
+      if (mediaFound.has(src) || !/^\/(?!\/)/.test(src)) continue;
+      mediaFound.set(src, null);
+      fetch(src, { method: 'HEAD', credentials: 'same-origin', cache: 'no-cache' })
+        .then((res) => {
+          mediaFound.set(src, res.ok || `HTTP ${res.status}`);
+          if (!res.ok) computeProblems();
+        })
+        .catch(() => mediaFound.delete(src));
+    }
+  }
+}
+
 function computeProblems() {
+  checkMediaSoon();
   const found = DS.checkDeck(text(), { destination: destination(), pageProtocol: location.protocol });
+  for (const slide of deck.slides) {
+    const uses = [...slide.media.map((m) => ({ src: m.src, at: m.start })), ...(slide.video ? [{ src: slide.video.src, at: Math.max(0, slide.raw.indexOf(slide.video.src)) }] : [])];
+    for (const { src, at } of uses) {
+      const status = mediaFound.get(src);
+      if (typeof status === 'string') found.push({ slide: slide.index, offset: slide.start + at, severity: 'warning', message: `"${src}" is not on this server (${status}), so the room will see nothing there.` });
+    }
+  }
   if (rendered?.themeWarning) found.push({ slide: 0, offset: 0, severity: 'warning', message: rendered.themeWarning });
   (rendered?.fits || []).forEach((fit, i) => {
     if (fit < 0.98 && deck.slides[i]) {
@@ -774,7 +836,8 @@ const COMMANDS = {
   list: () => prefixLines((t) => (/^\s*[-*+]\s/.test(t) ? t.replace(/^(\s*)[-*+]\s/, '$1') : `- ${t}`)),
   numbered: () => prefixLines((t, i) => (/^\s*\d+[.)]\s/.test(t) ? t.replace(/^(\s*)\d+[.)]\s/, '$1') : `${i + 1}. ${t}`)),
   build: () => applyText(DS.setSlideBuild(text(), current, !deck.slides[current]?.hasBuild)),
-  image: () => openImageDialog(),
+  image: () => media.openPicture(),
+  video: () => media.openVideo(),
   math: () => insertBlock('$$\n\n$$\n', 3),
   code: () => insertBlock('```\n\n```\n', 4),
 };
@@ -833,27 +896,37 @@ function focusSlide() {
   view.dispatch({ effects });
 }
 
-function openImageDialog() {
-  const dialog = $('#deck-image-dialog');
-  dialog.hidden = false;
-  $('#deck-image-src').value = '';
-  $('#deck-image-alt').value = '';
-  $('#deck-image-width').value = '';
-  $('#deck-image-src').focus();
+// --- pictures and videos (see deck-media.js) ----------------------------------------
+
+/** What uploads say they were for: the deck's title, or failing that its file name. */
+function deckName() {
+  return deck.frontMatter.fields.title || origin.title || deck.slides[0]?.title || fileName();
 }
 
-function wireImageDialog() {
-  const close = () => { $('#deck-image-dialog').hidden = true; view.focus(); };
-  $('#deck-image-cancel').addEventListener('click', close);
-  $('#deck-image-go').addEventListener('click', () => {
-    const src = $('#deck-image-src').value.trim();
-    if (!src) { $('#deck-image-src').focus(); return; }
-    const place = $('#deck-image-place').value;
-    const width = Number($('#deck-image-width').value);
-    const words = [place === 'inline' ? '' : place, width > 0 ? `w:${Math.round(width)}` : '', $('#deck-image-alt').value.trim()].filter(Boolean);
-    const tag = `![${words.join(' ')}](${src.replace(/\s/g, '%20')})`;
-    close();
-    insertBlock(`${tag}\n`, tag.length + 1);
+const media = createDeckMedia({
+  canUpload: () => !!(info?.features.includes('library') && info?.user),
+  courses: () => libraryCourses,
+  deckCourse: () => origin.course || params.get('course') || '',
+  deckName,
+  insertPicture: (tag) => insertBlock(`${tag}\n`, tag.length + 1),
+  makeVideoSlide: (video) => applyText(DS.setSlideVideo(text(), current, video), { selectSlide: current }),
+  currentVideo: () => deck.slides[current]?.video || null,
+  done: () => view.focus(),
+});
+
+// A picture or video dropped or pasted anywhere on the page that nothing
+// more particular took (the editor and the strip handle their own).
+function wirePageDrops() {
+  const hasFiles = (ev) => Array.from(ev.dataTransfer?.types || []).includes('Files');
+  document.addEventListener('dragover', (ev) => { if (hasFiles(ev)) ev.preventDefault(); });
+  document.addEventListener('drop', (ev) => {
+    if (!hasFiles(ev) || ev.defaultPrevented) return;
+    ev.preventDefault();
+    if (!media.takeFiles(ev.dataTransfer.files)) warn('Only pictures (.png, .jpg, .gif, .webp) and videos (.mp4, .webm) can be dropped here, and only on Podium\'s own server.');
+  });
+  document.addEventListener('paste', (ev) => {
+    if (ev.defaultPrevented || ev.target.closest?.('input, textarea, .cm-editor')) return;
+    if (media.takeFiles(ev.clipboardData?.files)) ev.preventDefault();
   });
 }
 
@@ -1247,7 +1320,7 @@ window.addEventListener('beforeunload', (ev) => {
 wireToolbar();
 wireSlidePanel();
 wireDeckSettings();
-wireImageDialog();
+wirePageDrops();
 wireLibraryDialog();
 wireSaveMenu();
 start();

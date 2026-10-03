@@ -7,6 +7,8 @@
 //
 // The Marp bundle is ~1 MB and is only fetched the first time a deck is used.
 
+import { PODIUM_DIRECTIVES, parseDeck } from './deck-source.js';
+
 const MARP_URL = new URL('../vendor/marp.esm.js', import.meta.url).href;
 const THEMES_MANIFEST = 'marp-themes/themes.json';
 
@@ -153,6 +155,10 @@ function engine() {
 async function createMarp() {
   const { Marp, themeCss } = await engine();
   const marp = new Marp({ inlineSVG: true, html: HTML_ALLOWLIST, math: 'katex' });
+  // Podium's own directives (a video slide, Issue #226): known to Marp so the
+  // comment holding one is a directive rather than a presenter note. They
+  // change nothing Marp draws - render() reads them back out below.
+  for (const key of PODIUM_DIRECTIVES) marp.customDirectives.local[key] = () => ({});
   for (const [file, css] of themeCss) {
     try {
       marp.themeSet.add(css);
@@ -480,9 +486,22 @@ export function forgetDeck(id) {
   cache.delete(id);
 }
 
+/**
+ * Each slide's own <section>, one per slide. Not every section in the deck: a
+ * slide with a `![bg …]` picture is drawn as three (Marp's "advanced
+ * backgrounds" - the picture, the content, and a pseudo layer for
+ * pagination), and counting those as slides gave such a deck extra slides,
+ * shifted every later slide's title and build, and lost the end of the deck.
+ */
+function slideSections(root) {
+  return Array.from(root.querySelectorAll('svg[data-marpit-svg]'))
+    .map((svg) => contentSection(svg) || svg.querySelector('section'))
+    .filter(Boolean);
+}
+
 export function parseSections(root) {
   const sections = [];
-  root.querySelectorAll('svg[data-marpit-svg] section').forEach((section, i) => {
+  slideSections(root).forEach((section, i) => {
     const heading = section.querySelector('h1, h2');
     if (heading) {
       const text = (heading.textContent || '').trim().replace(/\s+/g, ' ');
@@ -499,7 +518,7 @@ export function parseSections(root) {
 }
 
 function outline(root) {
-  return Array.from(root.querySelectorAll('svg[data-marpit-svg] section')).map((section, i) => {
+  return slideSections(root).map((section, i) => {
     const heading = section.querySelector('h1, h2, h3, h4');
     const text = (heading?.textContent || section.textContent || '').trim().replace(/\s+/g, ' ');
     return text.slice(0, 70) || `Slide ${i + 1}`;
@@ -523,8 +542,7 @@ function markFragments(root) {
   // and how its build was found, so a presenter can check the directive did
   // what they meant before class rather than in front of it.
   const builds = [];
-  const sections = root.querySelectorAll('svg[data-marpit-svg] section');
-  sections.forEach((section) => {
+  slideSections(root).forEach((section) => {
     const explicit = Array.from(section.querySelectorAll('.build, [data-build]'));
     const buildClass = section.classList.contains('build');
     // Auto-build: opting a slide in without hand-marking anything treats each
@@ -647,9 +665,25 @@ export async function render(source, id) {
     // applyFits() wherever the deck's html is mounted.
     fits,
     count: titles.length,
+    // A video slide's video, or null, per slide (Issue #226). Read from the
+    // markdown, whose slides are Marp's slides (see deck-source.js) - except
+    // in a headingDivider deck, which splits where the markdown does not say,
+    // so has none.
+    videos: videosOf(source, titles.length),
   };
   cache.set(key, result);
   return result;
+}
+
+function videosOf(source, count) {
+  const deck = parseDeck(source);
+  if (deck.headingDivider || deck.slides.length !== count) return Array(count).fill(null);
+  return deck.slides.map((slide) => slide.video);
+}
+
+/** The slides of a rendered deck that are video slides, by index. */
+export function videoSlides(deck) {
+  return (deck?.videos || []).flatMap((video, i) => (video ? [i] : []));
 }
 
 function frontMatterValue(source, key) {

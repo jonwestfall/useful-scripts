@@ -892,6 +892,9 @@ body.guest {
   color: var(--dim); padding: 2px 7px; display: grid; place-items: center; border-radius: 8px;
 }
 .tile-edit:hover, .tile-edit:active { background: var(--panel-2); color: var(--accent); }
+/* Issue #226: the pictures and videos used in decks, kept out of the tiles until asked for. */
+.lib-deck-media { display: block; margin: 12px auto 4px; background: none; border: 0; color: var(--accent); font-size: 13px; cursor: pointer; }
+.lib-deck-media:hover { text-decoration: underline; }
 .empty { color: var(--dim); }
 
 /* Where you just were. A single scrolling row rather than a group in the
@@ -2409,6 +2412,35 @@ body.deck-editor .topbar { flex: none; }
   border-radius: var(--radius); padding: 16px 18px; box-shadow: 0 20px 50px rgba(0, 0, 0, .5);
 }
 .deck-dialog-card h2 { font-size: 16px; margin: 0 0 12px; }
+/* Pictures and videos (Issue #226): where from, the choice, and where it is kept. */
+.deck-media-card { width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.deck-media-tabs { display: flex; gap: 4px; margin: 0 0 12px; border-bottom: 1px solid var(--line); }
+.deck-media-tabs button {
+  min-height: 32px; padding: 0 10px; font-size: 13px; background: none; border: 0;
+  border-bottom: 2px solid transparent; border-radius: 0; color: var(--dim);
+}
+.deck-media-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.deck-media-tabs button[hidden] { display: none; }
+.deck-media-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px;
+  max-height: 220px; overflow: auto; margin-top: 6px;
+}
+.deck-media-grid.is-list { grid-template-columns: minmax(0, 1fr); }
+.deck-media-tile {
+  display: grid; gap: 2px; padding: 4px; text-align: left; font-size: 12px; min-height: 0;
+  background: var(--panel-2); border: 2px solid transparent; border-radius: 8px; overflow: hidden;
+}
+.deck-media-grid.is-list .deck-media-tile { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.deck-media-tile[aria-selected="true"] { border-color: var(--accent); }
+.deck-media-tile img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; background: #fff; }
+.deck-media-tile span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deck-media-tile small { color: var(--dim); }
+.deck-media-chosen { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+.deck-media-chosen[hidden] { display: none; }
+.deck-media-chosen img { width: 96px; height: 64px; object-fit: contain; background: #fff; border-radius: 6px; }
+.deck-media-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
+.deck-video-preview { display: block; width: 100%; max-height: 240px; background: #000; border-radius: 8px; margin: 0 0 10px; }
+.deck-video-preview[hidden] { display: none; }
 
 /* Narrow screens: one column, preview under the code. */
 @media (max-width: 960px) {

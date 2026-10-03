@@ -1067,6 +1067,15 @@ async function receiveUpload(req, url, ctx, user) {
   // member of, and only be told no once it had all landed.
   const courseCode = url.searchParams.get('course') || '';
   library.courseIdFor(ctx.db, user, courseCode);
+  // A picture or video for a deck (Issue #226): filed where the deck's own
+  // editors can file it, and kept with the deck's other media.
+  const deckMedia = String(url.searchParams.get('deckMedia') || '').trim().slice(0, 200);
+  if (deckMedia && !['image', 'video'].includes(allowed.kind)) {
+    throw Object.assign(new Error('only pictures and videos can be added to a deck'), { status: 415 });
+  }
+  if (deckMedia && !library.mayAddDeckMedia(ctx.db, user, courseCode)) {
+    throw Object.assign(new Error(`only an owner of ${courseCode.toUpperCase()} or an admin can add pictures and videos to its decks`), { status: 403 });
+  }
 
   // A PowerPoint file becomes a PDF on the way in (Issue #107) - read up to
   // the same limit an ordinary PDF upload already has, since that is what it
@@ -1089,13 +1098,19 @@ async function receiveUpload(req, url, ctx, user) {
   let mediaId;
   try {
     mediaId = library.rememberMedia(ctx.db, user, { sha256, bytes, contentType: allowed.type });
+    // The same photo put on a second slide is the item already there.
+    if (deckMedia) {
+      const same = library.findSameMedia(ctx.db, user, { kind: allowed.kind, sha256, courseCode });
+      if (same) return { item: same, existing: true };
+    }
     const item = library.addItem(ctx.db, user, {
       courseCode,
       kind: allowed.kind,
       title: url.searchParams.get('title') || filename.replace(/\.[^.]+$/, ''),
-      group: url.searchParams.get('group') || '',
+      group: url.searchParams.get('group') || (deckMedia ? library.DECK_MEDIA_GROUP : ''),
       filename,
       mediaId,
+      props: deckMedia ? { deckMedia } : {},
     });
     return { item };
   } catch (err) {

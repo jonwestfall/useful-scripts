@@ -83,8 +83,23 @@ The deck editor writes and edits Marp decks without leaving Podium (Issue #226).
 
 - **Three columns**: every slide as a thumbnail strip (drag to reorder, or use ↑ ↓, duplicate and delete), the markdown, and *What the class sees*. Clicking a slide in the strip, or moving the cursor in the markdown, keeps the two in step. ◀ ▶ step through a slide's builds the way Next does in class.
 - **A code editor that knows Marp**: slide separators, directives and presenter notes are coloured; directives such as `_class:`, `paginate:` and `backgroundColor:` complete as you type; *Focus slide* folds every slide except the one you are on; and the toolbar adds headings, lists, builds, pictures, math and code.
+- **Pictures** 🖥️: 🖼 *Picture* uploads one from this device, picks one already in the library, or takes an address. You can also paste a picture (a screenshot, say) into the editor, or drop one on the page or on a slide in the strip. A picture you add goes into the library, and the slide links to it there. It is never pasted into the markdown itself, so the deck stays small enough to send anywhere. A big photo is scaled down to a size a projector can use, and the same picture added twice is stored once. The dialog sets where it sits on the slide (in the slide, as the background, or on the left or right 40%) and asks for a description, which is what screen readers and Guest View get.
+- **Video slides** 🖥️: 🎬 *Video* (or dropping an `.mp4` or `.webm` on a slide) turns the slide into a video slide. The video goes into the library, and the editor grabs the frame it starts on as the slide's **poster**, so the strip, the controller's thumbnails and slide photos all show it. In class, the display plays the real video over the slide, and you drive it from the controller like any other video:
+  - the Now tab's Play, Pause and scrubber, and the bottom bar's Play button (Space still means Next in a deck);
+  - the Mixer's content fader;
+  - the background music ducks under it;
+  - pausing it, marking it up and playing on keeps a photo of the marked-up frame (#182).
+
+  Arriving on a video slide does not start it; moving to another slide pauses it, and coming back finds it where you left it. In the markdown it is two directives and the poster, so the deck still opens in any Marp tool:
+
+  ```markdown
+  <!-- _video: /media/<sha256>/clip.webm -->
+  <!-- _videoStart: "1:05" -->
+  ![bg contain](/media/<sha256>/clip-poster.jpg)
+  ```
+- **Where pictures and videos are kept**: under the deck's course, or with no course. With no course, the library's usual rule applies: every signed-in account on the server can see them. They are kept in a *Deck media* group, which the controller's library hides until you ask for it (*Show the pictures and videos used in decks*) or type in its filter. Only people who may edit a course's decks can add media to it.
 - **No markdown needed for the common settings**: the slide panel sets a slide's build, class, background, page number and presenter notes, and the *Deck* panel sets the theme, shape, page numbers, header and footer.
-- **Check before class** lists anything that will look wrong in the room: text that overflows its slide, a picture with no description, a build with nothing to reveal, a theme the server doesn't have, a code block that is never closed, a picture address the projector can't load (a relative path in a library deck, or `http:` from an `https:` page), or a deck too big to send from a controller. Each problem is also marked in the editor's gutter.
+- **Check before class** lists anything that will look wrong in the room: text that overflows its slide, a picture with no description, a build with nothing to reveal, a theme the server doesn't have, a code block that is never closed, a picture or video address the projector can't load (a relative path in a library deck, `http:` from an `https:` page, or a file that is not on the server), a video slide with no poster, or a deck too big to send from a controller. Each problem is also marked in the editor's gutter.
 - **Where a deck is saved**:
   - **The library** 🖥️: a library deck keeps one address while you edit it, so every plan that uses it picks up the change and no projector shows a cached copy of the old one. If someone else saved in the meantime, the editor asks whether to save over theirs, save yours as a copy, or load theirs.
   - **Inside a plan**: *Edit this deck* on a deck item in `plan.html` opens it here, and **Save** hands it back to the planner. *Write a new deck* starts a new deck for that item.

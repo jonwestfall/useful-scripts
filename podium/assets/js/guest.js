@@ -18,7 +18,7 @@
 import { $, $$, throttle } from './util.js';
 import { loadConfig, isConfigured } from './config.js';
 import { createBus } from './bus.js';
-import { focusedItem, BLACK, versionStamp } from './protocol.js';
+import { focusedItem, BLACK, versionStamp, isPlayable } from './protocol.js';
 
 const cfg = await loadConfig();
 
@@ -39,10 +39,6 @@ function itemTitle(item) {
 // gates its own arrow-key shortcuts on (see the 'nav' case in protocol.js's
 // applyCommand for what each one means).
 const NAVIGABLE = new Set(['pdf', 'slides', 'web', 'deck']);
-
-// The types Play/Pause actually applies to - the same set control.js's own
-// isMedia check uses.
-const MEDIA_TYPES = new Set(['video', 'audio', 'youtube', 'stream']);
 
 const LASER_COLORS = ['red', 'green', 'blue'];
 let laserColor = 'red';
@@ -85,7 +81,8 @@ function renderNow() {
   $('#guest-blank').classList.toggle('is-on', !!state.blank);
   $('#guest-blank').textContent = state.blank ? 'Unblank' : 'Blank screen';
 
-  $('#guest-play-pause').disabled = !MEDIA_TYPES.has(item?.type);
+  // What Play/Pause applies to: the same isPlayable() control.js's transport uses.
+  $('#guest-play-pause').disabled = !isPlayable(item);
   $('#guest-play-pause').textContent = telemetry.playing ? '⏸ Pause' : '▶ Play';
 }
 

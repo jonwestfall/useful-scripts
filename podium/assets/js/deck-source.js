@@ -31,7 +31,31 @@ export const LOCAL_DIRECTIVES = [
   'paginate', 'header', 'footer', 'class', 'backgroundColor', 'backgroundImage',
   'backgroundPosition', 'backgroundRepeat', 'backgroundSize', 'color',
 ];
-const KNOWN = new Set([...GLOBAL_DIRECTIVES, ...LOCAL_DIRECTIVES]);
+// Podium's own (Issue #226): a video slide. Marp is told about them too (see
+// createMarp in deck.js) so a comment holding them is a directive there as
+// well, never a presenter note. Only the one-slide form (`_video`) means
+// anything: a video belongs to the slide it is on.
+//
+//   <!-- _video: /media/<sha>/clip.mp4 -->
+//   <!-- _videoStart: 1:05 -->
+export const PODIUM_DIRECTIVES = ['video', 'videoStart'];
+const KNOWN = new Set([...GLOBAL_DIRECTIVES, ...LOCAL_DIRECTIVES, ...PODIUM_DIRECTIVES]);
+
+/** `1:05`, `1:02:03`, `65` or `65.5` as seconds; anything else is 0. */
+export function parseTimecode(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+(?::\d{1,2}){0,2}(?:\.\d+)?$/.test(text)) return 0;
+  return text.split(':').reduce((total, part) => total * 60 + Number(part), 0);
+}
+
+/** Seconds as `m:ss` (or `h:mm:ss`), whole seconds - what _videoStart is written as. */
+export function formatTimecode(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
+}
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const BREAK = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
@@ -246,6 +270,7 @@ function describe(deck) {
     slide.title = heading ? heading[1].replace(/[*_`]/g, '').trim() : '';
     slide.hasBuild = slide.classes.includes('build') || /\bclass\s*=\s*["'][^"']*\bbuild\b|\bdata-build\b/.test(masked);
     slide.media = mediaIn(slide.raw);
+    slide.video = spot.video ? { src: spot.video, start: parseTimecode(spot.videoStart) } : null;
   }
   deck.headingDivider = deck.frontMatter.fields.headingDivider !== undefined
     || deck.slides.some((s) => commentsIn(s.raw).some((c) => c.directives.some((d) => d.key === 'headingDivider')));
@@ -414,6 +439,34 @@ function yamlValue(value) {
   return /^[\w#.%/ -]*$/.test(v) && v.trim() === v ? v : JSON.stringify(v);
 }
 
+/**
+ * Make slide `index` a video slide (Issue #226), or with no `src` stop it
+ * being one. The video plays over the slide in class; the poster, a
+ * background picture of its first frame, is what the slide shows until then
+ * (and is what thumbnails, exports and a slide's photo are made from).
+ *
+ * @param {string} md
+ * @param {number} index
+ * @param {{src?: string, start?: number, poster?: string}} video
+ */
+export function setSlideVideo(md, index, { src = '', start = 0, poster = '' } = {}) {
+  // videoStart first: a new directive goes at the top of the slide, so this
+  // order leaves _video above it, where it reads first.
+  let out = setSlideDirective(md, index, 'videoStart', src && start > 0 ? formatTimecode(start) : null);
+  out = setSlideDirective(out, index, 'video', src || null);
+  if (!src || !poster) return out;
+  const deck = parseDeck(out);
+  const slide = deck.slides[index];
+  if (!slide || slide.media.some((m) => m.background && m.src === poster)) return out;
+  // Straight after the directives, so the poster sits with the video it is for.
+  let raw = slide.raw;
+  const last = commentsIn(raw).filter((c) => c.directive && c.directives.some((d) => d.key === 'video' || d.key === 'videoStart')).at(-1);
+  const at = last ? (raw.indexOf('\n', last.end) === -1 ? raw.length : raw.indexOf('\n', last.end) + 1) : 0;
+  const tag = `![bg contain](${poster})\n${/^[ \t]*\S/.test(raw.slice(at)) ? '\n' : ''}`;
+  raw = `${raw.slice(0, at)}${at && raw.slice(0, at).endsWith('\n') ? '' : '\n'}${tag}${raw.slice(at)}`;
+  return replaceSlide(deck, index, raw);
+}
+
 /** Toggle Podium's build class on a slide, keeping any other classes it has. */
 export function setSlideBuild(md, index, on) {
   const deck = parseDeck(md);
@@ -535,6 +588,18 @@ export function checkDeck(md, { destination = 'file', pageProtocol = '' } = {}) 
       }
       if (!m.background && !(m.alt || '').trim()) {
         add(slide.index, at, 'info', 'This picture has no description (alt text) for screen readers and Guest View.');
+      }
+    }
+    if (slide.video) {
+      const at = base + Math.max(0, slide.raw.indexOf(slide.video.src));
+      const src = slide.video.src;
+      if (!/^(https?:|\/)/i.test(src)) {
+        add(slide.index, at, 'warning', `The video "${src}" is not a full address, so the projector cannot find it. Add it from the library instead.`);
+      } else if (pageProtocol === 'https:' && /^http:/i.test(src)) {
+        add(slide.index, at, 'warning', `The video "${src}" is http:, which an https: page will not load.`);
+      }
+      if (!slide.media.some((m) => m.background)) {
+        add(slide.index, at, 'warning', 'This video slide has no poster (a background picture), so its thumbnail, its slide photo and what shows before Play are all blank.');
       }
     }
     const fences = (maskCodeFenceCount(slide.raw));
