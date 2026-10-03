@@ -29,6 +29,7 @@ const lectures = require('./lectures.js');
 const plans = require('./plans.js');
 const settings = require('./settings.js');
 const templates = require('./templates.js');
+const deckTemplates = require('./deck-templates.js');
 const content = require('./content.js');
 const store = require('./store.js');
 const kiosks = require('./kiosks.js');
@@ -179,7 +180,7 @@ function capabilities(ctx, user) {
   // every request answers 401 - a feature announced before it can be used.
   const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
   const features = ctx.db && ctx.hasAccounts()
-    ? ['auth', 'library', 'plans', 'templates', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content', 'kiosks'] : [])]
+    ? ['auth', 'library', 'plans', 'templates', 'deckTemplates', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content', 'kiosks'] : [])]
     : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
@@ -591,6 +592,40 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'templates' && rest.length === 1 && req.method === 'DELETE') {
       json(res, 200, { removed: templates.remove(ctx.db, user, rest[0]) });
+      return true;
+    }
+
+    // --- deck templates (Issue #226) ----------------------------------------
+    //
+    // A course's and your own; the built-ins are files under
+    // content/deck-templates/, of which the server only keeps which an admin
+    // has hidden. Who may write which is decided in deck-templates.js.
+
+    if (head === 'deck-templates' && !rest.length && req.method === 'GET') {
+      json(res, 200, deckTemplates.forUser(ctx.db, user));
+      return true;
+    }
+
+    if (head === 'deck-templates' && !rest.length && req.method === 'POST') {
+      const body = await readJson(req, deckTemplates.MAX_MARKDOWN_BYTES + 4096);
+      json(res, 200, { template: deckTemplates.create(ctx.db, user, body) });
+      return true;
+    }
+
+    if (head === 'deck-templates' && rest.length === 2 && rest[0] === 'builtin' && req.method === 'PUT') {
+      const body = await readJson(req);
+      json(res, 200, deckTemplates.hideBuiltIn(ctx.db, user, rest[1], !!body.hidden));
+      return true;
+    }
+
+    if (head === 'deck-templates' && rest.length === 1 && req.method === 'PUT') {
+      const body = await readJson(req, deckTemplates.MAX_MARKDOWN_BYTES + 4096);
+      json(res, 200, { template: deckTemplates.update(ctx.db, user, rest[0], body) });
+      return true;
+    }
+
+    if (head === 'deck-templates' && rest.length === 1 && req.method === 'DELETE') {
+      json(res, 200, { removed: deckTemplates.remove(ctx.db, user, rest[0]).id });
       return true;
     }
 

@@ -14,6 +14,9 @@
 //   ?plan&item     a deck carried inside a lecture plan, handed over by the
 //                  planner tab that opened this one and handed back to it
 //   ?src=<url>     anything else at an address: opened, then saved somewhere
+//   ?template=<k>  a template of your own or your course's, saved back to it
+//                  (one you cannot change opens as a new deck made from it)
+//   ?from=<k>      a new deck, started from a template
 //   (nothing)      a new deck
 // A draft of unsaved work is kept on this device the whole time.
 
@@ -25,6 +28,7 @@ import { serverInfo, mountSessionBadge } from './server.js';
 import { downloadText } from './store.js';
 import * as DS from './deck-source.js';
 import { createDeckMedia } from './deck-media.js';
+import { createTemplatesPanel, findTemplate, slidesOf } from './deck-templates.js';
 import * as CM from '../vendor/codemirror.esm.js';
 
 const params = new URLSearchParams(location.search);
@@ -67,6 +71,7 @@ let themeNames = [...BUILT_IN_THEMES];
 let themeClasses = new Set(BASE_CLASSES);
 let libraryCourses = [];
 let saving = false;
+let openedWith = '';            // the text this page opened with, to tell an untouched new deck
 
 // --- small helpers -------------------------------------------------------------
 
@@ -99,6 +104,7 @@ function draftKey() {
   if (origin.kind === 'content') return `${DRAFT_PREFIX}content:${origin.name}`;
   if (origin.kind === 'plan') return `${DRAFT_PREFIX}plan:${origin.planId}:${origin.itemId}`;
   if (origin.kind === 'file' && origin.src) return `${DRAFT_PREFIX}src:${origin.src}`;
+  if (origin.kind === 'template') return `${DRAFT_PREFIX}template:${origin.id}`;
   return `${DRAFT_PREFIX}new`;
 }
 
@@ -837,6 +843,7 @@ const COMMANDS = {
   numbered: () => prefixLines((t, i) => (/^\s*\d+[.)]\s/.test(t) ? t.replace(/^(\s*)\d+[.)]\s/, '$1') : `${i + 1}. ${t}`)),
   build: () => applyText(DS.setSlideBuild(text(), current, !deck.slides[current]?.hasBuild)),
   image: () => media.openPicture(),
+  template: () => templates.open({ kind: 'slide' }),
   video: () => media.openVideo(),
   math: () => insertBlock('$$\n\n$$\n', 3),
   code: () => insertBlock('```\n\n```\n', 4),
@@ -913,6 +920,87 @@ const media = createDeckMedia({
   currentVideo: () => deck.slides[current]?.video || null,
   done: () => view.focus(),
 });
+
+// --- templates (see deck-templates.js) -------------------------------------------------
+
+const templateWho = () => ({ server: !!(info?.features.includes('deckTemplates') && info?.user), isAdmin: !!info?.user?.isAdmin });
+
+const templates = createTemplatesPanel({
+  server: () => templateWho().server,
+  isAdmin: () => templateWho().isAdmin,
+  courses: () => libraryCourses,
+  deckCourse: () => origin.course || params.get('course') || '',
+  deck: () => deck,
+  current: () => current,
+  text,
+  insertSlides,
+  startDeck,
+  done: () => view.focus(),
+});
+
+/** A slide template's slides, after the one you are on - then its picture or video, if it asks for one. */
+function insertSlides(slides, then) {
+  if (deck.headingDivider) { warn('This deck splits slides on headings, so slides cannot be added from templates here.'); return; }
+  const at = current + 1;
+  const next = DS.insertSlide(text(), at, `\n${slides.trim()}\n\n`);
+  applyText(next, { selectSlide: at });
+  if (then) {
+    // After the slide's heading, where the picture dialog puts what it adds.
+    const slide = DS.parseDeck(next).slides[at];
+    const heading = slide ? /^ {0,3}#{1,6}[ \t].*$/m.exec(slide.raw) : null;
+    if (heading) view.dispatch({ selection: { anchor: slide.start + heading.index + heading[0].length } });
+    if (then === 'picture') media.openPicture();
+    else if (then === 'video') media.openVideo();
+  }
+  view.focus();
+}
+
+/** A new deck from a deck template: here, if nothing is open yet, else in this tab afresh. */
+function startDeck(template) {
+  if (origin.kind === 'new' && text() === openedWith) {
+    setDocument(template.markdown);
+    openedWith = template.markdown;
+    savedText = '';
+    describeOrigin();
+    refreshSaveState();
+    renderNow();
+    renderDeckSettings();
+    renderSlidePanel();
+    return;
+  }
+  keepDraftNow();
+  location.href = `deck.html?${new URLSearchParams({ from: template.scope === 'builtin' ? `b:${template.id}` : `s:${template.id}` })}`;
+}
+
+async function openTemplate(key) {
+  const t = await findTemplate(key, templateWho());
+  if (!t) throw new Error('That template is not here any more, or you cannot see it.');
+  if (!t.editable) {
+    origin = { kind: 'new' };
+    warn(`“${t.title}” is not yours to change, so this is a new deck made from it. Save it as a template of your own from the Save menu.`);
+    return t.markdown;
+  }
+  origin = { kind: 'template', id: t.id, title: t.title, name: t.title, scope: t.scope, course: t.course, templateKind: t.kind, editable: true };
+  return t.markdown;
+}
+
+async function saveTemplate() {
+  saving = true;
+  setSaveState('Saving…');
+  try {
+    const res = await fetch(`/api/deck-templates/${origin.id}`, {
+      method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ markdown: text() }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    savedOk('Saved to the template');
+  } catch (err) {
+    saving = false;
+    refreshSaveState();
+    warn(`That did not save: ${err.message}`);
+  }
+}
 
 // A picture or video dropped or pasted anywhere on the page that nothing
 // more particular took (the editor and the strip handle their own).
@@ -999,11 +1087,12 @@ function describeOrigin() {
     library: () => `Library${origin.course ? ` · ${origin.course.toUpperCase()}` : ''} · ${origin.name}${origin.editable ? '' : ' · view only'}`,
     content: () => `content/decks/${origin.name}`,
     plan: () => `Inside the lecture “${origin.planTitle || 'plan'}”`,
+    template: () => `Template · ${origin.scope === 'course' ? (origin.course || '').toUpperCase() : 'Mine'} · ${origin.title} (${origin.templateKind === 'deck' ? 'a whole deck' : 'a slide'})`,
     file: () => (origin.src ? `Opened from ${origin.src}` : `${origin.name || 'A file'} · not saved anywhere yet`),
     new: () => 'New deck · not saved anywhere yet',
   }[origin.kind];
   where.textContent = label ? label() : '';
-  const canSaveHere = (origin.kind === 'library' && origin.editable) || origin.kind === 'content' || origin.kind === 'plan';
+  const canSaveHere = (origin.kind === 'library' && origin.editable) || origin.kind === 'content' || origin.kind === 'plan' || origin.kind === 'template';
   $('#deck-save').textContent = canSaveHere ? 'Save' : 'Save…';
   $('#deck-save-library').hidden = !(info?.features.includes('library') && info?.user);
   $('#deck-save-content').hidden = !info?.user?.isAdmin;
@@ -1024,6 +1113,13 @@ async function start() {
     else if (params.get('library')) initial = await openLibrary(params.get('library'));
     else if (params.get('content')) initial = await openContent(params.get('content'));
     else if (params.get('src')) initial = await openSrc(params.get('src'));
+    else if (params.get('template')) initial = await openTemplate(params.get('template'));
+    else if (params.get('from')) {
+      const t = await findTemplate(params.get('from'), templateWho());
+      if (!t) throw new Error('That template is not here any more, or you cannot see it.');
+      origin = { kind: 'new' };
+      initial = t.kind === 'deck' ? t.markdown : `${STARTER.replace(/\n*$/, '\n\n---\n\n')}${slidesOf(t.markdown)}`;
+    }
     else {
       origin = { kind: 'new' };
       const title = params.get('title');
@@ -1035,9 +1131,12 @@ async function start() {
   }
   if (info.features.includes('library') && info.user && !libraryCourses.length) loadLibraryCourses();
   setDocument(initial);
+  openedWith = initial;
   savedText = origin.kind === 'new' ? '' : initial;
   describeOrigin();
-  offerDraft(initial);
+  // A deck just started from a template is not the unsaved new deck from
+  // before; that draft stays for the next plain new deck.
+  if (!params.get('from')) offerDraft(initial);
   refreshSaveState();
   renderNow();
   renderDeckSettings();
@@ -1082,6 +1181,7 @@ async function save() {
   if (origin.kind === 'library' && origin.editable) return saveLibrary();
   if (origin.kind === 'content') return saveContent();
   if (origin.kind === 'plan') return savePlan();
+  if (origin.kind === 'template') return saveTemplate();
   // Nowhere to save back to yet: the library if there is one, else a file.
   if (!$('#deck-save-library').hidden) openLibraryDialog();
   else downloadDeck();
@@ -1280,6 +1380,8 @@ function wireSaveMenu() {
     saveContent({ name, mtime: null });
   });
   $('#deck-download').addEventListener('click', () => { close(); downloadDeck(); });
+  $('#deck-save-template').addEventListener('click', () => { close(); templates.open({ kind: 'deck' }); });
+  $('#deck-new-template').addEventListener('click', () => { close(); templates.open({ kind: 'deck' }); });
   $('#deck-new').addEventListener('click', () => {
     close();
     if (dirty() && !confirm('Start a new deck? Your unsaved changes stay as a draft for this deck.')) return;

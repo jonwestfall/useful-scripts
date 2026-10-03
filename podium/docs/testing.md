@@ -30,6 +30,7 @@ podium/test/
 ├── spotlight.test.mjs    # Spotlight / attention dimmer pointer mode (Issue #37)
 ├── tabsettings.test.mjs  # Customizable/collapsible controller tab bar (Issue #76)
 ├── templates.test.mjs    # Course-level plan templates, against a real SQLite file (Issue #80)
+├── deck-templates.test.mjs # Deck templates: built-in, course and personal, and who may change which (Issue #226)
 ├── offline-shell.test.mjs # The offline shell warms everything the pages load at startup (Issue #130)
 ├── a11y.test.mjs         # Accessibility guard rails: labels, names, live regions, contrast, focus (Issue #156)
 ├── kiosk-open-paths.test.mjs # Kiosk and Guest View open-path lists match what the pages load (Issues #151, #150)
@@ -103,6 +104,7 @@ node podium/test/protocol.test.mjs
 - **`spotlight.test.mjs`**: the attention-dimmer pointer mode's keyboard shortcuts and geometry.
 - **`tabsettings.test.mjs`**: reordering, hiding, and restoring controller tabs.
 - **`templates.test.mjs`**: course-level plan template ownership and removal permissions.
+- **`deck-templates.test.mjs`**: the deck editor's templates (Issue #226): who sees a course's and a person's own, who may add, rename, rewrite and remove them, the size cap, the built-ins' `index.json`, and an administrator hiding a built-in.
 
 ---
 

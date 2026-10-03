@@ -471,6 +471,33 @@ const MIGRATIONS = [
       ALTER TABLE courses ADD COLUMN created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
     `);
   },
+  (db) => {
+    db.exec(`
+      -- Deck templates (Issue #226): a whole starting deck, or one slide's
+      -- layout, written in the deck editor. Two scopes live here - a
+      -- course's (course_id set; its owners write it, its members use it)
+      -- and one person's own ("mine": course_id NULL, user_id theirs). The
+      -- third scope, the ones shipped with Podium, are files under
+      -- content/deck-templates/ and never in this table. markdown is the
+      -- template itself: plain Marp, like any deck.
+      CREATE TABLE deck_templates (
+        id         INTEGER PRIMARY KEY,
+        scope      TEXT    NOT NULL CHECK (scope IN ('course', 'mine')),
+        course_id  INTEGER REFERENCES courses(id) ON DELETE CASCADE,
+        user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        kind       TEXT    NOT NULL CHECK (kind IN ('deck', 'slide')),
+        title      TEXT    NOT NULL,
+        markdown   TEXT    NOT NULL,
+        created_at INTEGER NOT NULL,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_at INTEGER NOT NULL,
+        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        deleted_at INTEGER
+      );
+      CREATE INDEX deck_templates_by_course ON deck_templates(course_id);
+      CREATE INDEX deck_templates_by_user ON deck_templates(user_id);
+    `);
+  },
 ];
 
 function migrate(db) {
