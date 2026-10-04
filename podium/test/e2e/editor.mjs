@@ -822,6 +822,121 @@ ok('handed back, the planner\'s preview shows it too', await planner.waitForFunc
 await ctx.close();
 }
 
+if (want('the deck editor: decks already on the server, edited where they are')) {
+console.log('\n-- the deck editor: decks already on the server, edited where they are --');
+const owen = await signedIn('owen');
+const planner = await owen.newPage();
+trap(planner, 'planner (server decks)');
+await planner.goto(`${base}/index.html`);
+const oldMd = '---\nmarp: true\ntitle: Old address\n---\n\n# Old address\n\n---\n\n## Two\n';
+const oldDeck = (await planner.evaluate(async (md) => (await fetch('/api/library/upload?filename=old-address.md&course=psy415&title=Old%20address', { method: 'POST', body: md })).json(), oldMd)).item;
+// How a plan made before the deck editor names a library deck: by its contents.
+const oldSrc = `/media/${oldDeck.version}/old-address.md`;
+
+await planner.goto(`${base}/plan.html`);
+await planner.waitForSelector('#type-picker .type-btn');
+await planner.click('#type-picker .type-btn:has-text("Marp deck")');
+await planner.fill('#item-fields input[placeholder="content/decks/week3.md"]', oldSrc);
+await planner.press('#item-fields input[placeholder="content/decks/week3.md"]', 'Tab');
+await planner.waitForFunction(() => /Slide 1 of 2/.test(document.querySelector('#deck-where')?.textContent || ''), null, { timeout: 20000 });
+const [editor] = await Promise.all([owen.waitForEvent('page'), planner.click('button:has-text("Edit this deck")')]);
+trap(editor, 'editor (server deck from the planner)');
+await editor.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 2, null, { timeout: 20000 });
+ok(`a library deck named by its old address opens as the library deck ("${await editor.textContent('#deck-where')}")`, /^Library · PSY415 · old-address\.md$/.test(await editor.textContent('#deck-where')));
+await planner.waitForFunction(() => [...document.querySelectorAll('#item-fields input[type=text]')].some((i) => /^\/media\/deck\/\d+\/old-address\.md$/.test(i.value)), null, { timeout: 10000 })
+  .then(() => ok('and the lecture now points at the deck\'s own address, so it follows every edit', true))
+  .catch(() => ok('and the lecture now points at the deck\'s own address', false));
+await pickSlide(editor, 1);
+await editor.click('#deck-add-slide');
+await editor.keyboard.type('Added in planning');
+await editor.waitForTimeout(400);
+await editor.click('#deck-save');
+await waitSaved(editor);
+ok('Save writes it back to the library', (await serverText(editor, oldDeck.src)).includes('Added in planning'));
+await planner.waitForFunction(() => /Slide 1 of 3/.test(document.querySelector('#deck-where')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('and the planner\'s preview shows the edit', true))
+  .catch(async () => ok(`and the planner's preview shows the edit ("${await planner.textContent('#deck-where')}")`, false));
+await editor.close();
+
+// During a lecture: the deck on screen, edited from the controller.
+const screen = await owen.newPage();
+trap(screen, 'server decks display');
+await screen.goto(`${base}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await owen.newPage();
+trap(pad, 'server decks controller');
+await pad.goto(`${base}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.click('.tile:has(.tile-title:text-is("Old address"))');
+const wall = '.layer[data-role="program"] .r-deck';
+const slidesUp = () => screen.evaluate((sel) => document.querySelector(sel)?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length || 0, wall);
+await until(async () => (await slidesUp()) === 3);
+await pad.click('.tab[data-tab="slides"]');
+await pad.waitForSelector('#deck-open-editor:not([hidden])', { timeout: 5000 })
+  .then(() => ok('the Slides tab offers to edit the deck on screen', true))
+  .catch(() => ok('the Slides tab offers to edit the deck on screen', false));
+const [quick] = await Promise.all([owen.waitForEvent('page'), pad.click('#deck-open-editor')]);
+trap(quick, 'editor (from the controller)');
+await quick.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 3, null, { timeout: 20000 });
+ok(`it opens in the editor, where it lives ("${await quick.textContent('#deck-where')}")`, /^Library · PSY415 · old-address\.md$/.test(await quick.textContent('#deck-where')));
+await pickSlide(quick, 2);
+await quick.click('#deck-add-slide');
+await quick.keyboard.type('Fixed mid-lecture');
+await quick.waitForTimeout(400);
+await quick.click('#deck-save');
+await waitSaved(quick);
+await pad.waitForSelector('#deck-edited:not([hidden])', { timeout: 10000 })
+  .then(() => ok('saved, the controller says the deck on screen was edited', true))
+  .catch(() => ok('saved, the controller says the deck on screen was edited', false));
+await pad.click('#deck-reload');
+await until(async () => (await slidesUp()) === 4)
+  .then(() => ok('and "Reload it" puts the fix up', true))
+  .catch(async () => ok(`and "Reload it" puts the fix up (${await slidesUp()} slides)`, false));
+await quick.close();
+await screen.close();
+await pad.close();
+await owen.close();
+
+// A TA presents the course deck, but is not offered an edit they could not save.
+const tia = await signedIn('tia');
+const tiaScreen = await tia.newPage();
+trap(tiaScreen, 'server decks display (tia)');
+await tiaScreen.goto(`${base}/display.html`);
+await tiaScreen.click('#arm-button');
+await tiaScreen.waitForSelector('#hud[data-status="online"]');
+const tiaPad = await tia.newPage();
+trap(tiaPad, 'server decks controller (tia)');
+await tiaPad.goto(`${base}/control.html`);
+await tiaPad.waitForSelector('.tile');
+await tiaPad.click('.tile:has(.tile-title:text-is("Old address"))');
+await tiaPad.click('.tab[data-tab="slides"]');
+await tiaPad.waitForSelector('#deck-live:not([hidden])', { timeout: 10000 });
+await tiaPad.waitForTimeout(500);
+ok('a TA is not offered Edit on a course deck', await tiaPad.isHidden('#deck-open-editor'));
+ok('nor ✎ on its tile', await tiaPad.locator('.tile:has(.tile-title:text-is("Old address")) .tile-edit').count() === 0);
+ok('nor on a content/decks deck, which only an administrator can save', await tiaPad.locator('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence")) .tile-edit').count() === 0);
+await tia.close();
+
+// An administrator can edit content/decks decks where they are.
+const root = await signedIn('root');
+const rootPad = await root.newPage();
+trap(rootPad, 'server decks controller (root)');
+await rootPad.goto(`${base}/control.html`);
+await rootPad.waitForSelector('.tile');
+await rootPad.locator('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence")) .tile-edit').waitFor({ timeout: 5000 })
+  .then(() => ok('an administrator gets ✎ on a content/decks deck', true))
+  .catch(() => ok('an administrator gets ✎ on a content/decks deck', false));
+const rootEditor = await root.newPage();
+trap(rootEditor, 'editor (root, content deck by address)');
+await rootEditor.goto(`${base}/index.html`);
+await rootEditor.evaluate(() => fetch('/api/content/files/decks/quick.md', { method: 'PUT', body: '# Quick\n\n---\n\n## Fix\n' }));
+await rootEditor.goto(`${base}/deck.html?src=${encodeURIComponent('/content/decks/quick.md')}`);
+await rootEditor.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 2, null, { timeout: 20000 });
+ok(`a content/decks deck named by its address opens as that file ("${await rootEditor.textContent('#deck-where')}")`, /^content\/decks\/quick\.md$/.test(await rootEditor.textContent('#deck-where')));
+await root.close();
+}
+
 if (want('the deck editor: drafts, downloads, completion and checks (#226)')) {
 console.log('\n-- the deck editor: drafts, downloads, completion and checks (#226) --');
 // The plain relay (no accounts, no library): the editor still works.

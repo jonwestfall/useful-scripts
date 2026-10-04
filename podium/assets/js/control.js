@@ -10,7 +10,7 @@ import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIM
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse, isPlayable, deckVideoHere } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
 import { createCameraSender, createMicSender } from './rtc.js';
-import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill, videoSlides } from './deck.js';
+import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill, videoSlides, deckLocation } from './deck.js';
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
@@ -115,6 +115,9 @@ const workItem = () => workingItem(state);
 let editedDeckId = null;     // the deckId on screen that the library has moved past
 let editedCheckedFor = null; // which deckId the last check was about
 let editedCheckAt = 0;
+// Whether this account administers the server - who may save over a
+// content/decks deck, as well as library decks they own.
+let signedInAdmin = false;
 const hasCue = () => !!state.preview || state.previewLayout !== null || (state.ink?.held || 0) > 0;
 const heldInkOnly = () => !state.preview && state.previewLayout === null && (state.ink?.held || 0) > 0;
 
@@ -475,13 +478,15 @@ function renderLibrary() {
       }
       // A library deck this account may edit opens in the deck editor (Issue
       // #226) - in a new tab, so the lecture on this one is left alone.
-      if (item.type === 'deck' && item.editable && item.serverId) {
+      // A content/decks deck from the manifest too, for an administrator.
+      const editAt = item.type === 'deck' ? deckEditSrc(item) : null;
+      if (editAt) {
         tile.append(el('span', {
           class: 'tile-edit',
           title: 'Edit this deck in the deck editor',
           onclick: (ev) => {
             ev.stopPropagation();
-            window.open(`deck.html?${new URLSearchParams({ library: String(item.serverId) })}`, '_blank', 'noopener');
+            openDeckEditor(editAt);
           },
         }, '✎'));
       }
@@ -1671,9 +1676,34 @@ let recallBrowse = null;   // { panel, key, slide, step } - this controller's ow
 // minute while a library deck is up, when this tab comes back into view, and
 // straight away when the deck editor in this browser saves one.
 
+/**
+ * Where the latest version of a deck on this server is read from - the
+ * deck's own address, or for one named by an older library content address,
+ * the library deck that address belongs to. Null for a deck that is not on
+ * the server (one from a lecture plan or this device), which cannot change.
+ */
 function libraryDeckSrc(item) {
   const src = item?.type === 'deck' ? (item.src || srcOfDeckId(item.deckId)) : null;
-  return src && src.startsWith('/media/deck/') ? src : null;
+  if (!src) return null;
+  const where = deckLocation(src);
+  if (where.kind === 'library' || where.kind === 'content') return src;
+  if (where.kind === 'version') return library.find((i) => i.type === 'deck' && i.version === where.sha && i.src)?.src || null;
+  return null;
+}
+
+/** The address to open a deck at in the deck editor, if this account may save it back; else null. */
+function deckEditSrc(item) {
+  const src = item?.type === 'deck' ? (item.src || srcOfDeckId(item.deckId)) : null;
+  if (!src) return null;
+  const where = deckLocation(src);
+  if (where.kind === 'content') return signedInAdmin ? src : null;
+  if (where.kind === 'library') return library.some((i) => i.editable && String(i.serverId) === where.id) ? src : null;
+  if (where.kind === 'version') return library.find((i) => i.type === 'deck' && i.editable && i.version === where.sha)?.src || null;
+  return null;
+}
+
+function openDeckEditor(src) {
+  window.open(`deck.html?${new URLSearchParams({ src })}`, '_blank', 'noopener');
 }
 
 async function checkDeckEdited({ force = false } = {}) {
@@ -1690,7 +1720,9 @@ async function checkDeckEdited({ force = false } = {}) {
   try {
     const res = await fetch(src, { cache: 'no-cache', credentials: 'same-origin' });
     if (!res.ok) return;
-    const now = await srcDeckId(src, await res.text());
+    // The id the deck on screen would have with this text: its own address,
+    // which is what its id was made from.
+    const now = await srcDeckId(item.src || srcOfDeckId(item.deckId), await res.text());
     const was = editedDeckId;
     editedDeckId = now !== item.deckId ? item.deckId : null;
     if (was !== editedDeckId) renderSlides();
@@ -1770,6 +1802,7 @@ function renderSlides() {
 
   $('#deck-title').textContent = itemTitle(item);
   $('#deck-edited').hidden = recalled || !editedDeckId || editedDeckId !== item.deckId;
+  $('#deck-open-editor').hidden = recalled || !deckEditSrc(item);
   if (!recalled && libraryDeckSrc(item) && editedCheckedFor !== item.deckId) checkDeckEdited({ force: true });
   // Working on the cue (Issue #174): say so, and put the pointers away - the
   // laser and spotlight point at what the room sees, which this is not.
@@ -2791,6 +2824,8 @@ function addToPollHistory(entry) {
 let serverKeepsSessions = false;
 let allowPollNames = false;
 serverInfo().then((info) => {
+  signedInAdmin = !!info.user?.isAdmin;
+  if (signedInAdmin) { renderLibrary(); renderSlides(); }   // ✎ on content/decks decks, now that we know
   serverKeepsSessions = info.features.includes('sessions');
   allowPollNames = !!info.allowPollNames;
   renderKeepPhotos();
@@ -5661,6 +5696,11 @@ $('#deck-prev').addEventListener('click', () => deckNav('prev'));
 $('#deck-next').addEventListener('click', () => deckNav('next'));
 $('#deck-back').addEventListener('click', putDeckBack);
 $('#deck-reload').addEventListener('click', reloadEditedDeck);
+$('#deck-open-editor').addEventListener('click', () => {
+  const view = slidesView();
+  const src = view && !view.recalled ? deckEditSrc(view.item) : null;
+  if (src) openDeckEditor(src);
+});
 $('#bar-prev').addEventListener('click', () => deckNav('prev'));
 $('#bar-next').addEventListener('click', () => deckNav('next'));
 $('#deck-export').addEventListener('click', exportDeck);

@@ -519,6 +519,14 @@ async function handleApi(req, res, url, ctx) {
 
     // A deck's earlier versions (Issue #226), each readable at its own
     // /media/<sha>/ address by anyone who can see the deck.
+    // Which library deck a content address belongs to (see deckForVersion).
+    if (head === 'library' && rest.length === 2 && rest[0] === 'deck-for' && req.method === 'GET') {
+      const item = /^[0-9a-f]{64}$/i.test(rest[1]) ? library.deckForVersion(ctx.db, user, rest[1]) : null;
+      if (!item) { json(res, 404, { error: 'no deck you can see has that version' }); return true; }
+      json(res, 200, { item });
+      return true;
+    }
+
     if (head === 'library' && rest.length === 2 && rest[1] === 'revisions' && req.method === 'GET') {
       json(res, 200, { revisions: library.deckRevisions(ctx.db, user, rest[0]) });
       return true;

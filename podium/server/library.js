@@ -517,6 +517,23 @@ async function replaceDeckContent(db, user, dataDir, id, text, { ifMatch = '' } 
   return getItem(db, user, id);
 }
 
+/**
+ * The library deck a content address belongs to - its current version, or one
+ * of its earlier ones - for a plan or manifest that points at a deck by the
+ * address it had before decks got a stable one. Null when no deck this user
+ * can see holds those bytes.
+ */
+function deckForVersion(db, user, sha256) {
+  const row = db.prepare(`${SELECT_ITEMS} AND ${VISIBLE} AND li.kind = 'deck' AND (m.sha256 = ?3
+      OR EXISTS (SELECT 1 FROM deck_revisions dr JOIN media rm ON rm.id = dr.media_id
+                  WHERE dr.item_id = li.id AND rm.sha256 = ?3))
+    ORDER BY (m.sha256 = ?3) DESC, li.updated_at DESC LIMIT 1`)
+    .get(user.id, user.isAdmin ? 1 : 0, String(sha256).toLowerCase());
+  if (!row) return null;
+  const item = itemRow(row);
+  return { ...item, editable: mayEditDeck(db, user, item), current: item.version === String(sha256).toLowerCase() };
+}
+
 // How many earlier versions of a deck are kept. A deck is a few kilobytes of
 // text, so this is about keeping the list useful, not about disk.
 const MAX_DECK_REVISIONS = 20;
@@ -561,7 +578,7 @@ function usage(db) {
 
 module.exports = {
   MAX_UPLOAD_BYTES, UPLOADABLE, uploadKindFor, mediaPath,
-  DECK_MEDIA_GROUP, mayAddDeckMedia, findSameMedia, deckRevisions, MAX_DECK_REVISIONS,
+  DECK_MEDIA_GROUP, mayAddDeckMedia, findSameMedia, deckRevisions, deckForVersion, MAX_DECK_REVISIONS,
   listItems, getItem, listCourses, mayReadMedia, courseIdFor,
   addItem, setItemFiles, findDuplicate, storeUpload, rememberMedia, forgetMediaIfUnused,
   renameItem, deleteItem, mayDelete, usage,

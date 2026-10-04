@@ -12,6 +12,7 @@ import {
   setSlideDirective, setSlideBuild, setSlideNotes, setFrontMatter, slideAt, checkDeck, commentsIn,
   setSlideVideo, parseTimecode, formatTimecode, PODIUM_DIRECTIVES,
 } from '../assets/js/deck-source.js';
+import { deckLocation } from '../assets/js/deck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -232,6 +233,18 @@ console.log('-- video slides (Phase 2) --');
   chk('one with a poster is not', !/no poster/.test(checks(made)));
   chk('a relative video address is flagged', /not a full address/.test(checks('<!-- _video: clip.webm -->\n![bg](/media/p.jpg)')));
   chk('an http: video on an https: page is flagged', /is http:/.test(checks('<!-- _video: http://example.org/v.mp4 -->\n![bg](/media/p.jpg)', { pageProtocol: 'https:' })));
+}
+
+console.log('-- where a deck lives on the server --');
+{
+  const sha = 'ab'.repeat(32);
+  chk('a library deck by its own address', JSON.stringify(deckLocation('/media/deck/12/week6.md')) === '{"kind":"library","id":"12"}');
+  chk('a library file by its content address', deckLocation(`/media/${sha}/week6.md`).kind === 'version' && deckLocation(`/media/${sha}/week6.md`).sha === sha);
+  chk('but not a picture by its content address', deckLocation(`/media/${sha}/chart.png`).kind === 'other');
+  chk('content/decks, with or without a leading slash', deckLocation('content/decks/day06.md').name === 'day06.md' && deckLocation('/content/decks/day06.md').name === 'day06.md');
+  chk('a query or fragment is not part of it', deckLocation('/media/deck/3/x.md?v=2#s').id === '3');
+  chk('anything else is just an address', deckLocation('https://example.org/deck.md').kind === 'other' && deckLocation('').kind === 'other');
+  chk('content/decks/../ is not content/decks', deckLocation('content/decks/sub/../../secret.md').kind === 'other');
 }
 
 if (!ok) process.exit(1);

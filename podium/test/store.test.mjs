@@ -414,6 +414,13 @@ console.log('\n-- the library: editing a deck (Issue #226) --');
   ok('while a kept one\'s are still there', existsSync(library.mediaPath(dataDir, trimmed[0].version)));
   ok('someone who cannot see the deck cannot read its earlier versions', !library.mayReadMedia(db, outsider, trimmed[0].version)
     && library.mayReadMedia(db, ta, trimmed[0].version));
+  const now = library.getItem(db, owner, forCourse.id);
+  ok('a deck is found by the content address of its current version', library.deckForVersion(db, ta, now.version)?.id === forCourse.id
+    && library.deckForVersion(db, ta, now.version).current === true);
+  ok('and of an earlier one, saying so', library.deckForVersion(db, owner, trimmed[0].version)?.current === false);
+  ok('which says whether this person may edit it', library.deckForVersion(db, ta, now.version).editable === false
+    && library.deckForVersion(db, owner, now.version).editable === true);
+  ok('and finds nothing for someone who cannot see the deck', library.deckForVersion(db, outsider, now.version) === null);
   let notDeckRevisions = null;
   try { library.deckRevisions(db, owner, forEveryone.id); } catch (err) { notDeckRevisions = err; }
   ok('only a deck has versions', notDeckRevisions?.status === 400);
