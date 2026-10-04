@@ -22,7 +22,7 @@
 
 import { $, $$, el, safeStorageSet } from './util.js';
 import { createRenderer } from './renderers.js';
-import { render as renderDeckSource, deckId, describeBuild, forgetDeck, applyFits } from './deck.js';
+import { render as renderDeckSource, deckId, describeBuild, forgetDeck, applyFits, applyPolyfill } from './deck.js';
 import { deckStep } from './protocol.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { downloadText } from './store.js';
@@ -507,6 +507,7 @@ function wirePreviewClicks(host) {
 
 let stripShadow = null;
 let stripBuiltFor = null;
+let stripPolyfill = null;
 
 function buildStrip() {
   if (!rendered || stripBuiltFor === renderedId) { markStrip(); return; }
@@ -532,6 +533,12 @@ function buildStrip() {
     .acts button { flex: 1; min-height: 28px; font: 12px system-ui, sans-serif; color: #e8ecf1; background: #1b2027; border: 1px solid #2a3038; border-radius: 6px; cursor: pointer; }
     .acts button:disabled { opacity: .4; cursor: default; }
     .acts button.armed { background: #6b1a1a; border-color: #ff4d4f; }
+    /* Narrow (Issue #231): the editor is one column, so the slides are one
+       row of small thumbnails that scrolls sideways. */
+    @media (max-width: 960px) {
+      #cells { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+      .cell { flex: 0 0 168px; margin: 0; }
+    }
   </style><style>${rendered.css}</style><div id="cells"></div>`;
   const holder = document.createElement('div');
   holder.innerHTML = rendered.html;
@@ -584,6 +591,17 @@ function buildStrip() {
     moveSlide(from, to);
   });
   markStrip();
+  // Marp's own polyfill for inline-SVG slides (Issue #231): without it,
+  // WebKit - Safari, and every iPad - lays a slide's content out at its full
+  // 1280px inside the small thumbnail, so all that shows is its top-left
+  // corner. The controller's slide grid and every renderer already do this.
+  stripPolyfill?.cleanup?.();
+  stripPolyfill = null;
+  const built = stripBuiltFor;
+  applyPolyfill(stripShadow).then((handle) => {
+    if (stripBuiltFor === built) stripPolyfill = handle;
+    else handle?.cleanup?.();
+  });
 }
 
 function markStrip() {
@@ -610,7 +628,7 @@ function markStrip() {
     acts.querySelector('[data-act="del"]').disabled = deck.slides.length < 2 || deck.headingDivider;
   });
   const on = stripShadow.querySelector('.cell.on');
-  on?.scrollIntoView({ block: 'nearest' });
+  on?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 let deleteArmed = null;
