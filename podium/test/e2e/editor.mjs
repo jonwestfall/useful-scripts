@@ -831,6 +831,26 @@ trap(page, 'editor (no server)');
 await page.goto(`${BASE}/deck.html`);
 await page.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 2, null, { timeout: 20000 });
 ok('with no library, the save menu offers no library', await page.isHidden('#deck-save-library'));
+// Issue #231: at iPad width the editor is one column, and the slide strip
+// used to make each thumbnail as wide as the window and then cut it off at
+// the column's height - only the top-left corner of every slide showed.
+await page.setViewportSize({ width: 820, height: 1180 });
+await page.waitForTimeout(300);
+const strip = await page.evaluate(() => {
+  const col = document.querySelector('.deck-strip-col').getBoundingClientRect();
+  return [...document.querySelector('#deck-strip').shadowRoot.querySelectorAll('.cell')].map((cell) => {
+    const thumb = cell.querySelector('.thumb').getBoundingClientRect();
+    const slide = cell.querySelector('svg[data-marpit-svg]').getBoundingClientRect();
+    return {
+      width: thumb.width,
+      inColumn: thumb.top >= col.top && thumb.bottom <= col.bottom,
+      slideFits: Math.abs(slide.width - thumb.width) < 6 && Math.abs(slide.height - thumb.height) < 6,
+    };
+  });
+});
+ok(`at iPad width the slides are small thumbnails in a row (${strip.map((t) => Math.round(t.width)).join(', ')} px wide)`, strip.length === 2 && strip.every((t) => t.width < 200));
+ok('each one whole: inside the strip, and the whole slide inside it', strip.every((t) => t.inColumn && t.slideFits));
+await page.setViewportSize({ width: 1440, height: 900 });
 await page.click('.deck-toolbar [data-cmd="image"]');
 ok('and a picture can only come from an address', await page.isHidden('#deck-image-dialog [data-from="device"]')
   && await page.isVisible('#deck-image-dialog .deck-media-offline'));

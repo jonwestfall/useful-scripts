@@ -2477,7 +2477,11 @@ body.deck-editor .topbar { flex: none; }
 @media (max-width: 960px) {
   body.deck-editor { height: auto; overflow: auto; }
   .deck-grid { grid-template-columns: minmax(0, 1fr); }
-  .deck-strip-col { max-height: 220px; }
+  /* One row of small slides, scrolled sideways (Issue #231) - not cells as
+     wide as the window, cut off by the column's height, which showed only
+     each slide's top-left corner. The row itself is laid out inside the
+     strip's shadow root (see buildStrip in deck-editor.js). */
+  .deck-strip-col { overflow: hidden; padding-bottom: 8px; }
   .deck-code-col { min-height: 70vh; }
   .deck-col { border-right: 0; border-bottom: 1px solid var(--line); }
 }

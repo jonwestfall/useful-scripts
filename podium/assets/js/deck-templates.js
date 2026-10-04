@@ -16,7 +16,7 @@
 // server/deck-templates.js.
 
 import { $, $$, el } from './util.js';
-import { render as renderDeckSource, deckId, applyFits } from './deck.js';
+import { render as renderDeckSource, deckId, applyFits, applyPolyfill } from './deck.js';
 import { parseDeck } from './deck-source.js';
 
 const BUILT_IN_DIR = 'content/deck-templates/';
@@ -186,8 +186,14 @@ export function createTemplatesPanel(deps) {
 
   // Each template's first slide, drawn the way it will look - a slide
   // template in the open deck's theme, since that is where it will go.
+  // Marp's polyfill for each thumbnail (Issue #231), or WebKit draws only a
+  // slide's top-left corner; let go when the thumbnails are drawn again.
+  let polyfills = [];
+  const dropPolyfills = () => { for (const p of polyfills) p?.cleanup?.(); polyfills = []; };
+
   async function drawThumbnails(shown) {
     const mine = ++drawing;
+    dropPolyfills();
     const fm = deps.deck().frontMatter.raw;
     for (const t of shown) {
       if (mine !== drawing || dialog.hidden) return;
@@ -208,6 +214,8 @@ export function createTemplatesPanel(deps) {
         const svgs = shadow.querySelectorAll('svg[data-marpit-svg]');
         svgs.forEach((svg, i) => { if (i) svg.remove(); });
         applyFits(shadow, rendered.fits);
+        const polyfill = await applyPolyfill(shadow);
+        if (mine === drawing) polyfills.push(polyfill); else polyfill?.cleanup?.();
       } catch { /* a template Marp cannot draw just has no picture */ }
     }
   }
@@ -302,6 +310,7 @@ export function createTemplatesPanel(deps) {
   function close() {
     dialog.hidden = true;
     drawing++;
+    dropPolyfills();
     deps.done();
   }
 
