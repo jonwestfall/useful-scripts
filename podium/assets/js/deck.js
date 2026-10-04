@@ -212,6 +212,29 @@ export async function srcDeckId(src, source) {
   return `src:${src}#v=${await deckId(source)}`;
 }
 
+/**
+ * Where a deck at this address lives on the server, so whatever offers to
+ * edit it can save it back to the same place:
+ *   {kind: 'library', id}   a library deck's stable address
+ *   {kind: 'version', sha}  a library file by its content address - an older
+ *                           way to point at a library deck, still in plans
+ *                           and manifests made before the deck editor
+ *   {kind: 'content', name} content/decks/<name>, with or without a leading /
+ *   {kind: 'other'}         anything else: a file, another site
+ */
+export function deckLocation(src) {
+  let path = String(src || '').trim().split(/[?#]/)[0];
+  const here = typeof location === 'object' ? location.origin : '';
+  if (here && path.startsWith(here)) path = path.slice(here.length);
+  let m;
+  if ((m = /^\/media\/deck\/(\d+)\//.exec(path))) return { kind: 'library', id: m[1] };
+  if ((m = /^\/media\/([0-9a-f]{64})\/[^/]+\.(?:md|markdown)$/i.exec(path))) return { kind: 'version', sha: m[1].toLowerCase() };
+  if ((m = /^\/?content\/decks\/([^/]+\.(?:md|markdown))$/i.exec(path))) {
+    try { return { kind: 'content', name: decodeURIComponent(m[1]) }; } catch { return { kind: 'content', name: m[1] }; }
+  }
+  return { kind: 'other' };
+}
+
 /** The address inside a srcDeckId (or an older plain `src:` id), or null. */
 export function srcOfDeckId(id) {
   const text = String(id || '');

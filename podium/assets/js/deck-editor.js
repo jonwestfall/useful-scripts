@@ -13,7 +13,9 @@
 //   ?content=<f>   content/decks/<f>, an administrator's
 //   ?plan&item     a deck carried inside a lecture plan, handed over by the
 //                  planner tab that opened this one and handed back to it
-//   ?src=<url>     anything else at an address: opened, then saved somewhere
+//   ?src=<url>     a deck at an address. One that is really a library deck
+//                  or a content/decks file opens as that, and saves back to
+//                  it; anything else is opened, then saved somewhere
 //   ?template=<k>  a template of your own or your course's, saved back to it
 //                  (one you cannot change opens as a new deck made from it)
 //   ?from=<k>      a new deck, started from a template
@@ -22,7 +24,7 @@
 
 import { $, $$, el, safeStorageSet } from './util.js';
 import { createRenderer } from './renderers.js';
-import { render as renderDeckSource, deckId, describeBuild, forgetDeck, applyFits, applyPolyfill } from './deck.js';
+import { render as renderDeckSource, deckId, describeBuild, forgetDeck, applyFits, applyPolyfill, deckLocation } from './deck.js';
 import { deckStep } from './protocol.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { downloadText } from './store.js';
@@ -1128,6 +1130,40 @@ async function openContent(name) {
 }
 
 async function openSrc(src) {
+  // A deck already on this server is edited where it is, whichever way the
+  // address names it - so the planner, the controller and a link can all
+  // just say which deck, and Save puts it back there.
+  const where = deckLocation(src);
+  const server = !!(info?.features.includes('library') && info?.user);
+  if (where.kind === 'library' && server) return openLibrary(where.id);
+  if (where.kind === 'version' && server) {
+    const res = await fetch(`/api/library/deck-for/${where.sha}`, { credentials: 'same-origin' });
+    const found = res.ok ? (await res.json()).item : null;
+    if (found) {
+      const value = await openLibrary(found.id);
+      // The address named this deck by its contents, which a save changes.
+      // Whatever pointed at it (a lecture in the planner) now points at the
+      // deck's own address, so it follows this edit and every later one.
+      relinkToLibrary(found);
+      if (!found.current) warn(`That address held an earlier version of “${found.title}”. This is the deck as it is now; Previous versions has the older ones.`);
+      return value;
+    }
+  }
+  if (where.kind === 'content') {
+    if (info?.user?.isAdmin) return openContent(where.name);
+    const value = await openPlainSrc(src);
+    if (server) warn(`content/decks/${where.name} is kept by the server's administrators, so only they can save over it. Save makes a copy of it in the library, for you to edit and present.`);
+    return value;
+  }
+  return openPlainSrc(src);
+}
+
+function relinkToLibrary(item) {
+  const fromPlan = params.get('plan') && params.get('item') ? { planId: params.get('plan'), itemId: params.get('item') } : null;
+  if (fromPlan) channel?.postMessage({ type: 'deck-linked', ...fromPlan, src: item.src, title: item.title, from: 'editor' });
+}
+
+async function openPlainSrc(src) {
   const res = await fetch(src, { cache: 'no-cache', credentials: 'same-origin' });
   if (!res.ok) throw new Error(`Could not read ${src} (HTTP ${res.status}).`);
   origin = { kind: 'file', src, name: decodeURIComponent(src.split('/').pop() || 'deck.md'), title: '' };

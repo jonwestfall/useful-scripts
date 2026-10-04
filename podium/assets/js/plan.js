@@ -19,7 +19,7 @@ import {
   readFileText, downscaleImage, downloadText,
 } from './store.js';
 import { createRenderer } from './renderers.js';
-import { render as renderDeckSource, frontMatterTitle, describeBuild } from './deck.js';
+import { render as renderDeckSource, frontMatterTitle, describeBuild, deckLocation } from './deck.js';
 import { assetRefsIn } from './deck-source.js';
 import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS, deckStep } from './protocol.js';
 import { mountSessionBadge, serverInfo } from './server.js';
@@ -474,18 +474,16 @@ function renderEditor() {
 function deckEditorField(item) {
   const base = { plan: plan.id, item: item.id };
   const open = (extra) => window.open(`deck.html?${new URLSearchParams({ ...extra, ...base })}`, '_blank');
-  const libraryId = /^\/media\/deck\/(\d+)\//.exec(item.src || '')?.[1];
-  const contentName = /^content\/decks\/(.+)$/.exec(item.src || '')?.[1];
+  // A deck inside the plan comes from here; any other is named by its
+  // address, and the editor works out where on the server that is - the
+  // library, content/decks - and saves it back there.
   const edit = el('button', {
     type: 'button',
     onclick: () => {
       if (item.asset) open({ embedded: '1' });
-      else if (libraryId) open({ library: libraryId });
-      else if (contentName && me?.isAdmin) open({ content: decodeURIComponent(contentName) });
       else open({ src: item.src });
     },
   }, 'Edit this deck');
-  edit.hidden = !item.asset && !item.src;
   const fresh = el('button', {
     type: 'button',
     onclick: () => {
@@ -505,9 +503,27 @@ function deckEditorField(item) {
       renderEditor();
       open({ embedded: '1' });
     },
-  }, item.asset || item.src ? 'Start a new deck instead' : 'Write a new deck');
+  }, 'Write a new deck');
+  // Typing a path into the item only redraws the preview, not this field, so
+  // the buttons follow the item themselves (see afterEdit).
+  deckEditorButtons = { item, sync: () => {
+    edit.hidden = !item.asset && !item.src;
+    fresh.textContent = item.asset || item.src ? 'Start a new deck instead' : 'Write a new deck';
+  } };
+  deckEditorButtons.sync();
   return field('Deck editor', el('div', { class: 'inline' }, edit, fresh),
     'Opens in a new tab: the markdown beside the slides as the class will see them. Keep this lecture open here while you edit a deck that lives inside it.');
+}
+
+// The same deck, however the two addresses are written (content/decks/x.md
+// and /content/decks/x.md, say).
+function sameDeck(a, b) {
+  const one = deckLocation(a);
+  const two = deckLocation(b);
+  if (one.kind !== two.kind) return false;
+  if (one.kind === 'library') return one.id === two.id;
+  if (one.kind === 'content') return one.name === two.name;
+  return String(a).split(/[?#]/)[0] === String(b).split(/[?#]/)[0];
 }
 
 function newDeckMarkdown(title) {
@@ -577,7 +593,7 @@ deckChannel?.addEventListener('message', (ev) => {
   if (msg.type === 'deck-saved') {
     deckEpoch++;
     const item = selected();
-    if (item?.type === 'deck' && item.src === msg.src) renderPreview({ remount: true });
+    if (item?.type === 'deck' && item.src && sameDeck(item.src, msg.src)) renderPreview({ remount: true });
   }
 });
 
@@ -875,8 +891,11 @@ function imageField(item, spec) {
 // A keystroke must not rebuild the editor - that would take the caret with it.
 // So an edit updates only what an edit can change: the row's label, the preview,
 // and the save state.
+let deckEditorButtons = null;
+
 function afterEdit({ remount = false, label = false } = {}) {
   touch();
+  if (deckEditorButtons?.item === selected()) deckEditorButtons.sync();
   if (label) renderOrder();
   renderPreview({ remount });
 }

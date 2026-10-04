@@ -114,7 +114,14 @@ The deck editor writes and edits Marp decks without leaving Podium (Issue #226).
   - **`content/decks`** 🖥️ (administrators), or a downloaded **`.md` file** anywhere else. Unsaved work is kept on the device, and offered back if the page is reloaded.
   - **A `.zip`, with its pictures**: the `.md` and a `media/` folder of the pictures and videos it uses, pointed at by relative path. That is the shape Marp for VS Code and other Marp tools expect, so a deck taken out of Podium opens there as it was. *Open a .md or .zip file…* brings one back in. On a server 🖥️, its pictures and videos go into the library (with no course) and the deck is pointed at them there.
   - **A PDF**: every slide, fully built, one page each, for a handout or to post after class.
-- **Who may save**: administrators, the owners of the deck's course, and whoever uploaded a deck that isn't filed under a course. A TA (a course *member*) can open a course deck and present it, but can only save a copy of their own. The controller's library shows ✎ on any deck you may edit.
+- **Who may save**: administrators, the owners of the deck's course, and whoever uploaded a deck that isn't filed under a course. A TA (a course *member*) can open a course deck and present it, but can only save a copy of their own. A deck in `content/decks` is kept by the server's administrators, so only they can save over it; anyone else's **Save** makes a copy in the library.
+- **Quick edits wherever you are** 🖥️: a deck already on the server is edited where it lives, and saved back there, from any of these:
+  - *Edit this deck* on a deck item in the planner;
+  - ✎ on a deck's tile in the controller's library;
+  - **✎ Edit** on the controller's Slides tab, for the deck on screen, during a lecture;
+  - a link to `deck.html?src=` and the deck's address.
+
+  This works however the deck is named: by its library address, by `content/decks/…` (with or without a leading `/`), or by the older content address (`/media/<sha256>/…`) that plans and manifests made before the deck editor still use. A lecture that named a deck the old way is pointed at the deck's own address the first time it is edited, so it follows that edit and every later one. During a lecture the room keeps the version it has until **Reload it** (see above). The ✎ buttons only appear where you may save.
 
 ### The Presenter View (Now, Next & Notes)
 
