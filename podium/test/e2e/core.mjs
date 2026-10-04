@@ -2489,6 +2489,37 @@ ok('it is remembered on this device', await phone.evaluate(() => document.body.c
 await lctx.close();
 }
 
+if (want('the planner on an iPad')) {
+console.log('\n-- the planner on an iPad: lecture settings and items come into view when tapped --');
+// Below 1100px the item / lecture settings column sits under the running
+// order, so tapping "Lecture settings" (or an item) filled in something off
+// the bottom of the screen and looked like it did nothing.
+const pctx = await browser.newContext({ viewport: { width: 1024, height: 768 }, hasTouch: true });
+const planner = await pctx.newPage();
+trap(planner, 'planner (iPad)');
+await planner.goto(`${BASE}/plan.html`);
+await planner.waitForSelector('#type-picker .type-btn');
+for (const kind of ['Text sign', 'Countdown', 'Black']) {
+  await planner.click(`#type-picker .type-btn:has-text("${kind}")`);
+}
+await planner.evaluate(() => window.scrollTo(0, 0));
+await planner.tap('#order-settings');
+const inView = (sel) => planner.waitForFunction((s) => {
+  const top = document.querySelector(s).getBoundingClientRect().top;
+  return top >= 0 && top < window.innerHeight * 0.6;
+}, sel, { timeout: 3000 }).then(() => true).catch(() => false);
+ok('tapping "Lecture settings" brings the settings into view', await inView('#lecture-settings') && (await planner.textContent('#item-heading')) === 'Lecture settings');
+await planner.evaluate(() => window.scrollTo(0, 0));
+await planner.tap('#order li .order-open >> nth=1');
+ok('and tapping an item brings its fields into view', await inView('#item-heading') && (await planner.textContent('#item-heading')) !== 'Lecture settings');
+await planner.setViewportSize({ width: 1400, height: 900 });
+await planner.evaluate(() => window.scrollTo(0, 0));
+await planner.click('#order-settings');
+await planner.waitForTimeout(400);
+ok('with three columns, nothing scrolls', await planner.evaluate(() => window.scrollY === 0));
+await pctx.close();
+}
+
 if (want('a deck still renders after the engine download fails')) {
 console.log('\n-- a deck still renders after the engine download fails (Issue #221) --');
 // The first download of the 1.1 MB Marp bundle - and the immediate retry -

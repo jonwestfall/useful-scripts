@@ -214,7 +214,7 @@ function renderOrder() {
       dataset: { id: item.id },
     },
       el('span', { class: 'order-n' }, String(index + 1)),
-      el('button', { class: 'order-open', type: 'button', onclick: () => select(item.id) },
+      el('button', { class: 'order-open', type: 'button', onclick: () => select(item.id, { reveal: true }) },
         el('span', { class: 'order-icon' }, PLAN_TYPES[item.type]?.icon || '?'),
         el('span', { class: 'order-title' }, itemLabel(item, plan)),
         el('span', { class: 'order-type' }, PLAN_TYPES[item.type]?.label || item.type),
@@ -267,14 +267,30 @@ $('#order').addEventListener('drop', (ev) => {
   renderOrder();
 });
 
-$('#order-settings').addEventListener('click', () => select(null));
+$('#order-settings').addEventListener('click', () => select(null, { reveal: true }));
 
-function select(id) {
+function select(id, { reveal = false } = {}) {
   selectedId = id;
   preview.slide = 0;
   preview.step = 0;
   renderOrder();
   renderEditor();
+  if (reveal) revealEditor();
+}
+
+// On a narrower screen - an iPad either way up - the column that shows the
+// item or the lecture settings sits under the running order rather than
+// beside it, and filling it in changes nothing you can see: tapping "Lecture
+// settings" looked like it did nothing at all. So a tap that opens something
+// there brings it into view - only when it is stacked below and not already
+// on screen, never in the three-column layout.
+function revealEditor() {
+  const column = $('#col-item');
+  const order = $('#col-order').getBoundingClientRect();
+  const top = column.getBoundingClientRect().top;
+  if (top < order.bottom - 1) return;                  // beside the running order
+  if (top >= 0 && top < window.innerHeight * 0.5) return;  // already in view
+  column.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function move(id, delta) {
@@ -337,7 +353,7 @@ function renderTypePicker() {
       // down it, and appending to the end means dragging it back every time.
       plan.items.splice(at < 0 ? plan.items.length : at + 1, 0, item);
       touch();
-      select(item.id);
+      select(item.id, { reveal: true });
       if (type === 'timer') renderTimers();
       renderAutoLaunch();
     },
