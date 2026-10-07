@@ -190,6 +190,13 @@ request automatically — subresources, manifests, icons, service-worker fetches
 - Failed logins are rate-limited per IP and per username in memory — this is an
   internet-facing form on a box with one user, and an unthrottled one is a
   standing invitation.
+- **Changing your own password** (`POST /api/me/password { current, password }`,
+  from My Files, Issue #243) asks for the current one and is throttled by the
+  same counters as a login, so a browser left signed in is not a way to guess
+  at it. Success ends every session the account has, then hands this browser a
+  fresh one: signed in here, signed out everywhere else. Both outcomes are in
+  the audit log (`password_changed_self`, `password_change_failure`). A kiosk
+  or a Guest View pass has no account, so neither can reach it.
 
 `AUTH_PASSWORD` (the Basic Auth that shipped last week) stays for installs that
 want one shared credential and no accounts. The precedence is explicit and

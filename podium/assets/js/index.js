@@ -39,6 +39,9 @@ function surfaceLinks(cls) {
   // server with a library, not just administrators - a TA who can upload
   // decks should be able to find the page that lets them.
   if (info.features.includes('library')) links.push(el('a', { href: 'admin.html', class: cls }, 'Admin'));
+  // Issue #243: everything that is yours, and your password. Accounts only -
+  // without them nothing belongs to anybody.
+  if (info.auth?.mode === 'accounts' && info.user) links.push(el('a', { href: 'me.html', class: cls }, 'My Files'));
   return links;
 }
 

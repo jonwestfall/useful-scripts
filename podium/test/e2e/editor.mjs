@@ -1,6 +1,7 @@
 // Podium end-to-end group: the deck editor (Issue #226), and the planner's
-// lecture archive (Issue #239), Quick Look (Issue #242) and the server file
-// picker (Issue #241), which want the same server with accounts.
+// lecture archive (Issue #239), Quick Look (Issue #242), the server file
+// picker (Issue #241) and My Files (Issue #243), which want the same server
+// with accounts.
 //
 //   node podium/test/e2e/editor.mjs [--only <name>[,<name>...]]
 //
@@ -1601,6 +1602,131 @@ await toPlan.waitForFunction((n) => document.querySelectorAll('#order .order-row
   .catch(() => ok('and Add puts it in the lecture', false));
 ok('the planner\'s address is tidied back to plain', !new URL(toPlan.url()).searchParams.has('add'));
 await owen.close();
+}
+
+if (want('My Files: everything I have, and what I may do with it (#243)')) {
+console.log('\n-- My Files: everything I have, and what I may do with it (#243) --');
+// A TA of their own, so changing a password here leaves everyone else's alone.
+admin('user', 'add', 'mia', '--name', 'Mia TA', '--password-stdin');
+admin('course', 'add', 'mine101', '--title', 'Mine 101');
+admin('member', 'add', 'mine101', 'owen', '--role', 'owner');
+admin('member', 'add', 'mine101', 'mia', '--role', 'member');
+const owen = await signedIn('owen');
+const desk = await owen.newPage();
+trap(desk, 'my files setup');
+await desk.goto(`${base}/index.html`);
+await desk.evaluate(async (bytes) => {
+  await fetch('/api/library/upload?filename=owen-handout.pdf&course=mine101&title=Owen%20handout', { method: 'POST', body: new Uint8Array(bytes) });
+  await fetch('/api/plans', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Shared lecture', course: 'mine101', doc: { podium: 'plan', v: 1, title: 'Shared lecture', items: [] } }) });
+}, [...fs.readFileSync(path.join(ROOT, 'content', 'sample.pdf'))]);
+await owen.close();
+
+const mia = await signedIn('mia');
+const other = await signedIn('mia');          // the same person, on another device
+const page = await mia.newPage();
+trap(page, 'my files (mia)');
+await page.goto(`${base}/index.html`);
+const miaUpload = await page.evaluate(async (bytes) => {
+  const res = await fetch('/api/library/upload?filename=mia-notes.pdf&course=mine101&title=Mia%20notes', { method: 'POST', body: new Uint8Array(bytes) });
+  return (await res.json()).item;
+}, [...fs.readFileSync(path.join(ROOT, 'content', 'sample.pdf'))]);
+
+await page.waitForSelector('#session-badge .session-who');
+ok('your name in the session badge leads to My Files', await page.getAttribute('#session-badge .session-who', 'href') === 'me.html');
+await Promise.all([page.waitForURL((url) => url.pathname === '/me.html'), page.click('#session-badge .session-who')]);
+await page.waitForFunction(() => document.querySelector('#me-name')?.textContent === 'Mia TA', null, { timeout: 10000 })
+  .then(() => ok('the profile says who you are', true))
+  .catch(() => ok('the profile says who you are', false));
+const courseLine = await page.textContent('#me-courses');
+ok(`and your course, with your role in it ("${courseLine}")`, /MINE101 — member \(TA\)/.test(courseLine));
+
+const row = (title) => page.locator('#files-list .me-row', { hasText: title });
+await row('Owen handout').waitFor({ timeout: 10000 });
+ok(`a course owner's file is View only to a TA ("${await row('Owen handout').locator('.me-chip').textContent()}")`,
+  (await row('Owen handout').locator('.me-chip').textContent()) === 'View only');
+ok('with the reason on it', /Added by Owen Owner; you're a member of MINE101/.test(await row('Owen handout').locator('.me-chip').getAttribute('title')));
+ok('and nothing offered that would change it', await row('Owen handout').locator('button', { hasText: /Rename|Move|Delete/ }).count() === 0);
+ok(`their own upload says Owner ("${await row('Mia notes').locator('.me-chip').textContent()}")`, (await row('Mia notes').locator('.me-chip').textContent()) === 'Owner');
+ok('with Rename, Move and Delete', await row('Mia notes').locator('button', { hasText: /^(Rename|Move to…|Delete)$/ }).count() === 3);
+
+page.once('dialog', (d) => d.accept('Mia notes, revised'));
+await row('Mia notes').locator('button', { hasText: 'Rename' }).click();
+await row('Mia notes, revised').waitFor({ timeout: 5000 })
+  .then(() => ok('Rename renames it', true))
+  .catch(() => ok('Rename renames it', false));
+await row('Mia notes, revised').locator('button', { hasText: 'Move to…' }).click();
+await page.waitForSelector('.me-dialog select');
+await page.selectOption('.me-dialog select', '');
+ok('moving to no course warns who will see it', /everyone who has an account/.test(await page.textContent('.me-dialog')));
+await page.click('.me-dialog button:has-text("Move")');
+await page.waitForFunction(() => /Moved/.test(document.querySelector('#files-note').textContent), null, { timeout: 5000 }).catch(() => {});
+ok('Move refiles it', (await libraryItem(page, miaUpload.id))?.course === null && /No course/.test(await row('Mia notes, revised').textContent()));
+
+await page.selectOption('#files-show', 'view');
+ok('Show: View only narrows the list to what you cannot change', await row('Owen handout').count() === 1 && await row('Mia notes, revised').count() === 0);
+await page.selectOption('#files-show', 'all');
+
+const [look] = await Promise.all([mia.waitForEvent('page'), row('Owen handout').locator('button', { hasText: '↗' }).click()]);
+trap(look, 'my files quick look');
+await look.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 })
+  .then(() => ok('↗ opens a PDF in Quick Look', true))
+  .catch(() => ok('↗ opens a PDF in Quick Look', false));
+await look.close();
+
+await page.click('.me-tabs .tab:has-text("Lectures")');
+const lecture = page.locator('#lectures-list .me-row', { hasText: 'Shared lecture' });
+await lecture.waitFor({ timeout: 10000 })
+  .then(() => ok('Lectures lists the lecture shared with them through their course', true))
+  .catch(() => ok('Lectures lists the lecture shared with them through their course', false));
+ok(`as shared, to open and present, not delete ("${await lecture.locator('.me-chip').textContent().catch(() => '')}")`,
+  (await lecture.locator('.me-chip').textContent()) === 'Shared, view & present' && await lecture.locator('button', { hasText: 'Delete' }).count() === 0);
+const [present] = await Promise.all([mia.waitForEvent('page'), lecture.locator('button', { hasText: 'Present' }).click()]);
+trap(present, 'my files present');
+await present.waitForFunction(() => /Loaded “Shared lecture”/.test(document.querySelector('#plan-note')?.textContent || ''), null, { timeout: 15000 })
+  .then(() => ok('Present opens it in the controller', true))
+  .catch(async () => ok(`Present opens it in the controller ("${await present.textContent('#plan-note').catch(() => '')}")`, false));
+ok('and tidies the controller\'s address', !new URL(present.url()).searchParams.has('plan'));
+await present.close();
+await page.click('.me-tabs .tab:has-text("Recorded lectures")');
+await page.waitForFunction(() => !/Looking/.test(document.querySelector('#recorded-list').textContent), null, { timeout: 5000 });
+await page.click('.me-tabs .tab:has-text("Deck templates")');
+await page.waitForFunction(() => !/Looking/.test(document.querySelector('#templates-list').textContent), null, { timeout: 5000 });
+ok('the other tabs load', true);
+
+// The password: the current one is asked for, and every other device signs out.
+const otherPage = await other.newPage();
+await otherPage.goto(`${base}/index.html`);
+const otherStatus = () => otherPage.evaluate(() => fetch('/api/me').then((r) => r.status));
+ok('the other device is signed in to begin with', await otherStatus() === 200);
+await page.click('#me-password');
+expecting.passwordRefused = true;
+await page.fill('#pw-current', 'not my password');
+await page.fill('#pw-new', 'a fresh long password');
+await page.fill('#pw-again', 'a fresh long password');
+await page.click('.me-password button[type=submit]');
+await page.waitForFunction(() => /not your current password/.test(document.querySelector('#pw-status')?.textContent || ''), null, { timeout: 5000 })
+  .then(() => ok('the wrong current password is refused, and says so', true))
+  .catch(() => ok('the wrong current password is refused, and says so', false));
+expecting.passwordRefused = false;
+await page.fill('#pw-current', 'a good long password');
+await page.click('.me-password button[type=submit]');
+await page.waitForSelector('.me-dialog', { state: 'detached', timeout: 10000 })
+  .then(() => ok('the right one changes it', true))
+  .catch(() => ok('the right one changes it', false));
+ok(`and says what happened ("${await page.textContent('#me-who')}")`, /password changed/.test(await page.textContent('#me-who')));
+ok('this browser is still signed in', await page.evaluate(() => fetch('/api/me').then((r) => r.status)) === 200);
+ok('the other device is not', await otherStatus() === 401);
+await other.close();
+await mia.close();
+
+// An administrator sees everything; the page still starts with their own.
+const root = await signedIn('root');
+const rootPage = await root.newPage();
+trap(rootPage, 'my files (root)');
+await rootPage.goto(`${base}/me.html`);
+await rootPage.waitForFunction(() => document.querySelector('#me-who')?.textContent.includes('Administrator'), null, { timeout: 10000 }).catch(() => {});
+ok(`an administrator's Files start on Mine ("${await rootPage.inputValue('#files-show')}")`, await rootPage.inputValue('#files-show') === 'mine');
+await root.close();
 }
 
 if (want('the deck editor: drafts, downloads, completion and checks (#226)')) {

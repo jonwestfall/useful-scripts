@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex">
+<title>My Files — Podium</title>
+<link rel="stylesheet" href="assets/css/podium.css">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<!-- My Files (Issue #243): everything this account has on the server - library
+     files, lectures, deck templates and recorded lectures - each saying what
+     you may do with it, and a small profile with the one thing you can change
+     yourself, your password. Reached by tapping your name in the session
+     badge. Server installs with accounts only; see assets/js/me.js. -->
+</head>
+<body class="plan admin me">
+
+<div class="topbar">
+  <a class="brand" href="index.html" title="Back to Podium">PODIUM</a>
+  <span class="tag">My Files</span>
+  <span class="spacer"></span>
+  <span id="session-badge" class="session-badge" hidden></span>
+  <a href="control.html" class="linkish">Controller</a>
+  <a href="plan.html" class="linkish">Planning</a>
+  <a href="deck.html" class="linkish">Deck editor</a>
+</div>
+
+<div id="no-accounts" class="admin-wrap" hidden>
+  <div class="card">
+    <h2>My Files needs a Podium server with accounts</h2>
+    <p class="hint">
+      This Podium is running without accounts, so there is nobody for these
+      files to belong to. On a server of your own, set up accounts as
+      <code>VPS.md</code> describes and this page lists everything that is
+      yours.
+    </p>
+  </div>
+</div>
+
+<div id="me" class="admin-wrap" hidden>
+  <section class="card me-profile" id="me-profile" aria-labelledby="me-name">
+    <h2 id="me-name">…</h2>
+    <p class="hint" id="me-who"></p>
+    <div class="me-courses" id="me-courses"></div>
+    <div class="admin-actions">
+      <button type="button" class="admin-small" id="me-password">Change password</button>
+    </div>
+  </section>
+
+  <div class="tabs admin-tabs me-tabs" role="tablist" style="grid-column: 1 / -1; margin-bottom: 0;">
+    <button type="button" class="tab is-on" role="tab" data-target="panel-files" aria-selected="true">Files</button>
+    <button type="button" class="tab" role="tab" data-target="panel-lectures" aria-selected="false">Lectures</button>
+    <button type="button" class="tab" role="tab" data-target="panel-templates" aria-selected="false">Deck templates</button>
+    <button type="button" class="tab" role="tab" data-target="panel-recorded" aria-selected="false">Recorded lectures</button>
+  </div>
+
+  <section class="card me-panel" id="panel-files" role="tabpanel" aria-label="Files">
+    <div class="me-filters">
+      <input id="files-search" type="search" placeholder="Search by title, file name, class or who added it" aria-label="Search files" autocomplete="off">
+      <select id="files-show" aria-label="Show">
+        <option value="all">All I can see</option>
+        <option value="mine">Mine</option>
+        <option value="edit">I can edit</option>
+        <option value="view">View only</option>
+      </select>
+      <select id="files-course" aria-label="Course"></select>
+      <select id="files-type" aria-label="Kind of file"></select>
+      <label class="me-check"><input type="checkbox" id="files-deck-media"> Deck media</label>
+    </div>
+    <div class="me-upload" id="files-drop">
+      <span>Upload to the library:</span>
+      <select id="upload-course" aria-label="File the upload under"></select>
+      <button type="button" class="admin-small" id="upload-pick">Choose files…</button>
+      <input type="file" id="upload-file" multiple hidden>
+      <span class="hint" id="upload-note" role="status">…or drop them here.</span>
+    </div>
+    <div class="me-bulk" id="files-bulk" hidden>
+      <span id="files-bulk-count"></span>
+      <button type="button" class="admin-small" id="files-bulk-move">Move to…</button>
+      <button type="button" class="admin-small is-bad" id="files-bulk-delete">Delete</button>
+      <button type="button" class="admin-small" id="files-bulk-clear">Clear</button>
+    </div>
+    <div class="me-list" id="files-list" role="list"><p class="hint">Looking…</p></div>
+    <p class="hint" id="files-note" role="status"></p>
+  </section>
+
+  <section class="card me-panel" id="panel-lectures" role="tabpanel" aria-label="Lectures" hidden>
+    <div class="me-filters">
+      <input id="lectures-search" type="search" placeholder="Search by title, class or author" aria-label="Search lectures" autocomplete="off">
+      <label class="me-check"><input type="checkbox" id="lectures-archived"> Show archived</label>
+    </div>
+    <div class="me-list" id="lectures-list" role="list"><p class="hint">Looking…</p></div>
+    <p class="hint" id="lectures-note" role="status"></p>
+  </section>
+
+  <section class="card me-panel" id="panel-templates" role="tabpanel" aria-label="Deck templates" hidden>
+    <div class="me-list" id="templates-list" role="list"><p class="hint">Looking…</p></div>
+    <p class="hint" id="templates-note" role="status"></p>
+  </section>
+
+  <section class="card me-panel" id="panel-recorded" role="tabpanel" aria-label="Recorded lectures" hidden>
+    <div class="me-list" id="recorded-list" role="list"><p class="hint">Looking…</p></div>
+    <p class="hint" id="recorded-note" role="status"></p>
+  </section>
+</div>
+
+<script type="module" src="assets/js/me.js"></script>
+</body>
+</html>

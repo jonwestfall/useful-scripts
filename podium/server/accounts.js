@@ -361,6 +361,37 @@ async function login(db, username, password, { userAgent = '', ip = '' } = {}) {
   return { ok: true, token: startSession(db, row.id, userAgent, now), user: publicUser(row) };
 }
 
+/**
+ * Someone changing their own password (Issue #243). The current one is asked
+ * for and throttled exactly as a login is, since a signed-in browser left open
+ * is otherwise a way to guess at it. setPassword ends every session the
+ * account has, which is the point - so this one is handed a fresh session, and
+ * the person stays signed in here and nowhere else.
+ */
+async function changeOwnPassword(db, user, current, next, { userAgent = '', ip = '' } = {}) {
+  // Said before the current password is checked, so a too-short new one never
+  // counts as a wrong guess.
+  if (String(next || '').length < 8) {
+    throw Object.assign(new Error('password must be at least 8 characters'), { status: 400 });
+  }
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  if (!row || row.disabled_at) return { ok: false };
+  const now = Date.now();
+  for (const key of [`u:${row.username}`, `ip:${ip}`]) {
+    if (throttledFor(key, now)) return { ok: false, retryAfterMs: throttledFor(key, now) };
+  }
+  if (!(await verifyPassword(current, row.password_hash))) {
+    noteFailure(`u:${row.username}`, now);
+    noteFailure(`ip:${ip}`, now);
+    logEvent(db, { userId: row.id, username: row.username, action: 'password_change_failure', ip, userAgent, now });
+    return { ok: false };
+  }
+  await setPassword(db, row.username, next);
+  clearFailures(`u:${row.username}`);
+  logEvent(db, { userId: row.id, username: row.username, action: 'password_changed_self', ip, userAgent, now });
+  return { ok: true, token: startSession(db, row.id, userAgent, now) };
+}
+
 // --- audit logs --------------------------------------------------------------
 
 function logEvent(db, { userId = null, username = null, action, ip = null, userAgent = null, details = null, now = Date.now() }) {
@@ -384,7 +415,7 @@ module.exports = {
   hashPassword, verifyPassword, normalizeUsername, publicUser,
   createUser, findUser, listUsers, countUsers, countEnabledUsers, countEnabledAdmins,
   setPassword, setDisabled, setAdmin, setDisplayName, assertAnotherAdminRemains,
-  startSession, sessionUser, endSession, pruneSessions, login,
+  startSession, sessionUser, endSession, pruneSessions, login, changeOwnPassword,
   logEvent, pruneLogs,
   SESSION_MS,
 };

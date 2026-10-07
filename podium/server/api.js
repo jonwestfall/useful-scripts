@@ -563,6 +563,32 @@ async function handleApi(req, res, url, ctx) {
       return true;
     }
 
+    // --- My Files (Issue #243): who I am, and my own password -----------------
+
+    if (head === 'me' && rest.length === 1 && rest[0] === 'profile' && req.method === 'GET') {
+      json(res, 200, { user, courses: courses.memberships(ctx.db, user) });
+      return true;
+    }
+
+    if (head === 'me' && rest.length === 1 && rest[0] === 'password' && req.method === 'POST') {
+      const body = await readJson(req, 8 * 1024);
+      const result = await accounts.changeOwnPassword(ctx.db, user, body.current, body.password, {
+        userAgent: req.headers['user-agent'] || '',
+        ip: clientIp(req),
+      });
+      if (!result.ok) {
+        const retry = result.retryAfterMs;
+        json(res, retry ? 429 : 403,
+          { error: retry ? 'too many attempts, try again shortly' : 'that is not your current password' },
+          retry ? { 'retry-after': String(Math.ceil(retry / 1000)) } : {});
+        return true;
+      }
+      // Every other session of this account has just ended; this browser is
+      // handed the one fresh session changeOwnPassword made.
+      json(res, 200, { ok: true }, { 'set-cookie': setCookie(req, result.token, Math.floor(accounts.SESSION_MS / 1000)) });
+      return true;
+    }
+
     if (head === 'plans' && !rest.length && req.method === 'GET') {
       // ?archived=1 / 0: only the lectures this caller has archived from
       // their own list (Issue #239), or only the rest. Left out: all, each
@@ -678,7 +704,9 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'lectures' && !rest.length && req.method === 'GET') {
       json(res, 200, {
-        lectures: lectures.listLectures(ctx.db, user),
+        // Each says whether this caller may delete it (Issue #243), so My Files
+        // offers Delete only where the server will allow it.
+        lectures: lectures.listLectures(ctx.db, user).map((l) => ({ ...l, mayDelete: lectures.mayDelete(ctx.db, user, l) })),
         // Scoped to what this caller may see, the same as the lecture list
         // just above it - the instance-wide total is the Storage card's own,
         // admin-only question (see the comment on usage()).

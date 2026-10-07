@@ -1517,8 +1517,11 @@ ok('a lecture on the server this browser has no copy of is in the same list, mar
 await planner.click('#plan-list .plan-row.is-remote:has-text("From another device")');
 await planner.waitForFunction(() => document.querySelector('#plan-title').value === 'From another device', null, { timeout: 8000 });
 ok('tapping it opens it here', true);
-ok('and it is no longer listed twice', (await planner.$$('#plan-list .plan-row.is-remote:has-text("From another device")')).length === 0
-  && (await planner.$$('#plan-list .plan-row:has-text("From another device")')).length === 1);
+// The list redraws after the lecture opens (it reads storage first), so wait for it.
+ok('and it is no longer listed twice', await planner.waitForFunction(() => {
+  const rows = [...document.querySelectorAll('#plan-list .plan-row')].filter((r) => r.textContent.includes('From another device'));
+  return rows.length === 1 && !rows[0].classList.contains('is-remote');
+}, null, { timeout: 5000 }).then(() => true, () => false));
 
 // -- Delete removes both copies, and says so ---------------------------------
 await planner.click('#plan-delete');

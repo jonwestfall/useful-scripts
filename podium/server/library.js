@@ -96,6 +96,8 @@ function itemRow(row) {
     bytes: row.bytes || 0,
     createdAt: row.created_at,
     createdBy: row.created_by,
+    // Who that was, by name (Issue #243) - "Added by Tia".
+    createdByName: row.created_by_name || '',
     ...(row.sha256 ? { src: `/media/${row.sha256}/${encodeURIComponent(row.filename || 'file')}` } : {}),
     // A deck can be edited (Issue #226), and everything that points at one -
     // a plan, the manifest, a controller's library - should see the edit. So a
@@ -116,10 +118,12 @@ function deckSrc(id, filename) {
 }
 
 const SELECT_ITEMS = `
-  SELECT li.*, m.sha256, m.bytes, c.code AS course_code
+  SELECT li.*, m.sha256, m.bytes, c.code AS course_code,
+         COALESCE(NULLIF(u.display_name, ''), u.username) AS created_by_name
     FROM library_items li
     LEFT JOIN media m ON m.id = li.media_id
     LEFT JOIN courses c ON c.id = li.course_id
+    LEFT JOIN users u ON u.id = li.created_by
    WHERE li.deleted_at IS NULL`;
 
 function listItems(db, user) {

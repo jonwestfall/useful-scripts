@@ -381,7 +381,7 @@ async function loadServerLibrary() {
     const { items } = await res.json();
     // Bookkeeping the projector has no use for is dropped here rather than
     // being carried into the protocol state as unexplained extra keys.
-    return (items || []).map(({ id, filename, bytes, createdAt, createdBy, course, may: _may, ...item }) => ({
+    return (items || []).map(({ id, filename, bytes, createdAt, createdBy, createdByName: _by, course, may: _may, ...item }) => ({
       ...item,
       // A course becomes the group heading when nothing more specific was
       // given, which is what makes the existing filter box a course filter.
@@ -7990,10 +7990,24 @@ $('#plan-server-open').addEventListener('click', async () => {
   }
 });
 
-serverInfo().then((info) => {
+serverInfo().then(async (info) => {
   if (!info.features.includes('plans')) return;
   $('#plan-server').hidden = false;
-  refreshServerPlans();
+  await refreshServerPlans();
+  // control.html?plan=<id> (Issue #243): My Files' Present opens a lecture
+  // here, the same as picking it and pressing Open.
+  const wanted = new URLSearchParams(location.search).get('plan');
+  if (!wanted) return;
+  const url = new URL(location.href);
+  url.searchParams.delete('plan');
+  history.replaceState(null, '', url.pathname + url.search + url.hash);
+  const pick = $('#plan-server-pick');
+  if (![...pick.options].some((o) => o.value === wanted)) {
+    $('#plan-note').textContent = 'That lecture is not on the server any more, or you cannot see it.';
+    return;
+  }
+  pick.value = wanted;
+  $('#plan-server-open').click();
 });
 
 $('#plan-clear').addEventListener('click', async () => {
