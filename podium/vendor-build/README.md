@@ -1,7 +1,7 @@
 # Rebuilding the vendored bundles
 
-`npm run build` rebuilds both bundles below. `npm run build:marp` and
-`npm run build:codemirror` rebuild just one.
+`npm run build` rebuilds every bundle below. `npm run build:marp`,
+`npm run build:codemirror` and `npm run build:mermaid` rebuild just one.
 
 ## Marp
 
@@ -46,3 +46,24 @@ that the bundle contains exactly one copy of `@codemirror/state`. Two copies bre
 CodeMirror in confusing ways, so upgrade them together. To use something new from
 CodeMirror in `assets/js/deck-editor.js`, export it from `codemirror-entry.js` and
 rebuild.
+
+## Mermaid (diagrams in decks)
+
+`../assets/vendor/mermaid.esm.js` is [Mermaid](https://mermaid.js.org/) for
+```` ```mermaid ```` code blocks in decks (Issue #235), bundled from
+`mermaid-entry.js`. `assets/js/deck-mermaid.js` loads it, and only for a deck
+that has a diagram in it.
+
+```bash
+cd podium/vendor-build
+npm install
+npm run build:mermaid
+```
+
+It is one file, about 5 MB (1.5 MB gzipped). Mermaid loads each kind of
+diagram with `import()`; without code splitting esbuild folds all of them into
+this file, so every kind of diagram draws offline and there is nothing else to
+serve or cache. Nothing is trimmed: the biggest part is the ELK layout engine
+(1.4 MB), which a diagram only uses if it asks for `layout: elk`, but stubbing
+it out would turn such a diagram into an error on the projector. `mermaid` is
+pinned to an exact version in `package.json`.

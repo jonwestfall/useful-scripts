@@ -31,6 +31,7 @@ podium/test/
 ├── tabsettings.test.mjs  # Customizable/collapsible controller tab bar (Issue #76)
 ├── templates.test.mjs    # Course-level plan templates, against a real SQLite file (Issue #80)
 ├── deck-templates.test.mjs # Deck templates: built-in, course and personal, and who may change which (Issue #226)
+├── deck-mermaid.test.mjs # Mermaid diagrams in decks: which theme each is drawn in, and what a broken one says (Issue #235)
 ├── offline-shell.test.mjs # The offline shell warms everything the pages load at startup (Issue #130)
 ├── a11y.test.mjs         # Accessibility guard rails: labels, names, live regions, contrast, focus (Issue #156)
 ├── kiosk-open-paths.test.mjs # Kiosk and Guest View open-path lists match what the pages load (Issues #151, #150)
@@ -46,7 +47,7 @@ podium/test/
     ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen
     ├── media.mjs         # Camera, music, audio, clocks, captions, PDFs
     ├── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
-    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226)
+    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235)
 ```
 
 ---
@@ -105,6 +106,7 @@ node podium/test/protocol.test.mjs
 - **`tabsettings.test.mjs`**: reordering, hiding, and restoring controller tabs.
 - **`templates.test.mjs`**: course-level plan template ownership and removal permissions.
 - **`deck-templates.test.mjs`**: the deck editor's templates (Issue #226): who sees a course's and a person's own, who may add, rename, rewrite and remove them, the size cap, the built-ins' `index.json`, and an administrator hiding a built-in.
+- **`deck-mermaid.test.mjs`**: diagrams in decks (Issue #235): the theme a diagram is drawn in when the deck decides (light, dark, gaia's colours, a course theme's brand colour, gradient backgrounds), when `mermaidTheme` does, that `strict` security is never relaxed, and how Mermaid's errors are shortened for a slide. Which slides a `mermaidTheme` reaches is checked against the real Marp engine in `deck-source.test.mjs`; drawing itself is in the editor's end-to-end group.
 
 ---
 

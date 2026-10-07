@@ -5,9 +5,11 @@
 // same object, and the presenter notes on your iPad belong to the slide the
 // class is actually looking at.
 //
-// The Marp bundle is ~1 MB and is only fetched the first time a deck is used.
+// The Marp bundle is ~1 MB and is only fetched the first time a deck is used;
+// Mermaid's (for diagrams, see deck-mermaid.js) only by a deck with a diagram.
 
-import { PODIUM_DIRECTIVES, parseDeck, ASSET_REF } from './deck-source.js';
+import { PODIUM_DIRECTIVES, MERMAID_DIRECTIVE, parseDeck, ASSET_REF } from './deck-source.js';
+import { drawDiagrams, DIAGRAM_CSS } from './deck-mermaid.js';
 
 // What an `asset:` picture this device has not been given is drawn as (Issue
 // #226) - the same blank as assets.js's, rather than an address no browser
@@ -155,6 +157,26 @@ function engine() {
   return enginePromise;
 }
 
+/**
+ * Teach a Marp instance the mermaidTheme directive (Issue #235). Marp works
+ * out which slides it reaches - the whole deck, from a slide on, one slide -
+ * and each one's <section> is marked data-mermaid-theme for deck-mermaid.js
+ * to read. (Marpit only writes a data- attribute itself for directives it
+ * knew of when it was made, hence the rule.)
+ */
+export function markMermaidTheme(marp) {
+  marp.customDirectives.local[MERMAID_DIRECTIVE] = (value) => ({ [MERMAID_DIRECTIVE]: value });
+  marp.use((md) => {
+    md.core.ruler.after('marpit_directives_apply', 'podium_mermaid_theme', (state) => {
+      for (const token of state.tokens) {
+        const value = token.type === 'marpit_slide_open' && token.meta?.marpitDirectives?.[MERMAID_DIRECTIVE];
+        if (value) token.attrSet('data-mermaid-theme', String(value));
+      }
+    });
+  });
+  return marp;
+}
+
 // A fresh Marp instance per render: themeSet and directive state are stateful,
 // and one deck's front matter should never leak into the next.
 async function createMarp() {
@@ -164,6 +186,7 @@ async function createMarp() {
   // comment holding one is a directive rather than a presenter note. They
   // change nothing Marp draws - render() reads them back out below.
   for (const key of PODIUM_DIRECTIVES) marp.customDirectives.local[key] = () => ({});
+  markMermaidTheme(marp);
   for (const [file, css] of themeCss) {
     try {
       marp.themeSet.add(css);
@@ -642,6 +665,10 @@ export async function render(source, id) {
   // html is one wrapping <div class="marpit"> holding every slide's <svg>.
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const root = doc.querySelector('.marpit') || doc.body;
+  const combinedCss = `${css}\n${MATH_CSS}\n${DIAGRAM_CSS}`;
+  // ```mermaid blocks drawn as diagrams (Issue #235), first: they change
+  // what fits, and a slide's title is never a diagram's source text.
+  const diagrams = await drawDiagrams(root, combinedCss, slideSections);
   const { fragments, builds } = markFragments(root);
   const titles = outline(root);
   const sections = parseSections(root);
@@ -660,7 +687,6 @@ export async function render(source, id) {
   });
 
   const finalHtml = root.outerHTML;
-  const combinedCss = `${css}\n${MATH_CSS}`;
 
   // Measured here, once, and carried with the deck: see measureFits.
   const fits = await measureFits(finalHtml, combinedCss);
@@ -698,8 +724,13 @@ export async function render(source, id) {
     // in a headingDivider deck, which splits where the markdown does not say,
     // so has none.
     videos: videosOf(source, titles.length),
+    // Each ```mermaid block (Issue #235): its slide, which one on that slide,
+    // the theme it was drawn in, and why it could not be drawn if it was not.
+    diagrams,
   };
-  cache.set(key, result);
+  // A deck drawn while the diagram bundle would not load is shown with that
+  // said where each diagram goes, but not kept: the next render tries again.
+  if (!diagrams.some((d) => d.error?.retry)) cache.set(key, result);
   return result;
 }
 
