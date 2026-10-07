@@ -31,6 +31,8 @@ import { downloadText } from './store.js';
 import * as DS from './deck-source.js';
 import { createDeckMedia, uploadDeckMedia } from './deck-media.js';
 import { exportZip, readDeckZip, exportPdf, replaceRef } from './deck-export.js';
+import { deckProblems, checkServerMedia } from './deck-checks.js';
+import { openQuickLook } from './quicklook-open.js';
 import { createTemplatesPanel, findTemplate, slidesOf } from './deck-templates.js';
 import {
   STARTERS, starterFence, isMermaidLiveLink, readMermaidLiveLink, fenceFromLink, mermaidLiveLink, fenceAt,
@@ -455,6 +457,7 @@ async function renderNow() {
     return;
   }
   if (mine !== renderGeneration) return;
+  rehearsal?.update(rehearsalPackage());
   const previous = renderedId;
   rendered = result;
   renderedId = id;
@@ -783,60 +786,13 @@ function wireDeckSettings() {
 
 // --- problems ------------------------------------------------------------------------
 
-// Whether each picture and video on this server is really there (Issue #226).
-// Asked once per address with a HEAD request; another site's would need it to
-// allow the request, so those are left alone.
+// Whether each picture and video on this server is really there (Issue #226),
+// asked once per address - see checkServerMedia in deck-checks.js.
 const mediaFound = new Map();   // src -> true | 'HTTP 404' | null while asking
-function checkMediaSoon() {
-  for (const slide of deck.slides) {
-    for (const src of [...slide.media.map((m) => m.src), slide.video?.src].filter(Boolean)) {
-      if (mediaFound.has(src) || !/^\/(?!\/)/.test(src)) continue;
-      mediaFound.set(src, null);
-      fetch(src, { method: 'HEAD', credentials: 'same-origin', cache: 'no-cache' })
-        .then((res) => {
-          mediaFound.set(src, res.ok || `HTTP ${res.status}`);
-          if (!res.ok) computeProblems();
-        })
-        .catch(() => mediaFound.delete(src));
-    }
-  }
-}
 
 function computeProblems() {
-  checkMediaSoon();
-  const found = DS.checkDeck(text(), { destination: destination(), pageProtocol: location.protocol });
-  for (const slide of deck.slides) {
-    const uses = [...slide.media.map((m) => ({ src: m.src, at: m.start })), ...(slide.video ? [{ src: slide.video.src, at: Math.max(0, slide.raw.indexOf(slide.video.src)) }] : [])];
-    for (const { src, at } of uses) {
-      const status = mediaFound.get(src);
-      if (typeof status === 'string') found.push({ slide: slide.index, offset: slide.start + at, severity: 'warning', message: `"${src}" is not on this server (${status}), so the room will see nothing there.` });
-    }
-  }
-  if (rendered?.themeWarning) found.push({ slide: 0, offset: 0, severity: 'warning', message: rendered.themeWarning });
-  (rendered?.fits || []).forEach((fit, i) => {
-    if (fit < 0.98 && deck.slides[i]) {
-      found.push({ slide: i, offset: deck.slides[i].start, severity: 'info', message: `Shrunk to ${Math.round(fit * 100)}% to fit. Consider splitting this slide.` });
-    }
-  });
-  // A diagram Mermaid could not draw (Issue #235), at the line it complains
-  // about when it says which.
-  (rendered?.diagrams || []).forEach((d) => {
-    const slide = deck.slides[d.slide];
-    if (!d.error || !slide) return;
-    const fence = DS.mermaidFences(slide.raw)[d.nth];
-    let offset = slide.start + (fence ? fence.start : 0);
-    if (fence && d.error.line > 0) {
-      const lines = fence.body.split('\n');
-      const n = Math.min(d.error.line, Math.max(1, lines.length - 1)) - 1;
-      offset = slide.start + fence.bodyStart + lines.slice(0, n).reduce((sum, l) => sum + l.length + 1, 0);
-    }
-    found.push({ slide: d.slide, offset, severity: 'warning', message: `This diagram could not be drawn: ${d.error.message}` });
-  });
-  (rendered?.builds || []).forEach((b, i) => {
-    const said = describeBuild(b);
-    if (said.warn && deck.slides[i]) found.push({ slide: i, offset: deck.slides[i].start, severity: 'warning', message: said.text });
-  });
-  problems = found.sort((a, b) => a.offset - b.offset);
+  checkServerMedia(deck, mediaFound, computeProblems);
+  problems = deckProblems(text(), rendered, { destination: destination(), pageProtocol: location.protocol, mediaFound });
   renderProblems();
   markStrip();
   renderDeckSettings();
@@ -1585,6 +1541,25 @@ async function downloadZip() {
   setTimeout(refreshSaveState, 2500);
 }
 
+// The deck in Quick Look (Issue #242), in its own tab - full screen, with its
+// notes and builds - as it is here, unsaved changes and all, and kept up to
+// date as you type (see renderNow).
+let rehearsal = null;
+
+function rehearsalPackage() {
+  const value = planPictures.size ? text().replace(DS.ASSET_REF, (ref, id) => planPictures.get(id) || ref) : text();
+  return {
+    item: { type: 'deck', title: deck.frontMatter.fields.title || origin.title || fileName(), src: origin.src || origin.item?.src || '' },
+    source: value,
+    from: 'From the deck editor · follows your edits',
+    destination: destination(),
+  };
+}
+
+function rehearse() {
+  rehearsal = openQuickLook(rehearsalPackage(), { live: true });
+}
+
 // Every slide, fully built, one page each - for a handout or to post after class.
 async function downloadPdf() {
   if (!rendered) return;
@@ -1713,6 +1688,7 @@ function wireSaveMenu() {
   $('#deck-download').addEventListener('click', () => { close(); downloadDeck(); });
   $('#deck-download-zip').addEventListener('click', () => { close(); downloadZip(); });
   $('#deck-download-pdf').addEventListener('click', () => { close(); downloadPdf(); });
+  $('#deck-rehearse').addEventListener('click', () => { close(); rehearse(); });
   $('#deck-save-template').addEventListener('click', () => { close(); templates.open({ kind: 'deck' }); });
   $('#deck-versions').addEventListener('click', () => { close(); openVersions(); });
   $('#deck-new-template').addEventListener('click', () => { close(); templates.open({ kind: 'deck' }); });

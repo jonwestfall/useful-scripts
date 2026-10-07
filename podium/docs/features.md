@@ -8,7 +8,7 @@ Podium is built for real classroom lectures. It gives you complete control of th
 
 ## Contents
 
-1. **[Presenting](#part-1--presenting)**: Freeze is a cue · The library · Marp decks · The deck editor · Now/Next/Notes · PDFs · Layouts & PiP
+1. **[Presenting](#part-1--presenting)**: Freeze is a cue · The library · Marp decks · The deck editor · Quick Look · Now/Next/Notes · PDFs · Layouts & PiP
 2. **[Drawing & Pointing](#part-2--drawing--pointing)**: Live ink · Whiteboards · Laser · Spotlight
 3. **[Media & Sound](#part-3--media--sound)**: Transport · Background music · Mixer · Controller microphone
 4. **[On-Screen Tools](#part-4--on-screen-tools)**: Timers · Messages · QR codes · Watermarks · Automated sets
@@ -140,6 +140,20 @@ The deck editor writes and edits Marp decks without leaving Podium (Issue #226).
   - a link to `deck.html?src=` and the deck's address.
 
   This works however the deck is named: by its library address, by `content/decks/…` (with or without a leading `/`), or by the older content address (`/media/<sha256>/…`) that plans and manifests made before the deck editor still use. A lecture that named a deck the old way is pointed at the deck's own address the first time it is edited, so it follows that edit and every later one. During a lecture the room keeps the version it has until **Reload it** (see above). The ✎ buttons only appear where you may save.
+
+### Quick Look: A File, Just for You
+
+**↗ Quick Look** (Issue #242) opens something in a new tab, drawn the way the display would draw it, without the room seeing it. Use it to read ahead in a deck with its notes, check a page of a PDF, find the moment in a video, or rehearse a deck full screen.
+
+- **Where**: ↗ on a controller tile (library files and the lecture's items alike), ↗ on an item in the planner's running order and *↗ Quick Look* in its settings, and **▾ → Open in a new tab to rehearse** in the deck editor.
+- **Its own navigation**: nothing in the tab reaches the display, and moving the display never moves the tab. It doesn't connect to the room at all.
+- **Decks**: the slide with its **presenter notes** beside it (N hides them), **→ / ←** step through builds as in class, **G** shows every slide to jump to, and **C** is *Check before class* with the same list the deck editor gives. A video slide plays in the tab.
+- **PDFs** page by page, with **G** for every page; **picture decks** picture by picture; a **picture** fits the tab, and a click shows it at its own size.
+- **Video and audio always start muted**, with *Unmute* beside them, because a presenter laptop's sound is often what the room hears.
+- **Web pages, YouTube and text** as the display shows them (the first two need the network); an **automated set** lists its entries, each one a click away.
+- **Rehearsing from the deck editor**: the tab shows the deck as it is in the editor, unsaved changes included, and follows your edits as you type, staying on the slide you were on.
+- **With no server**: a deck or picture kept inside a lecture plan is handed to the new tab on this device, so it works offline. A reload of that tab keeps showing it.
+- **Who**: on a server with accounts, only someone signed in. A kiosk's or a Guest View viewer's credential never opens it.
 
 ### The Presenter View (Now, Next & Notes)
 

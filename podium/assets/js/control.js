@@ -14,10 +14,11 @@ import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatter
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
-import { assetRefsIn } from './deck-source.js';
+import { assetRefsIn, ASSET_REF } from './deck-source.js';
+import { openQuickLook, canQuickLook } from './quicklook-open.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
 import { mountSessionBadge, serverInfo } from './server.js';
-import { createAssetResolver } from './assets.js';
+import { createAssetResolver, BLANK_PIXEL } from './assets.js';
 import { createWatermarkPanel } from './watermark.js';
 import { createThumbnailer } from './thumbs.js';
 import { loadDefaults, defaultCommands, defaultsDelta, changedDefaultCommands, createDefaultsPanel, DEFAULTS_KEY } from './defaults.js';
@@ -248,6 +249,28 @@ async function loadServerDeck(src) {
   const id = await srcDeckId(src, source);
   deckStore.set(id, source);
   return { id, source };
+}
+
+/**
+ * What Quick Look (Issue #242) needs to show a tile's item in its own tab: a
+ * library file by its id, which the tab fetches itself; anything else as it
+ * is here, with a plan's pictures swapped for their bytes and a deck's
+ * markdown when this device holds it.
+ */
+function quickLookOf(item) {
+  if (item.serverId) return { libraryId: item.serverId, item };
+  const bytes = (ref) => {
+    const got = resolveAssets({ src: ref }).src;
+    return got && got !== BLANK_PIXEL ? got : ref;
+  };
+  return (async () => {
+    const pkg = { item: resolveAssets(item), from: 'From the controller' };
+    if (item.type === 'deck') {
+      const source = await getDeckSource(item);
+      if (source != null) pkg.source = String(source).replace(ASSET_REF, bytes);
+    }
+    return pkg;
+  })();
 }
 
 async function stageDeck({ source, name, src, slide = 0 }) {
@@ -489,6 +512,20 @@ function renderLibrary() {
             openDeckEditor(editAt);
           },
         }, '✎'));
+      }
+      // Quick Look (Issue #242): this, privately, in a new tab - nothing in
+      // it reaches the room.
+      if (canQuickLook(item)) {
+        tile.append(el('span', {
+          class: `tile-look${editAt || (item.type === 'audio' && item.src) ? ' is-beside' : ''}`,
+          title: 'Quick Look: open it in a new tab, just for you',
+          role: 'button',
+          'aria-label': `Quick Look: ${itemTitle(item)}`,
+          onclick: (ev) => {
+            ev.stopPropagation();
+            openQuickLook(quickLookOf(item));
+          },
+        }, '↗'));
       }
       // Audio is the one type that can honestly be two different things: a
       // title card the room sees, or something playing behind everything

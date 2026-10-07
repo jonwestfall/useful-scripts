@@ -112,8 +112,8 @@ console.log('\n-- KIOSK_OPEN_PATHS itself --');
 const stale = [...KIOSK_OPEN_PATHS].filter((p) => !fs.existsSync(path.join(ROOT, p.replace(/^\//, ''))));
 chk(`every kiosk-open entry still exists on disk${stale.length ? ` - stale: ${stale.join(', ')}` : ''}`, stale.length === 0);
 
-const scoped = [...KIOSK_OPEN_PATHS].filter((p) => /^\/(control|admin|plan)\.html$/.test(p));
-chk('never control.html, admin.html or plan.html - a kiosk cookie has no business past display.html', scoped.length === 0);
+const scoped = [...KIOSK_OPEN_PATHS].filter((p) => /^\/(control|admin|plan|deck|quicklook)\.html$/.test(p));
+chk('never control.html, admin.html, plan.html, deck.html or quicklook.html - a kiosk cookie has no business past display.html', scoped.length === 0);
 
 console.log('\n-- VIEW_OPEN_PATHS: Guest View (Issue #150) --');
 // view.html is display.js in its viewer mode, opened by strangers with no
@@ -136,8 +136,12 @@ const viewMissing = [...viewNeeded]
 chk(`everything view.html loads is open to an anonymous viewer (${viewNeeded.size} files)${viewMissing.length ? ` - missing: ${viewMissing.join(', ')}` : ''}`,
   viewMissing.length === 0);
 chk('view.html itself is open', VIEW_OPEN_PATHS.has('/view.html'));
-chk('but never display.html, control.html, admin.html, plan.html or config.json',
-  ![...VIEW_OPEN_PATHS].some((p) => /^\/(display|control|admin|plan)\.html$|^\/config\.json$/.test(p)));
+chk('but never display.html, control.html, admin.html, plan.html, deck.html, quicklook.html or config.json',
+  ![...VIEW_OPEN_PATHS].some((p) => /^\/(display|control|admin|plan|deck|quicklook)\.html$|^\/config\.json$/.test(p)));
+// Quick Look (Issue #242) shows a presenter's files, notes included: never
+// to someone who is not signed in, a kiosk or a viewer.
+chk('quicklook.html is open to nobody who has not signed in', !AUTH_OPEN_PATHS.has('/quicklook.html')
+  && !KIOSK_OPEN_PATHS.has('/quicklook.html') && !VIEW_OPEN_PATHS.has('/quicklook.html'));
 
 if (!ok) {
   console.error('\nSOME TESTS FAILED');

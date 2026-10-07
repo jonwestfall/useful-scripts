@@ -20,7 +20,8 @@ import {
 } from './store.js';
 import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle, describeBuild, deckLocation } from './deck.js';
-import { assetRefsIn } from './deck-source.js';
+import { assetRefsIn, ASSET_REF } from './deck-source.js';
+import { openQuickLook, canQuickLook } from './quicklook-open.js';
 import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS, deckStep } from './protocol.js';
 import { mountSessionBadge, serverInfo } from './server.js';
 import { mountZipImport } from './zip-review.js';
@@ -482,6 +483,9 @@ function renderOrder() {
         el('button', { type: 'button', title: 'Move up', 'aria-label': 'Move up', disabled: index === 0, onclick: () => move(item.id, -1) }, '↑'),
         el('button', { type: 'button', title: 'Move down', 'aria-label': 'Move down', disabled: index === plan.items.length - 1, onclick: () => move(item.id, 1) }, '↓'),
         el('button', { type: 'button', title: 'Duplicate', 'aria-label': 'Duplicate', onclick: () => duplicate(item.id) }, '⧉'),
+        canQuickLook(itemForStage(item))
+          ? el('button', { type: 'button', title: 'Quick Look: open it in a new tab, just for you', 'aria-label': `Quick Look: ${itemLabel(item, plan)}`, onclick: () => openQuickLook(quickLookOf(item)) }, '↗')
+          : null,
         el('button', { type: 'button', class: 'order-del', title: 'Remove', 'aria-label': 'Remove', onclick: () => remove(item.id) }, '×')));
     return row;
   }));
@@ -705,6 +709,12 @@ function renderEditor() {
 
   for (const spec2 of spec.fields) fields.append(fieldFor(item, spec2));
   if (item.type === 'deck') fields.append(deckEditorField(item));
+  if (canQuickLook(itemForStage(item))) {
+    fields.append(field('Quick Look', el('button', { type: 'button', onclick: () => openQuickLook(quickLookOf(item)) }, '↗ Quick Look'),
+      item.type === 'deck'
+        ? 'Opens it in a new tab, just for you: every slide with its notes and builds, and anything to check before class.'
+        : 'Opens it in a new tab, just for you.'));
+  }
 
   fields.append(field('Planned duration', el('div', { class: 'inline', style: 'align-items: center;' },
     el('input', {
@@ -1196,6 +1206,24 @@ function previewDeckSource(item) {
     });
   }
   return null;
+}
+
+/**
+ * What Quick Look (Issue #242) needs to show a plan item in its own tab: the
+ * item with this plan's pictures in it, and a deck kept in the plan as its
+ * markdown. A deck on the server is fetched by the tab itself.
+ */
+function quickLookOf(item) {
+  const staged = itemForStage(item);
+  const bytes = (ref, id) => plan.assets[id]?.data || ref;
+  const id = assetIdOf(staged.src);
+  const pkg = { item: id ? { ...staged, src: plan.assets[id]?.data || '' } : staged, from: `From the lecture plan${plan.title ? ` · ${plan.title}` : ''}` };
+  if (item.type === 'deck' && item.asset) {
+    pkg.item = { ...staged, src: '' };
+    pkg.source = String(plan.assets[item.asset]?.data || '').replace(ASSET_REF, bytes);
+    pkg.destination = 'plan';
+  }
+  return pkg;
 }
 
 // What the projector will be handed, with asset references resolved to the

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Quick Look — Podium</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="assets/css/podium.css">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0b0d10">
+</head>
+<!-- Quick Look (Issue #242): a file, privately, in its own tab - drawn the way
+     the display would draw it, with its own navigation and no connection to
+     the room at all. See assets/js/quicklook.js, and quicklook-open.js for
+     how a page hands something over. -->
+<body class="quicklook">
+
+<div class="topbar ql-bar">
+  <span class="brand">PODIUM</span>
+  <span class="tag">Quick Look</span>
+  <span id="ql-title" class="ql-title">Opening…</span>
+  <span id="ql-from" class="hint ql-from"></span>
+  <span class="spacer"></span>
+  <span id="ql-where" class="hint ql-where" role="status" aria-live="polite"></span>
+  <div class="ql-controls" role="toolbar" aria-label="Quick Look">
+    <button id="ql-prev" type="button" aria-label="Previous (←)" title="Previous (←)" hidden>◀</button>
+    <button id="ql-next" type="button" aria-label="Next (→)" title="Next (→)" hidden>▶</button>
+    <button id="ql-play" type="button" hidden>▶ Play</button>
+    <button id="ql-mute" type="button" hidden>🔇 Unmute</button>
+    <button id="ql-grid-toggle" type="button" title="Every slide or page (G)" hidden>▦ Grid</button>
+    <button id="ql-notes-toggle" type="button" title="Presenter notes (N)" aria-pressed="true" hidden>Notes</button>
+    <button id="ql-checks-toggle" type="button" title="Check before class (C)" hidden>Check</button>
+    <button id="ql-full" type="button" title="Full screen (F)">⛶ Full screen</button>
+  </div>
+</div>
+<p id="ql-warn" class="ql-warn" role="alert" hidden></p>
+
+<main class="ql-main">
+  <div id="ql-stage" class="ql-stage"></div>
+  <aside id="ql-notes" class="ql-notes" hidden>
+    <h2>Notes</h2>
+    <div id="ql-notes-text" class="ql-notes-text"></div>
+  </aside>
+</main>
+
+<div id="ql-grid" class="ql-overlay" hidden>
+  <div class="ql-overlay-head">
+    <h2 id="ql-grid-heading">Every slide</h2>
+    <button id="ql-grid-close" type="button" aria-label="Close (Esc)">✕</button>
+  </div>
+  <div id="ql-grid-cells" class="ql-grid-cells"></div>
+</div>
+
+<div id="ql-checks" class="ql-overlay ql-checks" hidden>
+  <div class="ql-overlay-head">
+    <h2>Check before class</h2>
+    <button id="ql-checks-close" type="button" aria-label="Close (Esc)">✕</button>
+  </div>
+  <ul id="ql-checks-list" class="ql-checks-list"></ul>
+</div>
+
+<p class="ql-private">Only you can see this tab. Nothing you do here reaches the room.</p>
+
+<script src="assets/vendor/pdf.min.js"></script>
+<script type="module" src="assets/js/quicklook.js"></script>
+</body>
+</html>

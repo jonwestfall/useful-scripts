@@ -1,5 +1,5 @@
 // Podium end-to-end group: the deck editor (Issue #226), and the planner's
-// lecture archive (Issue #239), which wants the same server with accounts.
+// lecture archive (Issue #239) and Quick Look (Issue #242), which want the same server with accounts.
 //
 //   node podium/test/e2e/editor.mjs [--only <name>[,<name>...]]
 //
@@ -1329,6 +1329,154 @@ await offline.waitForFunction(() => /Only on this iPad/.test(document.querySelec
   .then(() => ok('and comes back with Unarchive selected', true))
   .catch(() => ok('and comes back with Unarchive selected', false));
 await solo.close();
+}
+
+if (want('Quick Look: a file privately, in its own tab (#242)')) {
+console.log('\n-- Quick Look: a file privately, in its own tab (#242) --');
+const owen = await signedIn('owen');
+const desk = await owen.newPage();
+trap(desk, 'quick look setup');
+await desk.goto(`${base}/index.html`);
+const lookDeck = await desk.evaluate(async (md) => {
+  const res = await fetch('/api/library/upload?filename=quick-look.md&course=psy415&title=Quick%20Look%20deck', { method: 'POST', body: md });
+  return (await res.json()).item;
+}, exampleDeck);
+const lookVideo = await desk.evaluate(async (bytes) => {
+  const res = await fetch('/api/library/upload?filename=four-colours.webm&course=psy415&title=Quick%20Look%20video', { method: 'POST', body: new Uint8Array(bytes) });
+  return (await res.json()).item;
+}, [...fs.readFileSync(path.join(ROOT, 'test', 'e2e', 'media-fixtures', 'four-colours.webm'))]);
+const lookPdf = await desk.evaluate(async (bytes) => {
+  const res = await fetch('/api/library/upload?filename=handout.pdf&course=psy415&title=Quick%20Look%20handout', { method: 'POST', body: new Uint8Array(bytes) });
+  return (await res.json()).item;
+}, [...fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'session-export.pdf'))]);
+await desk.close();
+
+// The room, with the deck up on slide 1.
+const screen = await owen.newPage();
+trap(screen, 'quick look display');
+await screen.goto(`${base}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await owen.newPage();
+trap(pad, 'quick look controller');
+await pad.goto(`${base}/control.html`);
+await pad.waitForSelector('.tile');
+const tile = pad.locator('.tile', { hasText: 'Quick Look deck' });
+await tile.click();
+const wallSlide = () => screen.evaluate(() => {
+  const svgs = [...(document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || [])];
+  return svgs.findIndex((svg) => svg.classList.contains('podium-on'));
+});
+await until(async () => (await wallSlide()) === 0, { timeout: 20000 }).catch(() => {});
+ok('the deck is up in the room, on its first slide', (await wallSlide()) === 0);
+
+// ↗ on its tile: the deck in its own tab.
+ok('a tile offers ↗ Quick Look', await tile.locator('.tile-look').count() === 1);
+const [look] = await Promise.all([owen.waitForEvent('page'), tile.locator('.tile-look').click()]);
+trap(look, 'quick look (deck)');
+let sockets = 0;
+look.on('websocket', () => { sockets += 1; });
+await look.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+  .then(() => ok('↗ opens the deck in a new tab', true))
+  .catch(async () => ok(`↗ opens the deck in a new tab ("${await look.textContent('#ql-where').catch(() => '')}")`, false));
+ok(`a library file opens by its id (${new URL(look.url()).search})`, new URL(look.url()).searchParams.get('library') === String(lookDeck.id));
+ok('titled so it is easy to find among tabs', /^Quick Look · Quick Look deck/.test(await look.title()));
+ok('with its presenter notes beside it', await look.isVisible('#ql-notes'));
+for (let i = 0; i < 3; i++) await look.keyboard.press('ArrowRight');
+ok(`→ steps through the builds as in class ("${await look.textContent('#ql-where')}")`, /Slide 2 of 4 · build 2 of 3/.test(await look.textContent('#ql-where')));
+ok('and the notes are that slide\'s', /bullet list/.test(await look.textContent('#ql-notes-text')));
+await look.keyboard.press('g');
+await look.waitForFunction(() => document.querySelector('#ql-grid-cells .ql-cell-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 10000 })
+  .then(() => ok('G shows every slide', true))
+  .catch(() => ok('G shows every slide', false));
+await look.evaluate(() => document.querySelector('#ql-grid-cells .ql-cell-deck').shadowRoot.querySelectorAll('svg[data-marpit-svg]')[3].dispatchEvent(new MouseEvent('click', { bubbles: true })));
+ok(`and a click on one goes there ("${await look.textContent('#ql-where')}")`, /Slide 4 of 4/.test(await look.textContent('#ql-where')) && await look.isHidden('#ql-grid'));
+await look.click('#ql-checks-toggle');
+ok(`Check before class is there too ("${(await look.textContent('#ql-checks-list')).trim().slice(0, 40)}")`, await look.isVisible('#ql-checks') && /Nothing to fix|Slide \d/.test(await look.textContent('#ql-checks-list')));
+await look.keyboard.press('Escape');
+await screen.waitForTimeout(800);
+ok('none of it moved the room: the display is still on slide 1', (await wallSlide()) === 0);
+await pad.click('.tab[data-tab="slides"]');
+await pad.click('#deck-next');
+await until(async () => (await wallSlide()) === 1, { timeout: 8000 }).catch(() => {});
+await look.waitForTimeout(500);
+ok('and moving the room does not move the tab', (await wallSlide()) === 1 && /Slide 4 of 4/.test(await look.textContent('#ql-where')));
+ok(`Quick Look never opened a connection to the room (${sockets} sockets)`, sockets === 0);
+await look.close();
+
+// A PDF, page by page, and a video that starts muted.
+const pdfLook = await owen.newPage();
+trap(pdfLook, 'quick look (pdf)');
+await pdfLook.goto(`${base}/quicklook.html?library=${lookPdf.id}`);
+await pdfLook.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+  .then(async () => ok(`a library PDF opens page by page ("${await pdfLook.textContent('#ql-where')}")`, true))
+  .catch(async () => ok(`a library PDF opens page by page ("${await pdfLook.textContent('#ql-where')}")`, false));
+await pdfLook.click('#ql-grid-toggle');
+await pdfLook.waitForSelector('#ql-grid-cells .ql-cell canvas', { timeout: 10000 })
+  .then(() => ok('with a grid of its pages', true))
+  .catch(() => ok('with a grid of its pages', false));
+await pdfLook.close();
+const videoLook = await owen.newPage();
+trap(videoLook, 'quick look (video)');
+await videoLook.goto(`${base}/quicklook.html?library=${lookVideo.id}`);
+await videoLook.waitForSelector('video.ql-media', { timeout: 10000 });
+ok('a video starts muted', await videoLook.evaluate(() => document.querySelector('video.ql-media').muted) && /Unmute/.test(await videoLook.textContent('#ql-mute')));
+await videoLook.click('#ql-mute');
+ok('and Unmute unmutes it', await videoLook.evaluate(() => !document.querySelector('video.ql-media').muted));
+await videoLook.close();
+await screen.close();
+await pad.close();
+
+// From the deck editor: the deck as it is there, unsaved, and following edits.
+const editor = await owen.newPage();
+trap(editor, 'quick look (editor)');
+await editor.goto(`${base}/deck.html?library=${lookDeck.id}`);
+await editor.waitForFunction(() => document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length === 4, null, { timeout: 20000 });
+await editor.click('#deck-save-more');
+const [rehearsal] = await Promise.all([owen.waitForEvent('page'), editor.click('#deck-rehearse')]);
+trap(rehearsal, 'quick look (rehearsal)');
+await rehearsal.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+  .then(() => ok('"Open in a new tab to rehearse" opens the deck in Quick Look', true))
+  .catch(() => ok('"Open in a new tab to rehearse" opens the deck in Quick Look', false));
+ok('saying it follows the editor', /follows your edits/.test(await rehearsal.textContent('#ql-from')));
+await rehearsal.keyboard.press('ArrowRight');
+await editor.click('#deck-add-slide');
+await rehearsal.waitForFunction(() => /of 5/.test(document.querySelector('#ql-where').textContent), null, { timeout: 10000 })
+  .then(() => ok('an unsaved new slide in the editor appears in the rehearsal tab', true))
+  .catch(async () => ok(`an unsaved new slide in the editor appears in the rehearsal tab ("${await rehearsal.textContent('#ql-where')}")`, false));
+ok(`where you were in it ("${await rehearsal.textContent('#ql-where')}")`, /^Slide 2 of 5/.test(await rehearsal.textContent('#ql-where')));
+const editorProblems = await editor.evaluate(() => [...document.querySelectorAll('#deck-problems li')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()));
+const tabProblems = await rehearsal.evaluate(() => [...document.querySelectorAll('#ql-checks-list li')].map((li) => li.textContent.replace(/\s+/g, ' ').trim()));
+ok(`its Check before class matches the editor's (${tabProblems.length} and ${editorProblems.length})`, JSON.stringify(tabProblems) === JSON.stringify(editorProblems));
+await rehearsal.close();
+await editor.close();
+await owen.close();
+
+// From a lecture plan, with no server: handed over on this device.
+const solo = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+const planner = await solo.newPage();
+trap(planner, 'quick look (planner)');
+await planner.goto(`${BASE}/plan.html`);
+await planner.waitForSelector('#type-picker .type-btn');
+await planner.click('#type-picker .type-btn:has-text("Marp deck")');
+await planner.setInputFiles('#item-fields input[type=file]', { name: 'inside.md', mimeType: 'text/markdown', buffer: Buffer.from(exampleDeck) });
+await planner.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#deck-where')?.textContent || ''), null, { timeout: 20000 });
+ok('a planner item offers ↗ Quick Look', await planner.locator('#order .order-row button[aria-label^="Quick Look"]').count() === 1);
+const [inPlan] = await Promise.all([solo.waitForEvent('page'), planner.click('#order .order-row button[aria-label^="Quick Look"]')]);
+trap(inPlan, 'quick look (from the plan)');
+await inPlan.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+  .then(() => ok('a deck kept inside the plan opens in Quick Look, handed over with no server', true))
+  .catch(async () => ok(`a deck kept inside the plan opens in Quick Look ("${await inPlan.textContent('.ql-stage').catch(() => '')}")`, false));
+ok(`a handover is not an address anyone else could open (${new URL(inPlan.url()).hash.slice(0, 18)}…)`, /^#handoff=[0-9a-f]{24}$/.test(new URL(inPlan.url()).hash));
+await inPlan.keyboard.press('End');
+await inPlan.reload();
+await inPlan.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 10000 })
+  .then(() => ok('and a reload of that tab still shows it', true))
+  .catch(() => ok('and a reload of that tab still shows it', false));
+await solo.close();
+
+// A kiosk's cookie, or nobody signed in, never gets in.
+ok('signed out, quicklook.html is not served', [302, 401, 403].includes((await fetch(`${base}/quicklook.html`, { redirect: 'manual' })).status));
 }
 
 if (want('the deck editor: drafts, downloads, completion and checks (#226)')) {
