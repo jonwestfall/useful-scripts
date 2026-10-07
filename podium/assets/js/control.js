@@ -381,7 +381,7 @@ async function loadServerLibrary() {
     const { items } = await res.json();
     // Bookkeeping the projector has no use for is dropped here rather than
     // being carried into the protocol state as unexplained extra keys.
-    return (items || []).map(({ id, filename, bytes, createdAt, createdBy, course, ...item }) => ({
+    return (items || []).map(({ id, filename, bytes, createdAt, createdBy, course, may: _may, ...item }) => ({
       ...item,
       // A course becomes the group heading when nothing more specific was
       // given, which is what makes the existing filter box a course filter.

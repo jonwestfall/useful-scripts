@@ -22,6 +22,7 @@ import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle, describeBuild, deckLocation } from './deck.js';
 import { assetRefsIn, ASSET_REF } from './deck-source.js';
 import { openQuickLook, canQuickLook } from './quicklook-open.js';
+import { openFileBrowser } from './file-browser.js';
 import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS, deckStep } from './protocol.js';
 import { mountSessionBadge, serverInfo } from './server.js';
 import { mountZipImport } from './zip-review.js';
@@ -172,10 +173,15 @@ async function lectureRows() {
   return [...local, ...remote];
 }
 
+// Each render reads storage first, so two can be in flight at once - only the
+// newest one draws, or an older read finishing late puts stale rows back.
+let planListRender = 0;
 async function renderPlanList() {
   const list = $('#plan-list');
+  const mine = ++planListRender;
   let rows;
   try { rows = await lectureRows(); } catch (err) { warn(err.message); return; }
+  if (mine !== planListRender) return;
   const shown = rows.filter((r) => !r.archived);
   list.replaceChildren(...shown.map((r) => el('div', { class: 'plan-row-wrap' },
     el('button', {
@@ -708,6 +714,14 @@ function renderEditor() {
   }), 'Optional. Left blank, the iPad labels it from its contents.'));
 
   for (const spec2 of spec.fields) fields.append(fieldFor(item, spec2));
+  if (FROM_SERVER.has(item.type)) fields.append(field('From the server', el('button', {
+    type: 'button',
+    onclick: () => openFileBrowser({
+      mode: 'use', type: item.type, title: `Choose a ${PLAN_TYPES[item.type].label.toLowerCase()} from the server`,
+      server: serverLibraryUpload, isAdmin: !!me?.isAdmin,
+      onUse: (file) => useServerFile(item, file),
+    }),
+  }, 'Choose from the server…'), 'Something already in the library or on the server - just made in the deck editor, say - without typing its path.'));
   if (item.type === 'deck') fields.append(deckEditorField(item));
   if (canQuickLook(itemForStage(item))) {
     fields.append(field('Quick Look', el('button', { type: 'button', onclick: () => openQuickLook(quickLookOf(item)) }, '↗ Quick Look'),
@@ -1206,6 +1220,60 @@ function previewDeckSource(item) {
     });
   }
   return null;
+}
+
+// --- choosing from the server (Issue #241) ------------------------------------
+
+// The item types a file on the server can fill.
+const FROM_SERVER = new Set(['deck', 'pdf', 'image', 'imagedeck', 'video', 'audio']);
+
+/** Point an item at a file on the server, in place of whatever it had. */
+function applyServerFile(item, file) {
+  if (item.type === 'image') {
+    item.path = file.src;
+    if (isAssetRef(item.src)) item.src = '';
+  } else if (item.type === 'imagedeck') {
+    item.images = (file.images?.length ? file.images : [file.src]).join('\n');
+  } else {
+    item.src = file.src;
+    if (item.type === 'deck') delete item.asset;
+  }
+  if (!String(item.title || '').trim()) item.title = file.title;
+}
+
+function useServerFile(item, file) {
+  if (item.type === 'deck' && item.asset
+    && !confirm(`This lecture has its own deck in this item. Use "${file.title}" from the server instead?`)) return;
+  applyServerFile(item, file);
+  touch();
+  renderOrder();
+  renderEditor();
+  renderPreview({ remount: true });
+}
+
+/** Add files from the server as new items, in order, after the one selected. */
+function addServerFiles(files) {
+  let at = plan.items.findIndex((i) => i.id === selectedId);
+  let last = null;
+  for (const file of files) {
+    const type = file.type === 'slides' ? 'slides' : file.type;
+    if (!PLAN_TYPES[type]) continue;
+    const item = newItem(type);
+    if (type === 'slides') item.src = file.src; else applyServerFile(item, file);
+    plan.items.splice(at < 0 ? plan.items.length : at + 1, 0, item);
+    at = plan.items.indexOf(item);
+    last = item;
+  }
+  if (!last) return;
+  touch();
+  select(last.id, { reveal: true });
+}
+
+function addFromServer(preselect = '') {
+  openFileBrowser({
+    mode: 'add', preselect, server: serverLibraryUpload, isAdmin: !!me?.isAdmin,
+    onAdd: addServerFiles,
+  });
 }
 
 /**
@@ -2126,7 +2194,22 @@ $('#plan-remove-template').addEventListener('click', async () => {
   }
 });
 
-serverInfo().then((info) => {
+// plan.html?add=<address> (Issue #241): the deck editor's "Add to a lecture…"
+// - the file browser opens on this lecture with that deck already ticked.
+const serverKnown = serverInfo().catch(() => null);
+const addParam = new URLSearchParams(location.search).get('add');
+if (addParam) {
+  // A tick later, so the account below is known first.
+  Promise.all([serverKnown, booted]).then(() => new Promise((resolve) => setTimeout(resolve))).then(() => {
+    const url = new URL(location.href);
+    url.searchParams.delete('add');
+    history.replaceState(null, '', url.pathname + url.search);
+    addFromServer(addParam);
+  });
+}
+
+serverKnown.then((info) => {
+  if (!info) return;
   // Issue #108: whether serverUploadField() offers uploading a PDF/video/
   // audio file straight to the server, rather than only a typed path.
   // Checked async, so an item editor already open for one of those types
@@ -2234,6 +2317,7 @@ function renderAll() {
 loadMusicPlaylists();
 renderTypePicker();
 wireArchive();
+$('#plan-add-from-server').addEventListener('click', () => addFromServer());
 $('#plan-build').textContent = `Podium ${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
 const planTag = $('#plan-version-tag');
 if (planTag) planTag.textContent = versionStamp();

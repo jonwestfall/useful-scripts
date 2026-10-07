@@ -1,5 +1,6 @@
 // Podium end-to-end group: the deck editor (Issue #226), and the planner's
-// lecture archive (Issue #239) and Quick Look (Issue #242), which want the same server with accounts.
+// lecture archive (Issue #239), Quick Look (Issue #242) and the server file
+// picker (Issue #241), which want the same server with accounts.
 //
 //   node podium/test/e2e/editor.mjs [--only <name>[,<name>...]]
 //
@@ -9,7 +10,7 @@
 
 import {
   ROOT, fs, path, os, spawn, execFileSync, freePort, BASE, browser, ok, want, trap, expecting,
-  reportErrors, teardown, exitWithResult,
+  reportErrors, teardown, exitWithResult, writeImageFixture,
 } from './harness.mjs';
 
 const exampleDeck = fs.readFileSync(path.join(ROOT, 'content', 'decks', 'example-builds.md'), 'utf8');
@@ -1477,6 +1478,129 @@ await solo.close();
 
 // A kiosk's cookie, or nobody signed in, never gets in.
 ok('signed out, quicklook.html is not served', [302, 401, 403].includes((await fetch(`${base}/quicklook.html`, { redirect: 'manual' })).status));
+}
+
+if (want('the planner: choosing files from the server (#241)')) {
+console.log('\n-- the planner: choosing files from the server (#241) --');
+admin('course', 'add', 'pick101', '--title', 'Picking 101');
+admin('member', 'add', 'pick101', 'owen', '--role', 'owner');
+admin('member', 'add', 'pick101', 'tia', '--role', 'member');
+admin('course', 'add', 'other101', '--title', 'Not yours');
+const owen = await signedIn('owen');
+const desk = await owen.newPage();
+trap(desk, 'picker setup');
+await desk.goto(`${base}/index.html`);
+const upload = (name, course, title, bytes) => desk.evaluate(async ([n, c, t, b]) => {
+  const res = await fetch(`/api/library/upload?filename=${encodeURIComponent(n)}&course=${c}&title=${encodeURIComponent(t)}`, { method: 'POST', body: typeof b === 'string' ? b : new Uint8Array(b) });
+  return (await res.json()).item;
+}, [name, course, title, bytes]);
+const pickDeck = await upload('picker.md', 'pick101', 'Picker deck', exampleDeck);
+await upload('picker.pdf', 'pick101', 'Picker handout', [...fs.readFileSync(path.join(ROOT, 'content', 'sample.pdf'))]);
+await upload('picker.png', 'pick101', 'Picker photo', [...fs.readFileSync(writeImageFixture())]);
+await desk.close();
+
+// Made in the deck editor - opened and saved there.
+const editor = await owen.newPage();
+trap(editor, 'picker (editor)');
+await editor.goto(`${base}/deck.html?library=${pickDeck.id}`);
+await editor.waitForFunction(() => document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length === 4, null, { timeout: 20000 });
+await editor.click('#deck-add-slide');
+await editor.waitForTimeout(400);
+await editor.click('#deck-save');
+await editor.waitForFunction(() => /^Saved/.test(document.querySelector('#deck-save-state').textContent), null, { timeout: 10000 });
+const recentDecks = await editor.evaluate(async () => (await (await fetch('/api/me/recent-decks')).json()).decks);
+ok(`the deck editor remembers it as just saved (${recentDecks.map((d) => d.title).join(', ')})`, recentDecks[0]?.libraryId === pickDeck.id && recentDecks[0].saved === true);
+
+// The planner: a deck item, chosen rather than typed.
+const planner = await owen.newPage();
+trap(planner, 'picker (planner)');
+await planner.goto(`${base}/plan.html`);
+await planner.waitForSelector('#type-picker .type-btn');
+await planner.click('#plan-new');
+await planner.waitForTimeout(400);
+await planner.click('#type-picker .type-btn:has-text("Marp deck")');
+await planner.click('#item-fields button:has-text("Choose from the server")');
+await planner.waitForSelector('.fb-dialog .fb-row', { timeout: 10000 });
+const firstSection = await planner.evaluate(() => {
+  const list = document.querySelector('.fb-dialog .fb-list');
+  return { heading: list.querySelector('h3')?.textContent, first: list.querySelector('.fb-row .fb-title')?.textContent, meta: list.querySelector('.fb-row .fb-meta')?.textContent };
+});
+ok(`what was just made in the deck editor is first (${firstSection.heading}: ${firstSection.first} - ${firstSection.meta})`,
+  firstSection.heading === 'Recent in the deck editor' && firstSection.first === 'Picker deck' && /saved in the deck editor/.test(firstSection.meta));
+ok('opened on decks, for a deck item', await planner.inputValue('.fb-dialog select') === 'deck');
+ok('with ↗ Quick Look and ✎ Edit on a deck you may edit', await planner.locator('.fb-dialog .fb-row').first().locator('button[aria-label^="Quick Look"]').count() === 1
+  && await planner.locator('.fb-dialog .fb-row').first().locator('button[aria-label^="Edit"]').count() === 1);
+await planner.locator('.fb-dialog .fb-row').first().locator('button:has-text("Use")').click();
+await planner.waitForFunction(() => !document.querySelector('.fb-dialog'), null, { timeout: 5000 });
+const pathValue = await planner.evaluate(() => [...document.querySelectorAll('#item-fields input[type=text]')].map((i) => i.value).find((v) => v.startsWith('/media/')) || '');
+ok(`Use fills the item with the deck's address (${pathValue})`, pathValue === pickDeck.src);
+await planner.waitForFunction(() => /Slide 1 of 5/.test(document.querySelector('#deck-where')?.textContent || ''), null, { timeout: 20000 })
+  .then(() => ok('and it is the deck as saved, five slides', true))
+  .catch(async () => ok(`and it is the deck as saved ("${await planner.textContent('#deck-where')}")`, false));
+ok('named after it', /Picker deck/.test(await planner.textContent('#order')));
+
+// Narrowing it down.
+await planner.click('#plan-add-from-server');
+await planner.waitForSelector('.fb-dialog .fb-row', { timeout: 10000 });
+const shownTitles = () => planner.evaluate(() => [...document.querySelectorAll('.fb-dialog .fb-row .fb-title')].map((t) => t.textContent));
+await planner.selectOption('.fb-dialog select', 'pdf');
+ok(`the kind filter shows only PDFs (${(await shownTitles()).join(', ')})`, (await shownTitles()).length >= 1 && (await shownTitles()).every((t) => /handout|sample|PDF/i.test(t)));
+await planner.selectOption('.fb-dialog select', '');
+await planner.fill('.fb-dialog input[type=search]', 'pick101');
+ok(`search finds a class's files (${(await shownTitles()).join(', ')})`, (await shownTitles()).includes('Picker handout') && (await shownTitles()).includes('Picker photo'));
+
+// Quick add: three files, three items, in order.
+const before = await planner.evaluate(() => document.querySelectorAll('#order .order-row').length);
+const tick = (title) => planner.locator('.fb-dialog .fb-row', { hasText: title }).filter({ hasNot: planner.locator('.fb-meta:has-text("deck editor")') }).first().locator('input[type=checkbox]').check();
+await tick('Picker deck');
+await tick('Picker handout');
+await tick('Picker photo');
+ok('the button counts what is ticked', /Add 3 to the lecture/.test(await planner.textContent('.fb-dialog .fb-foot button')));
+await planner.click('.fb-dialog .fb-foot button');
+await planner.waitForFunction((n) => document.querySelectorAll('#order .order-row').length === n + 3, before, { timeout: 5000 }).catch(() => {});
+const types = await planner.evaluate(() => [...document.querySelectorAll('#order .order-row')].slice(-3).map((r) => r.querySelector('.order-type').textContent));
+ok(`quick add puts in one item per file, of the right kind (${types.join(', ')})`, types.join() === 'Marp deck,PDF,Photo');
+await planner.close();
+
+// A TA sees their class's files, not another class's.
+const tia = await signedIn('tia');
+const ta = await tia.newPage();
+trap(ta, 'picker (TA)');
+await ta.goto(`${base}/index.html`);
+await editor.close();
+const root = await signedIn('root');
+const rootPage = await root.newPage();
+await rootPage.goto(`${base}/index.html`);
+await rootPage.evaluate(async () => fetch('/api/library/upload?filename=private.md&course=other101&title=Another%20class%20deck', { method: 'POST', body: '---\nmarp: true\n---\n# Theirs\n' }));
+await root.close();
+await ta.goto(`${base}/plan.html`);
+await ta.waitForSelector('#plan-add-from-server');
+await ta.click('#plan-add-from-server');
+await ta.waitForSelector('.fb-dialog .fb-row', { timeout: 10000 });
+const taTitles = await ta.evaluate(() => [...document.querySelectorAll('.fb-dialog .fb-row .fb-title')].map((t) => t.textContent));
+ok(`a TA sees their class's files (${taTitles.filter((t) => /Picker/.test(t)).length} of them) and not another class's`, taTitles.includes('Picker handout') && !taTitles.includes('Another class deck'));
+ok('and no ✎ on a deck they may not edit', await ta.locator('.fb-dialog .fb-row', { hasText: 'Picker deck' }).first().locator('button[aria-label^="Edit"]').count() === 0);
+await tia.close();
+
+// "Add to a lecture…" from the deck editor.
+const again = await owen.newPage();
+trap(again, 'picker (editor, add to a lecture)');
+await again.goto(`${base}/deck.html?library=${pickDeck.id}`);
+await again.waitForFunction(() => document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length === 5, null, { timeout: 20000 });
+await again.click('#deck-save-more');
+ok('the deck editor offers "Add to a lecture…" for a deck on the server', await again.isVisible('#deck-add-to-lecture'));
+const [toPlan] = await Promise.all([owen.waitForEvent('page'), again.click('#deck-add-to-lecture')]);
+trap(toPlan, 'picker (planner, from the editor)');
+await toPlan.waitForSelector('.fb-dialog .fb-row', { timeout: 15000 });
+const ticked = await toPlan.evaluate(() => [...document.querySelectorAll('.fb-dialog .fb-row')].filter((r) => r.querySelector('input:checked')).map((r) => r.querySelector('.fb-title').textContent));
+ok(`it opens the planner with that deck ticked (${ticked.join(', ')})`, ticked.length === 1 && ticked[0] === 'Picker deck');
+const rows = await toPlan.evaluate(() => document.querySelectorAll('#order .order-row').length);
+await toPlan.click('.fb-dialog .fb-foot button');
+await toPlan.waitForFunction((n) => document.querySelectorAll('#order .order-row').length === n + 1, rows, { timeout: 5000 })
+  .then(() => ok('and Add puts it in the lecture', true))
+  .catch(() => ok('and Add puts it in the lecture', false));
+ok('the planner\'s address is tidied back to plain', !new URL(toPlan.url()).searchParams.has('add'));
+await owen.close();
 }
 
 if (want('the deck editor: drafts, downloads, completion and checks (#226)')) {

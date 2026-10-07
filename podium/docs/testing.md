@@ -31,6 +31,7 @@ podium/test/
 ├── tabsettings.test.mjs  # Customizable/collapsible controller tab bar (Issue #76)
 ├── templates.test.mjs    # Course-level plan templates, against a real SQLite file (Issue #80)
 ├── quicklook-open.test.mjs # Quick Look's handover to a new tab: one-use tokens, the deck editor's live rehearsal (Issue #242)
+├── recent-decks.test.mjs # The deck editor's recent decks, and what each person may do with each library file (Issue #241)
 ├── plan-archive.test.mjs # Archiving lectures from one's own planner list: personal, bulk, what may be archived (Issue #239)
 ├── deck-templates.test.mjs # Deck templates: built-in, course and personal, and who may change which (Issue #226)
 ├── deck-mermaid.test.mjs # Mermaid diagrams in decks: which theme each is drawn in, and what a broken one says (Issue #235)
@@ -50,7 +51,7 @@ podium/test/
     ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen
     ├── media.mjs         # Camera, music, audio, clocks, captions, PDFs
     ├── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
-    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242)
+    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242); choosing files from the server (Issue #241)
 ```
 
 ---
@@ -109,6 +110,7 @@ node podium/test/protocol.test.mjs
 - **`tabsettings.test.mjs`**: reordering, hiding, and restoring controller tabs.
 - **`templates.test.mjs`**: course-level plan template ownership and removal permissions.
 - **`quicklook-open.test.mjs`**: how a page hands something to a Quick Look tab on the same device (Issue #242), against Node's own BroadcastChannel: which item types can be looked at, a library file opening by its id, a one-use token (asked twice, or a token nobody handed over, gets nothing), a tab that opens before its item is ready, an item that could not be gathered saying why, and the deck editor's rehearsal handover answering reloads and sending each new version until it is closed.
+- **`recent-decks.test.mjs`**: the planner's *Choose from the server* (Issue #241): the decks someone opened or saved in the deck editor (newest first, one row each, saved staying saved, only addresses of decks on this server, never a deck they can no longer see, a dozen listed and a few dozen kept), and the per-file `may` the library now reports (owner, TA, a TA's own upload, a no-course deck, an admin), checked against the rules the server enforces.
 - **`plan-archive.test.mjs`**: archiving lectures from the planner's list (Issue #239): it is one person's (a co-instructor's list is untouched, and the plan itself does not change), `?archived=` narrows the list, bulk archive and unarchive, a lecture you cannot see is skipped rather than archived, the limits on a request, and a deleted lecture leaving both lists.
 - **`deck-templates.test.mjs`**: the deck editor's templates (Issue #226): who sees a course's and a person's own, who may add, rename, rewrite and remove them, the size cap, the built-ins' `index.json`, and an administrator hiding a built-in.
 - **`deck-mermaid.test.mjs`**: diagrams in decks (Issue #235): the theme a diagram is drawn in when the deck decides (light, dark, gaia's colours, a course theme's brand colour, gradient backgrounds), when `mermaidTheme` does, that `strict` security is never relaxed, and how Mermaid's errors are shortened for a slide. Which slides a `mermaidTheme` reaches is checked against the real Marp engine in `deck-source.test.mjs`; drawing itself is in the editor's end-to-end group.

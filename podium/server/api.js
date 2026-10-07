@@ -27,6 +27,7 @@ const courses = require('./courses.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
 const plans = require('./plans.js');
+const recent = require('./recent.js');
 const settings = require('./settings.js');
 const templates = require('./templates.js');
 const deckTemplates = require('./deck-templates.js');
@@ -548,6 +549,19 @@ async function handleApi(req, res, url, ctx) {
     }
 
     // --- lecture plans ----------------------------------------------------
+
+    // --- the decks this person has had open in the deck editor (Issue #241) ---
+
+    if (head === 'me' && rest.length === 1 && rest[0] === 'recent-decks' && req.method === 'GET') {
+      json(res, 200, { decks: recent.list(ctx.db, user) });
+      return true;
+    }
+
+    if (head === 'me' && rest.length === 1 && rest[0] === 'recent-decks' && req.method === 'POST') {
+      const body = await readJson(req, 8 * 1024);
+      json(res, 200, recent.note(ctx.db, user, { src: body.src, title: body.title, saved: body.saved === true }));
+      return true;
+    }
 
     if (head === 'plans' && !rest.length && req.method === 'GET') {
       // ?archived=1 / 0: only the lectures this caller has archived from
