@@ -550,7 +550,19 @@ async function handleApi(req, res, url, ctx) {
     // --- lecture plans ----------------------------------------------------
 
     if (head === 'plans' && !rest.length && req.method === 'GET') {
-      json(res, 200, { plans: plans.listPlans(ctx.db, user), courses: library.listCourses(ctx.db, user) });
+      // ?archived=1 / 0: only the lectures this caller has archived from
+      // their own list (Issue #239), or only the rest. Left out: all, each
+      // saying which it is.
+      const which = url.searchParams.get('archived');
+      const archived = which === '1' ? true : which === '0' ? false : undefined;
+      json(res, 200, { plans: plans.listPlans(ctx.db, user, { archived }), courses: library.listCourses(ctx.db, user) });
+      return true;
+    }
+
+    // Before /api/plans/:id below, which would otherwise take "archive" for an id.
+    if (head === 'plans' && rest.length === 1 && rest[0] === 'archive' && req.method === 'PUT') {
+      const body = await readJson(req, 64 * 1024);
+      json(res, 200, plans.setArchived(ctx.db, user, body.ids, body.archived !== false));
       return true;
     }
 

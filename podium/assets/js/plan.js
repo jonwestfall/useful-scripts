@@ -8,7 +8,7 @@
 // one. The one thing they share is the renderers: the preview here is the same
 // code the projector runs, so "it looks right in my office" means something.
 
-import { $, $$, el, uid, guessItemFromUrl, wireDangerButton, servedBuild } from './util.js';
+import { $, $$, el, uid, guessItemFromUrl, wireDangerButton, servedBuild, safeStorageSet } from './util.js';
 import {
   PLAN_TYPES, emptyPlan, newItem, readPlan, planToJson, planFileName, planBytes,
   itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, pruneAssets, emptyAutoLaunch, emptyPip,
@@ -102,42 +102,300 @@ function renderSize() {
 // One list (Issue #204): this browser's lectures, each saying where it lives,
 // then - on a server - the server's lectures this browser has no copy of yet
 // (another device's, or a co-instructor's), which open with a tap.
-async function renderPlanList() {
-  const list = $('#plan-list');
-  let rows;
-  try { rows = await allPlans(); } catch (err) { warn(err.message); return; }
-  const where = (row) => {
-    if (!serverMode) return 'this browser';
-    return row.server?.id ? 'on the server' : 'this browser';
-  };
-  const local = rows.map((row) => el('button', {
-    class: `plan-row${row.id === plan?.id ? ' is-on' : ''}`,
-    type: 'button',
-    onclick: () => openPlan(row.id),
-  },
-    el('span', { class: 'plan-row-title' }, row.title || 'Untitled lecture'),
-    el('span', { class: 'plan-row-meta' },
-      el('span', { class: `plan-row-where${row.server?.id && serverMode ? ' is-server' : ''}` }, where(row)),
-      ` · ${row.items?.length || 0} item${(row.items?.length || 0) === 1 ? '' : 's'}`
-      + (row.course ? ` · ${row.course}` : '')
-      + ` · ${new Date(row.updated || 0).toLocaleDateString()}`)));
+//
+// Less what this person has archived (Issue #239): put away from THEIR list,
+// nobody else's, and brought back from 🗄 Archive. A lecture on the server is
+// archived there, per person, so it is the same on every device; one only in
+// this browser is archived here.
+
+const ARCHIVE_KEY = 'podium.planner.archived.v1';
+let archivedHere = new Set();   // ids of this browser's lectures that are archived
+try { archivedHere = new Set(JSON.parse(localStorage.getItem(ARCHIVE_KEY) || '[]')); } catch { /* no storage: nothing archived */ }
+const keepArchivedHere = () => safeStorageSet(localStorage, ARCHIVE_KEY, JSON.stringify([...archivedHere]));
+
+/**
+ * Every lecture in this person's list, archived or not, as one shape: this
+ * browser's (linked to a server row or not), then the server's that this
+ * browser has no copy of.
+ */
+async function lectureRows() {
+  const rows = await allPlans();
+  const byServerId = new Map(serverRows.map((r) => [String(r.id), r]));
   const linked = new Set(rows.map((r) => r.server?.id && String(r.server.id)).filter(Boolean));
   // Only mine, or filed under a class I am in: an administrator can read
   // every lecture on the server, and the place to look through all of those
   // - the unfiled ones included - is Administration → Lectures (Issue #224),
   // not this list.
   const relevant = (r) => !me || r.ownerId === me.id || (!!r.course && (!myClasses || myClasses.has(r.course)));
-  const remote = serverMode ? serverRows.filter((r) => !linked.has(String(r.id)) && relevant(r)).map((r) => el('button', {
-    class: 'plan-row is-remote',
-    type: 'button',
-    onclick: () => openServerPlan(r.id),
-  },
-    el('span', { class: 'plan-row-title' }, r.title || 'Untitled lecture'),
+  let tidied = false;
+  const local = rows.map((row) => {
+    const serverId = serverMode && row.server?.id ? String(row.server.id) : null;
+    const onServer = serverId ? byServerId.get(serverId) : null;
+    // This browser's record follows the server's once it has answered.
+    if (onServer && !!onServer.archived !== archivedHere.has(row.id)) {
+      if (onServer.archived) archivedHere.add(row.id); else archivedHere.delete(row.id);
+      tidied = true;
+    }
+    return {
+      key: `local:${row.id}`,
+      localId: row.id,
+      serverId,
+      title: row.title || 'Untitled lecture',
+      course: row.course || '',
+      owner: onServer?.owner || '',
+      updated: row.updated || 0,
+      items: row.items?.length || 0,
+      // Once the server has answered, it decides - so archiving on one device
+      // and unarchiving on another ends the same everywhere. Until then (or
+      // with no server), this browser's own record.
+      archived: onServer ? !!onServer.archived : archivedHere.has(row.id),
+      where: !serverMode ? 'this browser' : serverId ? 'on the server' : 'this browser',
+    };
+  });
+  const remote = serverMode ? serverRows.filter((r) => !linked.has(String(r.id)) && relevant(r)).map((r) => ({
+    key: `server:${r.id}`,
+    localId: null,
+    serverId: String(r.id),
+    title: r.title || 'Untitled lecture',
+    course: r.course || '',
+    owner: r.owner || '',
+    updated: r.updatedAt || 0,
+    items: null,
+    archived: !!r.archived,
+    where: 'on the server only',
+  })) : [];
+  // A lecture deleted from this browser takes its archived mark with it.
+  const here = new Set(rows.map((row) => row.id));
+  for (const id of archivedHere) if (!here.has(id)) { archivedHere.delete(id); tidied = true; }
+  if (tidied) keepArchivedHere();
+  return [...local, ...remote];
+}
+
+async function renderPlanList() {
+  const list = $('#plan-list');
+  let rows;
+  try { rows = await lectureRows(); } catch (err) { warn(err.message); return; }
+  const shown = rows.filter((r) => !r.archived);
+  list.replaceChildren(...shown.map((r) => el('div', { class: 'plan-row-wrap' },
+    el('button', {
+      class: `plan-row${r.localId && r.localId === plan?.id ? ' is-on' : ''}${r.localId ? '' : ' is-remote'}`,
+      type: 'button',
+      onclick: () => openLecture(r),
+    },
+    el('span', { class: 'plan-row-title' }, r.title),
     el('span', { class: 'plan-row-meta' },
-      el('span', { class: 'plan-row-where' }, 'on the server only'),
-      [r.course && ` · ${r.course}`, r.owner && ` · ${r.owner}`, ' · tap to open'].filter(Boolean).join('')))) : [];
-  list.replaceChildren(...local, ...remote);
-  if (!rows.length && !remote.length) list.append(el('p', { class: 'empty' }, 'No lectures yet.'));
+      el('span', { class: `plan-row-where${r.localId && r.serverId ? ' is-server' : ''}` }, r.where),
+      r.localId
+        ? ` · ${r.items} item${r.items === 1 ? '' : 's'}${r.course ? ` · ${r.course}` : ''} · ${new Date(r.updated).toLocaleDateString()}`
+        : [r.course && ` · ${r.course}`, r.owner && ` · ${r.owner}`, ' · tap to open'].filter(Boolean).join(''))),
+    el('button', {
+      class: 'plan-row-archive',
+      type: 'button',
+      title: 'Archive: take it out of your list',
+      'aria-label': `Archive ${r.title}`,
+      onclick: () => archiveRows([r], true, { undo: true }),
+    }, '🗄'),
+  )));
+  if (!shown.length) list.append(el('p', { class: 'empty' }, rows.length ? 'Every lecture is archived.' : 'No lectures yet.'));
+  const archivedCount = rows.length - shown.length;
+  $('#plan-archive-open').textContent = archivedCount ? `🗄 Archive (${archivedCount})` : '🗄 Archive';
+  $('#plan-tidy-open').hidden = shown.length < 2;
+  const current = rows.find((r) => r.localId && r.localId === plan?.id);
+  $('#plan-archived-note').hidden = !current?.archived;
+  if (!$('#plan-archive-dialog').hidden) renderArchiveDialog(rows);
+  if (!$('#plan-tidy-dialog').hidden) renderTidyDialog(rows);
+}
+
+function openLecture(row) {
+  closeArchiveDialogs();
+  if (row.localId) openPlan(row.localId);
+  else openServerPlan(row.serverId);
+}
+
+let undoTimer = null;
+
+/**
+ * Archive (or bring back) lectures from this person's list. A lecture on the
+ * server is changed there, all at once, so it holds on every device; this
+ * browser keeps its own record too, for its lectures, for when the server has
+ * not answered yet.
+ */
+async function archiveRows(rows, archived, { undo = false } = {}) {
+  if (!rows.length) return;
+  const serverIds = rows.map((r) => r.serverId).filter(Boolean);
+  if (serverIds.length) {
+    try {
+      const res = await fetch('/api/plans/archive', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ids: serverIds.map(Number), archived }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `the server said ${res.status}`);
+      const changed = new Set((body.changed || []).map(String));
+      for (const r of serverRows) if (changed.has(String(r.id))) r.archived = archived;
+    } catch (err) {
+      warn(`That did not ${archived ? 'archive' : 'come back'}: ${err.message}`);
+      return;
+    }
+  }
+  for (const r of rows) {
+    if (!r.localId) continue;
+    if (archived) archivedHere.add(r.localId); else archivedHere.delete(r.localId);
+  }
+  keepArchivedHere();
+  await renderPlanList();
+  clearTimeout(undoTimer);
+  const note = $('#plan-archive-undo');
+  if (!undo) { note.hidden = true; return; }
+  const what = rows.length === 1 ? `"${rows[0].title}"` : `${rows.length} lectures`;
+  note.replaceChildren(`${archived ? 'Archived' : 'Brought back'} ${what}. `,
+    el('button', { type: 'button', class: 'linkish', onclick: () => archiveRows(rows, !archived) }, 'Undo'));
+  note.hidden = false;
+  undoTimer = setTimeout(() => { note.hidden = true; }, 8000);
+}
+
+// --- the archive -------------------------------------------------------------
+
+function rowMeta(r) {
+  return [r.course && r.course.toUpperCase(), r.owner, r.updated && `changed ${new Date(r.updated).toLocaleDateString()}`, r.where]
+    .filter(Boolean).join(' · ');
+}
+
+function closeArchiveDialogs() {
+  $('#plan-archive-dialog').hidden = true;
+  $('#plan-tidy-dialog').hidden = true;
+}
+
+function renderArchiveDialog(rows) {
+  const needle = $('#plan-archive-search').value.trim().toLowerCase();
+  const archived = rows.filter((r) => r.archived).sort((a, b) => b.updated - a.updated);
+  const found = archived.filter((r) => !needle || `${r.title} ${r.course} ${r.owner}`.toLowerCase().includes(needle));
+  const list = $('#plan-archive-list');
+  const picked = new Set([...list.querySelectorAll('input:checked')].map((box) => box.value));
+  list.replaceChildren(...found.map((r) => el('div', { class: 'plan-archive-item', role: 'listitem', 'data-key': r.key },
+    el('input', { type: 'checkbox', value: r.key, 'aria-label': `Select ${r.title}`, ...(picked.has(r.key) ? { checked: '' } : {}), onchange: syncArchivePicks }),
+    el('span', { class: 'plan-archive-what' },
+      el('span', { class: 'plan-row-title' }, r.title),
+      el('span', { class: 'plan-row-meta' }, rowMeta(r))),
+    el('button', { type: 'button', onclick: () => archiveRows([r], false) }, 'Unarchive'),
+    el('button', { type: 'button', onclick: () => openLecture(r) }, 'Open'),
+  )));
+  if (!found.length) list.append(el('p', { class: 'empty' }, archived.length ? 'No archived lecture matches that.' : 'Nothing archived yet. 🗄 on a lecture in your list puts it here.'));
+  $('#plan-archive-count').textContent = archived.length ? `${archived.length} archived` : '';
+  syncArchivePicks();
+}
+
+function syncArchivePicks() {
+  $('#plan-archive-unarchive-selected').disabled = !$('#plan-archive-list').querySelector('input:checked');
+}
+
+async function openArchiveDialog() {
+  $('#plan-tidy-dialog').hidden = true;
+  $('#plan-archive-search').value = '';
+  $('#plan-archive-list').replaceChildren();
+  $('#plan-archive-dialog').hidden = false;
+  renderArchiveDialog(await lectureRows());
+  $('#plan-archive-search').focus();
+}
+
+// --- tidying up --------------------------------------------------------------
+
+const TIDY_DAYS = 120;   // "older than" starts at about a term ago
+
+function olderThan(rows) {
+  const value = $('#plan-tidy-date').value;
+  if (!value) return [];
+  const cutoff = new Date(`${value}T00:00:00`).getTime();
+  return rows.filter((r) => !r.archived && r.updated && r.updated < cutoff);
+}
+
+function inCourse(rows) {
+  const code = $('#plan-tidy-course').value;
+  return code ? rows.filter((r) => !r.archived && r.course.toLowerCase() === code) : [];
+}
+
+const count = (n) => `${n} lecture${n === 1 ? '' : 's'}`;
+
+function renderTidyDialog(rows) {
+  const older = olderThan(rows);
+  const when = $('#plan-tidy-date').value ? new Date(`${$('#plan-tidy-date').value}T00:00:00`).toLocaleDateString() : '';
+  $('#plan-tidy-older-count').textContent = when ? `${count(older.length)} in your list not changed since ${when}.` : '';
+  $('#plan-tidy-older').disabled = !older.length;
+  $('#plan-tidy-older').textContent = older.length ? `Archive ${count(older.length)}` : 'Archive';
+
+  const select = $('#plan-tidy-course');
+  const was = select.value;
+  const courses = [...new Set(rows.filter((r) => !r.archived && r.course).map((r) => r.course.toLowerCase()))].sort();
+  select.replaceChildren(el('option', { value: '' }, 'Choose a class'), ...courses.map((c) => el('option', { value: c }, c.toUpperCase())));
+  select.value = courses.includes(was) ? was : '';
+  const filed = inCourse(rows);
+  $('#plan-tidy-course-count').textContent = select.value ? `${count(filed.length)} in your list filed under ${select.value.toUpperCase()}.` : '';
+  $('#plan-tidy-course-go').disabled = !filed.length;
+  $('#plan-tidy-course-go').textContent = filed.length ? `Archive ${count(filed.length)}` : 'Archive';
+
+  const list = $('#plan-tidy-list');
+  const picked = new Set([...list.querySelectorAll('input:checked')].map((box) => box.value));
+  const open = rows.filter((r) => !r.archived).sort((a, b) => a.updated - b.updated);
+  list.replaceChildren(...open.map((r) => el('label', { class: 'plan-archive-item', role: 'listitem' },
+    el('input', { type: 'checkbox', value: r.key, ...(picked.has(r.key) ? { checked: '' } : {}), onchange: syncTidyPicks }),
+    el('span', { class: 'plan-archive-what' },
+      el('span', { class: 'plan-row-title' }, r.title),
+      el('span', { class: 'plan-row-meta' }, rowMeta(r))))));
+  if (!open.length) list.append(el('p', { class: 'empty' }, 'Every lecture is archived.'));
+  syncTidyPicks();
+}
+
+function syncTidyPicks() {
+  const n = $('#plan-tidy-list').querySelectorAll('input:checked').length;
+  $('#plan-tidy-selected').disabled = !n;
+  $('#plan-tidy-selected').textContent = n ? `Archive ${count(n)}` : 'Archive selected';
+}
+
+async function openTidyDialog() {
+  $('#plan-archive-dialog').hidden = true;
+  const start = new Date(Date.now() - TIDY_DAYS * 86400000);
+  $('#plan-tidy-date').value = start.toISOString().slice(0, 10);
+  $('#plan-tidy-list').replaceChildren();
+  $('#plan-tidy-note').textContent = '';
+  $('#plan-tidy-dialog').hidden = false;
+  renderTidyDialog(await lectureRows());
+}
+
+async function tidy(pick) {
+  const rows = pick(await lectureRows());
+  if (!rows.length) return;
+  await archiveRows(rows, true);
+  $('#plan-tidy-note').textContent = `Archived ${count(rows.length)}. They are in 🗄 Archive if you want any back.`;
+}
+
+function wireArchive() {
+  $('#plan-archive-open').addEventListener('click', openArchiveDialog);
+  $('#plan-tidy-open').addEventListener('click', openTidyDialog);
+  $('#plan-archive-close').addEventListener('click', closeArchiveDialogs);
+  $('#plan-tidy-close').addEventListener('click', closeArchiveDialogs);
+  for (const dialog of [$('#plan-archive-dialog'), $('#plan-tidy-dialog')]) {
+    dialog.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeArchiveDialogs(); });
+    dialog.addEventListener('click', (ev) => { if (ev.target === dialog) closeArchiveDialogs(); });
+  }
+  $('#plan-archive-search').addEventListener('input', async () => renderArchiveDialog(await lectureRows()));
+  $('#plan-archive-unarchive-selected').addEventListener('click', async () => {
+    const keys = new Set([...$('#plan-archive-list').querySelectorAll('input:checked')].map((box) => box.value));
+    await archiveRows((await lectureRows()).filter((r) => keys.has(r.key)), false);
+  });
+  $('#plan-unarchive-this').addEventListener('click', async () => {
+    const row = (await lectureRows()).find((r) => r.localId && r.localId === plan?.id);
+    if (row) archiveRows([row], false);
+  });
+  $('#plan-tidy-date').addEventListener('change', async () => renderTidyDialog(await lectureRows()));
+  $('#plan-tidy-course').addEventListener('change', async () => renderTidyDialog(await lectureRows()));
+  $('#plan-tidy-older').addEventListener('click', () => tidy(olderThan));
+  $('#plan-tidy-course-go').addEventListener('click', () => tidy(inCourse));
+  $('#plan-tidy-selected').addEventListener('click', () => tidy((rows) => {
+    const keys = new Set([...$('#plan-tidy-list').querySelectorAll('input:checked')].map((box) => box.value));
+    return rows.filter((r) => keys.has(r.key));
+  }));
 }
 
 async function openPlan(id) {
@@ -1947,6 +2205,7 @@ function renderAll() {
 
 loadMusicPlaylists();
 renderTypePicker();
+wireArchive();
 $('#plan-build').textContent = `Podium ${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
 const planTag = $('#plan-version-tag');
 if (planTag) planTag.textContent = versionStamp();

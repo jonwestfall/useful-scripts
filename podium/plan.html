@@ -55,9 +55,19 @@
     <!-- This browser's lectures and, on a server, the server's too - one list,
          each row saying where it lives. -->
     <div id="plan-list"></div>
+    <!-- Archiving (Issue #239): out of this list, and only this person's. -->
+    <p id="plan-archive-undo" class="plan-archive-undo" role="status" hidden></p>
+    <div class="plan-archive-bar">
+      <button id="plan-archive-open" type="button" class="linkish">🗄 Archive</button>
+      <button id="plan-tidy-open" type="button" class="linkish">Tidy up…</button>
+    </div>
     <hr>
     <h3>This lecture</h3>
     <p id="plan-sync" class="plan-sync" role="status"></p>
+    <p id="plan-archived-note" class="plan-archived-note" hidden>
+      This lecture is archived, so it is not in your list.
+      <button id="plan-unarchive-this" type="button" class="linkish">Unarchive</button>
+    </p>
     <!-- Autosave paused (Issue #204): the server's copy changed since this
          one was opened, and nothing is overwritten without asking. -->
     <div id="plan-conflict" class="plan-conflict" role="alert" hidden>
@@ -261,6 +271,57 @@
     </div>
   </section>
 
+</div>
+
+<!-- The lectures archived from this list (Issue #239): find one, bring it
+     back, or open it as it is. -->
+<div id="plan-archive-dialog" class="deck-dialog" hidden>
+  <div class="deck-dialog-card plan-archive-card" role="dialog" aria-modal="true" aria-labelledby="plan-archive-heading">
+    <div class="plan-archive-head">
+      <h2 id="plan-archive-heading">Archived lectures</h2>
+      <button id="plan-archive-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <input id="plan-archive-search" type="search" placeholder="Search by title, class or author" aria-label="Search archived lectures" autocomplete="off">
+    <div id="plan-archive-list" class="plan-archive-list" role="list"></div>
+    <div class="inline">
+      <button id="plan-archive-unarchive-selected" type="button" disabled>Unarchive selected</button>
+      <span class="hint" id="plan-archive-count"></span>
+    </div>
+    <p class="hint">Archiving only tidies your own list. Anyone you share a class with still sees these lectures until they archive them too.</p>
+  </div>
+</div>
+
+<!-- Tidy up the list (Issue #239): several at once, everything older than a
+     date, or a whole class's. -->
+<div id="plan-tidy-dialog" class="deck-dialog" hidden>
+  <div class="deck-dialog-card plan-archive-card" role="dialog" aria-modal="true" aria-labelledby="plan-tidy-heading">
+    <div class="plan-archive-head">
+      <h2 id="plan-tidy-heading">Tidy up your list</h2>
+      <button id="plan-tidy-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <p class="hint">Each of these archives lectures from <strong>your</strong> list only. You can bring any of them back from 🗄 Archive.</p>
+
+    <h3>Not changed since…</h3>
+    <div class="inline">
+      <input id="plan-tidy-date" type="date" aria-label="Not changed since">
+      <button id="plan-tidy-older" type="button">Archive</button>
+    </div>
+    <p class="hint" id="plan-tidy-older-count"></p>
+
+    <h3>Every lecture in a class</h3>
+    <div class="inline">
+      <select id="plan-tidy-course" aria-label="Class"></select>
+      <button id="plan-tidy-course-go" type="button">Archive</button>
+    </div>
+    <p class="hint" id="plan-tidy-course-count"></p>
+
+    <h3>Choose them</h3>
+    <div id="plan-tidy-list" class="plan-archive-list" role="list"></div>
+    <div class="inline">
+      <button id="plan-tidy-selected" type="button" disabled>Archive selected</button>
+    </div>
+    <p class="hint" id="plan-tidy-note" role="status"></p>
+  </div>
 </div>
 
 <script src="assets/vendor/qrcode.js"></script>
