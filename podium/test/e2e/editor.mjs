@@ -1,4 +1,5 @@
-// Podium end-to-end group: the deck editor (Issue #226).
+// Podium end-to-end group: the deck editor (Issue #226), and the planner's
+// lecture archive (Issue #239), which wants the same server with accounts.
 //
 //   node podium/test/e2e/editor.mjs [--only <name>[,<name>...]]
 //
@@ -1170,6 +1171,164 @@ ok('without the picture comments', !now.includes('<!-- diagram:'));
 ok('and without asking to bring the pictures in', !/media\/diagrams/.test(await page.textContent('#deck-warn')));
 ok(`nothing went to mermaid.live but the one link opened (${opened.length})`, opened.length === 1);
 await ctx.close();
+}
+
+if (want('the planner: archiving lectures from your own list (#239)')) {
+console.log('\n-- the planner: archiving lectures from your own list (#239) --');
+// A class of its own, so the other sections' lectures never get in the count.
+admin('course', 'add', 'arc101', '--title', 'Archive 101');
+admin('member', 'add', 'arc101', 'owen', '--role', 'owner');
+admin('member', 'add', 'arc101', 'tia', '--role', 'member');
+const owen = await signedIn('owen');
+const planner = await owen.newPage();
+trap(planner, 'planner (archive)');
+await planner.goto(`${base}/plan.html`);
+await planner.waitForSelector('#plan-list');
+const make = (title, course) => planner.evaluate(async ([t, c]) => {
+  const res = await fetch('/api/plans', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: t, course: c, doc: { podium: 'plan', v: 1, title: t, items: [] } }) });
+  return (await res.json()).plan;
+}, [title, course]);
+const week1 = await make('Archive Week 1', 'arc101');
+await make('Archive Week 2', 'arc101');
+await make('Archive loose notes', '');
+await planner.reload();
+const listed = () => planner.evaluate(() => [...document.querySelectorAll('#plan-list .plan-row-title')].map((t) => t.textContent));
+await planner.waitForFunction(() => /Archive Week 1/.test(document.querySelector('#plan-list').textContent), null, { timeout: 10000 });
+ok('the server\'s lectures are in the list, each with 🗄', (await listed()).filter((t) => t.startsWith('Archive ')).length === 3
+  && (await planner.$$('#plan-list .plan-row-archive')).length >= 3);
+
+const row = (title) => planner.locator('#plan-list .plan-row-wrap', { hasText: title });
+await row('Archive Week 1').hover();
+await row('Archive Week 1').locator('.plan-row-archive').click();
+await planner.waitForFunction(() => !/Archive Week 1/.test(document.querySelector('#plan-list').textContent), null, { timeout: 5000 })
+  .then(() => ok('🗄 takes a lecture out of the list', true))
+  .catch(() => ok('🗄 takes a lecture out of the list', false));
+ok(`and says so, with Undo ("${(await planner.textContent('#plan-archive-undo')).trim()}")`, /Archived "Archive Week 1"\. Undo/.test(await planner.textContent('#plan-archive-undo')));
+ok('the archive says how many are in it', /🗄 Archive \(1\)/.test(await planner.textContent('#plan-archive-open')));
+await planner.click('#plan-archive-undo button');
+await planner.waitForFunction(() => /Archive Week 1/.test(document.querySelector('#plan-list').textContent), null, { timeout: 5000 })
+  .then(() => ok('Undo puts it back', true))
+  .catch(() => ok('Undo puts it back', false));
+await row('Archive Week 1').hover();
+await row('Archive Week 1').locator('.plan-row-archive').click();
+await planner.waitForFunction(() => !/Archive Week 1/.test(document.querySelector('#plan-list').textContent), null, { timeout: 5000 });
+const onServer = await planner.evaluate(async (id) => (await (await fetch('/api/plans')).json()).plans.find((p) => p.id === id), week1.id);
+ok('it is archived on the server, for this person', onServer?.archived === true);
+
+// Only this person's list.
+const tia = await signedIn('tia');
+const taPlanner = await tia.newPage();
+trap(taPlanner, 'planner (archive, TA)');
+await taPlanner.goto(`${base}/plan.html`);
+await taPlanner.waitForFunction(() => /Archive Week 2/.test(document.querySelector('#plan-list').textContent), null, { timeout: 10000 });
+ok('a co-instructor in the same class still has it in their list', /Archive Week 1/.test(await taPlanner.textContent('#plan-list')));
+await taPlanner.close();
+await tia.close();
+
+// The archive: search, bring back, open.
+await planner.click('#plan-archive-open');
+await planner.waitForSelector('#plan-archive-dialog:not([hidden]) .plan-archive-item');
+const inArchive = () => planner.evaluate(() => [...document.querySelectorAll('#plan-archive-list .plan-archive-item .plan-row-title')].map((t) => t.textContent));
+ok('🗄 Archive lists it', (await inArchive()).includes('Archive Week 1'));
+// The search filters as you type, a moment after each keystroke.
+const searchShows = (fn, arg) => planner.waitForFunction(fn, arg, { timeout: 5000 }).then(() => true).catch(() => false);
+await planner.fill('#plan-archive-search', 'arc101');
+ok('searching by class finds it', await searchShows(() => [...document.querySelectorAll('#plan-archive-list .plan-archive-item .plan-row-title')]
+  .map((t) => t.textContent).join() === 'Archive Week 1'));
+await planner.fill('#plan-archive-search', 'nothing like this');
+ok('and a search that matches nothing says so', await searchShows(() => !document.querySelector('#plan-archive-list .plan-archive-item')
+  && /No archived lecture matches/.test(document.querySelector('#plan-archive-list').textContent)));
+await planner.fill('#plan-archive-search', 'week');
+await searchShows(() => /Archive Week 1/.test(document.querySelector('#plan-archive-list').textContent));
+await planner.locator('#plan-archive-list .plan-archive-item', { hasText: 'Archive Week 1' }).locator('button:has-text("Unarchive")').click();
+await planner.waitForFunction(() => /Archive Week 1/.test(document.querySelector('#plan-list').textContent), null, { timeout: 5000 })
+  .then(() => ok('Unarchive brings it back to the list', true))
+  .catch(() => ok('Unarchive brings it back to the list', false));
+await planner.click('#plan-archive-close');
+
+// Tidying up: a whole class, then several chosen, then older than a date.
+await planner.click('#plan-tidy-open');
+await planner.waitForSelector('#plan-tidy-dialog:not([hidden])');
+await planner.selectOption('#plan-tidy-course', 'arc101');
+ok(`a class's lectures are counted before anything happens ("${await planner.textContent('#plan-tidy-course-count')}")`,
+  /2 lectures in your list filed under ARC101/.test(await planner.textContent('#plan-tidy-course-count')));
+await planner.click('#plan-tidy-course-go');
+await planner.waitForFunction(() => !/Archive Week/.test(document.querySelector('#plan-list').textContent), null, { timeout: 5000 })
+  .then(() => ok('and archived together', true))
+  .catch(() => ok('and archived together', false));
+await planner.fill('#plan-tidy-date', '2000-01-01');
+await planner.dispatchEvent('#plan-tidy-date', 'change');
+ok('nothing older than 2000: nothing to archive', await planner.isDisabled('#plan-tidy-older') && /0 lectures/.test(await planner.textContent('#plan-tidy-older-count')));
+const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+await planner.fill('#plan-tidy-date', tomorrow);
+await planner.dispatchEvent('#plan-tidy-date', 'change');
+const stillListed = (await listed()).length;
+ok(`older than tomorrow counts every lecture still listed (${await planner.textContent('#plan-tidy-older-count')})`,
+  new RegExp(`^${stillListed} lecture`).test(await planner.textContent('#plan-tidy-older-count')) && !(await planner.isDisabled('#plan-tidy-older')));
+await planner.locator('#plan-tidy-list .plan-archive-item', { hasText: 'Archive loose notes' }).locator('input').check();
+ok('choosing one names the button', /Archive 1 lecture/.test(await planner.textContent('#plan-tidy-selected')));
+await planner.click('#plan-tidy-selected');
+await planner.waitForFunction(() => !/Archive loose notes/.test(document.querySelector('#plan-list').textContent), null, { timeout: 5000 })
+  .then(() => ok('Archive selected archives the ones chosen', true))
+  .catch(() => ok('Archive selected archives the ones chosen', false));
+await planner.click('#plan-tidy-close');
+
+// Opening one from the archive, as it is.
+await planner.click('#plan-archive-open');
+await planner.waitForSelector('#plan-archive-dialog:not([hidden]) .plan-archive-item');
+ok('the archive has all three', (await inArchive()).filter((t) => t.startsWith('Archive ')).length === 3);
+await planner.locator('#plan-archive-list .plan-archive-item', { hasText: 'Archive loose notes' }).locator('button:has-text("Open")').click();
+await planner.waitForFunction(() => document.querySelector('#plan-title').value === 'Archive loose notes', null, { timeout: 8000 })
+  .then(() => ok('Open opens an archived lecture without bringing it back', true))
+  .catch(() => ok('Open opens an archived lecture without bringing it back', false));
+await planner.waitForSelector('#plan-archived-note:not([hidden])', { timeout: 5000 })
+  .then(() => ok('which says it is archived', true))
+  .catch(() => ok('which says it is archived', false));
+ok('and it is still out of the list', !(await listed()).includes('Archive loose notes'));
+await planner.click('#plan-unarchive-this');
+await planner.waitForFunction(() => /Archive loose notes/.test(document.querySelector('#plan-list').textContent), null, { timeout: 5000 })
+  .then(() => ok('"Unarchive" on it brings it back', true))
+  .catch(() => ok('"Unarchive" on it brings it back', false));
+ok('and the note goes', await planner.isHidden('#plan-archived-note'));
+
+// Kept on the server: another device, or a reload, agrees.
+await planner.reload();
+await planner.waitForFunction(() => /Archive loose notes/.test(document.querySelector('#plan-list').textContent), null, { timeout: 10000 });
+ok('after a reload the archived ones are still archived', !/Archive Week/.test(await planner.textContent('#plan-list'))
+  && /🗄 Archive \(2\)/.test(await planner.textContent('#plan-archive-open')));
+const other = await owen.newPage();
+trap(other, 'planner (archive, second tab)');
+await other.goto(`${base}/plan.html`);
+await other.waitForFunction(() => /Archive loose notes/.test(document.querySelector('#plan-list').textContent), null, { timeout: 10000 });
+ok('and so does another tab', !/Archive Week/.test(await other.textContent('#plan-list')));
+await other.close();
+await owen.close();
+
+// With no server: this browser's lectures, archived here.
+const solo = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+const offline = await solo.newPage();
+trap(offline, 'planner (archive, no server)');
+await offline.goto(`${BASE}/plan.html`);
+await offline.waitForSelector('#plan-list');
+await offline.fill('#plan-title', 'Only on this iPad');
+await offline.waitForFunction(() => /Only on this iPad/.test(document.querySelector('#plan-list').textContent), null, { timeout: 5000 });
+await offline.click('#plan-new');
+await offline.waitForFunction(() => document.querySelectorAll('#plan-list .plan-row').length === 2, null, { timeout: 5000 });
+const soloRow = offline.locator('#plan-list .plan-row-wrap', { hasText: 'Only on this iPad' });
+await soloRow.hover();
+await soloRow.locator('.plan-row-archive').click();
+await offline.waitForFunction(() => !/Only on this iPad/.test(document.querySelector('#plan-list').textContent), null, { timeout: 5000 });
+await offline.reload();
+await offline.waitForSelector('#plan-list .plan-row');
+ok('with no server, a lecture archived in this browser stays archived', !/Only on this iPad/.test(await offline.textContent('#plan-list'))
+  && /🗄 Archive \(1\)/.test(await offline.textContent('#plan-archive-open')));
+await offline.click('#plan-archive-open');
+await offline.locator('#plan-archive-list .plan-archive-item', { hasText: 'Only on this iPad' }).locator('input').check();
+await offline.click('#plan-archive-unarchive-selected');
+await offline.waitForFunction(() => /Only on this iPad/.test(document.querySelector('#plan-list').textContent), null, { timeout: 5000 })
+  .then(() => ok('and comes back with Unarchive selected', true))
+  .catch(() => ok('and comes back with Unarchive selected', false));
+await solo.close();
 }
 
 if (want('the deck editor: drafts, downloads, completion and checks (#226)')) {

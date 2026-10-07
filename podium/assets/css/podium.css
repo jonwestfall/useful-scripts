@@ -1659,6 +1659,34 @@ body.plan .linkish:hover { text-decoration: underline; }
 .plan-row-where { color: var(--dim); }
 .plan-row-where.is-server { color: var(--ok, #3fb950); }
 .plan-row.is-remote { border-style: dashed; background: transparent; }
+/* Archiving (Issue #239) */
+.plan-row-wrap { position: relative; }
+.plan-row-wrap .plan-row { padding-right: 40px; }
+.plan-row-archive {
+  position: absolute; top: 6px; right: 6px; min-height: 0; width: 30px; height: 30px; padding: 0;
+  font-size: 15px; line-height: 1; background: transparent; border-color: transparent; opacity: 0;
+}
+.plan-row-wrap:hover .plan-row-archive, .plan-row-archive:focus-visible { opacity: 1; border-color: var(--line); background: var(--panel); }
+@media (hover: none) { .plan-row-archive { opacity: .75; } }
+body.plan button.linkish { background: none; border: 0; padding: 0; min-height: 0; cursor: pointer; }
+body.plan button.linkish:hover { text-decoration: underline; }
+.plan-archive-bar { display: flex; justify-content: space-between; gap: 8px; margin: 2px 0 4px; font-size: 13px; }
+.plan-archive-undo { font-size: 13px; color: var(--dim); margin: 0 0 6px; }
+.plan-archived-note { font-size: 13px; color: #ffd9a8; margin: 0 0 10px; }
+.plan-archive-card { width: min(620px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.plan-archive-card h3 { font-size: 14px; margin: 16px 0 6px; }
+.plan-archive-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.plan-archive-head h2 { margin: 0; }
+.plan-archive-head button { min-height: 32px; padding: 0 10px; }
+#plan-archive-search { width: 100%; margin: 12px 0 8px; }
+#plan-tidy-course { width: auto; min-width: 14rem; }
+.plan-archive-list { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow: auto; margin: 0 0 10px; }
+.plan-archive-item { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.plan-archive-item input[type="checkbox"] { flex: none; }
+.plan-archive-item .plan-archive-what { flex: 1; min-width: 0; }
+.plan-archive-item .plan-row-title, .plan-archive-item .plan-row-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-archive-item button { min-height: 30px; padding: 0 10px; font-size: 13px; }
+.plan-archive-list .empty { color: var(--dim); font-size: 13px; margin: 4px 0; }
 .plan-sync { font-size: 13px; color: var(--dim); margin: 0 0 10px; }
 .plan-sync.is-ok { color: var(--ok, #3fb950); }
 .plan-sync.is-warn { color: var(--cue); }

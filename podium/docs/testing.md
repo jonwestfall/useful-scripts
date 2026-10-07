@@ -30,6 +30,7 @@ podium/test/
 ├── spotlight.test.mjs    # Spotlight / attention dimmer pointer mode (Issue #37)
 ├── tabsettings.test.mjs  # Customizable/collapsible controller tab bar (Issue #76)
 ├── templates.test.mjs    # Course-level plan templates, against a real SQLite file (Issue #80)
+├── plan-archive.test.mjs # Archiving lectures from one's own planner list: personal, bulk, what may be archived (Issue #239)
 ├── deck-templates.test.mjs # Deck templates: built-in, course and personal, and who may change which (Issue #226)
 ├── deck-mermaid.test.mjs # Mermaid diagrams in decks: which theme each is drawn in, and what a broken one says (Issue #235)
 ├── deck-diagrams.test.mjs # Diagrams in the deck editor: mermaid.live links in and out, starters, pictures in a .zip (Issue #235)
@@ -48,7 +49,7 @@ podium/test/
     ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen
     ├── media.mjs         # Camera, music, audio, clocks, captions, PDFs
     ├── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
-    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235)
+    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239)
 ```
 
 ---
@@ -106,6 +107,7 @@ node podium/test/protocol.test.mjs
 - **`spotlight.test.mjs`**: the attention-dimmer pointer mode's keyboard shortcuts and geometry.
 - **`tabsettings.test.mjs`**: reordering, hiding, and restoring controller tabs.
 - **`templates.test.mjs`**: course-level plan template ownership and removal permissions.
+- **`plan-archive.test.mjs`**: archiving lectures from the planner's list (Issue #239): it is one person's (a co-instructor's list is untouched, and the plan itself does not change), `?archived=` narrows the list, bulk archive and unarchive, a lecture you cannot see is skipped rather than archived, the limits on a request, and a deleted lecture leaving both lists.
 - **`deck-templates.test.mjs`**: the deck editor's templates (Issue #226): who sees a course's and a person's own, who may add, rename, rewrite and remove them, the size cap, the built-ins' `index.json`, and an administrator hiding a built-in.
 - **`deck-mermaid.test.mjs`**: diagrams in decks (Issue #235): the theme a diagram is drawn in when the deck decides (light, dark, gaia's colours, a course theme's brand colour, gradient backgrounds), when `mermaidTheme` does, that `strict` security is never relaxed, and how Mermaid's errors are shortened for a slide. Which slides a `mermaidTheme` reaches is checked against the real Marp engine in `deck-source.test.mjs`; drawing itself is in the editor's end-to-end group.
 - **`deck-diagrams.test.mjs`**: the deck editor's diagram conveniences (Issue #235): mermaid.live links made and read back (`#pako:`, the older `#base64:`, `/view` and mermaid.ink, a theme carried over or left to the deck, broken and empty links), the ◇ Diagram starters, which block the cursor is in, and the picture comments a `.zip` export adds after each diagram (a directive rather than a note, replaced rather than added to, and taken out again on the way back in).

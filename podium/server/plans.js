@@ -33,11 +33,14 @@ const VISIBLE = `(
       AND EXISTS (SELECT 1 FROM course_members cm WHERE cm.course_id = p.course_id AND cm.user_id = ?1))
 )`;
 
+// pa: whether the CALLER (?1) has archived this plan from their own list
+// (Issue #239) - one person's tidying, never anyone else's.
 const SELECT_PLANS = `
-  SELECT p.*, c.code AS course_code, u.username AS owner_name
+  SELECT p.*, c.code AS course_code, u.username AS owner_name, pa.archived_at AS archived_at
     FROM plans p
     LEFT JOIN courses c ON c.id = p.course_id
     LEFT JOIN users u ON u.id = p.owner_id
+    LEFT JOIN plan_archive pa ON pa.plan_id = p.id AND pa.user_id = ?1
    WHERE p.deleted_at IS NULL`;
 
 function planRow(row, { withDoc = false } = {}) {
@@ -49,6 +52,9 @@ function planRow(row, { withDoc = false } = {}) {
     ownerId: row.owner_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // Archived from this caller's own list (Issue #239), and when.
+    archived: !!row.archived_at,
+    archivedAt: row.archived_at || null,
   };
   // The document itself is only sent when one plan was asked for. A list of
   // twenty lectures is a list of twenty names, not twenty lecture plans.
@@ -58,10 +64,17 @@ function planRow(row, { withDoc = false } = {}) {
   return { ...summary, doc };
 }
 
-const listPlans = (db, user) =>
-  db.prepare(`${SELECT_PLANS} AND ${VISIBLE} ORDER BY p.updated_at DESC`)
+/**
+ * Every plan this user can see, newest change first. `archived` narrows it to
+ * the ones they have archived (true) or not (false); left out, both, each
+ * saying which it is.
+ */
+function listPlans(db, user, { archived } = {}) {
+  const which = archived === undefined ? '' : archived ? ' AND pa.archived_at IS NOT NULL' : ' AND pa.archived_at IS NULL';
+  return db.prepare(`${SELECT_PLANS} AND ${VISIBLE}${which} ORDER BY p.updated_at DESC`)
     .all(user.id, user.isAdmin ? 1 : 0)
     .map((row) => planRow(row));
+}
 
 function getPlan(db, user, id) {
   const row = db.prepare(`${SELECT_PLANS} AND p.id = ?3 AND ${VISIBLE}`)
@@ -80,7 +93,8 @@ function getPlan(db, user, id) {
  * id nobody ever wrote.
  */
 function getPlanForKiosk(db, id) {
-  const row = db.prepare(`${SELECT_PLANS} AND p.id = ?`).get(Number(id));
+  // ?1 is SELECT_PLANS's own "whose archive" - nobody's, for a kiosk.
+  const row = db.prepare(`${SELECT_PLANS} AND p.id = ?2`).get(0, Number(id));
   return row ? planRow(row, { withDoc: true }) : null;
 }
 
@@ -181,4 +195,44 @@ function deletePlan(db, user, id) {
   return plan;
 }
 
-module.exports = { listPlans, getPlan, getPlanForKiosk, savePlan, updatePlan, deletePlan, mayWrite, MAX_DOC_BYTES };
+// --- archiving from one's own list (Issue #239) ----------------------------------
+
+const MAX_ARCHIVE_IDS = 1000;
+
+/**
+ * Archive (or bring back) plans in this user's own planner list. Personal:
+ * anyone may archive anything they can see, and it changes nothing for
+ * anyone else. Ids this user cannot see are skipped, not an error - a list
+ * gone stale on another device should not make the rest of a bulk tidy fail.
+ *
+ * @returns {{changed: number[], skipped: number[]}}
+ */
+function setArchived(db, user, ids, archived) {
+  const wanted = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!wanted.length) throw Object.assign(new Error('which lectures?'), { status: 400 });
+  if (wanted.length > MAX_ARCHIVE_IDS) {
+    throw Object.assign(new Error(`at most ${MAX_ARCHIVE_IDS} lectures at a time`), { status: 413 });
+  }
+  const changed = [];
+  const skipped = [];
+  const now = Date.now();
+  const put = db.prepare('INSERT OR IGNORE INTO plan_archive (user_id, plan_id, archived_at) VALUES (?, ?, ?)');
+  const take = db.prepare('DELETE FROM plan_archive WHERE user_id = ? AND plan_id = ?');
+  db.exec('BEGIN');
+  try {
+    for (const id of wanted) {
+      if (!getPlan(db, user, id)) { skipped.push(id); continue; }
+      if (archived) put.run(user.id, id, now); else take.run(user.id, id);
+      changed.push(id);
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  return { changed, skipped };
+}
+
+module.exports = {
+  listPlans, getPlan, getPlanForKiosk, savePlan, updatePlan, deletePlan, mayWrite, setArchived, MAX_DOC_BYTES, MAX_ARCHIVE_IDS,
+};

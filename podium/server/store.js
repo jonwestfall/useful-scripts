@@ -517,6 +517,21 @@ const MIGRATIONS = [
       CREATE INDEX deck_revisions_by_media ON deck_revisions(media_id);
     `);
   },
+  (db) => {
+    db.exec(`
+      -- Lectures someone has put away (Issue #239): archived from THEIR
+      -- planner list, and nobody else's. A co-instructor who shares the
+      -- course still sees the lecture until they archive it themselves, and
+      -- nothing about the plan - owner, course, who may open it - changes.
+      CREATE TABLE plan_archive (
+        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        plan_id     INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+        archived_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, plan_id)
+      );
+      CREATE INDEX plan_archive_by_plan ON plan_archive(plan_id);
+    `);
+  },
 ];
 
 function migrate(db) {
