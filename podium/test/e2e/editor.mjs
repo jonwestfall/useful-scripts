@@ -1348,7 +1348,7 @@ const lookVideo = await desk.evaluate(async (bytes) => {
 const lookPdf = await desk.evaluate(async (bytes) => {
   const res = await fetch('/api/library/upload?filename=handout.pdf&course=psy415&title=Quick%20Look%20handout', { method: 'POST', body: new Uint8Array(bytes) });
   return (await res.json()).item;
-}, [...fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'session-export.pdf'))]);
+}, [...fs.readFileSync(path.join(ROOT, 'content', 'sample.pdf'))]);
 await desk.close();
 
 // The room, with the deck up on slide 1.
