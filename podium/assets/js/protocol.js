@@ -940,9 +940,10 @@ export function inkSurfaceKey(item) {
   if (!item) return 'none';
   switch (item.type) {
     case 'deck': return `deck:${item.deckId}:${item.slide || 0}`;
-    // Until ink is pinned to a document's text (Issue #240, phase 2), it is
-    // kept per position: scroll back to the same place and it is there.
-    case 'document': return `document:${item.deckId}:${item.at || 0}`;
+    // One surface for the whole page (Issue #240): its strokes are in the
+    // page's own coordinates (see docInkSpace in doc.js), so they scroll
+    // with the text rather than staying where the screen was.
+    case 'document': return `document:${item.deckId}`;
     case 'pdf': return `pdf:${item.src}:${item.page || 1}`;
     case 'slides': return `web:${item.src}:${item.slide || 0}`;
     case 'web': return `web:${item.src}`;

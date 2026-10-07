@@ -49,7 +49,7 @@ const WARM = [
   // page offline.
   ...[
     'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-checks', 'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-source', 'deck-templates',
-    'defaults', 'display', 'doc', 'duration-probe', 'file-browser',
+    'defaults', 'display', 'doc', 'doc-reader', 'duration-probe', 'file-browser',
     'index', 'me', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'quicklook', 'quicklook-open', 'recap', 'recap-pdf', 'renderers',
     'rtc', 'server', 'store', 'thumbs', 'util', 'watermark', 'zip', 'zip-review',
   ].map((name) => `assets/js/${name}.js`),

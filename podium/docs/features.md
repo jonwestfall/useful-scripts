@@ -108,7 +108,10 @@ A `.md` that is not a slide deck goes up as what it is: **one page the room read
 - **Presenter notes**: HTML comments (`<!-- … -->`) are notes, as in a deck. The Now tab shows the notes in what is on screen, plus the nearest one above it, so a note at the top of a section stays while the section is up. They are never on the display, and a viewer's copy never has them.
 - **Quick Look** opens a document as a page, with its own Next/Previous, the mouse wheel, its headings and its notes.
 
-*Coming next*: Guest View reading at a student's own pace, ink that scrolls with the text (until then, ink on a document is kept per position), and a document mode in the deck editor with its exports.
+- **Ink stays on the text**: what you draw on a document is pinned to the words under it. It scrolls with the page on the display, the Ink tab and Guest View, and is there again when that part of the page comes back. It is one surface for the whole document, kept with the lecture like slide ink, and a photo of the panel (*Save a photo*, auto-save) shows the page with its ink.
+- **Guest View** follows the room: the page as the projector shows it, at the presenter's place, with the presenter's ink. On a phone, **Read at my own pace** opens the same document reflowed to fit the phone, to scroll freely, with a marker showing where the class is. **Back to the presenter** rejoins. Ink is not shown while reading, since reflowed text no longer lines up with it. A viewer never receives the presenter notes.
+
+*Coming next*: a document mode in the deck editor, with its exports.
 
 ### The Deck Editor (`deck.html`)
 

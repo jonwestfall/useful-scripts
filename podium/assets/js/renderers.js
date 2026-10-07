@@ -1639,7 +1639,6 @@ function renderDocument(item, opts) {
     :host { display: block; position: absolute; inset: 0; overflow: hidden; background: #ffffff; }
     :host(.is-dark) { background: #14181d; }
     #view { position: absolute; left: 0; top: 0; width: ${DOC_WIDTH}px; transform-origin: 0 0; }
-    #view.is-gliding { transition: transform .45s cubic-bezier(.2, .7, .2, 1); }
     #status {
       position: absolute; inset: 0; display: grid; place-items: center; padding: 4%;
       font: 16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -1654,10 +1653,13 @@ function renderDocument(item, opts) {
   let mountedKey = null;
   let generation = 0;
   let failedAt = 0;
-  let at = 0;
+  let at = 0;          // where the room is
+  let shownAt = 0;     // where this screen is, mid-glide
+  let height = Number(item.height) || DOC_VIEW;
   let scale = 1;
   let left = 0;
   let metrics = null;
+  let glide = 0;
 
   const setStatus = (text) => {
     statusEl.textContent = text || '';
@@ -1665,16 +1667,32 @@ function renderDocument(item, opts) {
   };
   const keyOf = (it) => `${it.deckId || it.src || ''}|${it.look || ''}`;
 
-  function place(glide) {
-    view.classList.toggle('is-gliding', !!glide);
-    view.style.transform = `translate(${left}px, ${-at * scale}px) scale(${scale})`;
+  function place() {
+    view.style.transform = `translate(${left}px, ${-shownAt * scale}px) scale(${scale})`;
+  }
+  // A short glide the room can follow, stepped here rather than left to a CSS
+  // transition, so ink pinned to the text (see pageRect) moves with it.
+  function glideTo(target) {
+    cancelAnimationFrame(glide);
+    const from = shownAt;
+    const start = performance.now();
+    const ease = (t) => 1 - (1 - t) ** 3;
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / 450);
+      shownAt = from + (target - from) * ease(t);
+      place();
+      opts.onScroll?.();
+      if (t < 1) glide = requestAnimationFrame(step);
+    };
+    if (typeof requestAnimationFrame !== 'function' || from === target) { shownAt = target; place(); opts.onScroll?.(); return; }
+    glide = requestAnimationFrame(step);
   }
   function fit() {
     const w = host.clientWidth || DOC_WIDTH;
     const h = host.clientHeight || DOC_VIEW;
     scale = Math.min(w / DOC_WIDTH, h / DOC_VIEW) || 1;
     left = Math.max(0, (w - DOC_WIDTH * scale) / 2);
-    place(false);
+    place();
   }
   const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
   resize?.observe(host);
@@ -1724,6 +1742,8 @@ function renderDocument(item, opts) {
       host.classList.toggle('is-dark', doc.look === 'dark');
       mountedKey = keyOf(it);
       at = Number(it.at) || 0;
+      shownAt = at;
+      height = Number(it.height) || height;
       fit();
       setStatus('');
       remeasure();
@@ -1752,19 +1772,63 @@ function renderDocument(item, opts) {
         mount(it);
         return;
       }
+      height = Number(it.height) || height;
       const next = Number(it.at) || 0;
-      if (next !== at) { at = next; place(true); }
+      if (next !== at) { at = next; glideTo(at); }
     },
     reconcile() {},
     telemetry: noTelemetry,
     /** Where everything is in the page, once it is laid out (or null). */
     measure: () => metrics,
+    /** Where this copy is showing, mid-glide included. */
+    shownAt: () => shownAt,
     /** The page as rendered: outline, notes, title. */
     rendered: () => rendered,
-    // Ink spans the whole screen until it is pinned to the text (phase 2).
     contentAspect: () => null,
+    // What the room sees of the page, for a photo of the panel - the ink
+    // canvas is laid over it by whoever asked, as for a slide.
+    async snapshot(ctx, rect) {
+      const page = view.querySelector('.podium-doc');
+      if (!page || !rendered) return false;
+      const s = Math.min(rect.w / DOC_WIDTH, rect.h / DOC_VIEW) || 1;
+      const visible = Math.ceil(rect.h / s);
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', `0 ${Math.round(shownAt)} ${DOC_WIDTH} ${visible}`);
+      const fo = document.createElementNS(ns, 'foreignObject');
+      fo.setAttribute('x', '0');
+      fo.setAttribute('y', '0');
+      fo.setAttribute('width', String(DOC_WIDTH));
+      fo.setAttribute('height', String(Math.max(height, Math.round(shownAt) + visible)));
+      const holder = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+      holder.innerHTML = page.outerHTML;
+      fo.append(holder);
+      svg.append(fo);
+      const width = Math.round(DOC_WIDTH * s);
+      const img = await svgToImage(svg, rendered.css, width, Math.round(rect.h));
+      ctx.fillStyle = rendered.look === 'dark' ? '#14181d' : '#ffffff';
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.drawImage(img, rect.x + Math.max(0, (rect.w - width) / 2), rect.y, width, Math.round(rect.h));
+      return true;
+    },
+    /**
+     * The whole page's box on this screen, given the box this renderer fills -
+     * what ink on a document is drawn in, so it stays on the text it was
+     * drawn on (Issue #240). Uses the room's page height, the one every
+     * screen shares, so a stroke lands on the same words everywhere.
+     */
+    pageRect(box) {
+      const s = Math.min(box.w / DOC_WIDTH, box.h / DOC_VIEW) || 1;
+      return {
+        x: box.x + Math.max(0, (box.w - DOC_WIDTH * s) / 2),
+        y: box.y - shownAt * s,
+        w: DOC_WIDTH * s,
+        h: height * s,
+      };
+    },
     destroy() {
       generation++;
+      cancelAnimationFrame(glide);
       resize?.disconnect();
       host.remove();
     },

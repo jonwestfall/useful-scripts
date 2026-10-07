@@ -15,7 +15,7 @@ import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
 import { assetRefsIn, ASSET_REF } from './deck-source.js';
-import { docTitle, notesInView, headingAt, headingAtTop, docMaxAt, DOC_WIDTH, DOC_VIEW, DOC_STEP } from './doc.js';
+import { docTitle, notesInView, headingAt, headingAtTop, docMaxAt, docInkSpace, DOC_WIDTH, DOC_VIEW, DOC_STEP } from './doc.js';
 import { openQuickLook, canQuickLook } from './quicklook-open.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
 import { mountSessionBadge, serverInfo } from './server.js';
@@ -3952,7 +3952,12 @@ function updatePadMirror() {
     padMirrorRenderer?.destroy();
     padMirror.replaceChildren();
     padMirrorKey = key;
-    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, onMeasure: (m, r) => docMeasured(item, m, r), resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) }) : null;
+    padMirrorRenderer = item ? createRenderer(resolveAssets(item), {
+      preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource,
+      onMeasure: (m, r) => docMeasured(item, m, r), resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId),
+      // A document scrolling under the pad (Issue #240): its ink goes with it.
+      onScroll: () => redrawPad(),
+    }) : null;
     if (padMirrorRenderer) padMirror.append(padMirrorRenderer.el);
   } else {
     padMirrorRenderer?.update(resolveAssets(item));
@@ -3976,10 +3981,31 @@ function showPausedFrame(renderer, item) {
   renderer.syncTo(telemetry.time);
 }
 
+// Ink on a document is pinned to its text (Issue #240): its points are
+// fractions of the whole page, which on this pad is mostly above or below
+// what is showing. Everywhere else a point is a fraction of the pad itself.
+function padInkSpace() {
+  const item = workItem();
+  if (item?.type !== 'document') return null;
+  // Where the pad's own copy of the page is, mid-glide included, so the ink
+  // here moves with the text under it.
+  const at = padMirrorRenderer?.shownAt?.() ?? item.at;
+  return docInkSpace({ ...item, at }, (pad.clientWidth || 16) / (pad.clientHeight || 9));
+}
+
+/** The box ink points are fractions of, in pad pixels. */
+function padInkBox() {
+  const w = pad.clientWidth;
+  const h = pad.clientHeight;
+  const box = padInkSpace()?.box;
+  return box ? { x: box.x * w, y: box.y * h, w: box.w * w, h: box.h * h } : { x: 0, y: 0, w, h };
+}
+
 function redrawPad() {
   const w = pad.clientWidth;
   const h = pad.clientHeight;
   padCtx.clearRect(0, 0, w, h);
+  const b = padInkBox();
   // Held ink (Issue #174) is drawn over what is already on the real surface,
   // which it is headed for - so marking up while frozen looks like what the
   // room will see after TAKE.
@@ -3994,8 +4020,8 @@ function redrawPad() {
     padCtx.lineWidth = stroke.width;
     padCtx.lineCap = 'round';
     padCtx.lineJoin = 'round';
-    padCtx.moveTo(stroke.pts[0][0] * w, stroke.pts[0][1] * h);
-    for (let i = 1; i < stroke.pts.length; i++) padCtx.lineTo(stroke.pts[i][0] * w, stroke.pts[i][1] * h);
+    padCtx.moveTo(b.x + stroke.pts[0][0] * b.w, b.y + stroke.pts[0][1] * b.h);
+    for (let i = 1; i < stroke.pts.length; i++) padCtx.lineTo(b.x + stroke.pts[i][0] * b.w, b.y + stroke.pts[i][1] * b.h);
     padCtx.stroke();
     padCtx.restore();
   }
@@ -4137,9 +4163,17 @@ const flushInk = throttle(() => {
   send({ op: 'ink', action: 'points', id: ink.strokeId, pts: ink.buffer.splice(0) });
 }, 60);
 
-function padPoint(ev) {
+// Where on the pad, as a fraction of it - what the laser and the spotlight
+// point at, which is the screen whatever is on it.
+function padFramePoint(ev) {
   const rect = pad.getBoundingClientRect();
   return [(ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height];
+}
+
+// Where on what is being drawn on: the pad, or a document's page.
+function padPoint(ev) {
+  const point = padFramePoint(ev);
+  return padInkSpace()?.toPage(point) || point;
 }
 
 function isHardwareEraser(ev) {
@@ -4172,10 +4206,13 @@ function eraseAt(ev) {
   }
   ink.lastErasePoint = [px, py];
 
+  // On a document, hit-test in the page's own box on this pad (Issue #240).
+  const space = padInkSpace()?.box;
+  const box = space ? { x: space.x * w, y: space.y * h, w: space.w * w, h: space.h * h } : { x: 0, y: 0, w, h };
   const toRemove = [];
   for (const stroke of ink.strokes) {
     for (const [sx, sy] of samplePoints) {
-      if (strokeHitTest(stroke, sx, sy, w, h)) {
+      if (strokeHitTest(stroke, sx - box.x, sy - box.y, box.w, box.h)) {
         toRemove.push(stroke.id);
         break;
       }
@@ -4237,8 +4274,8 @@ function triggerHoldSnap() {
   const stroke = ink.strokes.find((st) => st.id === ink.strokeId);
   if (!stroke || stroke.pts.length < 2) return;
 
-  const w = pad.clientWidth || 1000;
-  const h = pad.clientHeight || 1000;
+  const w = padInkBox().w || 1000;
+  const h = padInkBox().h || 1000;
   const detected = detectAndSnapShape(stroke.pts, w, h);
   if (!detected) return;
 
@@ -4271,7 +4308,7 @@ pad.addEventListener('pointerdown', (ev) => {
   if (ink.tool === 'laser' || ink.tool === 'spotlight') {
     pad.setPointerCapture(ev.pointerId);
     ink.pointing = ink.tool;
-    const [x, y] = padPoint(ev);
+    const [x, y] = padFramePoint(ev);
     if (ink.tool === 'laser') {
       padLaserDot.style.left = `${x * 100}%`;
       padLaserDot.style.top = `${y * 100}%`;
@@ -4317,7 +4354,7 @@ pad.addEventListener('pointerdown', (ev) => {
 pad.addEventListener('pointermove', (ev) => {
   if (ink.pointing) {
     ev.preventDefault();
-    const [x, y] = padPoint(ev);
+    const [x, y] = padFramePoint(ev);
     if (ink.pointing === 'laser') {
       padLaserDot.style.left = `${x * 100}%`;
       padLaserDot.style.top = `${y * 100}%`;
@@ -4342,8 +4379,8 @@ pad.addEventListener('pointermove', (ev) => {
     const stroke = ink.strokes.find((st) => st.id === ink.strokeId);
     if (!stroke) return;
     const pt = padPoint(ev);
-    const w = pad.clientWidth || 1000;
-    const h = pad.clientHeight || 1000;
+    const w = padInkBox().w || 1000;
+    const h = padInkBox().h || 1000;
 
     let updated = null;
     if (snappedShapeInfo?.type === 'line') {
