@@ -9,11 +9,12 @@ export {
   dropCursor, rectangularSelection, crosshairCursor, Decoration, ViewPlugin, placeholder, WidgetType,
 } from '@codemirror/view';
 export {
-  defaultKeymap, history, historyKeymap, indentWithTab, undo, redo, toggleComment,
+  defaultKeymap, history, historyKeymap, indentWithTab, undo, redo, toggleComment, isolateHistory,
 } from '@codemirror/commands';
 export {
   syntaxHighlighting, defaultHighlightStyle, HighlightStyle, foldGutter, foldKeymap, foldService,
   indentOnInput, bracketMatching, codeFolding, foldEffect, unfoldEffect, foldedRanges, unfoldAll,
+  StreamLanguage, LanguageDescription, LanguageSupport,
 } from '@codemirror/language';
 export { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 export { html } from '@codemirror/lang-html';

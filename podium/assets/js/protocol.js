@@ -647,9 +647,10 @@ const MARP_DIRECTIVES = new Set([
   'marp', 'theme', 'style', 'headingDivider', 'lang', 'title', 'description', 'author', 'image',
   'keywords', 'url', 'size', 'math', 'paginate', 'header', 'footer', 'class', 'transition',
   'backgroundColor', 'backgroundImage', 'backgroundPosition', 'backgroundRepeat', 'backgroundSize', 'color',
-  // Podium's own: a video slide, which a viewer plays too (Issue #226), and
-  // the theme of a slide's diagrams (Issue #235).
-  'video', 'videoStart', 'mermaidTheme',
+  // Podium's own: a video slide, which a viewer plays too (Issue #226), the
+  // theme of a slide's diagrams and where an exported deck keeps a picture of
+  // one (Issue #235).
+  'video', 'videoStart', 'mermaidTheme', 'diagram',
 ]);
 
 // --- things that play ----------------------------------------------------------

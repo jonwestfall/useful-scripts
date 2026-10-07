@@ -1043,6 +1043,135 @@ await pad.close();
 await owen.close();
 }
 
+if (want('the deck editor: diagrams from the toolbar, from mermaid.live and out in a .zip (#235)')) {
+console.log('\n-- the deck editor: diagrams from the toolbar, from mermaid.live and out in a .zip (#235) --');
+// The plain relay: everything here works with no server.
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+// "Open in mermaid.live" opens another site; the test answers for it.
+const opened = [];
+await ctx.route('https://mermaid.live/**', (route) => { opened.push(route.request().url()); return route.fulfill({ status: 200, contentType: 'text/html', body: '<title>mermaid.live</title>' }); });
+const page = await ctx.newPage();
+trap(page, 'editor diagrams (no server)');
+await page.goto(`${BASE}/deck.html`);
+await page.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 2, null, { timeout: 20000 });
+// The whole markdown: CodeMirror only puts the lines on screen in the page.
+const doc = () => page.evaluate(async () => {
+  const CM = await import('/assets/vendor/codemirror.esm.js');
+  return CM.EditorView.findFromDOM(document.querySelector('.cm-editor')).state.doc.toString();
+});
+const drawnInStrip = () => page.evaluate(() => document.querySelector('#deck-strip').shadowRoot.querySelectorAll('img.podium-diagram').length);
+
+await page.click('.cm-content');
+await page.keyboard.press('Control+End');
+await page.click('#deck-diagram');
+const menu = await page.evaluate(() => ({
+  starters: [...document.querySelectorAll('#deck-diagram-starters button')].map((b) => b.textContent),
+  live: document.querySelector('#deck-diagram-live').disabled,
+}));
+ok(`◇ Diagram offers diagrams to start from (${menu.starters.join(', ')})`, menu.starters.length >= 6
+  && ['Flowchart', 'Sequence', 'Class', 'Pie chart', 'Mind map'].every((k) => menu.starters.includes(k)) && menu.starters.some((k) => /Gantt/.test(k)));
+ok('"Open in mermaid.live" waits for the cursor to be in a diagram', menu.live === true);
+await page.click('#deck-diagram-starters button:has-text("Pie chart")');
+await until(async () => (await drawnInStrip()) === 1, { timeout: 20000 }).catch(() => {});
+ok('a starter goes in as a ```mermaid block and is drawn', /```mermaid\npie title/.test(await doc()) && (await drawnInStrip()) === 1);
+const coloured = await page.evaluate(() => {
+  const line = [...document.querySelectorAll('.cm-content .cm-line')].find((l) => /^pie title/.test(l.textContent));
+  return line ? [...line.querySelectorAll('span')].some((sp) => getComputedStyle(sp).color === 'rgb(196, 155, 255)' && /pie/.test(sp.textContent)) : false;
+});
+ok('and its text is coloured as Mermaid', coloured);
+
+await page.click('#deck-diagram');
+ok('with the cursor in it, "Open in mermaid.live" is there', !(await page.evaluate(() => document.querySelector('#deck-diagram-live').disabled)));
+const [popup] = await Promise.all([ctx.waitForEvent('page'), page.click('#deck-diagram-live')]);
+await popup.waitForLoadState().catch(() => {});
+const liveUrl = popup.url();
+await popup.close();
+const backFromLive = await page.evaluate(async (url) => (await import('/assets/js/deck-diagrams.js')).readMermaidLiveLink(url), liveUrl);
+ok(`it opens the diagram itself in mermaid.live (${liveUrl.slice(0, 48)}...)`, /^https:\/\/mermaid\.live\/edit#pako:/.test(liveUrl) && /^pie title/.test(backFromLive?.code || ''));
+
+// A mermaid.live link pasted in.
+const link = await page.evaluate(async () => (await import('/assets/js/deck-diagrams.js')).mermaidLiveLink('sequenceDiagram\n  Student->>Teacher: Pasted from mermaid.live\n', { theme: 'forest' }));
+const paste = (text) => page.evaluate((t) => {
+  const dt = new DataTransfer();
+  dt.setData('text/plain', t);
+  document.querySelector('.cm-content').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+}, text);
+await page.click('.cm-content');
+await page.keyboard.press('Control+End');
+await page.keyboard.type('\n\n---\n\n');
+await paste(link);
+await page.waitForSelector('#deck-mermaid-dialog:not([hidden])', { timeout: 5000 })
+  .then(() => ok('pasting a mermaid.live link asks: as a diagram, or as the link?', true))
+  .catch(() => ok('pasting a mermaid.live link asks: as a diagram, or as the link?', false));
+ok('showing the diagram it holds, with its mermaid.live theme', /%%\{init: \{"theme": "forest"\}\}%%\nsequenceDiagram/.test(await page.textContent('#deck-mermaid-preview')));
+await page.click('#deck-mermaid-diagram');
+await page.waitForFunction(() => /Pasted from mermaid\.live/.test(document.querySelector('.cm-content').textContent), null, { timeout: 5000 }).catch(() => {});
+let now = await doc();
+ok('"Diagram" puts the diagram in, not the link', /```mermaid\n%%\{init: \{"theme": "forest"\}\}%%\nsequenceDiagram\n {2}Student->>Teacher: Pasted from mermaid\.live\n```/.test(now) && !now.includes('mermaid.live/edit'));
+await until(async () => (await drawnInStrip()) === 2, { timeout: 20000 }).catch(() => {});
+ok('and it is drawn', (await drawnInStrip()) === 2);
+await page.keyboard.press('Control+z');
+now = await doc();
+ok('undo puts the link back', now.includes(link) && !now.includes('Pasted from mermaid.live'));
+await page.keyboard.press('Control+z');
+ok('and undo again takes it out', !(await doc()).includes('mermaid.live/edit'));
+await paste(link);
+await page.waitForSelector('#deck-mermaid-dialog:not([hidden])', { timeout: 5000 }).catch(() => {});
+await page.click('#deck-mermaid-link');
+ok('"Link" keeps it as the link', (await doc()).includes(link) && await page.isHidden('#deck-mermaid-dialog'));
+await paste('https://example.org/not-a-diagram');
+await page.waitForTimeout(300);
+ok('any other link is just pasted', (await doc()).includes('https://example.org/not-a-diagram') && await page.isHidden('#deck-mermaid-dialog'));
+
+// The built-in slide template.
+// The strip catches up with the undos and pastes above first.
+const fencesNow = ((await doc()).match(/```mermaid/g) || []).length;
+await until(async () => (await drawnInStrip()) === fencesNow, { timeout: 20000 }).catch(() => {});
+const before = await stripCount(page);
+const diagramsBefore = await drawnInStrip();
+await page.click('.deck-toolbar [data-cmd="template"]');
+await page.waitForSelector('#deck-templates-dialog:not([hidden]) .deck-template', { timeout: 10000 });
+const template = page.locator('.deck-template', { hasText: 'Diagram (Mermaid)' });
+ok('there is a "Diagram (Mermaid)" slide template', await template.count() === 1);
+await template.locator('[data-act="use"]').click();
+await page.waitForFunction((n) => document.querySelector('#deck-strip').shadowRoot.querySelectorAll('.cell').length === n + 1, before, { timeout: 5000 }).catch(() => {});
+await until(async () => (await drawnInStrip()) === diagramsBefore + 1, { timeout: 20000 }).catch(() => {});
+const total = await drawnInStrip();
+ok(`and it goes in drawn (${diagramsBefore} then ${total} diagrams in the strip)`, total === diagramsBefore + 1 && total >= 2);
+
+// Out as a .zip: the code, and a picture of each diagram beside it.
+await page.click('#deck-save-more');
+const [download] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#deck-download-zip')]);
+const zipBytes = fs.readFileSync(await download.path());
+const zipped = await page.evaluate(async (bytes) => {
+  const { readZip } = await import('/assets/js/zip.js');
+  const files = await readZip(new Blob([new Uint8Array(bytes)]));
+  const md = files.find((f) => f.name.endsWith('.md'));
+  const pngs = await Promise.all(files.filter((f) => f.name.endsWith('.png')).map(async (f) => [...new Uint8Array(await f.read()).slice(0, 4)].join(',')));
+  const svgs = await Promise.all(files.filter((f) => f.name.endsWith('.svg')).map(async (f) => new TextDecoder().decode(await f.read()).slice(0, 4)));
+  return { names: files.map((f) => f.name), md: new TextDecoder().decode(await md.read()), pngs, svgs };
+}, [...zipBytes]);
+const pictures = zipped.names.filter((n) => n.startsWith('media/diagrams/'));
+ok(`the .zip has an .svg and a .png of each diagram (${pictures.join(', ')})`, pictures.filter((n) => n.endsWith('.svg')).length === total
+  && pictures.filter((n) => n.endsWith('.png')).length === total && zipped.pngs.every((sig) => sig === '137,80,78,71') && zipped.svgs.every((t) => t === '<svg'));
+ok('and the deck keeps each diagram\'s code', (zipped.md.match(/```mermaid/g) || []).length === total);
+const notes = zipped.md.match(/```\n<!-- diagram: media\/diagrams\/slide-\d+-1\.png -->/g) || [];
+ok(`with its picture named in a comment after it (${notes.length})`, notes.length === total && notes.every((n) => pictures.includes(n.match(/media\/diagrams\/[^ ]+/)[0])));
+
+// And back in: the code is the diagram; the pictures stay behind.
+const whereBefore = await page.textContent('#deck-where');
+page.once('dialog', (d) => d.accept());
+await page.setInputFiles('#deck-file', { name: 'diagrams.zip', mimeType: 'application/zip', buffer: zipBytes });
+await page.waitForFunction((was) => document.querySelector('#deck-where').textContent !== was, whereBefore, { timeout: 15000 }).catch(() => {});
+await until(async () => (await drawnInStrip()) === total, { timeout: 20000 }).catch(() => {});
+now = await doc();
+ok(`opening the .zip brings the diagrams back as code, drawn (${(now.match(/```mermaid/g) || []).length} blocks, ${await drawnInStrip()} drawn, of ${total}; "${await page.textContent('#deck-where')}")`, (now.match(/```mermaid/g) || []).length === total && (await drawnInStrip()) === total);
+ok('without the picture comments', !now.includes('<!-- diagram:'));
+ok('and without asking to bring the pictures in', !/media\/diagrams/.test(await page.textContent('#deck-warn')));
+ok(`nothing went to mermaid.live but the one link opened (${opened.length})`, opened.length === 1);
+await ctx.close();
+}
+
 if (want('the deck editor: drafts, downloads, completion and checks (#226)')) {
 console.log('\n-- the deck editor: drafts, downloads, completion and checks (#226) --');
 // The plain relay (no accounts, no library): the editor still works.

@@ -45,7 +45,14 @@ export const LOCAL_DIRECTIVES = [
 // slide. Without it a diagram follows the deck's look (see deck-mermaid.js),
 // and a theme set at the top of the diagram itself beats both.
 export const MERMAID_DIRECTIVE = 'mermaidTheme';
-export const PODIUM_DIRECTIVES = ['video', 'videoStart', MERMAID_DIRECTIVE];
+// And where a deck taken out of Podium as a .zip keeps a picture of each
+// diagram, for a Marp tool that cannot draw one (see deck-export.js):
+//
+//   <!-- diagram: media/diagrams/slide-3-1.png -->
+//
+// It changes nothing in Podium, which draws the diagram from its code.
+export const DIAGRAM_DIRECTIVE = 'diagram';
+export const PODIUM_DIRECTIVES = ['video', 'videoStart', MERMAID_DIRECTIVE, DIAGRAM_DIRECTIVE];
 /** Mermaid's themes - what mermaidTheme may be. */
 export const MERMAID_THEMES = ['default', 'neutral', 'dark', 'forest', 'base'];
 const KNOWN = new Set([...GLOBAL_DIRECTIVES, ...LOCAL_DIRECTIVES, ...PODIUM_DIRECTIVES]);
@@ -299,7 +306,8 @@ export function assetRefsIn(md) {
 
 /**
  * The ```mermaid code blocks in a slide (Issue #235), in order: where each
- * opens, where its diagram text starts, and that text.
+ * opens, where its diagram text starts, that text, and where the block ends
+ * (after its closing line; null for one never closed).
  */
 export function mermaidFences(raw) {
   const out = [];
@@ -310,7 +318,7 @@ export function mermaidFences(raw) {
     if (fence) {
       const close = FENCE.exec(t);
       if (close && close[1][0] === fence.mark[0] && close[1].length >= fence.mark.length && /^\s*$/.test(t.slice(close[0].length))) {
-        if (fence.mermaid) out.push({ start: fence.start, bodyStart: fence.bodyStart, body: fence.body });
+        if (fence.mermaid) out.push({ start: fence.start, bodyStart: fence.bodyStart, body: fence.body, end: at + line.length });
         fence = null;
       } else if (fence.mermaid) {
         fence.body += line;
@@ -325,7 +333,7 @@ export function mermaidFences(raw) {
     at += line.length;
   }
   // Unclosed: Marp draws it to the end of the slide, so it is one all the same.
-  if (fence?.mermaid) out.push({ start: fence.start, bodyStart: fence.bodyStart, body: fence.body });
+  if (fence?.mermaid) out.push({ start: fence.start, bodyStart: fence.bodyStart, body: fence.body, end: null });
   return out;
 }
 

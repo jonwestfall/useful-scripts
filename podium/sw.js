@@ -48,7 +48,7 @@ const WARM = [
   // display.js or deck-editor.js imports that is missing here fails the whole
   // page offline.
   ...[
-    'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-source', 'deck-templates',
+    'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-source', 'deck-templates',
     'defaults', 'display', 'duration-probe',
     'index', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'recap', 'renderers',
     'rtc', 'server', 'store', 'thumbs', 'util', 'watermark', 'zip', 'zip-review',

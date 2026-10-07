@@ -10,6 +10,7 @@
     { "id": "two-columns", "kind": "slide", "file": "slide-two-columns.md", "title": "Two columns", "description": "Side by side: compare, contrast, before and after." },
     { "id": "picture", "kind": "slide", "file": "slide-picture.md", "title": "Picture and caption", "description": "A picture on the right, the words on the left.", "then": "picture" },
     { "id": "video", "kind": "slide", "file": "slide-video.md", "title": "Video slide", "description": "A video, played from the controller.", "then": "video" },
+    { "id": "diagram", "kind": "slide", "file": "slide-diagram.md", "title": "Diagram (Mermaid)", "description": "A flowchart to change into your own - or paste a mermaid.live link over it." },
     { "id": "quote", "kind": "slide", "file": "slide-quote.md", "title": "Quote", "description": "A quotation and who said it." },
     { "id": "question", "kind": "slide", "file": "slide-question.md", "title": "Question for the room", "description": "One question, big, with a note for you on how to run it." }
   ]
