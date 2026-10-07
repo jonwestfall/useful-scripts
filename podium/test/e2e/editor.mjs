@@ -1252,6 +1252,7 @@ await planner.click('#plan-archive-close');
 await planner.click('#plan-tidy-open');
 await planner.waitForSelector('#plan-tidy-dialog:not([hidden])');
 await planner.selectOption('#plan-tidy-course', 'arc101');
+await planner.waitForFunction(() => /\d/.test(document.querySelector('#plan-tidy-course-count')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
 ok(`a class's lectures are counted before anything happens ("${await planner.textContent('#plan-tidy-course-count')}")`,
   /2 lectures in your list filed under ARC101/.test(await planner.textContent('#plan-tidy-course-count')));
 await planner.click('#plan-tidy-course-go');
@@ -1814,11 +1815,63 @@ await pad.click('#prev-page');
 await until(async () => (await wall())?.at === 0, { timeout: 8000 }).catch(() => {});
 ok('and Previous back', (await wall())?.at === 0);
 
+// Ink pinned to the text: drawn at one place in the page, it moves with the
+// page and is there again when the page comes back.
+const scrubTo = (v) => pad.evaluate((x) => { const s = document.querySelector('#doc-scrub'); s.value = String(x); s.dispatchEvent(new Event('change')); }, v);
+await scrubTo(300);
+await until(async () => (await wall())?.at === 300, { timeout: 8000 }).catch(() => {});
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(600);
+const box = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+await pad.mouse.move(box.x + box.w * 0.3, box.y + box.h * 0.3);
+await pad.mouse.down();
+for (let i = 1; i <= 10; i++) await pad.mouse.move(box.x + box.w * (0.3 + i * 0.04), box.y + box.h * 0.3);
+await pad.mouse.up();
+// The middle row of the ink on the display, in CSS pixels, or null.
+const inkRow = () => screen.evaluate(() => {
+  const c = document.querySelector('#ink');
+  const k = c.width / c.clientWidth;
+  const x = Math.round(c.width / 2);
+  const d = c.getContext('2d').getImageData(x, 0, 1, c.height).data;
+  const rows = [];
+  for (let y = 0; y < c.height; y++) if (d[y * 4 + 3] > 0) rows.push(y);
+  return rows.length ? rows[Math.floor(rows.length / 2)] / k : null;
+});
+const displayScale = () => screen.evaluate(() => {
+  const view = document.querySelector('.layer[data-role="program"] .r-doc').shadowRoot.querySelector('#view');
+  return Number(/scale\(([\d.]+)\)/.exec(view.style.transform)[1]);
+});
+await until(async () => (await inkRow()) !== null, { timeout: 8000 }).catch(() => {});
+const drawnAt = await inkRow();
+ok(`ink drawn on a document reaches the display (row ${Math.round(drawnAt)})`, drawnAt !== null);
+const sc = await displayScale();
+await scrubTo(0);
+await until(async () => (await wall())?.at === 0, { timeout: 8000 }).catch(() => {});
+await screen.waitForTimeout(700);
+const movedTo = await inkRow();
+ok(`and scrolls with the text (${Math.round(drawnAt)} → ${Math.round(movedTo)}, expected ${Math.round(drawnAt + 300 * sc)})`,
+  movedTo !== null && Math.abs(movedTo - (drawnAt + 300 * sc)) <= 3);
+await scrubTo(300);
+await until(async () => (await wall())?.at === 300, { timeout: 8000 }).catch(() => {});
+await screen.waitForTimeout(700);
+ok('and is back where it was drawn when the page is', Math.abs((await inkRow()) - drawnAt) <= 3);
+await pad.click('.tab[data-tab="now"]');
+
 const headings = await pad.$$eval('#doc-headings .doc-heading', (bs) => bs.map((b) => b.textContent));
 ok(`the controller lists its headings (${headings.join(' / ')})`, headings.join('|') === 'Memory and forgetting|Part two: interference|Part three');
 await pad.click('#doc-headings .doc-heading:has-text("Part two")');
-await until(async () => ((await wall())?.at || 0) > 612, { timeout: 8000 }).catch(() => {});
-const jumped = await wall();
+// The page glides there; wait for it to come to rest.
+const settled = async () => {
+  let last = null;
+  await until(async () => {
+    const now = (await wall())?.at;
+    const still = now > 612 && now === last;
+    last = now;
+    return still;
+  }, { timeout: 8000, interval: 250 }).catch(() => {});
+  return wall();
+};
+const jumped = await settled();
 const headingTop = await screen.evaluate(() => {
   const view = document.querySelector('.layer[data-role="program"] .r-doc').shadowRoot.querySelector('#view');
   const h = view.querySelector('#doc-h-1');

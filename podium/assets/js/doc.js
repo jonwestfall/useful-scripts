@@ -383,6 +383,32 @@ export function notesInView(notes, at, view = DOC_VIEW) {
   return above ? [above, ...within] : within;
 }
 
+/**
+ * Ink on a document is pinned to its text (Issue #240): a stroke's points are
+ * fractions of the whole page (x of its width, y of its height), not of the
+ * screen, so it scrolls with the paragraph it was drawn on and is there again
+ * whenever that part of the page is. This maps between those and fractions of
+ * a frame of the given aspect ratio showing the page at `item.at`, laid out
+ * the way the display lays it out: scaled to the frame's width, or to a 16:9
+ * window's height in a frame wider than that.
+ *
+ * `box` is the whole page in frame fractions - mostly above or below the
+ * frame - for drawing every stroke in one pass.
+ */
+export function docInkSpace(item, aspect) {
+  const ratio = Number(aspect) > 0 ? Number(aspect) : DOC_WIDTH / DOC_VIEW;
+  const sw = Math.min(1, (DOC_WIDTH / DOC_VIEW) / ratio);
+  const left = (1 - sw) / 2;
+  const height = Math.max(DOC_VIEW, Number(item?.height) || DOC_VIEW);
+  const at = Number(item?.at) || 0;
+  const perPixel = (sw * ratio) / DOC_WIDTH;          // one page pixel, in frame heights
+  return {
+    toPage: ([fx, fy]) => [(fx - left) / sw, (at + fy / perPixel) / height],
+    toFrame: ([x, y]) => [left + x * sw, (y * height - at) * perPixel],
+    box: { x: left, y: -at * perPixel, w: sw, h: height * perPixel },
+  };
+}
+
 /** The heading the top of the screen is under, for "you are here". */
 export function headingAtTop(headings, at) {
   return (headings || []).filter((h) => h.y <= (Number(at) || 0) + HEADING_MARGIN * 2).pop() || null;

@@ -3178,6 +3178,46 @@ await viewer.waitForFunction(() => {
 }, null, { timeout: 10000 });
 ok('ink drawn in the room is drawn on the viewer', true);
 
+// A document (Issue #240): the viewer follows the room's page, and can read
+// it at their own pace, reflowed for a phone, without the presenter's notes.
+const gvDocText = ['# Week 9 reading', '', '<!-- Presenter only: mention the exam. -->', '',
+  ...Array.from({ length: 24 }, (_, i) => `Paragraph ${i + 1} of the reading, long enough to wrap and take up room on the page.\n`),
+  '## The second part', '', ...Array.from({ length: 12 }, (_, i) => `More text ${i + 1}.\n`)].join('\n');
+await gvCtrl.evaluate(async (md) => {
+  await fetch('/api/library/upload?filename=week9.md&title=Week%209%20reading', { method: 'POST', body: md });
+}, gvDocText);
+await gvCtrl.reload();
+await gvCtrl.waitForSelector('#app:not([hidden])');
+await gvCtrl.click('.tab[data-tab="library"]');
+await gvCtrl.click('.tile:has(.tile-title:text-is("Week 9 reading"))');
+await viewer.waitForFunction(() => /Week 9 reading/.test(document.querySelector('.layer[data-role="program"] .r-doc')?.shadowRoot?.textContent || ''), null, { timeout: 15000 })
+  .then(() => ok('a document on the projector is on the viewer\'s screen, as the room sees it', true))
+  .catch(() => ok('a document on the projector is on the viewer\'s screen, as the room sees it', false));
+ok('without the presenter\'s notes', !(await viewer.evaluate(() => document.querySelector('.layer[data-role="program"] .r-doc')?.shadowRoot?.textContent || '')).includes('mention the exam'));
+await viewer.waitForSelector('.doc-reader-toggle:not([hidden])', { timeout: 5000 })
+  .then(() => ok('the viewer is offered "Read at my own pace"', true))
+  .catch(() => ok('the viewer is offered "Read at my own pace"', false));
+await viewer.click('.doc-reader-toggle');
+await viewer.waitForFunction(() => /The second part/.test(document.querySelector('.doc-reader-page')?.textContent || ''), null, { timeout: 10000 });
+const reflowed = await viewer.evaluate(() => {
+  const page = document.querySelector('.doc-reader-page .podium-doc');
+  return { width: page.getBoundingClientRect().width, view: window.innerWidth, font: parseFloat(getComputedStyle(page).fontSize) };
+});
+ok(`which reflows it for the phone (${Math.round(reflowed.width)} px wide at ${reflowed.font}px type)`, reflowed.width <= reflowed.view && reflowed.font < 32);
+ok('still without the notes', !(await viewer.textContent('.doc-reader-page')).includes('mention the exam'));
+const markerAt = () => viewer.evaluate(() => parseFloat(document.querySelector('.doc-reader-marker').style.top) || 0);
+const before = await markerAt();
+await viewer.evaluate(() => { document.querySelector('.doc-reader-scroll').scrollTop = 99999; });
+await gvCtrl.click('.tab[data-tab="now"]');
+await gvCtrl.waitForSelector('#doc-tools:not([hidden])');
+await gvCtrl.click('#next-page');
+await viewer.waitForFunction((was) => (parseFloat(document.querySelector('.doc-reader-marker').style.top) || 0) > was, before, { timeout: 8000 })
+  .then(() => ok('a marker shows where the class has got to, and follows it', true))
+  .catch(() => ok('a marker shows where the class has got to, and follows it', false));
+ok('while the viewer reads where they like', await viewer.evaluate(() => document.querySelector('.doc-reader-scroll').scrollTop > 0));
+await viewer.click('.doc-reader-back');
+ok('and "Back to the presenter" rejoins the room\'s page', await viewer.isHidden('.doc-reader') && await viewer.isVisible('.doc-reader-toggle'));
+
 // The course's own files, through the viewer pass - and nothing else.
 expecting.viewerRefused = true;
 const files = await viewer.evaluate(async () => ({

@@ -16,7 +16,7 @@ globalThis.HTMLElement ??= class {};
 
 const { isMarpDeck } = await import('../assets/js/deck-source.js');
 const { initialState, applyCommand, inkSurfaceKey, stripDeckNotes, DOC_VIEW } = await import('../assets/js/protocol.js');
-const { renderDoc, docTitle, docLook, splitFrontMatter, notesInView, headingAt, headingAtTop } = await import('../assets/js/doc.js');
+const { renderDoc, docTitle, docLook, splitFrontMatter, notesInView, headingAt, headingAtTop, docInkSpace } = await import('../assets/js/doc.js');
 const store = require('../server/store.js');
 const accounts = require('../server/accounts.js');
 const courses = require('../server/courses.js');
@@ -85,7 +85,8 @@ ok('or shorter, keeping the room on the page', doc.height === 1000 && doc.at ===
 ok('only for that document', applyCommand(state, { op: 'doc-height', deckId: 'other', height: 9000 }) === false && doc.height === 1000);
 applyCommand(state, { op: 'stage', item: { type: 'document', deckId: 'x', height: 'lots', at: 'nowhere' }, where: 'program' });
 ok('nonsense sizes and positions become sensible ones', state.program.height === DOC_VIEW && state.program.at === 0);
-ok('ink on a document is kept per position until it is pinned to the text', inkSurfaceKey({ type: 'document', deckId: 'abc', at: 612 }) === 'document:abc:612');
+ok('ink on a document is one surface for the whole page, wherever it is scrolled', inkSurfaceKey({ type: 'document', deckId: 'abc', at: 612 }) === 'document:abc'
+  && inkSurfaceKey({ type: 'document', deckId: 'abc', at: 0 }) === 'document:abc');
 ok('a viewer is sent a document without its presenter notes',
   stripDeckNotes('# Hi\n<!-- the secret plan -->\nText') === '# Hi\n\nText');
 
@@ -129,6 +130,21 @@ const heads = [{ text: 'One', y: 0 }, { text: 'Two', y: 1661 }];
 ok('a heading jump lands just above it', headingAt(heads[1], 5000) === 1637);
 ok('but never past the end', headingAt(heads[1], 2000) === 2000 - DOC_VIEW);
 ok('the heading the screen is under', headingAtTop(heads, 1700)?.text === 'Two' && headingAtTop(heads, 1000)?.text === 'One');
+
+console.log('\n-- ink pinned to the text --');
+const near = (a, b) => Math.abs(a - b) < 1e-9;
+const at600 = docInkSpace({ height: 3000, at: 600 }, 16 / 9);
+const middle = at600.toPage([0.5, 0.5]);
+ok(`the middle of a 16:9 screen at 600 is page pixel 960 (${middle[1] * 3000})`, near(middle[0], 0.5) && near(middle[1] * 3000, 960));
+ok('and back again', at600.toFrame(middle).every((v, i) => near(v, [0.5, 0.5][i])));
+const at0 = docInkSpace({ height: 3000, at: 0 }, 16 / 9);
+ok('the same words are lower on the screen once the page scrolls back up', near(at0.toFrame(middle)[1], 0.5 + 600 / 720));
+const tall = docInkSpace({ height: 3000, at: 0 }, 4 / 3);
+ok('a 4:3 screen shows more of the page below (960 px)', near(tall.toPage([0, 1])[1] * 3000, 960) && near(tall.box.w, 1));
+const wide = docInkSpace({ height: 3000, at: 0 }, 21 / 9);
+ok('a 21:9 screen shows the page in the middle, at a 16:9 window\'s height', near(wide.box.w, (16 / 9) / (21 / 9)) && near(wide.box.x, (1 - wide.box.w) / 2)
+  && wide.toFrame(wide.toPage([0.3, 0.7])).every((v, i) => near(v, [0.3, 0.7][i])));
+ok('the page box is the whole page, mostly off the screen', near(at600.box.y, -600 / 720) && near(at600.box.h, 3000 / 720));
 
 console.log(fails.length ? `\n${fails.length} FAILED` : '\nALL PASS');
 process.exit(fails.length ? 1 : 0);

@@ -33,6 +33,7 @@ import { createAssetResolver } from './assets.js';
 import { deckId } from './deck.js';
 import { assetRefsIn } from './deck-source.js';
 import { createCaptionLog } from './caption-log.js';
+import { createDocReader } from './doc-reader.js';
 import { createDurationProber } from './duration-probe.js';
 import { makeSigningKey, importSigningKey, importVerifyKey, signText, verifyText } from './crypto.js';
 
@@ -69,6 +70,8 @@ const armEl = $('#arm');
 // Everything a viewer must not do (record, broadcast, save, answer the room,
 // take keyboard shortcuts, arm) is switched off where it happens, by this.
 const VIEWER = document.body.dataset.viewer === 'yes';
+// Guest View's own pace for a document (Issue #240): only for a viewer.
+const docReader = VIEWER ? createDocReader({ getSource: (item) => getDeckSource(item) }) : null;
 
 let cfg = VIEWER ? viewerConfig() : await loadConfig();
 
@@ -303,6 +306,8 @@ function mount(layer, item) {
     // box is known is what makes that self-correct instead of staying
     // wrong for the rest of the item's time on screen.
     onReady: () => redrawInk(true),
+    // A document gliding to a new place (Issue #240): its ink goes with it.
+    onScroll: () => redrawInk(),
     onEnded: () => handleMediaEnded(key),
     getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId),
   });
@@ -434,6 +439,15 @@ const ink = { ctx: inkCanvas.getContext('2d'), drawnKey: null, drawnStrokes: 0, 
 // its own on-screen region, not all drawn from (0,0). Letterboxed within
 // that region for anything with a fixed aspect ratio; the whole region for
 // everything else, which is exactly how those render.
+// Where ink is drawn for a panel: its content box, or for a document the
+// whole page wherever it has scrolled to (Issue #240), so the strokes stay on
+// the text. The laser and the spotlight point at the screen, not the page,
+// and keep using contentRectFor itself.
+function inkRectFor(slot, renderer) {
+  const rect = contentRectFor(slot, renderer);
+  return renderer?.pageRect ? renderer.pageRect(rect) : rect;
+}
+
 function contentRectFor(slot, renderer) {
   if (!slot) return { x: 0, y: 0, w: 0, h: 0 };
   const stageBox = stage.getBoundingClientRect();
@@ -564,7 +578,7 @@ function redrawSplitInk() {
   ctx.clearRect(0, 0, stage.clientWidth, stage.clientHeight);
   let any = false;
   for (const panel of activePanels()) {
-    const rect = contentRectFor(panel.slot, panel.renderer);
+    const rect = inkRectFor(panel.slot, panel.renderer);
     const strokes = state.ink.bySurface[inkSurfaceKey(panel.item)]?.strokes || [];
     for (const stroke of strokes) strokePath(ctx, stroke, rect);
     if (strokes.length) any = true;
@@ -586,7 +600,7 @@ function redrawInk(force = false) {
   if (ensureInkCanvas()) force = true;
   if (state.layout !== 'single') { redrawSplitInk(); return; }
   const { ctx } = ink;
-  const rect = contentRectFor(slotA, programRenderer());
+  const rect = inkRectFor(slotA, programRenderer());
   const strokes = currentInkStrokes();
   const last = strokes[strokes.length - 1];
   const key = `${inkSurfaceKey(state.program)}|${rect.x.toFixed(1)}|${rect.y.toFixed(1)}|${rect.w.toFixed(1)}|${rect.h.toFixed(1)}`;
@@ -1871,6 +1885,7 @@ function beaconEvents() {
 // --- rendering the rest of the chrome --------------------------------------
 
 function render() {
+  docReader?.update(state.program);
   syncMusic();
   syncMicVolumes();
   blankEl.classList.toggle('is-on', state.blank);
