@@ -40,12 +40,15 @@ const WARM = [
   'assets/vendor/qrcode.js', 'assets/vendor/marp.esm.js', 'assets/vendor/pdf.min.js',
   // The deck editor's code editor (Issue #226), ~600 KB.
   'assets/vendor/codemirror.esm.js',
+  // Diagrams in decks (Issue #235), 5 MB - only ever loaded by a deck with a
+  // diagram in it, but that deck has to draw offline like any other.
+  'assets/vendor/mermaid.esm.js',
   'assets/icons/icon-192.png', 'assets/icons/apple-touch-icon.png',
   // Kept complete by test/offline-shell.test.mjs: a module control.js,
   // display.js or deck-editor.js imports that is missing here fails the whole
   // page offline.
   ...[
-    'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-editor', 'deck-export', 'deck-media', 'deck-source', 'deck-templates',
+    'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-source', 'deck-templates',
     'defaults', 'display', 'duration-probe',
     'index', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'recap', 'renderers',
     'rtc', 'server', 'store', 'thumbs', 'util', 'watermark', 'zip', 'zip-review',

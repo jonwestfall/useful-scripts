@@ -937,6 +937,112 @@ ok(`a content/decks deck named by its address opens as that file ("${await rootE
 await root.close();
 }
 
+if (want('the deck editor: Mermaid diagrams, in the editor and on the projector (#235)')) {
+console.log('\n-- the deck editor: Mermaid diagrams, in the editor and on the projector (#235) --');
+const owen = await signedIn('owen');
+// Nothing a diagram needs comes from anywhere but this server.
+const elsewhere = [];
+owen.on('request', (r) => { if (!/^(data|blob):/.test(r.url()) && !r.url().startsWith(base)) elsewhere.push(r.url()); });
+const desk = await owen.newPage();
+trap(desk, 'editor diagrams (owen)');
+await desk.goto(`${base}/index.html`);
+const fence = (body) => `\`\`\`mermaid\n${body}\`\`\`\n`;
+const diagramDeck = [
+  '---', 'marp: true', 'title: Diagrams', '---', '',
+  '# A flowchart', '', fence('flowchart LR\n  A[Stimulus] --> B{Attend?}\n  B -->|yes| C[Encode]\n'),
+  '---', '', '<!-- _class: invert -->', '# On a dark slide', '', fence('sequenceDiagram\n  Student->>Podium: Answers\n'),
+  '---', '', '<!-- _mermaidTheme: forest -->', '# Its own theme', '', fence('pie title Pets\n  "Dogs" : 3\n  "Cats" : 1\n'),
+  '---', '', '# Broken', '', fence('flowchart LR\n  A -->\n'),
+  '---', '', '<!-- _mermaidTheme: forest -->', '# The diagram says', '', fence('%%{init: {"theme": "dark"}}%%\nflowchart TD\n  X --> Y\n'),
+].join('\n');
+const upload = (name, md) => desk.evaluate(async ([file, text]) => {
+  const res = await fetch(`/api/library/upload?filename=${file}&course=psy415`, { method: 'POST', body: text });
+  return (await res.json()).item;
+}, [name, md]);
+const plainItem = await upload('no-diagrams.md', '---\nmarp: true\n---\n\n# Just words\n\n```js\nconst x = 1;\n```\n');
+const diagramItem = await upload('diagrams.md', diagramDeck);
+const fetchedMermaid = (page) => page.evaluate(() => performance.getEntriesByType('resource').some((e) => /mermaid\.esm\.js/.test(e.name)));
+
+await desk.goto(`${base}/deck.html?library=${plainItem.id}`);
+await desk.waitForFunction(() => document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length === 1, null, { timeout: 20000 });
+ok('a deck with no diagram never fetches the 5 MB diagram bundle', !(await fetchedMermaid(desk)));
+
+await desk.goto(`${base}/deck.html?library=${diagramItem.id}`);
+await desk.waitForFunction(() => document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length === 5, null, { timeout: 30000 });
+ok('one with a diagram does', await fetchedMermaid(desk));
+const strip = await desk.evaluate(() => {
+  const root = document.querySelector('#deck-strip').shadowRoot;
+  return { drawn: root.querySelectorAll('img.podium-diagram').length, broken: root.querySelectorAll('.podium-diagram-error').length, code: root.querySelectorAll('code.language-mermaid').length };
+});
+ok(`the strip shows each diagram drawn, not as code (${strip.drawn} drawn, ${strip.broken} broken, ${strip.code} as code)`, strip.drawn === 4 && strip.broken === 1 && strip.code === 0);
+await pickSlide(desk, 0);
+await desk.waitForFunction(() => !!document.querySelector('#deck-preview .r-deck')?.shadowRoot?.querySelector('img.podium-diagram'), null, { timeout: 10000 })
+  .then(() => ok('so does the preview', true))
+  .catch(() => ok('so does the preview', false));
+const picture = await desk.evaluate(() => {
+  const img = document.querySelector('#deck-preview .r-deck').shadowRoot.querySelector('img.podium-diagram');
+  const svg = decodeURIComponent(img.getAttribute('src').replace(/^data:image\/svg\+xml;charset=utf-8,/, ''));
+  return { complete: img.complete && img.naturalWidth > 0, svg: svg.startsWith('<svg'), script: /<script/i.test(svg), alt: img.alt };
+});
+ok(`each diagram is a picture of its SVG, with no script in it (${picture.alt})`, picture.complete && picture.svg && !picture.script && /flowchart/.test(picture.alt));
+const themes = await desk.evaluate(async (md) => {
+  const { render } = await import('/assets/js/deck.js');
+  return (await render(md)).diagrams.map((d) => d.theme);
+}, diagramDeck);
+ok(`each in the deck's look unless told otherwise (${themes.join(', ')})`, themes.join() === 'default,dark,forest,default,forest');
+await desk.waitForFunction(() => /could not be drawn/.test(document.querySelector('#deck-problems').textContent), null, { timeout: 8000 })
+  .then(() => ok('a diagram Mermaid cannot read is listed under "Check before class"', true))
+  .catch(() => ok('a diagram Mermaid cannot read is listed under "Check before class"', false));
+const problem = await desk.evaluate(() => [...document.querySelectorAll('#deck-problems li')].map((li) => li.textContent).find((t) => /could not be drawn/.test(t)) || '');
+ok(`against its slide, saying what is wrong ("${problem.slice(0, 80)}...")`, /^Slide 4:/.test(problem) && /Parse error/.test(problem));
+await desk.locator('#deck-problems li', { hasText: 'could not be drawn' }).locator('button').click();
+const cursorLine = await desk.evaluate(() => {
+  const sel = window.getSelection();
+  return sel?.anchorNode?.parentElement?.closest('.cm-line')?.textContent ?? document.querySelector('.cm-activeLine')?.textContent ?? '';
+});
+ok(`and clicking it goes to the diagram ("${cursorLine.trim()}")`, /flowchart LR|A -->|```mermaid/.test(cursorLine));
+
+// Typing a theme Mermaid does not have is caught before class.
+await pickSlide(desk, 0);
+await desk.click('.cm-content');
+await desk.keyboard.press('Control+Home');
+await desk.keyboard.press('Control+End');
+await desk.keyboard.type('\n\n---\n\n<!-- _mermaidTheme: drak -->\n# Typo\n');
+await desk.waitForFunction(() => /"drak" is not a Mermaid theme/.test(document.querySelector('#deck-problems').textContent), null, { timeout: 8000 })
+  .then(() => ok('a misspelt mermaidTheme is flagged as it is typed', true))
+  .catch(() => ok('a misspelt mermaidTheme is flagged as it is typed', false));
+await desk.keyboard.type('<!-- mermaidT');
+await desk.waitForSelector('.cm-tooltip-autocomplete', { timeout: 5000 }).catch(() => {});
+ok('and mermaidTheme is offered as a directive', (await desk.textContent('.cm-tooltip-autocomplete').catch(() => '')).includes('mermaidTheme'));
+await desk.keyboard.press('Escape');
+
+// The projector, and the controller that drives it.
+const screen = await owen.newPage();
+trap(screen, 'diagrams display');
+await screen.goto(`${base}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await owen.newPage();
+trap(pad, 'diagrams controller');
+await pad.goto(`${base}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.locator('.tile', { hasText: 'Diagrams' }).first().click();
+const onWall = () => screen.evaluate(() => {
+  const root = document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot;
+  return root ? { slides: root.querySelectorAll('svg[data-marpit-svg]').length, drawn: root.querySelectorAll('img.podium-diagram').length, broken: root.querySelectorAll('.podium-diagram-error').length } : null;
+});
+await until(async () => (await onWall())?.drawn === 4, { timeout: 30000 }).catch(() => {});
+const wall = await onWall();
+ok(`the projector draws the diagrams (${JSON.stringify(wall)})`, wall?.slides === 5 && wall.drawn === 4 && wall.broken === 1);
+await pad.waitForFunction(() => /diagram on slide 4 could not be drawn/.test(document.querySelector('#deck-theme')?.textContent || ''), null, { timeout: 15000 })
+  .then(() => ok('and the controller warns about the broken one', true))
+  .catch(async () => ok(`and the controller warns about the broken one ("${await pad.textContent('#deck-theme').catch(() => '')}")`, false));
+ok(`nothing was fetched from anywhere else (${elsewhere.slice(0, 3).join(', ')})`, elsewhere.length === 0);
+await screen.close();
+await pad.close();
+await owen.close();
+}
+
 if (want('the deck editor: drafts, downloads, completion and checks (#226)')) {
 console.log('\n-- the deck editor: drafts, downloads, completion and checks (#226) --');
 // The plain relay (no accounts, no library): the editor still works.

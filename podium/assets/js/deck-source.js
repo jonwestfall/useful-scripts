@@ -38,7 +38,16 @@ export const LOCAL_DIRECTIVES = [
 //
 //   <!-- _video: /media/<sha>/clip.mp4 -->
 //   <!-- _videoStart: 1:05 -->
-export const PODIUM_DIRECTIVES = ['video', 'videoStart'];
+//
+// And the theme ```mermaid diagrams are drawn in (Issue #235), which works
+// like Marp's own local directives: in the front matter for the whole deck,
+// `<!-- mermaidTheme: dark -->` from a slide on, `_mermaidTheme` for one
+// slide. Without it a diagram follows the deck's look (see deck-mermaid.js),
+// and a theme set at the top of the diagram itself beats both.
+export const MERMAID_DIRECTIVE = 'mermaidTheme';
+export const PODIUM_DIRECTIVES = ['video', 'videoStart', MERMAID_DIRECTIVE];
+/** Mermaid's themes - what mermaidTheme may be. */
+export const MERMAID_THEMES = ['default', 'neutral', 'dark', 'forest', 'base'];
 const KNOWN = new Set([...GLOBAL_DIRECTIVES, ...LOCAL_DIRECTIVES, ...PODIUM_DIRECTIVES]);
 
 /** `1:05`, `1:02:03`, `65` or `65.5` as seconds; anything else is 0. */
@@ -286,6 +295,38 @@ function describe(deck) {
 export const ASSET_REF = /asset:([\w-]{1,64})/g;
 export function assetRefsIn(md) {
   return [...new Set(Array.from(String(md ?? '').matchAll(ASSET_REF), (m) => m[1]))];
+}
+
+/**
+ * The ```mermaid code blocks in a slide (Issue #235), in order: where each
+ * opens, where its diagram text starts, and that text.
+ */
+export function mermaidFences(raw) {
+  const out = [];
+  let fence = null;
+  let at = 0;
+  for (const line of linesOf(String(raw ?? ''))) {
+    const t = bare(line);
+    if (fence) {
+      const close = FENCE.exec(t);
+      if (close && close[1][0] === fence.mark[0] && close[1].length >= fence.mark.length && /^\s*$/.test(t.slice(close[0].length))) {
+        if (fence.mermaid) out.push({ start: fence.start, bodyStart: fence.bodyStart, body: fence.body });
+        fence = null;
+      } else if (fence.mermaid) {
+        fence.body += line;
+      }
+    } else {
+      const open = FENCE.exec(t);
+      if (open) {
+        const info = t.slice(open[0].length).trim().split(/\s+/)[0].toLowerCase();
+        fence = { mark: open[1], mermaid: info === 'mermaid', start: at, bodyStart: at + line.length, body: '' };
+      }
+    }
+    at += line.length;
+  }
+  // Unclosed: Marp draws it to the end of the slide, so it is one all the same.
+  if (fence?.mermaid) out.push({ start: fence.start, bodyStart: fence.bodyStart, body: fence.body });
+  return out;
 }
 
 /** Images (markdown and <img>) a slide uses, with where each one is. */
@@ -615,8 +656,22 @@ export function checkDeck(md, { destination = 'file', pageProtocol = '' } = {}) 
         add(slide.index, at, 'warning', 'This video slide has no poster (a background picture), so its thumbnail, its slide photo and what shows before Play are all blank.');
       }
     }
+    for (const c of commentsIn(slide.raw)) {
+      for (const d of c.directives) {
+        if (d.key === MERMAID_DIRECTIVE && !MERMAID_THEMES.includes(d.value)) {
+          add(slide.index, base + c.start, 'warning', mermaidThemeProblem(d.value));
+        }
+      }
+    }
+    for (const f of mermaidFences(slide.raw)) {
+      if (!f.body.trim()) add(slide.index, base + f.start, 'warning', 'This diagram (```mermaid) is empty, so the slide shows a problem box where it should be.');
+    }
     const fences = (maskCodeFenceCount(slide.raw));
     if (fences % 2) add(slide.index, base, 'warning', 'A code block on this slide is never closed (```), so the rest of the deck is swallowed into it.');
+  }
+  const fmTheme = deck.frontMatter.fields[MERMAID_DIRECTIVE];
+  if (fmTheme !== undefined && !MERMAID_THEMES.includes(fmTheme)) {
+    add(0, Math.max(0, deck.frontMatter.raw.indexOf(MERMAID_DIRECTIVE)), 'warning', mermaidThemeProblem(fmTheme));
   }
   const bytes = new TextEncoder().encode(text).length;
   // A file may be sent from a controller, and a deck inside a plan always
@@ -629,6 +684,10 @@ export function checkDeck(md, { destination = 'file', pageProtocol = '' } = {}) 
     add(0, 0, 'info', 'This deck splits slides on headings (headingDivider), so moving and inserting slides is turned off here. Edit the text directly.');
   }
   return out;
+}
+
+function mermaidThemeProblem(value) {
+  return `"${value}" is not a Mermaid theme, so diagrams follow the deck instead. Use one of: ${MERMAID_THEMES.join(', ')}.`;
 }
 
 function maskCodeFenceCount(raw) {

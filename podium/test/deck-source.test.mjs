@@ -10,9 +10,9 @@ import { fileURLToPath } from 'node:url';
 import {
   parseDeck, serializeDeck, moveSlide, duplicateSlide, deleteSlide, insertSlide,
   setSlideDirective, setSlideBuild, setSlideNotes, setFrontMatter, slideAt, checkDeck, commentsIn,
-  setSlideVideo, parseTimecode, formatTimecode, PODIUM_DIRECTIVES,
+  setSlideVideo, parseTimecode, formatTimecode, PODIUM_DIRECTIVES, mermaidFences, MERMAID_THEMES,
 } from '../assets/js/deck-source.js';
-import { deckLocation } from '../assets/js/deck.js';
+import { deckLocation, markMermaidTheme } from '../assets/js/deck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -245,6 +245,45 @@ console.log('-- where a deck lives on the server --');
   chk('a query or fragment is not part of it', deckLocation('/media/deck/3/x.md?v=2#s').id === '3');
   chk('anything else is just an address', deckLocation('https://example.org/deck.md').kind === 'other' && deckLocation('').kind === 'other');
   chk('content/decks/../ is not content/decks', deckLocation('content/decks/sub/../../secret.md').kind === 'other');
+}
+
+console.log('-- diagrams (Issue #235) --');
+{
+  const fence = (body) => `\`\`\`mermaid\n${body}\`\`\`\n`;
+  const config = fence('---\nconfig:\n  theme: dark\n---\nflowchart LR\n  A --> B\n');
+  const md = `# One\n\n${config}\n---\n\n# Two\n\n${fence('%%{init: {"theme": "forest"}}%%\npie\n  "a" : 1\n')}`;
+  const deck = parseDeck(md);
+  chk(`a diagram's own front matter (---) is not a slide break: ${deck.slides.length} = Marp ${marpSlides(md)}`, deck.slides.length === 2 && marpSlides(md) === 2);
+  chk('and the deck round-trips', serializeDeck(deck) === md);
+  const found = mermaidFences(deck.slides[0].raw);
+  chk('a slide\'s diagrams are found, with where they start', found.length === 1
+    && deck.slides[0].raw.slice(found[0].start).startsWith('```mermaid')
+    && deck.slides[0].raw.slice(found[0].bodyStart).startsWith('---\nconfig:'));
+  chk('with their text', found[0].body === '---\nconfig:\n  theme: dark\n---\nflowchart LR\n  A --> B\n');
+  chk('other code blocks are not diagrams', mermaidFences('```js\nx\n```\n\n~~~mermaid\npie\n~~~\n').length === 1);
+  chk('a diagram\'s %% lines and --- are not pictures', parseDeck(md).slides.every((s) => s.media.length === 0));
+  chk('nor are their comments presenter notes', parseDeck(`# A\n\n${fence('flowchart LR\n  %% a comment\n  A --> B\n')}`).slides[0].notes === ''
+    && marpNotes(`# A\n\n${fence('flowchart LR\n  A --> B\n')}`)[0] === '');
+
+  const note = (text) => checkDeck(text).map((f) => f.message).join(' | ');
+  chk('mermaidTheme is a directive, not a presenter note', parseDeck('<!-- mermaidTheme: dark -->\n# A').slides[0].notes === ''
+    && marpNotes('<!-- mermaidTheme: dark -->\n# A')[0] === '' && marpNotes('<!-- _mermaidTheme: dark -->\n# A')[0] === '');
+  chk('every Mermaid theme is fine', MERMAID_THEMES.every((t) => !/not a Mermaid theme/.test(note(`<!-- mermaidTheme: ${t} -->\n# A`))));
+  chk('a misspelt one is flagged, in a comment', /"drak" is not a Mermaid theme/.test(note('<!-- _mermaidTheme: drak -->\n# A')));
+  chk('and in the front matter', /"night" is not a Mermaid theme/.test(note('---\nmermaidTheme: night\n---\n# A')));
+  chk('an empty diagram is flagged', /diagram \(```mermaid\) is empty/.test(note(`# A\n\n${fence('')}`)));
+
+  // Marp decides which slides a mermaidTheme reaches, exactly as it does
+  // for its own local directives; deck.js marks each slide with the result.
+  const marp = markMermaidTheme(newMarp());
+  const themed = marp.render([
+    '---', 'mermaidTheme: forest', 'headingDivider: 2', '---', '', '# A', '', '## A2', '', '---', '',
+    '<!-- mermaidTheme: dark -->', '# B', '', '---', '', '<!-- _mermaidTheme: neutral -->', '# C', '', '---', '', '# D',
+  ].join('\n'));
+  const marks = (themed.html.match(/<section\b[^>]*>/g) || []).map((tag) => /data-mermaid-theme="([^"]*)"/.exec(tag)?.[1] || '');
+  chk(`the front matter reaches every slide, a comment the slides after it, _ one slide (${marks.join(',')})`,
+    marks.join(',') === 'forest,forest,dark,dark,neutral,dark,dark,dark');
+  chk('and none of them is a presenter note', themed.comments.every((list) => !list.length));
 }
 
 if (!ok) process.exit(1);

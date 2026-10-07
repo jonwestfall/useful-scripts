@@ -1878,7 +1878,11 @@ function renderSlides() {
     $('#deck-next-title').textContent = 'End of deck';
   }
 
-  const problems = [deck?.themeWarning, ...themeReport.failed].filter(Boolean);
+  const badDiagrams = [...new Set((deck?.diagrams || []).filter((d) => d.error).map((d) => d.slide + 1))];
+  const diagramWarning = badDiagrams.length
+    ? `A diagram on slide ${badDiagrams.join(', ')} could not be drawn - open the deck editor to see why.`
+    : null;
+  const problems = [deck?.themeWarning, diagramWarning, ...themeReport.failed].filter(Boolean);
   const themeEl = $('#deck-theme');
   themeEl.textContent = problems.length ? problems[0] : (deck ? `theme: ${deck.theme}` : 'Rendering…');
   themeEl.classList.toggle('is-warning', problems.length > 0);

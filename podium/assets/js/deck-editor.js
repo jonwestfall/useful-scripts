@@ -235,6 +235,7 @@ const VALUES = {
   paginate: () => ['true', 'false'],
   math: () => ['katex'],
   class: () => [...themeClasses],
+  mermaidTheme: () => DS.MERMAID_THEMES,
 };
 
 // Directive names, their values, theme names and picture options - the bits
@@ -258,13 +259,14 @@ function marpCompletions(ctx) {
   const key = /(?:<!--\s*|^\s*)(_?)([A-Za-z]*)$/.exec(before);
   if (key && (/<!--/.test(before) || insideComment(ctx.state, ctx.pos) || inFrontMatter(ctx.pos))) {
     if (!key[2] && !ctx.explicit && !/<!--\s*_?$/.test(before)) return null;
-    const names = inFrontMatter(ctx.pos) ? [...DS.GLOBAL_DIRECTIVES, ...DS.LOCAL_DIRECTIVES]
-      : key[1] === '_' ? [...DS.LOCAL_DIRECTIVES, ...DS.PODIUM_DIRECTIVES] : DS.LOCAL_DIRECTIVES;
+    const local = [...DS.LOCAL_DIRECTIVES, DS.MERMAID_DIRECTIVE];
+    const names = inFrontMatter(ctx.pos) ? [...DS.GLOBAL_DIRECTIVES, ...local]
+      : key[1] === '_' ? [...DS.LOCAL_DIRECTIVES, ...DS.PODIUM_DIRECTIVES] : local;
     return {
       from: ctx.pos - key[2].length,
       options: names.map((name) => ({
         label: name, type: 'property', apply: `${name}: `,
-        detail: key[1] === '_' ? 'this slide only' : (DS.LOCAL_DIRECTIVES.includes(name) && !inFrontMatter(ctx.pos) ? 'this slide and after' : 'whole deck'),
+        detail: key[1] === '_' ? 'this slide only' : (local.includes(name) && !inFrontMatter(ctx.pos) ? 'this slide and after' : 'whole deck'),
       })),
     };
   }
@@ -794,6 +796,20 @@ function computeProblems() {
     if (fit < 0.98 && deck.slides[i]) {
       found.push({ slide: i, offset: deck.slides[i].start, severity: 'info', message: `Shrunk to ${Math.round(fit * 100)}% to fit. Consider splitting this slide.` });
     }
+  });
+  // A diagram Mermaid could not draw (Issue #235), at the line it complains
+  // about when it says which.
+  (rendered?.diagrams || []).forEach((d) => {
+    const slide = deck.slides[d.slide];
+    if (!d.error || !slide) return;
+    const fence = DS.mermaidFences(slide.raw)[d.nth];
+    let offset = slide.start + (fence ? fence.start : 0);
+    if (fence && d.error.line > 0) {
+      const lines = fence.body.split('\n');
+      const n = Math.min(d.error.line, Math.max(1, lines.length - 1)) - 1;
+      offset = slide.start + fence.bodyStart + lines.slice(0, n).reduce((sum, l) => sum + l.length + 1, 0);
+    }
+    found.push({ slide: d.slide, offset, severity: 'warning', message: `This diagram could not be drawn: ${d.error.message}` });
   });
   (rendered?.builds || []).forEach((b, i) => {
     const said = describeBuild(b);
