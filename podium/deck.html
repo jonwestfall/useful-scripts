@@ -249,9 +249,10 @@
   <!-- Every slide, as the projector draws it. -->
   <aside class="deck-col deck-strip-col">
     <div class="deck-col-head">
-      <h2>Slides <span id="deck-count" class="hint"></span></h2>
-      <button id="deck-add-slide" type="button" title="Add a slide after this one">+ Slide</button>
+      <h2><span id="deck-strip-label">Slides</span> <span id="deck-count" class="hint"></span></h2>
+      <button id="deck-add-slide" class="deck-only" type="button" title="Add a slide after this one">+ Slide</button>
     </div>
+    <!-- A document (Issue #240) shows its headings here instead. -->
     <div id="deck-strip" class="deck-strip" role="list" aria-label="Slides"></div>
   </aside>
 
@@ -263,10 +264,10 @@
       <button type="button" data-cmd="italic" aria-label="Italic" title="Italic (Ctrl/Cmd+I)"><i>I</i></button>
       <button type="button" data-cmd="list" title="Bulleted list">• List</button>
       <button type="button" data-cmd="numbered" title="Numbered list">1. List</button>
-      <button type="button" data-cmd="build" title="Reveal this slide's bullets one at a time" aria-pressed="false">▶ Build</button>
+      <button type="button" class="deck-only" data-cmd="build" title="Reveal this slide's bullets one at a time" aria-pressed="false">▶ Build</button>
       <button type="button" data-cmd="image" title="Add a picture">🖼 Picture</button>
-      <button type="button" data-cmd="video" title="Make this a video slide">🎬 Video</button>
-      <button type="button" data-cmd="template" title="Add a slide from a template, or manage templates">⧉ Template</button>
+      <button type="button" class="deck-only" data-cmd="video" title="Make this a video slide">🎬 Video</button>
+      <button type="button" class="deck-only" data-cmd="template" title="Add a slide from a template, or manage templates">⧉ Template</button>
       <div class="deck-menu-wrap deck-diagram-wrap">
         <button id="deck-diagram" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="deck-diagram-menu" title="Add a diagram (Mermaid)">◇ Diagram</button>
         <div id="deck-diagram-menu" class="deck-menu deck-menu-left" hidden>
@@ -279,11 +280,13 @@
       <button type="button" data-cmd="math" title="Math (KaTeX)">∑ Math</button>
       <button type="button" data-cmd="code" title="Code block">&lt;/&gt; Code</button>
       <span class="spacer"></span>
-      <label class="check" title="Fold every slide but the one you are on"><input id="deck-focus" type="checkbox"> Focus slide</label>
+      <!-- Slides or a page to read (Issue #240): adds or takes away marp: true. -->
+      <button id="deck-mode-switch" type="button">Make this a document</button>
+      <label class="check deck-only" title="Fold every slide but the one you are on"><input id="deck-focus" type="checkbox"> Focus slide</label>
     </div>
     <div id="deck-code" class="deck-code"></div>
 
-    <div class="deck-slide-panel">
+    <div class="deck-slide-panel deck-only">
       <h3 id="deck-slide-heading">Slide</h3>
       <div class="deck-slide-row">
         <label class="check"><input id="deck-slide-build" type="checkbox"> Build (bullets one at a time)</label>
@@ -319,13 +322,13 @@
       <span class="hint" id="deck-position"></span>
       <button id="deck-next" type="button" aria-label="Next slide or build step">▶</button>
     </div>
-    <p class="hint deck-build" id="deck-build" role="status" hidden></p>
+    <p class="hint deck-build deck-only" id="deck-build" role="status" hidden></p>
 
     <h3>Check before class <span id="deck-problem-count" class="hint"></span></h3>
     <ul id="deck-problems" class="deck-problems"></ul>
 
-    <h3>Deck</h3>
-    <div class="deck-settings">
+    <h3 class="deck-only">Deck</h3>
+    <div class="deck-settings deck-only">
       <label for="deck-theme">Theme</label>
       <select id="deck-theme"></select>
       <label for="deck-size">Shape</label>
@@ -344,7 +347,16 @@
       <label for="deck-footer">Footer</label>
       <input id="deck-footer" type="text" autocomplete="off">
     </div>
-    <p class="hint" id="deck-theme-note"></p>
+    <p class="hint deck-only" id="deck-theme-note"></p>
+    <h3 class="doc-only">Document</h3>
+    <div class="deck-settings doc-only">
+      <label for="doc-look">Look</label>
+      <select id="doc-look">
+        <option value="">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </div>
+    <p class="hint doc-only">A document is one page the room reads and you scroll - for a reading, a handout, instructions. Its headings are the outline on the left; HTML comments are presenter notes.</p>
   </section>
 
 </div>

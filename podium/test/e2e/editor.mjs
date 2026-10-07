@@ -1911,6 +1911,67 @@ await look.click('#ql-next');
 ok('and scrolls it on its own', /Screen 2 of/.test(await look.textContent('#ql-where')) && (await wall())?.at === max);
 await look.close();
 
+// The deck editor's document mode: an outline instead of slides, the page
+// as the class sees it, following the cursor, and a switch to slides.
+const editor = await owen.newPage();
+trap(editor, 'documents editor');
+await editor.goto(`${base}/deck.html?library=${docItem.id}`);
+await editor.waitForFunction(() => document.body.classList.contains('is-doc'), null, { timeout: 20000 })
+  .then(() => ok('a document opens in the deck editor in document mode', true))
+  .catch(() => ok('a document opens in the deck editor in document mode', false));
+const outline = () => editor.evaluate(() => [...(document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.h') || [])].map((b) => b.textContent));
+await editor.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.h').length || 0) === 3, null, { timeout: 15000 }).catch(() => {});
+ok(`the slide strip is its outline instead (${(await outline()).join(' / ')})`, (await outline()).join('|') === 'Memory and forgetting|Part two: interference|Part three'
+  && (await editor.textContent('#deck-strip-label')) === 'Outline');
+ok('what the class sees is the page', await editor.evaluate(() => !!document.querySelector('#deck-preview .r-doc')));
+ok('and the slide-only tools are put away', await editor.isHidden('#deck-add-slide') && await editor.isHidden('.deck-toolbar [data-cmd="build"]')
+  && await editor.isHidden('.deck-slide-panel') && await editor.isVisible('#doc-look'));
+const editorText = () => editor.evaluate(async () => {
+  const CM = await import('/assets/vendor/codemirror.esm.js');
+  const v = CM.EditorView.findFromDOM(document.querySelector('.cm-editor'));
+  return { text: v.state.doc.toString(), line: v.state.doc.lineAt(v.state.selection.main.head).text };
+});
+const previewAt = () => editor.evaluate(() => {
+  const view = document.querySelector('#deck-preview .r-doc')?.shadowRoot?.querySelector('#view');
+  const m = /translate\([\d.]+px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(view?.style.transform || '');
+  return m ? Math.round(-Number(m[1]) / Number(m[2])) : null;
+});
+await editor.evaluate(() => [...document.querySelector('#deck-strip').shadowRoot.querySelectorAll('.h')][1].click());
+await editor.waitForTimeout(800);
+ok(`a heading in the outline puts the cursor on it ("${(await editorText()).line}")`, /^## Part two/.test((await editorText()).line));
+ok(`and the page there (${await previewAt()})`, (await previewAt()) > 600);
+ok(`the position says which screen (${await editor.textContent('#deck-position')})`, /^Screen \d+ of \d+$/.test(await editor.textContent('#deck-position')));
+
+// The whole document as a PDF, broken into printable pages.
+await editor.click('#deck-save-more');
+const [docPdf] = await Promise.all([editor.waitForEvent('download', { timeout: 60000 }), editor.click('#deck-download-pdf')]);
+const docPdfText = fs.readFileSync(await docPdf.path()).toString('latin1');
+const docPages = (docPdfText.match(/\/Type \/Page\b/g) || []).length;
+ok(`"Download as a PDF" breaks it into printable pages (${docPages} pages)`, docPdfText.startsWith('%PDF') && docPages >= 2);
+
+// Make it a deck, and back.
+await editor.click('#deck-mode-switch');
+await editor.waitForFunction(() => !document.body.classList.contains('is-doc'), null, { timeout: 10000 }).catch(() => {});
+ok('"Make this a slide deck" adds marp: true to its front matter, and it is slides', /^---\n[\s\S]*?^marp: true$[\s\S]*?\n---\n/m.test((await editorText()).text) && await editor.isVisible('#deck-add-slide'));
+await editor.click('#deck-mode-switch');
+await editor.waitForFunction(() => document.body.classList.contains('is-doc'), null, { timeout: 10000 }).catch(() => {});
+ok('and "Make this a document" takes it away again', !/marp:/.test((await editorText()).text) && await editor.isHidden('#deck-add-slide'));
+// An edit, saved back to the library as the document it is.
+await editor.evaluate(async () => {
+  const CM = await import('/assets/vendor/codemirror.esm.js');
+  const v = CM.EditorView.findFromDOM(document.querySelector('.cm-editor'));
+  v.dispatch({ changes: { from: v.state.doc.length, insert: '\n\n## Added in the editor\n' } });
+});
+await editor.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.h').length || 0) === 4, null, { timeout: 10000 })
+  .then(() => ok('a heading typed in joins the outline', true))
+  .catch(() => ok('a heading typed in joins the outline', false));
+await editor.click('#deck-save');
+await waitSaved(editor);
+const savedDoc = await libraryItem(editor, docItem.id);
+ok('and Save puts it back in the library, still a document', savedDoc?.type === 'document'
+  && (await serverText(editor, savedDoc.src)).includes('## Added in the editor'));
+await editor.close();
+
 // The planner: a plain .md is a document whichever item it is put in, and
 // either can be switched.
 const planner = await owen.newPage();

@@ -2695,3 +2695,7 @@ body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { disp
   position: absolute; right: 8px; top: -1px; padding: 1px 8px; border-radius: 0 0 6px 6px;
   background: #e0a800; color: #1d232b; font-size: 12px; font-weight: 600;
 }
+
+/* The deck editor's document mode (Issue #240) ----------------------------- */
+body.is-doc .deck-only { display: none !important; }
+body:not(.is-doc) .doc-only { display: none !important; }

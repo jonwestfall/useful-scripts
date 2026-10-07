@@ -272,3 +272,89 @@ export async function exportPdf(rendered, { title = 'Deck', onProgress = () => {
   }
   return createPdf(pages, { title });
 }
+
+// --- a document as a PDF (Issue #240) --------------------------------------------
+//
+// The one long page broken into printable ones - US Letter's shape, at the
+// page's own width - and broken between blocks (paragraphs, lists, tables,
+// pictures), never through a line of text. A block taller than a whole page
+// is the one thing that is cut, at the page's edge.
+
+const DOC_WIDTH = 1280;
+const DOC_PAGE_HEIGHT = Math.round(DOC_WIDTH * 11 / 8.5);
+const DOC_MARGIN = 56;
+
+/** Where to break a page of the given height laid out in blocks [{top, bottom}]. */
+export function docPageBreaks(blocks, total, pageHeight = DOC_PAGE_HEIGHT - DOC_MARGIN * 2) {
+  const breaks = [];
+  let start = 0;
+  while (start < total - 1) {
+    const limit = start + pageHeight;
+    if (limit >= total) { breaks.push([start, total]); break; }
+    let end = start;
+    for (const b of blocks) {
+      if (b.bottom <= limit && b.bottom > end) end = b.bottom;
+    }
+    // Nothing fits whole (a block taller than a page): cut at the edge.
+    if (end <= start) end = limit;
+    breaks.push([start, end]);
+    start = end;
+  }
+  return breaks.length ? breaks : [[0, Math.max(1, total)]];
+}
+
+export async function exportDocPdf(rendered, { title = 'Document', onProgress = () => {} } = {}) {
+  const host = document.createElement('div');
+  host.style.cssText = `position:fixed;left:-30000px;top:0;width:${DOC_WIDTH}px;visibility:hidden`;
+  const shadow = host.attachShadow({ mode: 'open' });
+  shadow.innerHTML = `<style>${rendered.css}</style>${rendered.html}`;
+  document.body.append(host);
+  try {
+    const page = shadow.querySelector('.podium-doc');
+    const cache = new Map();
+    await inlinePictures(page, cache);
+    await Promise.all(Array.from(page.querySelectorAll('img')).map((img) => (img.complete ? null : new Promise((done) => {
+      img.addEventListener('load', done, { once: true });
+      img.addEventListener('error', done, { once: true });
+    }))));
+    const top = page.getBoundingClientRect().top;
+    const blocks = Array.from(page.children).map((node) => {
+      const r = node.getBoundingClientRect();
+      return { top: r.top - top, bottom: r.bottom - top };
+    });
+    const total = Math.ceil(page.getBoundingClientRect().height);
+    const background = getComputedStyle(page).backgroundColor || '#fff';
+    const html = page.outerHTML;
+    const breaks = docPageBreaks(blocks, total);
+    const pages = [];
+    const scale = 1.5;
+    for (const [i, [from, to]] of breaks.entries()) {
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('viewBox', `0 ${from} ${DOC_WIDTH} ${to - from}`);
+      const fo = document.createElementNS(ns, 'foreignObject');
+      fo.setAttribute('width', String(DOC_WIDTH));
+      fo.setAttribute('height', String(total));
+      const holder = document.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+      holder.innerHTML = html;
+      fo.append(holder);
+      svg.append(fo);
+      const width = Math.round(DOC_WIDTH * scale);
+      const sliceHeight = Math.round((to - from) * scale);
+      const img = await svgToImage(svg, rendered.css, width, sliceHeight);
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = Math.round(DOC_PAGE_HEIGHT * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = background;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, Math.round(DOC_MARGIN * scale), width, sliceHeight);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+      pages.push({ width: canvas.width, height: canvas.height, data: new Uint8Array(await blob.arrayBuffer()) });
+      onProgress(i + 1, breaks.length);
+    }
+    return createPdf(pages, { title });
+  } finally {
+    host.remove();
+  }
+}
