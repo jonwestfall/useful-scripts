@@ -146,5 +146,20 @@ ok('a 21:9 screen shows the page in the middle, at a 16:9 window\'s height', nea
   && wide.toFrame(wide.toPage([0.3, 0.7])).every((v, i) => near(v, [0.3, 0.7][i])));
 ok('the page box is the whole page, mostly off the screen', near(at600.box.y, -600 / 720) && near(at600.box.h, 3000 / 720));
 
+console.log('\n-- the editor: printable pages and checks --');
+const { docPageBreaks } = await import('../assets/js/deck-export.js');
+const { docProblems } = await import('../assets/js/deck-checks.js');
+const blocks = [{ top: 0, bottom: 400 }, { top: 420, bottom: 900 }, { top: 920, bottom: 1500 }, { top: 1520, bottom: 1600 }];
+const breaks = docPageBreaks(blocks, 1600, 1000);
+ok(`pages break between blocks, never through one (${JSON.stringify(breaks)})`, JSON.stringify(breaks) === JSON.stringify([[0, 900], [900, 1600]]));
+const tallBreaks = docPageBreaks([{ top: 0, bottom: 2500 }], 2500, 1000);
+ok(`a block taller than a page is cut at the page's edge (${JSON.stringify(tallBreaks)})`, JSON.stringify(tallBreaks) === JSON.stringify([[0, 1000], [1000, 2000], [2000, 2500]]));
+ok('a short document is one page', JSON.stringify(docPageBreaks([{ top: 0, bottom: 300 }], 300, 1000)) === JSON.stringify([[0, 300]]));
+const checked = docProblems('# Reading\n\n![](pic.png)\n\n```js\nnever closed\n', null, { destination: 'library' });
+ok(`a document is checked as one (${checked.map((p) => p.message.slice(0, 40)).join(' | ')})`,
+  checked.some((p) => /relative path/.test(p.message) && /document in the library/.test(p.message))
+  && checked.some((p) => /no description/.test(p.message))
+  && checked.some((p) => /never closed/.test(p.message) && !/slide/.test(p.message)));
+
 console.log(fails.length ? `\n${fails.length} FAILED` : '\nALL PASS');
 process.exit(fails.length ? 1 : 0);

@@ -723,7 +723,7 @@ function renderEditor() {
       onUse: (file) => useServerFile(item, file),
     }),
   }, 'Choose from the server…'), 'Something already in the library or on the server - just made in the deck editor, say - without typing its path.'));
-  if (item.type === 'deck') fields.append(deckEditorField(item));
+  if (item.type === 'deck' || item.type === 'document') fields.append(deckEditorField(item));
   // Any markdown item can be shown either way (Issue #240): the file is the
   // same, only how it goes up changes.
   if (item.type === 'deck' || item.type === 'document') {
@@ -862,7 +862,7 @@ deckChannel?.addEventListener('message', (ev) => {
     if (!asset) { reply({ error: 'That item does not carry a deck inside the plan.' }); return; }
     // The deck's own pictures kept in this plan, so the editor can show them.
     const pictures = Object.fromEntries(assetRefsIn(asset.data).filter((id) => plan.assets[id]).map((id) => [id, plan.assets[id].data]));
-    reply({ markdown: asset.data, name: asset.name, title: item.title || '', planTitle: plan.title || '', course: plan.course || '', pictures });
+    reply({ markdown: asset.data, name: asset.name, title: item.title || '', planTitle: plan.title || '', course: plan.course || '', pictures, itemType: item.type });
     return;
   }
   // A picture for a deck that lives in this plan, with no server to keep it
@@ -887,6 +887,8 @@ deckChannel?.addEventListener('message', (ev) => {
     }
     plan.assets[item.asset].data = String(msg.markdown ?? '');
     item.src = '';
+    // Switched between slides and a document in the editor (Issue #240).
+    if (msg.itemType === 'deck' || msg.itemType === 'document') item.type = msg.itemType;
     deckEpoch++;
     touch();
     renderOrder();

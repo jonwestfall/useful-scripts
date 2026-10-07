@@ -111,7 +111,13 @@ A `.md` that is not a slide deck goes up as what it is: **one page the room read
 - **Ink stays on the text**: what you draw on a document is pinned to the words under it. It scrolls with the page on the display, the Ink tab and Guest View, and is there again when that part of the page comes back. It is one surface for the whole document, kept with the lecture like slide ink, and a photo of the panel (*Save a photo*, auto-save) shows the page with its ink.
 - **Guest View** follows the room: the page as the projector shows it, at the presenter's place, with the presenter's ink. On a phone, **Read at my own pace** opens the same document reflowed to fit the phone, to scroll freely, with a marker showing where the class is. **Back to the presenter** rejoins. Ink is not shown while reading, since reflowed text no longer lines up with it. A viewer never receives the presenter notes.
 
-*Coming next*: a document mode in the deck editor, with its exports.
+- **Writing one** (the deck editor's **document mode**): a document opens in `deck.html` like a deck (✎ *Edit* on a library tile, in My Files, in the file browser and on a planner item). A library or lecture-plan item opens as what it is listed as. A template, or a `content/decks` file, opens as slides. A file on its own follows `marp: true`. In document mode:
+  - The slide strip becomes the **outline**, its headings. Clicking one puts the cursor on it and the preview there.
+  - **What the class sees** is the page, following the cursor to the section it is in. ◀ ▶ scroll it a screen at a time.
+  - The toolbar keeps headings, lists, pictures, maths, code and ◇ Diagram, and puts away the slide-only tools (builds, video, slide templates, the slide panel and the deck's theme settings). A **Look** setting chooses light or dark.
+  - **Check before class** lists what applies to a page (pictures and their descriptions, diagrams, an unclosed code block, a misspelt `mermaidTheme`, size), by line.
+  - **Make this a slide deck** adds `marp: true`, and **Make this a document** takes it away. Saved to the library or the lecture plan, the item is then listed the new way too.
+  - Saving, drafts, versions, conflicts and **.zip** work as for a deck. **Download as a PDF** breaks the page into printable letter-shaped pages, between paragraphs, never through a line.
 
 ### The Deck Editor (`deck.html`)
 

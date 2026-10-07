@@ -86,3 +86,41 @@ export function deckProblems(md, rendered, { destination = 'file', pageProtocol 
   });
   return found.sort((a, b) => a.offset - b.offset);
 }
+
+/**
+ * Check before class, for a markdown document (Issue #240): the checks of a
+ * deck's that mean anything for one page - pictures and their descriptions,
+ * diagrams, an unclosed code block, a misspelt mermaidTheme, its size - and
+ * none about slides. Offsets are into the markdown, as for a deck.
+ */
+export function docProblems(md, rendered, { destination = 'file', pageProtocol = '', mediaFound = new Map() } = {}) {
+  const asDocument = (message) => message
+    .replace(/\bon this slide\b/g, 'here')
+    .replace(/\bthe slide\b/g, 'the page')
+    .replace(/\bthis deck\b/gi, 'this document')
+    .replace(/\bthe deck\b/g, 'the document')
+    .replace(/\bA deck\b/g, 'A document')
+    .replace(/\ba deck\b/g, 'a document');
+  const found = checkDeck(md, { destination, pageProtocol })
+    .filter((p) => !/headingDivider|video slide|The video "/.test(p.message))
+    .map((p) => ({ ...p, message: asDocument(p.message) }));
+  for (const { slide, src, at } of serverMedia(parseDeck(md))) {
+    const status = mediaFound.get(src);
+    if (typeof status === 'string') found.push({ slide: slide.index, offset: slide.start + at, severity: 'warning', message: `"${src}" is not on this server (${status}), so the room will see nothing there.` });
+  }
+  // A diagram Mermaid could not draw, at the line it complains about. The
+  // page is drawn as one "slide", so each diagram is the nth of the file.
+  const fences = mermaidFences(md);
+  (rendered?.diagrams || []).forEach((d) => {
+    if (!d.error) return;
+    const fence = fences[d.nth];
+    let offset = fence ? fence.start : 0;
+    if (fence && d.error.line > 0) {
+      const lines = fence.body.split('\n');
+      const n = Math.min(d.error.line, Math.max(1, lines.length - 1)) - 1;
+      offset = fence.bodyStart + lines.slice(0, n).reduce((sum, l) => sum + l.length + 1, 0);
+    }
+    found.push({ slide: 0, offset, severity: 'warning', message: `This diagram could not be drawn: ${d.error.message}` });
+  });
+  return found.sort((a, b) => a.offset - b.offset);
+}

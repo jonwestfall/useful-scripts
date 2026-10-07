@@ -604,7 +604,7 @@ function renderLibrary() {
       // A library deck this account may edit opens in the deck editor (Issue
       // #226) - in a new tab, so the lecture on this one is left alone.
       // A content/decks deck from the manifest too, for an administrator.
-      const editAt = item.type === 'deck' ? deckEditSrc(item) : null;
+      const editAt = item.type === 'deck' || item.type === 'document' ? deckEditSrc(item) : null;
       if (editAt) {
         tile.append(el('span', {
           class: 'tile-edit',
@@ -1850,12 +1850,13 @@ function libraryDeckSrc(item) {
 
 /** The address to open a deck at in the deck editor, if this account may save it back; else null. */
 function deckEditSrc(item) {
-  const src = item?.type === 'deck' ? (item.src || srcOfDeckId(item.deckId)) : null;
+  // A document is edited in the same editor (Issue #240).
+  const src = item?.type === 'deck' || item?.type === 'document' ? (item.src || srcOfDeckId(item.deckId)) : null;
   if (!src) return null;
   const where = deckLocation(src);
   if (where.kind === 'content') return signedInAdmin ? src : null;
   if (where.kind === 'library') return library.some((i) => i.editable && String(i.serverId) === where.id) ? src : null;
-  if (where.kind === 'version') return library.find((i) => i.type === 'deck' && i.editable && i.version === where.sha)?.src || null;
+  if (where.kind === 'version') return library.find((i) => (i.type === 'deck' || i.type === 'document') && i.editable && i.version === where.sha)?.src || null;
   return null;
 }
 

@@ -30,8 +30,9 @@ import { serverInfo, mountSessionBadge } from './server.js';
 import { downloadText } from './store.js';
 import * as DS from './deck-source.js';
 import { createDeckMedia, uploadDeckMedia } from './deck-media.js';
-import { exportZip, readDeckZip, exportPdf, replaceRef } from './deck-export.js';
-import { deckProblems, checkServerMedia } from './deck-checks.js';
+import { exportZip, readDeckZip, exportPdf, exportDocPdf, replaceRef } from './deck-export.js';
+import { deckProblems, docProblems, checkServerMedia } from './deck-checks.js';
+import { renderDoc, forgetDoc, headingAt, docMaxAt, DOC_VIEW, DOC_STEP } from './doc.js';
 import { openQuickLook } from './quicklook-open.js';
 import { createTemplatesPanel, findTemplate, slidesOf } from './deck-templates.js';
 import {
@@ -81,6 +82,18 @@ let themeClasses = new Set(BASE_CLASSES);
 let libraryCourses = [];
 let saving = false;
 let openedWith = '';
+// A document (Issue #240): a .md without `marp: true`, edited as one page to
+// read rather than as slides. The mode follows the text - adding or taking
+// away that line switches it - and the slide strip becomes its outline.
+let docMode = false;
+// Whether the mode is fixed by what this is - a library or plan item is a
+// deck or a document whatever its text says, a template is slides - rather
+// than following `marp: true` in the text, as a file does.
+let modePinned = false;
+let docRendered = null;          // the last render, from doc.js
+let docMetrics = null;           // where its headings fall, once laid out
+let docAt = 0;                   // where the preview is in the page
+let previewKind = null;
 // A deck inside a lecture plan keeps its pictures in the plan when there is
 // no server (Issue #226): `asset:<id>` in the markdown, the bytes here.
 const planPictures = new Map();            // the text this page opened with, to tell an untouched new deck
@@ -414,6 +427,10 @@ function onEditorUpdate(update) {
     keepDraftSoon();
     refreshSaveState();
   }
+  if (docMode) {
+    if (update.docChanged || update.selectionSet) followCursorInDoc(update.state.selection.main.head);
+    return;
+  }
   if (update.docChanged || update.selectionSet) {
     const at = DS.slideAt(deck, update.state.selection.main.head);
     if (at !== current) {
@@ -447,6 +464,8 @@ async function renderNow() {
   const id = `edit:${await deckId(value)}`;
   if (mine !== renderGeneration) return;
   sources.set(id, value);
+  if (!modePinned && DS.isMarpDeck(value) === docMode) setDocMode(!DS.isMarpDeck(value));
+  if (docMode) { await renderDocNow(value, id, mine); return; }
   let result;
   try {
     result = await renderDeckSource(value, id);
@@ -472,6 +491,9 @@ async function renderNow() {
 }
 
 function previewItem() {
+  if (docMode) {
+    return { type: 'document', deckId: renderedId, at: docAt, height: docMetrics?.height || DOC_VIEW, look: '' };
+  }
   const fragments = rendered?.fragments || [];
   const slide = Math.min(current, Math.max(0, (rendered?.count || 1) - 1));
   return {
@@ -484,12 +506,34 @@ function previewItem() {
 function updatePreview() {
   if (!renderedId) return;
   const item = previewItem();
+  if (previewRenderer && previewKind !== item.type) {
+    previewRenderer.destroy();
+    previewRenderer = null;
+    $('#deck-preview').replaceChildren();
+  }
   if (!previewRenderer) {
-    previewRenderer = createRenderer(item, { preview: true, getDeckSource: (it) => sources.get(it.deckId) ?? null });
+    previewKind = item.type;
+    previewRenderer = createRenderer(item, {
+      preview: true,
+      getDeckSource: (it) => sources.get(it.deckId) ?? null,
+      // A document's headings, once its page is laid out (Issue #240).
+      onMeasure: (metrics) => {
+        docMetrics = metrics;
+        docAt = Math.min(docAt, docMaxAt(metrics.height));
+        buildOutline();
+        followCursorInDoc(view.state.selection.main.head);
+      },
+    });
     $('#deck-preview').append(previewRenderer.el);
-    wirePreviewClicks(previewRenderer.el);
+    if (!docMode) wirePreviewClicks(previewRenderer.el);
   } else {
     previewRenderer.update(item);
+  }
+  if (docMode) {
+    const stride = Math.round(DOC_VIEW * DOC_STEP);
+    const screens = Math.max(1, Math.ceil(docMaxAt(item.height) / stride) + 1);
+    $('#deck-position').textContent = `Screen ${Math.min(screens, Math.round(docAt / stride) + 1)} of ${screens}`;
+    return;
   }
   const steps = item.fragments[item.slide] || 0;
   $('#deck-position').textContent = `Slide ${item.slide + 1} of ${item.slideCount}`
@@ -531,6 +575,138 @@ function wirePreviewClicks(host) {
   });
 }
 
+// --- a document (Issue #240) ------------------------------------------------------------
+
+/** Where each heading starts in the markdown, in the order the page has them. */
+function headingOffsets(md) {
+  const out = [];
+  let inFence = false;
+  let at = 0;
+  const body = DS.parseDeck(md).frontMatter.raw.length;
+  for (const line of md.split('\n')) {
+    if (at >= body) {
+      if (/^\s{0,3}(```|~~~)/.test(line)) inFence = !inFence;
+      else if (!inFence && /^\s{0,3}#{1,6}\s/.test(line)) out.push(at);
+    }
+    at += line.length + 1;
+  }
+  return out;
+}
+
+function setDocMode(on) {
+  docMode = on;
+  document.body.classList.toggle('is-doc', on);
+  $('#deck-strip-label').textContent = on ? 'Outline' : 'Slides';
+  $('#deck-strip').setAttribute('aria-label', on ? 'Headings' : 'Slides');
+  $('#deck-mode-switch').textContent = on ? 'Make this a slide deck' : 'Make this a document';
+  $('#deck-mode-switch').title = on
+    ? 'Adds marp: true to the front matter: the file is split into slides at every ---'
+    : 'Takes marp: true out of the front matter: the file is one page the room reads and you scroll';
+  if ($('#deck-focus').checked) { $('#deck-focus').checked = false; view?.dispatch({ effects: unfoldEverything() }); }
+  stripBuiltFor = null;
+  docMetrics = null;
+  docAt = 0;
+}
+
+async function renderDocNow(value, id, mine) {
+  let result;
+  try {
+    result = await renderDoc(value, id);
+  } catch (err) {
+    if (mine !== renderGeneration) return;
+    problems = [{ slide: 0, offset: 0, severity: 'warning', message: `This document could not be shown: ${err.message}` }];
+    renderProblems();
+    return;
+  }
+  if (mine !== renderGeneration) return;
+  rehearsal?.update(rehearsalPackage());
+  const previous = renderedId;
+  docRendered = result;
+  rendered = null;
+  renderedId = id;
+  if (previous && previous !== id) {
+    setTimeout(() => { if (renderedId !== previous) { forgetDoc(previous); forgetDeck(previous); sources.delete(previous); } }, 5000);
+  }
+  $('#deck-count').textContent = `(${result.outline.length} heading${result.outline.length === 1 ? '' : 's'})`;
+  updatePreview();
+  buildOutline();
+  computeProblems();
+  $('#doc-look').value = /^dark$/i.test(deck.frontMatter.fields.theme || '') ? 'dark' : '';
+}
+
+/** The outline: each heading, to jump the markdown and the preview to it. */
+function buildOutline() {
+  if (!docMode || !docRendered) return;
+  stripShadow ??= $('#deck-strip').attachShadow({ mode: 'open' });
+  stripBuiltFor = null;
+  const offsets = headingOffsets(text());
+  const style = `<style>
+    :host { display: block; }
+    .h { display: block; width: 100%; margin: 0 0 2px; padding: 6px 8px; text-align: left; background: none; border: 1px solid transparent;
+         border-radius: 6px; color: #d6dde6; font: 13px/1.35 system-ui, sans-serif; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .h:hover { border-color: #2a3038; }
+    .h.on { border-color: #6ea8fe; color: #fff; font-weight: 600; }
+    .l2 { padding-left: 20px; } .l3 { padding-left: 32px; font-size: 12px; } .l4, .l5, .l6 { padding-left: 44px; font-size: 12px; color: #b7c0cc; }
+    .none { color: #8b96a3; font: 13px/1.4 system-ui, sans-serif; padding: 6px 8px; }
+  </style>`;
+  stripShadow.innerHTML = style;
+  if (!docRendered.outline.length) {
+    stripShadow.append(el('p', { class: 'none' }, 'No headings yet. A line starting with # is one.'));
+    return;
+  }
+  docRendered.outline.forEach((h, i) => {
+    stripShadow.append(el('button', {
+      type: 'button', class: `h l${h.level}`, 'data-heading': String(i), role: 'listitem',
+      onclick: () => {
+        const at = offsets[i];
+        if (at !== undefined) {
+          view.dispatch({ selection: { anchor: Math.min(at, view.state.doc.length) }, scrollIntoView: true });
+          view.focus();
+        }
+        const measured = docMetrics?.headings?.[i];
+        if (measured) { docAt = headingAt(measured, docMetrics.height); updatePreview(); markOutline(i); }
+      },
+    }, h.text));
+  });
+}
+
+function markOutline(index) {
+  stripShadow?.querySelectorAll('.h').forEach((b, i) => b.classList.toggle('on', i === index));
+}
+
+/** The preview follows the cursor: to the heading the cursor is under. */
+function followCursorInDoc(head) {
+  if (!docMetrics) return;
+  const offsets = headingOffsets(text());
+  let index = -1;
+  offsets.forEach((at, i) => { if (at <= head) index = i; });
+  markOutline(index);
+  const measured = index >= 0 ? docMetrics.headings[index] : null;
+  const next = measured ? headingAt(measured, docMetrics.height) : 0;
+  if (next !== docAt) { docAt = next; updatePreview(); }
+}
+
+function switchMode() {
+  const value = text();
+  const next = docMode ? DS.setFrontMatter(value, 'marp', true) : DS.setFrontMatter(value, 'marp', null);
+  // An item's mode is its own; the text follows it (a library or plan item
+  // takes the new kind when it is saved).
+  if (modePinned) setDocMode(!docMode);
+  applyText(next);
+  renderSoon(0);
+}
+
+/** The mode what was opened fixes, or null to follow the text. */
+function modeForOrigin() {
+  if (origin.kind === 'library' && origin.item?.type) return origin.item.type === 'document';
+  if (origin.kind === 'plan' && origin.itemType) return origin.itemType === 'document';
+  if (origin.kind === 'template') return false;
+  // content/decks is the shared library's deck folder: shown as slides there,
+  // with or without the line, so edited as slides here.
+  if (origin.kind === 'content') return false;
+  return null;
+}
+
 // --- the slide strip -----------------------------------------------------------------
 
 let stripShadow = null;
@@ -538,6 +714,7 @@ let stripBuiltFor = null;
 let stripPolyfill = null;
 
 function buildStrip() {
+  if (docMode) return;
   if (!rendered || stripBuiltFor === renderedId) { markStrip(); return; }
   stripBuiltFor = renderedId;
   stripShadow ??= $('#deck-strip').attachShadow({ mode: 'open' });
@@ -633,7 +810,7 @@ function buildStrip() {
 }
 
 function markStrip() {
-  if (!stripShadow) return;
+  if (!stripShadow || docMode) return;
   $('#deck-count').textContent = `${deck.slides.length}`;
   const slideProblems = new Set(problems.filter((p) => p.severity === 'warning').map((p) => p.slide));
   stripShadow.querySelectorAll('.cell').forEach((cell) => {
@@ -776,6 +953,18 @@ function renderDeckSettings() {
 
 function wireDeckSettings() {
   const set = (key, value) => applyText(DS.setFrontMatter(text(), key, value));
+  // A document's look (Issue #240). Not setFrontMatter for a file with no
+  // front matter yet: that would add marp: true and make it a deck.
+  $('#doc-look').addEventListener('change', (ev) => {
+    const value = text();
+    const dark = ev.target.value === 'dark';
+    if (!DS.parseDeck(value).frontMatter.raw) {
+      if (dark) applyText(`---\ntheme: dark\n---\n\n${value.replace(/^\n+/, '')}`);
+      return;
+    }
+    set('theme', dark ? 'dark' : null);
+  });
+  $('#deck-mode-switch').addEventListener('click', switchMode);
   $('#deck-title').addEventListener('change', (ev) => set('title', ev.target.value.trim() || null));
   $('#deck-theme').addEventListener('change', (ev) => set('theme', ev.target.value || null));
   $('#deck-size').addEventListener('change', (ev) => set('size', ev.target.value || null));
@@ -792,7 +981,9 @@ const mediaFound = new Map();   // src -> true | 'HTTP 404' | null while asking
 
 function computeProblems() {
   checkServerMedia(deck, mediaFound, computeProblems);
-  problems = deckProblems(text(), rendered, { destination: destination(), pageProtocol: location.protocol, mediaFound });
+  problems = docMode
+    ? docProblems(text(), docRendered, { destination: destination(), pageProtocol: location.protocol, mediaFound })
+    : deckProblems(text(), rendered, { destination: destination(), pageProtocol: location.protocol, mediaFound });
   renderProblems();
   markStrip();
   renderDeckSettings();
@@ -803,7 +994,7 @@ function renderProblems() {
   $('#deck-problem-count').textContent = problems.length ? `(${problems.length})` : '';
   list.replaceChildren(...(problems.length ? problems.map((p) => el('li', { class: `is-${p.severity}` },
     el('button', { type: 'button', onclick: () => { view.dispatch({ selection: { anchor: Math.min(p.offset, view.state.doc.length) }, scrollIntoView: true }); view.focus(); } },
-      `Slide ${p.slide + 1}: `), p.message)) : [el('li', { class: 'is-ok' }, 'Nothing to fix.')]));
+      docMode ? `Line ${view.state.doc.lineAt(Math.min(p.offset, view.state.doc.length)).number}: ` : `Slide ${p.slide + 1}: `), p.message)) : [el('li', { class: 'is-ok' }, 'Nothing to fix.')]));
   if (!view) return;
   const doc = view.state.doc;
   const diagnostics = problems.map((p) => {
@@ -995,6 +1186,12 @@ function addSlide() {
 }
 
 function stepPreview(dir) {
+  if (docMode) {
+    const stride = Math.round(DOC_VIEW * DOC_STEP);
+    docAt = Math.min(docMaxAt(docMetrics?.height || DOC_VIEW), Math.max(0, docAt + (dir === 'prev' ? -stride : stride)));
+    updatePreview();
+    return;
+  }
   if (!rendered) return;
   const item = previewItem();
   const pos = deckStep(item, dir, item.fragments, item.slideCount);
@@ -1211,7 +1408,7 @@ async function loadLibraryCourses() {
 async function openLibrary(id) {
   const items = await loadLibraryCourses();
   const item = items.find((i) => String(i.id) === String(id));
-  if (!item || item.type !== 'deck') throw new Error('That deck is not in the library, or you cannot see it.');
+  if (!item || (item.type !== 'deck' && item.type !== 'document')) throw new Error('That deck is not in the library, or you cannot see it.');
   const res = await fetch(item.src, { cache: 'no-cache', credentials: 'same-origin' });
   if (!res.ok) throw new Error(`Could not read that deck (HTTP ${res.status}).`);
   const value = await res.text();
@@ -1289,7 +1486,7 @@ function askPlanner(message, { timeout = 2500 } = {}) {
 
 async function openPlan(planId, itemId) {
   const reply = await askPlanner({ type: 'plan-deck-get', planId, itemId });
-  origin = { kind: 'plan', planId, itemId, name: reply.name || 'deck.md', title: reply.title || '', planTitle: reply.planTitle || '', course: reply.course || '', editable: true };
+  origin = { kind: 'plan', planId, itemId, name: reply.name || 'deck.md', title: reply.title || '', planTitle: reply.planTitle || '', course: reply.course || '', editable: true, itemType: reply.itemType || '' };
   for (const [id, data] of Object.entries(reply.pictures || {})) planPictures.set(id, data);
   return reply.markdown ?? '';
 }
@@ -1345,6 +1542,9 @@ async function start() {
     warn(`${err.message} Starting a new deck instead.`);
   }
   if (info.features.includes('library') && info.user && !libraryCourses.length) loadLibraryCourses();
+  const pinned = modeForOrigin();
+  modePinned = pinned !== null;
+  if (modePinned && pinned !== docMode) setDocMode(pinned);
   setDocument(initial);
   openedWith = initial;
   savedText = origin.kind === 'new' ? '' : initial;
@@ -1459,6 +1659,15 @@ async function saveLibrary({ force = false } = {}) {
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
     origin.version = body.item.version;
     origin.item = body.item;
+    // Switched between slides and a document here (Issue #240): the library
+    // shows it the new way too, as far as this account may change that.
+    const kind = docMode ? 'document' : 'deck';
+    if (body.item.type && body.item.type !== kind) {
+      const moved = await fetch(`/api/library/${origin.id}`, {
+        method: 'PATCH', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: kind }),
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      if (moved?.item) origin.item = moved.item;
+    }
     savedOk();
     channel?.postMessage({ type: 'deck-saved', src: body.item.src, from: 'editor' });
   } catch (err) {
@@ -1522,7 +1731,7 @@ async function savePlan() {
   saving = true;
   setSaveState('Saving into the plan…');
   try {
-    await askPlanner({ type: 'plan-deck-put', planId: origin.planId, itemId: origin.itemId, markdown: text(), title: deck.frontMatter.fields.title || '' });
+    await askPlanner({ type: 'plan-deck-put', planId: origin.planId, itemId: origin.itemId, markdown: text(), title: deck.frontMatter.fields.title || '', itemType: docMode ? 'document' : 'deck' });
     savedOk('Saved into the plan');
   } catch (err) {
     saving = false;
@@ -1578,7 +1787,7 @@ let rehearsal = null;
 function rehearsalPackage() {
   const value = planPictures.size ? text().replace(DS.ASSET_REF, (ref, id) => planPictures.get(id) || ref) : text();
   return {
-    item: { type: 'deck', title: deck.frontMatter.fields.title || origin.title || fileName(), src: origin.src || origin.item?.src || '' },
+    item: { type: docMode ? 'document' : 'deck', title: deck.frontMatter.fields.title || origin.title || fileName(), src: origin.src || origin.item?.src || '' },
     source: value,
     from: 'From the deck editor · follows your edits',
     destination: destination(),
@@ -1591,6 +1800,21 @@ function rehearse() {
 
 // Every slide, fully built, one page each - for a handout or to post after class.
 async function downloadPdf() {
+  if (docMode) {
+    if (!docRendered) return;
+    try {
+      const blob = await exportDocPdf(docRendered, {
+        title: deck.frontMatter.fields.title || docRendered.title || origin.title || 'Document',
+        onProgress: (done, total) => setSaveState(`Making the PDF: page ${done} of ${total}…`),
+      });
+      saveBlob(fileName().replace(/\.md$/, '.pdf'), blob);
+      setSaveState('PDF downloaded');
+    } catch (err) {
+      warn(`That PDF did not work: ${err.message}`);
+    }
+    setTimeout(refreshSaveState, 2500);
+    return;
+  }
   if (!rendered) return;
   try {
     const blob = await exportPdf(rendered, {

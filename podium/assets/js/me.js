@@ -234,7 +234,7 @@ function fileRow(item) {
       canQuickLook({ type: item.type })
         ? small('↗', { title: 'Quick Look: open it in a new tab, just for you', 'aria-label': `Quick Look: ${item.title}`, onclick: () => quickLookFile(fileForQuickLook(item)) })
         : null,
-      item.type === 'deck' && may.edit
+      (item.type === 'deck' || item.type === 'document') && may.edit
         ? small('✎ Edit', { 'aria-label': `Edit ${item.title}`, onclick: () => window.open(`deck.html?library=${encodeURIComponent(item.id)}`, '_blank') })
         : null,
       item.src ? el('a', { class: 'admin-small me-link', href: item.src, download: item.filename || '', 'aria-label': `Download ${item.title}` }, 'Download') : null,

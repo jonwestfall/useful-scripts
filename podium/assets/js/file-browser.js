@@ -91,7 +91,7 @@ export async function loadFiles({ server = false, isAdmin = false, manifest = 'c
 
 /** The deck editor's address for a deck, or null: the library's id, or its place on the server. */
 export function editorAddress(file) {
-  if (file.type !== 'deck') return null;
+  if (file.type !== 'deck' && file.type !== 'document') return null;
   if (file.libraryId && (file.editable || file.from === 'recent')) return `deck.html?library=${encodeURIComponent(file.libraryId)}`;
   if (file.from === 'content' && file.editable) return `deck.html?src=${encodeURIComponent(file.src)}`;
   return null;
