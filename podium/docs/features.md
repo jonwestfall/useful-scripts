@@ -49,6 +49,7 @@ The **Library** tab is where everything starts: tap a tile and it goes to the pr
 | Item type | What it is |
 | :--- | :--- |
 | **Marp deck** | A Markdown slide deck, rendered in the browser (see below). |
+| **Document** | A plain markdown page to read (a handout, a reading), scrolled rather than paged. See *Markdown Documents* below. |
 | **Picture deck** | A folder of numbered slide images (e.g. exported from PowerPoint or Keynote), stepped through like a deck. |
 | **HTML slides** | An exported web deck, paged from the controller. |
 | **PDF** | Paged, zoomable and pannable on the projector (see below). |
@@ -90,6 +91,24 @@ Podium natively renders [Marp](https://marp.app/) Markdown decks directly inside
   - **In the deck's look**: a diagram takes the slide's type and size. On a dark slide (`invert`, or a dark theme) it is drawn in Mermaid's dark theme. With gaia, uncover or a theme built on them, such as the course themes in `marp-themes/`, it uses the slide's own colours. To choose a theme yourself, use the `mermaidTheme` directive (`default`, `neutral`, `dark`, `forest` or `base`), which works like Marp's own: in the front matter for the whole deck, `<!-- mermaidTheme: dark -->` from a slide on, or `<!-- _mermaidTheme: forest -->` for one slide. A theme written at the top of the diagram itself (`%%{init: {"theme": "forest"}}%%`, or a `config: theme:` front matter, as mermaid.live writes them) wins over both.
   - **Mistakes show before class**: a diagram Mermaid cannot read shows a short explanation on its slide instead of the diagram, the deck editor lists it under *Check before class* (clicking it goes to the line Mermaid complained about), and the controller warns about it when the deck goes up. A misspelt `mermaidTheme` and an empty diagram are listed too.
   - **Other Marp tools**: the markdown is plain Marp, so the deck still opens in Marp for VS Code or marp-cli, but they show a diagram as its code unless a Mermaid plugin is installed there. A deck downloaded from the deck editor as a `.zip` carries a picture of each diagram too (see below).
+
+### Markdown Documents: A Page to Read
+
+A `.md` that is not a slide deck goes up as what it is: **one page the room reads and you scroll** (Issue #240). Use it for a reading, a handout, a syllabus or lab instructions.
+
+- **Deck or document**: a file whose front matter says `marp: true` is a Marp deck. Anything else is a document. New uploads to the library are filed by that rule. Decks already in the library stay decks, whatever they say.
+- **Switching**: any markdown can be shown either way, since the file is the same. In the planner, a deck or document item has *Show it as a document instead* / *Show it as slides instead*. In My Files it is *Show as a document* / *Show as slides* (for whoever may rename the file). Uploading a plain `.md` into a *Marp deck* item makes it a document, and says so.
+- **What it can hold**: GitHub-style markdown (tables, task lists, strikethrough, automatic links), highlighted code, `$…$` and `$$…$$` maths (KaTeX), and ```` ```mermaid ```` diagrams, drawn the same way as in decks (`mermaidTheme` in the front matter works too). Pictures by their address on the server, or `asset:` pictures kept in a lecture plan. Raw HTML is held to the same allowlist decks use: layout, never a script.
+- **Light or dark, nothing else**: documents do not take Marp or course themes. A document is light unless its front matter says `theme: dark`, and a planner item can choose either.
+- **On the display**: the page is laid out at one width (1280 px, about 70 characters a line at projector size) and scaled to the screen, so a position in it means the same on every screen. A move is a short glide the room can follow.
+- **Driving it** (the controller's **Now** tab):
+  - **Next / Previous** (the buttons, the bottom bar, a clicker, Page Down/Up) scroll most of a screen, so a line or two stays on screen for context. At the end, Next has nothing left to do.
+  - The label says which screen of how many, and which section the top of the screen is in.
+  - **Headings** jump to a section, landing just above its heading. A **scrubber** goes anywhere, and the room follows as you drag it. Dragging the Now mirror up or down scrolls the room too, as a finger would the page.
+- **Presenter notes**: HTML comments (`<!-- … -->`) are notes, as in a deck. The Now tab shows the notes in what is on screen, plus the nearest one above it, so a note at the top of a section stays while the section is up. They are never on the display, and a viewer's copy never has them.
+- **Quick Look** opens a document as a page, with its own Next/Previous, the mouse wheel, its headings and its notes.
+
+*Coming next*: Guest View reading at a student's own pace, ink that scrolls with the text (until then, ink on a document is kept per position), and a document mode in the deck editor with its exports.
 
 ### The Deck Editor (`deck.html`)
 
@@ -492,7 +511,7 @@ The **Plan** page (`plan.html`) is designed for your office computer:
 - Upload files straight to the server library from an item 🖥️, and start a new lecture from your course's **template** 🖥️.
 - **On a self-hosted server, lectures save themselves to the server** as you work (Issue #204), the same way they already save in your browser. The left column says *Saved to the server* and who it's shared with: the course you typed, if the server has it, or *yours alone*. The lecture is then on the iPad in class with no file to carry. A brand-new lecture saves once it has a title or something in it.
 - **One list**: your lectures in this browser and the ones on the server are one list, each row saying where it lives. A lecture saved from another device, or by a co-instructor, shows as *on the server only*; tap it to open it here.
-- **Choose from the server** (Issue #241): a deck, PDF, picture, picture deck, video or audio item has *Choose from the server…*, so a file already on the server goes in without typing its path. It lists, in this order:
+- **Choose from the server** (Issue #241): a deck, document, PDF, picture, picture deck, video or audio item has *Choose from the server…*, so a file already on the server goes in without typing its path. It lists, in this order:
   - **Recent in the deck editor**: the decks you opened or saved there lately (on a server with accounts), so the deck you just made is first;
   - **the library**, by class: everything you can see, with ✎ on a deck you may edit;
   - **On the server (content/)**: the shared library every controller shows, and for an administrator the decks in `content/decks`.

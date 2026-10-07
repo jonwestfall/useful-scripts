@@ -147,7 +147,7 @@ const KIOSK_OPEN_PATHS = new Set([
   '/display.html', '/config.json', '/manifest-display.webmanifest',
   '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
-  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-source.js', '/assets/js/duration-probe.js',
+  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/duration-probe.js',
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js',
 ]);
 
@@ -162,7 +162,7 @@ const VIEW_OPEN_PATHS = new Set([
   '/view.html',
   '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
-  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-source.js', '/assets/js/duration-probe.js',
+  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/duration-probe.js',
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js',
 ]);
 for (const openPath of VIEW_OPEN_PATHS) AUTH_OPEN_PATHS.add(openPath);
@@ -732,7 +732,7 @@ function serveMedia(req, res, url) {
   // current text gets a 304 and one holding an older version gets the new one.
   if (sha256 === 'deck') {
     const item = library.getItem(db, user, url.pathname.split('/')[3]);
-    if (!item || item.type !== 'deck' || !item.version) { res.writeHead(404); res.end('not found'); return; }
+    if (!item || !library.isMarkdownKind(item.type) || !item.version) { res.writeHead(404); res.end('not found'); return; }
     sha256 = item.version;
   }
   if (!/^[0-9a-f]{64}$/.test(sha256)) { res.writeHead(404); res.end('not found'); return; }

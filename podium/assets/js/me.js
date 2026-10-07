@@ -239,6 +239,13 @@ function fileRow(item) {
         : null,
       item.src ? el('a', { class: 'admin-small me-link', href: item.src, download: item.filename || '', 'aria-label': `Download ${item.title}` }, 'Download') : null,
       may.rename ? small('Rename', { 'aria-label': `Rename ${item.title}`, onclick: () => renameFile(item) }) : null,
+      // A .md shown as slides or as a page to read (Issue #240): the same file.
+      may.rename && (item.type === 'deck' || item.type === 'document')
+        ? small(item.type === 'deck' ? 'Show as a document' : 'Show as slides', {
+          title: item.type === 'deck' ? 'One page the room scrolls through, rather than slides' : 'Slides, split at every ---, rather than one page',
+          onclick: () => switchKind(item),
+        })
+        : null,
       may.move ? small('Move to…', { 'aria-label': `Move ${item.title}`, onclick: () => moveFiles([item]) }) : null,
       may.delete ? small('Delete', { class: 'admin-small is-bad', 'aria-label': `Delete ${item.title}`, onclick: () => deleteFiles([item]) }) : null));
 }
@@ -280,6 +287,15 @@ async function renameFile(item) {
     note('#files-note', `Renamed to “${title.trim()}”.`);
     await loadFiles();
   } catch (err) { note('#files-note', `That was not renamed: ${err.message}`, true); }
+}
+
+async function switchKind(item) {
+  const type = item.type === 'deck' ? 'document' : 'deck';
+  try {
+    await api(`/api/library/${item.id}`, { method: 'PATCH', body: { type } });
+    note('#files-note', `“${item.title}” is now ${type === 'deck' ? 'a slide deck' : 'a document'}.`);
+    await loadFiles();
+  } catch (err) { note('#files-note', `That did not change: ${err.message}`, true); }
 }
 
 async function moveFiles(items) {

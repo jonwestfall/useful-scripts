@@ -299,6 +299,16 @@ function describe(deck) {
  * plan on a setup with no server. Whatever shows the deck swaps each for the
  * picture's bytes before Marp sees it.
  */
+/**
+ * Whether a .md is a Marp deck or a document to read (Issue #240): its front
+ * matter says `marp: true`. Anything else - no front matter, `marp: false`,
+ * a `marp:` buried in the text - is a document.
+ */
+export function isMarpDeck(md) {
+  const fm = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(String(md || ''));
+  return !!fm && /^marp[ \t]*:[ \t]*(?:true|["']true["'])[ \t]*(?:#.*)?$/mi.test(fm[1]);
+}
+
 export const ASSET_REF = /asset:([\w-]{1,64})/g;
 export function assetRefsIn(md) {
   return [...new Set(Array.from(String(md ?? '').matchAll(ASSET_REF), (m) => m[1]))];

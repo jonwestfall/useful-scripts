@@ -15,6 +15,7 @@ import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
 import { assetRefsIn, ASSET_REF } from './deck-source.js';
+import { docTitle, notesInView, headingAt, headingAtTop, docMaxAt, DOC_WIDTH, DOC_VIEW, DOC_STEP } from './doc.js';
 import { openQuickLook, canQuickLook } from './quicklook-open.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
 import { mountSessionBadge, serverInfo } from './server.js';
@@ -265,7 +266,7 @@ function quickLookOf(item) {
   };
   return (async () => {
     const pkg = { item: resolveAssets(item), from: 'From the controller' };
-    if (item.type === 'deck') {
+    if (item.type === 'deck' || item.type === 'document') {
       const source = await getDeckSource(item);
       if (source != null) pkg.source = String(source).replace(ASSET_REF, bytes);
     }
@@ -309,6 +310,107 @@ async function stageDeck({ source, name, src, slide = 0 }) {
     videoSlides: videoSlides(deck),
   });
   return deck;
+}
+
+// --- documents (Issue #240) ----------------------------------------------------
+//
+// A markdown document goes up as one page the room scrolls through. Where its
+// headings and presenter notes fall is only known once a copy of it is laid
+// out, so whichever mirror of it here lays it out first reports it, keyed by
+// the document's content and look; and the page's height is measured before
+// it is staged, so Next knows where the end is from the first press.
+const docMetrics = new Map();
+const docMetricsKey = (item) => `${item?.deckId || ''}|${item?.look || ''}`;
+
+function docMeasured(item, metrics, rendered) {
+  if (item?.type !== 'document' || !item.deckId || !metrics) return;
+  docMetrics.set(docMetricsKey(item), { ...metrics, rendered });
+  // Its pictures arriving changed the page's height: tell every copy of it.
+  const showing = [state.program, state.preview, ...(state.panels || [])]
+    .some((it) => it?.type === 'document' && it.deckId === item.deckId && Math.abs((it.height || 0) - metrics.height) > 4);
+  if (showing) send({ op: 'doc-height', deckId: item.deckId, height: metrics.height });
+  renderNow();
+}
+
+/** Lay a document out off screen once, to learn its height before it goes up. */
+function measureDocOffscreen(item, timeoutMs = 8000) {
+  const known = docMetrics.get(docMetricsKey(item));
+  if (known) return Promise.resolve(known);
+  return new Promise((resolve) => {
+    const host = el('div', { 'aria-hidden': 'true', style: 'position:fixed;left:-30000px;top:0;width:1280px;height:720px;visibility:hidden;pointer-events:none' });
+    document.body.append(host);
+    let renderer = null;
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      // A moment more for its pictures, whose sizes change the page.
+      setTimeout(() => { resolve(docMetrics.get(docMetricsKey(item)) || value); renderer?.destroy(); host.remove(); }, value ? 400 : 0);
+    };
+    const timer = setTimeout(() => done(null), timeoutMs);
+    renderer = createRenderer(resolveAssets(item), {
+      preview: true, getDeckSource, resolveAssets,
+      onMeasure: (m, r) => { docMeasured(item, m, r); done({ ...m, rendered: r }); },
+    });
+    host.append(renderer.el);
+  });
+}
+
+async function stageDocument({ source, name, src, look = '', at = 0 }) {
+  const id = src ? await srcDeckId(src, source) : await deckId(source);
+  deckStore.set(id, source);
+  const probe = { type: 'document', deckId: id, src, look };
+  if (!src) bus?.send({ t: 'deck', id, source });
+  for (const asset of assetRefsIn(source)) pushAssetIfHeld(assetRef(asset));
+  const metrics = await measureDocOffscreen(probe);
+  stage({
+    type: 'document',
+    title: docTitle(source, name || 'Document'),
+    deckId: id,
+    src,
+    look,
+    height: metrics?.height || DOC_VIEW,
+    at,
+  });
+}
+
+/** What the Now tab says about a document on screen: which screen, and under which heading. */
+function docWhere(item) {
+  const height = item.height || DOC_VIEW;
+  const stride = Math.round(DOC_VIEW * DOC_STEP);
+  const screens = Math.max(1, Math.ceil(docMaxAt(height) / stride) + 1);
+  const screen = Math.min(screens, Math.round((item.at || 0) / stride) + 1);
+  const heading = headingAtTop(docMetrics.get(docMetricsKey(item))?.headings, item.at);
+  return `Screen ${screen} of ${screens}${heading ? ` · ${heading.text}` : ''}`;
+}
+
+function renderDocControls(item) {
+  const isDoc = item?.type === 'document';
+  $('#doc-tools').hidden = !isDoc;
+  if (!isDoc) return;
+  const metrics = docMetrics.get(docMetricsKey(item));
+  const max = docMaxAt(item.height);
+  const scrub = $('#doc-scrub');
+  scrub.max = String(max);
+  scrub.disabled = !max;
+  if (document.activeElement !== scrub) scrub.value = String(item.at || 0);
+  const top = headingAtTop(metrics?.headings, item.at);
+  const headingsKey = `${docMetricsKey(item)}:${metrics?.headings?.length || 0}`;
+  const list = $('#doc-headings');
+  if (list.dataset.key !== headingsKey) {
+    list.dataset.key = headingsKey;
+    list.replaceChildren(...(metrics?.headings?.length ? metrics.headings.map((h, i) => el('button', {
+      type: 'button', class: `doc-heading doc-heading-${Math.min(h.level, 4)}`, 'data-heading': String(i),
+      onclick: () => send({ op: 'nav', dir: 'goto', value: headingAt(h, item.height) }),
+    }, h.text)) : [el('span', { class: 'hint' }, metrics ? 'No headings in this document.' : 'Reading the document…')]));
+  }
+  list.querySelectorAll('.doc-heading').forEach((b, i) => b.classList.toggle('is-on', metrics?.headings?.[i] === top));
+  const notes = metrics ? notesInView(metrics.notes, item.at) : [];
+  const notesEl = $('#doc-notes');
+  if (notes.length) notesEl.innerHTML = notes.map((n) => miniMarkdown(n.text)).join('<hr>');
+  else notesEl.textContent = metrics ? 'No notes for this part.' : 'Reading the document…';
+  notesEl.classList.toggle('is-empty', !notes.length);
 }
 
 // --- library ----------------------------------------------------------------
@@ -684,12 +786,14 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
   }
 
   for (const row of plan.items) {
-    if (row.type !== 'deck' || !row.asset) continue;
+    if ((row.type !== 'deck' && row.type !== 'document') || !row.asset) continue;
     const source = plan.assets?.[row.asset]?.data;
     if (typeof source !== 'string') continue;
     const id = await deckId(source);
     deckStore.set(id, source);
     row.deckId = id;
+    // A document (Issue #240) is measured when it is picked.
+    if (row.type === 'document') continue;
     try {
       const deck = await renderDeckSource(source, id);
       row.slideCount = deck.count;
@@ -1076,6 +1180,7 @@ async function pick(item, where = 'auto') {
   // tab's composer does. Tapping it in the Library loads that composer rather
   // than trying to stage an item protocol.js would reject for missing fields.
   if (item.type === 'poll') { openPollDraftFromPlan(item); return; }
+  if (item.type === 'document' && !(item.deckId && item.height)) { await pickDocument(item, where); return; }
   if (item.type !== 'deck' || item.slideCount) { stage(item, where); followToTab(item, where); return; }
   // A click handler can't be awaited by whatever dispatched it, so the
   // moment this returns control (at the first await below), the pad's own
@@ -1105,6 +1210,21 @@ async function pick(item, where = 'auto') {
   }
 }
 
+// A document from the library (Issue #240): fetched fresh, as a deck is, and
+// measured before it goes up.
+async function pickDocument(item, where) {
+  const note = $('#deck-file-note');
+  note.textContent = `Loading ${item.title || 'document'}…`;
+  try {
+    const source = item.deckId ? await getDeckSource(item) : (await loadServerDeck(item.src)).source;
+    await stageDocument({ source, name: item.title, src: item.src, look: item.look || '' });
+    note.textContent = '';
+    followToTab(item, where);
+  } catch (err) {
+    note.textContent = `Could not open that document: ${err.message}`;
+  }
+}
+
 // Issue #185: something picked in the Library is almost always followed by
 // controlling it, so the controller goes to the tab that does - a deck to
 // Slides, anything paged or played to Now (its paging, zoom and transport
@@ -1116,7 +1236,7 @@ async function pick(item, where = 'auto') {
 // preference, on unless turned off in Settings -> Presentation.
 const TAB_FOR_TYPE = {
   deck: 'slides',
-  imagedeck: 'now', pdf: 'now', slides: 'now', web: 'now',
+  imagedeck: 'now', pdf: 'now', slides: 'now', web: 'now', document: 'now',
   video: 'now', audio: 'now', youtube: 'now',
   whiteboard: 'ink', timer: 'timer', camera: 'camera',
 };
@@ -1196,7 +1316,7 @@ function renderPreview() {
     holder.replaceChildren();
     previewKey = key;
     if (item) {
-      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) });
+      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, onMeasure: (m, r) => docMeasured(item, m, r), resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) });
       holder.append(previewRenderer.el);
     }
   } else if (previewRenderer && item) {
@@ -1835,7 +1955,14 @@ function renderSlides() {
   const recalled = !!view?.recalled;
   $('#deck-none').hidden = !!item;
   $('#deck-live').hidden = !item;
-  if (!item) { $('#bar-prev').disabled = true; $('#bar-next').disabled = true; return; }
+  if (!item) {
+    // A document (Issue #240) pages from the bar too: Next and Previous scroll it.
+    const doc = workItem();
+    const isDoc = doc?.type === 'document';
+    $('#bar-prev').disabled = !isDoc || !(doc.at > 0);
+    $('#bar-next').disabled = !isDoc || (doc.at || 0) >= docMaxAt(doc.height);
+    return;
+  }
 
   $('#deck-title').textContent = itemTitle(item);
   $('#deck-edited').hidden = recalled || !editedDeckId || editedDeckId !== item.deckId;
@@ -2572,7 +2699,7 @@ function renderNow() {
       b.setAttribute('aria-pressed', String(on));
     });
   }
-  const isPaged = ['pdf', 'slides', 'web', 'deck', 'imagedeck'].includes(type);
+  const isPaged = ['pdf', 'slides', 'web', 'deck', 'imagedeck', 'document'].includes(type);
 
   $('#now-title').textContent = itemTitle(item);
   $('#now-type').textContent = TYPES[type]?.label || type || '';
@@ -2581,7 +2708,16 @@ function renderNow() {
   $('#page-label').textContent = type === 'pdf'
     ? `Page ${item.page || 1}`
     : type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}`
-      : type === 'imagedeck' ? `Slide ${(item.slide || 0) + 1} / ${item.images?.length || 0}` : 'Slide';
+      : type === 'imagedeck' ? `Slide ${(item.slide || 0) + 1} / ${item.images?.length || 0}`
+        : type === 'document' ? docWhere(item) : 'Slide';
+  if (type === 'document') {
+    $('#prev-page').disabled = !(item.at > 0);
+    $('#next-page').disabled = (item.at || 0) >= docMaxAt(item.height);
+  } else {
+    $('#prev-page').disabled = false;
+    $('#next-page').disabled = false;
+  }
+  renderDocControls(item);
 
   $('#pdf-zoom').hidden = type !== 'pdf';
   $('#pdf-pan').hidden = type !== 'pdf';
@@ -3697,7 +3833,7 @@ function createLiveMirror(container) {
       renderer?.destroy();
       frame.replaceChildren();
       mountedKey = key;
-      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) }) : null;
+      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, onMeasure: (m, r) => docMeasured(item, m, r), resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) }) : null;
       if (renderer) frame.append(renderer.el);
     } else {
       renderer?.update(resolveAssets(item));
@@ -3816,7 +3952,7 @@ function updatePadMirror() {
     padMirrorRenderer?.destroy();
     padMirror.replaceChildren();
     padMirrorKey = key;
-    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) }) : null;
+    padMirrorRenderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, onMeasure: (m, r) => docMeasured(item, m, r), resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId) }) : null;
     if (padMirrorRenderer) padMirror.append(padMirrorRenderer.el);
   } else {
     padMirrorRenderer?.update(resolveAssets(item));
@@ -5933,6 +6069,36 @@ $('#pdf-upload').addEventListener('change', async (ev) => {
 
 $('#prev-page').addEventListener('click', () => send({ op: 'nav', dir: 'prev' }));
 $('#next-page').addEventListener('click', () => send({ op: 'nav', dir: 'next' }));
+const sendDocScrub = throttle((value) => send({ op: 'nav', dir: 'goto', value }), 120);
+
+// Dragging the Now mirror scrolls a document (Issue #240), as a finger would
+// the page - only what the room is looking at, never a cue behind it.
+{
+  const mirror = $('#now-preview');
+  let drag = null;
+  mirror.addEventListener('pointerdown', (ev) => {
+    const live = focusedItem(state);
+    if (live?.type !== 'document' || workItem() !== live) return;
+    const frame = mirror.querySelector('.mirror-frame') || mirror;
+    const scale = Math.min(frame.clientWidth / DOC_WIDTH, frame.clientHeight / DOC_VIEW) || 1;
+    drag = { y: ev.clientY, at: live.at || 0, height: live.height, scale };
+    mirror.setPointerCapture?.(ev.pointerId);
+    ev.preventDefault();
+  });
+  const target = (ev) => Math.min(docMaxAt(drag.height), Math.max(0, Math.round(drag.at - (ev.clientY - drag.y) / drag.scale)));
+  mirror.addEventListener('pointermove', (ev) => { if (drag) sendDocScrub(target(ev)); });
+  const end = (ev) => {
+    if (!drag) return;
+    send({ op: 'nav', dir: 'goto', value: target(ev) });
+    drag = null;
+  };
+  mirror.addEventListener('pointerup', end);
+  mirror.addEventListener('pointercancel', () => { drag = null; });
+}
+
+// A document's scrubber (Issue #240): the room follows as it is dragged.
+$('#doc-scrub').addEventListener('input', (ev) => sendDocScrub(Number(ev.target.value)));
+$('#doc-scrub').addEventListener('change', (ev) => send({ op: 'nav', dir: 'goto', value: Number(ev.target.value) }));
 
 // Zooming into a PDF page on the projector (Issue #82) - distinct from the
 // Ink tab's own pad zoom, which only changes what you see while drawing and

@@ -22,6 +22,7 @@ import { el, miniMarkdown, fmtTime } from './util.js';
 import { parseStreamSource, streamLabel } from './protocol.js';
 import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
 import { ASSET_REF } from './deck-source.js';
+import { renderDoc, measureDoc, DOC_WIDTH, DOC_VIEW } from './doc.js';
 import { BLANK_PIXEL } from './assets.js';
 
 export const TYPES = {
@@ -34,6 +35,7 @@ export const TYPES = {
   web:        { label: 'Web page',   icon: '\u{1F310}' },
   slides:     { label: 'Slides',     icon: '\u{1F4D1}' },
   deck:       { label: 'Marp deck',  icon: '\u{1F4D6}' },
+  document:   { label: 'Document',   icon: '\u{1F4C3}' },
   imagedeck:  { label: 'Picture deck', icon: '\u{1F39E}' },
   pdf:        { label: 'PDF',        icon: '\u{1F4C4}' },
   text:       { label: 'Big text',   icon: 'T' },
@@ -1625,6 +1627,150 @@ function renderStream(item, opts) {
   };
 }
 
+// A markdown document (Issue #240): one page laid out at DOC_WIDTH and scaled
+// to the screen - by its width, or by a 16:9 window's height on a screen
+// wider than that - and scrolled to `at`, the y of the top of what the room
+// sees, in the page's own pixels. A move is a short glide the room can
+// follow, never a jump.
+function renderDocument(item, opts) {
+  const host = el('div', { class: 'r-doc' });
+  const shadow = host.attachShadow({ mode: 'open' });
+  shadow.innerHTML = `<style>
+    :host { display: block; position: absolute; inset: 0; overflow: hidden; background: #ffffff; }
+    :host(.is-dark) { background: #14181d; }
+    #view { position: absolute; left: 0; top: 0; width: ${DOC_WIDTH}px; transform-origin: 0 0; }
+    #view.is-gliding { transition: transform .45s cubic-bezier(.2, .7, .2, 1); }
+    #status {
+      position: absolute; inset: 0; display: grid; place-items: center; padding: 4%;
+      font: 16px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #556; background: #fff; text-align: center; white-space: pre-wrap;
+    }
+    #status[hidden] { display: none; }
+  </style><style id="doc-css"></style><div id="view"></div><div id="status">Loading document…</div>`;
+  const view = shadow.getElementById('view');
+  const cssEl = shadow.getElementById('doc-css');
+  const statusEl = shadow.getElementById('status');
+  let rendered = null;
+  let mountedKey = null;
+  let generation = 0;
+  let failedAt = 0;
+  let at = 0;
+  let scale = 1;
+  let left = 0;
+  let metrics = null;
+
+  const setStatus = (text) => {
+    statusEl.textContent = text || '';
+    statusEl.hidden = !text;
+  };
+  const keyOf = (it) => `${it.deckId || it.src || ''}|${it.look || ''}`;
+
+  function place(glide) {
+    view.classList.toggle('is-gliding', !!glide);
+    view.style.transform = `translate(${left}px, ${-at * scale}px) scale(${scale})`;
+  }
+  function fit() {
+    const w = host.clientWidth || DOC_WIDTH;
+    const h = host.clientHeight || DOC_VIEW;
+    scale = Math.min(w / DOC_WIDTH, h / DOC_VIEW) || 1;
+    left = Math.max(0, (w - DOC_WIDTH * scale) / 2);
+    place(false);
+  }
+  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
+  resize?.observe(host);
+
+  let missingAssets = [];
+  const resolved = (ref) => {
+    const got = opts.resolveAssets?.({ src: ref })?.src;
+    return got && got !== ref && got !== BLANK_PIXEL ? got : null;
+  };
+  function withAssets(source) {
+    missingAssets = [];
+    if (!opts.resolveAssets || !source.includes('asset:')) return source;
+    return source.replace(ASSET_REF, (ref) => {
+      const got = resolved(ref);
+      if (!got) { missingAssets.push(ref); return BLANK_PIXEL; }
+      return got;
+    });
+  }
+
+  // Measured once the page is laid out, and again once its pictures have
+  // arrived (a picture with no size given grows the page when it loads).
+  function remeasure() {
+    const page = view.querySelector('.podium-doc');
+    if (!page || !rendered) return;
+    metrics = measureDoc(page, rendered);
+    opts.onMeasure?.(metrics, rendered);
+  }
+
+  async function mount(it) {
+    const mine = ++generation;
+    let source;
+    try {
+      source = await opts.getDeckSource?.(it);
+    } catch (err) {
+      setStatus(`Could not load the document.\n${err.message}`);
+      return;
+    }
+    if (mine !== generation) return;
+    if (source == null) { setStatus('Waiting for the document…'); return; }
+    try {
+      const drawn = withAssets(source);
+      const doc = await renderDoc(drawn, drawn === source ? it.deckId : undefined, { look: it.look });
+      if (mine !== generation) return;
+      rendered = doc;
+      cssEl.textContent = doc.css;
+      view.innerHTML = doc.html;
+      host.classList.toggle('is-dark', doc.look === 'dark');
+      mountedKey = keyOf(it);
+      at = Number(it.at) || 0;
+      fit();
+      setStatus('');
+      remeasure();
+      const pictures = Array.from(view.querySelectorAll('img')).filter((img) => !img.complete);
+      if (pictures.length) {
+        Promise.all(pictures.map((img) => new Promise((done) => {
+          img.addEventListener('load', done, { once: true });
+          img.addEventListener('error', done, { once: true });
+        }))).then(() => { if (mine === generation) remeasure(); });
+      }
+      opts.onReady?.();
+    } catch (err) {
+      failedAt = Date.now();
+      setStatus(`This document could not be shown.\n${err.message}\nTrying again in a moment…`);
+    }
+  }
+
+  mount(item);
+
+  return {
+    el: host,
+    update(it) {
+      if (missingAssets.length && keyOf(it) === mountedKey && missingAssets.some(resolved)) { mount(it); return; }
+      if (keyOf(it) !== mountedKey) {
+        if (Date.now() - failedAt < 4000) return;
+        mount(it);
+        return;
+      }
+      const next = Number(it.at) || 0;
+      if (next !== at) { at = next; place(true); }
+    },
+    reconcile() {},
+    telemetry: noTelemetry,
+    /** Where everything is in the page, once it is laid out (or null). */
+    measure: () => metrics,
+    /** The page as rendered: outline, notes, title. */
+    rendered: () => rendered,
+    // Ink spans the whole screen until it is pinned to the text (phase 2).
+    contentAspect: () => null,
+    destroy() {
+      generation++;
+      resize?.disconnect();
+      host.remove();
+    },
+  };
+}
+
 const FACTORIES = {
   black: renderBlack,
   image: renderImage,
@@ -1635,6 +1781,7 @@ const FACTORIES = {
   web: renderWeb,
   slides: renderWeb,
   deck: renderDeck,
+  document: renderDocument,
   imagedeck: renderImageDeck,
   pdf: renderPdf,
   text: renderText,

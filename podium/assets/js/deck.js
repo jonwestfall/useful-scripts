@@ -14,15 +14,15 @@ import { drawDiagrams, DIAGRAM_CSS } from './deck-mermaid.js';
 // What an `asset:` picture this device has not been given is drawn as (Issue
 // #226) - the same blank as assets.js's, rather than an address no browser
 // can load. Whoever shows a deck swaps in the real ones first.
-const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+export const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
-const MARP_URL = new URL('../vendor/marp.esm.js', import.meta.url).href;
+export const MARP_URL = new URL('../vendor/marp.esm.js', import.meta.url).href;
 const THEMES_MANIFEST = 'marp-themes/themes.json';
 
 // Raw HTML in markdown is allowed, but only as layout. This is what makes the
 // theme's `.columns` / `.callout` helpers work without letting a stray <script>
 // in a downloaded deck run on the projector.
-const HTML_ALLOWLIST = {
+export const HTML_ALLOWLIST = {
   div: ['class', 'style', 'id'],
   span: ['class', 'style'],
   p: ['class', 'style'],

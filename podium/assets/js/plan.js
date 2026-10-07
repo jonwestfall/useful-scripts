@@ -20,7 +20,8 @@ import {
 } from './store.js';
 import { createRenderer } from './renderers.js';
 import { render as renderDeckSource, frontMatterTitle, describeBuild, deckLocation } from './deck.js';
-import { assetRefsIn, ASSET_REF } from './deck-source.js';
+import { assetRefsIn, ASSET_REF, isMarpDeck } from './deck-source.js';
+import { docTitle } from './doc.js';
 import { openQuickLook, canQuickLook } from './quicklook-open.js';
 import { openFileBrowser } from './file-browser.js';
 import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS, deckStep } from './protocol.js';
@@ -723,6 +724,23 @@ function renderEditor() {
     }),
   }, 'Choose from the server…'), 'Something already in the library or on the server - just made in the deck editor, say - without typing its path.'));
   if (item.type === 'deck') fields.append(deckEditorField(item));
+  // Any markdown item can be shown either way (Issue #240): the file is the
+  // same, only how it goes up changes.
+  if (item.type === 'deck' || item.type === 'document') {
+    const toDoc = item.type === 'deck';
+    fields.append(field('Shown as', el('button', {
+      type: 'button',
+      onclick: () => {
+        item.type = toDoc ? 'document' : 'deck';
+        touch();
+        renderOrder();
+        renderEditor();
+        renderPreview({ remount: true });
+      },
+    }, toDoc ? 'Show it as a document instead' : 'Show it as slides instead'), toDoc
+      ? 'Slides now. A document is one page the room scrolls through, for a reading or a handout.'
+      : 'A document now. Slides split the file at every ---, styled by its Marp theme.'));
+  }
   if (canQuickLook(itemForStage(item))) {
     fields.append(field('Quick Look', el('button', { type: 'button', onclick: () => openQuickLook(quickLookOf(item)) }, '↗ Quick Look'),
       item.type === 'deck'
@@ -1047,9 +1065,20 @@ function uploadField(item, spec) {
         plan.assets[id] = { name: file.name, mime: file.type || 'text/markdown', data: text };
         item[spec.key] = id;
         item.src = '';
+        // Deck or document (Issue #240): `marp: true` decides, whichever of
+        // the two this item started as. The switch below turns it back.
+        let switched = '';
+        if ((item.type === 'deck' || item.type === 'document') && isMarpDeck(text) !== (item.type === 'deck')) {
+          item.type = isMarpDeck(text) ? 'deck' : 'document';
+          switched = item.type === 'deck' ? 'It starts with marp: true, so it is a slide deck.' : 'It has no marp: true at the top, so it is a document to read rather than slides.';
+        }
         // A deck names itself in its front matter; use that rather than making
         // you retype it, and only when you have not titled it yourself.
-        if (!item.title) item.title = frontMatterTitle(text, file.name.replace(/\.[^.]+$/, ''));
+        if (!item.title) {
+          const fallback = file.name.replace(/\.[^.]+$/, '');
+          item.title = item.type === 'document' ? docTitle(text, fallback) : frontMatterTitle(text, fallback);
+        }
+        if (switched) setTimeout(() => warn(switched), 0);
         touch();
         renderOrder();
         renderEditor();
@@ -1225,7 +1254,7 @@ function previewDeckSource(item) {
 // --- choosing from the server (Issue #241) ------------------------------------
 
 // The item types a file on the server can fill.
-const FROM_SERVER = new Set(['deck', 'pdf', 'image', 'imagedeck', 'video', 'audio']);
+const FROM_SERVER = new Set(['deck', 'document', 'pdf', 'image', 'imagedeck', 'video', 'audio']);
 
 /** Point an item at a file on the server, in place of whatever it had. */
 function applyServerFile(item, file) {
@@ -1236,7 +1265,7 @@ function applyServerFile(item, file) {
     item.images = (file.images?.length ? file.images : [file.src]).join('\n');
   } else {
     item.src = file.src;
-    if (item.type === 'deck') delete item.asset;
+    if (item.type === 'deck' || item.type === 'document') delete item.asset;
   }
   if (!String(item.title || '').trim()) item.title = file.title;
 }
@@ -1286,7 +1315,7 @@ function quickLookOf(item) {
   const bytes = (ref, id) => plan.assets[id]?.data || ref;
   const id = assetIdOf(staged.src);
   const pkg = { item: id ? { ...staged, src: plan.assets[id]?.data || '' } : staged, from: `From the lecture plan${plan.title ? ` · ${plan.title}` : ''}` };
-  if (item.type === 'deck' && item.asset) {
+  if ((item.type === 'deck' || item.type === 'document') && item.asset) {
     pkg.item = { ...staged, src: '' };
     pkg.source = String(plan.assets[item.asset]?.data || '').replace(ASSET_REF, bytes);
     pkg.destination = 'plan';
@@ -1300,6 +1329,9 @@ function forPreview(item) {
   const staged = itemForStage(item);
   if (item.type === 'deck') {
     return { ...staged, deckId: `${item.asset ? `asset:${item.asset}` : `src:${item.src}`}#e${deckEpoch}`, slide: preview.slide, step: preview.step };
+  }
+  if (item.type === 'document') {
+    return { ...staged, deckId: `${item.asset ? `asset:${item.asset}` : `src:${item.src}`}#e${deckEpoch}`, at: preview.at || 0 };
   }
   if (item.type === 'timer') return { ...staged, timerId: item.timerId || plan.timers[0]?.id || '', label: item.label || '' };
   const id = assetIdOf(staged.src);

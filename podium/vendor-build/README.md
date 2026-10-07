@@ -15,6 +15,13 @@ npm install
 npm run build
 ```
 
+It also re-exports the markdown-it, KaTeX (with its stylesheet) and HTML filter
+marp-core already carries, for markdown documents (Issue #240, `assets/js/doc.js`).
+They come through `shared-cjs.cjs`, so the bundle reuses marp-core's own CommonJS
+copies instead of adding their ES module builds beside them; that costs about
+24 KB, KaTeX's CSS. Code in a document is highlighted by a Marp instance's own
+`highlightjs`.
+
 Two things are trimmed to keep it near a megabyte instead of four:
 
 - **MathJax is stubbed.** Podium renders math with KaTeX, which is bundled. A deck
