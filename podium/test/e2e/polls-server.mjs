@@ -1428,7 +1428,9 @@ ok(`on a server, the Course field is a dropdown of classes to file under (Issue 
 await planner.selectOption('#plan-course-pick', 'psy415');
 await planner.waitForFunction(() => /Saved to the server.*shared with psy415/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
 ok(`it saves itself to the server, and says where it went ("${(await syncText()).trim()}")`, true);
-ok('and the list says it lives there', /on the server/.test(await planner.textContent('#plan-list .plan-row.is-on')));
+ok('and the list says it lives there', await planner.waitForFunction(
+  () => /on the server/.test(document.querySelector('#plan-list .plan-row.is-on')?.textContent || ''), null, { timeout: 5000 },
+).then(() => true, () => false));
 
 // And in class. Opening the Library tab is what re-reads the list, which is
 // the point: this controller was already open before the plan was saved, and

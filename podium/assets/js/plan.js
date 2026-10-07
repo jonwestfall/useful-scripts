@@ -173,10 +173,15 @@ async function lectureRows() {
   return [...local, ...remote];
 }
 
+// Each render reads storage first, so two can be in flight at once - only the
+// newest one draws, or an older read finishing late puts stale rows back.
+let planListRender = 0;
 async function renderPlanList() {
   const list = $('#plan-list');
+  const mine = ++planListRender;
   let rows;
   try { rows = await lectureRows(); } catch (err) { warn(err.message); return; }
+  if (mine !== planListRender) return;
   const shown = rows.filter((r) => !r.archived);
   list.replaceChildren(...shown.map((r) => el('div', { class: 'plan-row-wrap' },
     el('button', {
