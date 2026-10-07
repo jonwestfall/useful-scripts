@@ -10,12 +10,62 @@
 //
 // The PDF is each slide fully built, as the room sees it, one page each - for
 // handouts and for posting after class.
+//
+// A ```mermaid diagram (Issue #235) goes out as both: its code stays in the
+// markdown, which is what Podium draws it from, and a picture of it as
+// Podium drew it goes beside it in media/diagrams/ (an .svg and a .png),
+// named in a comment after the code - for a Marp tool that cannot draw
+// diagrams, and for anyone who wants the picture itself. Coming back in, the
+// pictures and their comments are left behind: the code is the diagram.
 
 import { createZip, readZip } from './zip.js';
 import { createPdf } from './pdf-writer.js';
 import { applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
 import { svgToImage } from './renderers.js';
-import { parseDeck } from './deck-source.js';
+import { parseDeck, mermaidFences } from './deck-source.js';
+
+const DIAGRAM_DIR = 'media/diagrams/';
+// A picture-of-a-diagram comment that an export wrote, on a line of its own.
+const DIAGRAM_NOTE = /^[ \t]*<!--\s*diagram:\s*media\/diagrams\/[^\s>]*\s*-->[ \t]*(?:\r?\n|$)/gm;
+
+/** The markdown with every picture-of-a-diagram comment an export added taken out. */
+export function stripDiagramNotes(md) {
+  return String(md).replace(DIAGRAM_NOTE, '');
+}
+
+/**
+ * Name a picture after each ```mermaid block, in a comment on the line after
+ * it: `names[k]` for the k-th block in the deck (null for none). An earlier
+ * export's comments are replaced, not added to.
+ */
+export function noteDiagramPictures(md, names) {
+  const text = stripDiagramNotes(md);
+  const fences = mermaidFences(text);
+  let out = '';
+  let at = 0;
+  fences.forEach((fence, k) => {
+    if (fence.end === null || !names[k]) return;
+    out += text.slice(at, fence.end);
+    // A block that is the last thing in the file may have no newline of its own.
+    if (!/\n$/.test(out)) out += '\n';
+    out += `<!-- diagram: ${names[k]} -->\n`;
+    at = fence.end;
+  });
+  return out + text.slice(at);
+}
+
+/** A diagram's SVG as a PNG, at twice its drawn size so it stays sharp on a slide. */
+async function diagramPng({ svg, width, height }) {
+  const img = new Image();
+  img.decoding = 'sync';
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  await img.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * 2));
+  canvas.height = Math.max(1, Math.round(height * 2));
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('no PNG'))), 'image/png'));
+}
 
 /** Every picture and video a deck points at, once each, in order. */
 export function mediaRefs(md) {
@@ -52,10 +102,11 @@ function baseName(src) {
  * @param {object} opts
  * @param {string} opts.name - the .md file's name in the zip
  * @param {(src: string) => string|null} [opts.resolve] - a fetchable address for `src` (e.g. an asset: picture's data URL)
- * @returns {Promise<{blob: Blob, packed: number, skipped: string[]}>}
+ * @param {object[]} [opts.diagrams] - the deck's diagrams as render() in deck.js drew them, in order
+ * @returns {Promise<{blob: Blob, packed: number, skipped: string[], diagrams: number}>}
  */
-export async function exportZip(md, { name = 'deck.md', resolve = () => null } = {}) {
-  let text = String(md);
+export async function exportZip(md, { name = 'deck.md', resolve = () => null, diagrams = [] } = {}) {
+  let text = stripDiagramNotes(md);
   const files = [];
   const used = new Set();
   const skipped = [];
@@ -76,8 +127,24 @@ export async function exportZip(md, { name = 'deck.md', resolve = () => null } =
       skipped.push(src);
     }
   }
+  const packed = files.length;
+  // Each diagram as Podium drew it. Only named in the markdown when the
+  // blocks there are the ones that were drawn, one for one.
+  const names = [];
+  for (const d of diagrams) {
+    if (!d?.picture) { names.push(null); continue; }
+    const base = `${DIAGRAM_DIR}slide-${d.slide + 1}-${d.nth + 1}`;
+    files.push({ name: `${base}.svg`, data: new Blob([d.picture.svg], { type: 'image/svg+xml' }) });
+    try {
+      files.push({ name: `${base}.png`, data: await diagramPng(d.picture) });
+      names.push(`${base}.png`);
+    } catch {
+      names.push(`${base}.svg`);
+    }
+  }
+  if (names.some(Boolean) && mermaidFences(text).length === diagrams.length) text = noteDiagramPictures(text, names);
   const blob = await createZip([{ name, data: text }, ...files]);
-  return { blob, packed: files.length, skipped };
+  return { blob, packed, skipped, diagrams: names.filter(Boolean).length };
 }
 
 /**
@@ -93,7 +160,9 @@ export async function readDeckZip(file) {
     .sort((a, b) => a.name.split('/').length - b.name.split('/').length || a.name.localeCompare(b.name));
   if (!decks.length) throw new Error('there is no .md deck in that .zip');
   const deck = decks[0];
-  const markdown = new TextDecoder().decode(await deck.read());
+  // The diagrams' pictures (see exportZip) are not brought in: Podium draws
+  // a diagram from its code, so their comments go and the files stay behind.
+  const markdown = stripDiagramNotes(new TextDecoder().decode(await deck.read()));
   const dir = deck.name.includes('/') ? deck.name.slice(0, deck.name.lastIndexOf('/') + 1) : '';
   const byName = new Map(entries.map((e) => [e.name, e]));
   const media = [];

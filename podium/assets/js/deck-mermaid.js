@@ -358,7 +358,8 @@ export const DIAGRAM_CSS = `
  * deck.js, before it measures anything). `slides(root)` is each slide's own
  * <section>, by index.
  *
- * @returns {Promise<{slide: number, nth: number, theme: string, error: {message: string, line: number}|null}[]>}
+ * @returns {Promise<{slide: number, nth: number, theme: string, error: {message: string, line: number}|null,
+ *   picture: {svg: string, width: number, height: number}|null}[]>} - picture is the diagram as drawn, for an export
  */
 export async function drawDiagrams(root, css, slides) {
   const blocks = Array.from(root.querySelectorAll('pre > code.language-mermaid'));
@@ -387,6 +388,7 @@ export async function drawDiagrams(root, css, slides) {
     const look = looks.get(slide) || {};
     const config = diagramConfig(look, sections[slide]?.dataset.mermaidTheme || '');
     const result = loadError ? { error: loadError } : await drawOne(mermaid, text, config);
+    let picture = null;
     if (result.error) {
       pre.replaceWith(errorBox(root.ownerDocument, text, result.error));
     } else {
@@ -406,8 +408,9 @@ export async function drawDiagrams(root, css, slides) {
       img.setAttribute('height', String(height));
       if (look.room) img.setAttribute('style', `max-height: ${look.room}px`);
       pre.replaceWith(img);
+      picture = { svg: sized, width, height };
     }
-    out.push({ slide, nth, theme: config.theme, error: result.error || null });
+    out.push({ slide, nth, theme: config.theme, error: result.error || null, picture });
   }
   return out;
 }

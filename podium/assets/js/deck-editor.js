@@ -32,6 +32,10 @@ import * as DS from './deck-source.js';
 import { createDeckMedia, uploadDeckMedia } from './deck-media.js';
 import { exportZip, readDeckZip, exportPdf, replaceRef } from './deck-export.js';
 import { createTemplatesPanel, findTemplate, slidesOf } from './deck-templates.js';
+import {
+  STARTERS, starterFence, isMermaidLiveLink, readMermaidLiveLink, fenceFromLink, mermaidLiveLink, fenceAt,
+  mermaidStreamParser,
+} from './deck-diagrams.js';
 import * as CM from '../vendor/codemirror.esm.js';
 
 const params = new URLSearchParams(location.search);
@@ -261,7 +265,7 @@ function marpCompletions(ctx) {
     if (!key[2] && !ctx.explicit && !/<!--\s*_?$/.test(before)) return null;
     const local = [...DS.LOCAL_DIRECTIVES, DS.MERMAID_DIRECTIVE];
     const names = inFrontMatter(ctx.pos) ? [...DS.GLOBAL_DIRECTIVES, ...local]
-      : key[1] === '_' ? [...DS.LOCAL_DIRECTIVES, ...DS.PODIUM_DIRECTIVES] : local;
+      : key[1] === '_' ? [...DS.LOCAL_DIRECTIVES, ...DS.PODIUM_DIRECTIVES.filter((d) => d !== DS.DIAGRAM_DIRECTIVE)] : local;
     return {
       from: ctx.pos - key[2].length,
       options: names.map((name) => ({
@@ -313,7 +317,17 @@ const highlight = CM.HighlightStyle.define([
   { tag: CM.tags.tagName, color: '#ff8fa3' },
   { tag: CM.tags.attributeName, color: '#ffb38a' },
   { tag: CM.tags.string, color: '#a5d6a7' },
+  // Inside a ```mermaid block (Issue #235).
+  { tag: CM.tags.keyword, color: '#c49bff' },
+  { tag: CM.tags.operator, color: '#ffc94d' },
+  { tag: CM.tags.number, color: '#ffb38a' },
 ]);
+
+// The text of a ```mermaid block, coloured as Mermaid rather than plain code.
+const mermaidCode = CM.LanguageDescription.of({
+  name: 'mermaid',
+  support: new CM.LanguageSupport(CM.StreamLanguage.define(mermaidStreamParser)),
+});
 
 const editorKeys = [
   { key: 'Mod-s', preventDefault: true, run: () => { save(); return true; } },
@@ -337,7 +351,7 @@ function createEditor(initial) {
       CM.highlightActiveLine(),
       CM.highlightSelectionMatches(),
       CM.EditorView.lineWrapping,
-      CM.markdown({ base: CM.markdownLanguage }),
+      CM.markdown({ base: CM.markdownLanguage, codeLanguages: [mermaidCode] }),
       CM.syntaxHighlighting(highlight),
       CM.syntaxHighlighting(CM.defaultHighlightStyle, { fallback: true }),
       CM.autocompletion({ override: [marpCompletions], activateOnTyping: true }),
@@ -356,6 +370,13 @@ function createEditor(initial) {
       // and the slide links to it - never into the markdown itself.
       CM.EditorView.domEventHandlers({
         paste(ev) {
+          // A mermaid.live link: ask whether it is the diagram or the link.
+          const pasted = ev.clipboardData?.getData('text/plain') || '';
+          if (!ev.clipboardData?.files?.length && isMermaidLiveLink(pasted)) {
+            ev.preventDefault();
+            pasteLiveLink(pasted.trim());
+            return true;
+          }
           if (!media.takeFiles(ev.clipboardData?.files)) return false;
           ev.preventDefault();
           return true;
@@ -890,6 +911,111 @@ const COMMANDS = {
   math: () => insertBlock('$$\n\n$$\n', 3),
   code: () => insertBlock('```\n\n```\n', 4),
 };
+
+// --- diagrams (Issue #235) ---------------------------------------------------------
+
+/** Put a whole block on its own lines where `from`-`to` is, and leave the cursor at `cursor` within it. */
+function blockChange(from, to, block, cursor) {
+  const doc = view.state.doc;
+  const line = doc.lineAt(from);
+  const before = doc.sliceString(line.from, from);
+  const after = doc.sliceString(to, doc.lineAt(to).to);
+  // A blank line between it and the text above, which reads better in the markdown.
+  const above = line.number > 1 ? doc.line(line.number - 1).text : '';
+  const lead = before.trim() ? '\n\n' : (above.trim() ? '\n' : '');
+  const tail = after.trim() ? '\n' : '';
+  return {
+    changes: { from, to, insert: lead + block + tail },
+    selection: { anchor: from + lead.length + cursor },
+    scrollIntoView: true,
+  };
+}
+
+function insertDiagram(id) {
+  const block = starterFence(id);
+  if (!block) return;
+  const { from, to } = view.state.selection.main;
+  // The cursor ends on the diagram's first line, ready to change its kind or direction.
+  view.dispatch(blockChange(from, to, block, '```mermaid\n'.length));
+  view.focus();
+}
+
+async function openInMermaidLive() {
+  const found = fenceAt(text(), view.state.selection.main.head);
+  if (!found) return;
+  // The theme Podium drew it in, so it looks the same there - unless it says its own.
+  const theme = rendered?.diagrams?.[found.index]?.theme || 'default';
+  const link = await mermaidLiveLink(found.body, { theme });
+  window.open(link, '_blank', 'noopener');
+}
+
+let pasteAsk = null;   // {from, to, link} of a pasted mermaid.live link while the dialog asks about it
+
+/**
+ * A mermaid.live link pasted in goes in as the link first, then the dialog
+ * asks. "Diagram" swaps it for the diagram it holds, as a separate step, so
+ * undo puts the link back.
+ */
+async function pasteLiveLink(link) {
+  const { from, to } = view.state.selection.main;
+  view.dispatch({
+    changes: { from, to, insert: link },
+    selection: { anchor: from + link.length },
+    userEvent: 'input.paste',
+    annotations: CM.isolateHistory.of('full'),
+  });
+  const diagram = await readMermaidLiveLink(link);
+  if (!diagram) return;   // not one this can read: it stays a link
+  pasteAsk = { from, to: from + link.length, link, diagram };
+  $('#deck-mermaid-preview').textContent = fenceFromLink(diagram).trim();
+  $('#deck-mermaid-dialog').hidden = false;
+  $('#deck-mermaid-diagram').focus();
+}
+
+function answerPaste(asDiagram) {
+  const ask = pasteAsk;
+  pasteAsk = null;
+  $('#deck-mermaid-dialog').hidden = true;
+  if (ask && asDiagram && view.state.sliceDoc(ask.from, ask.to) === ask.link) {
+    view.dispatch({
+      ...blockChange(ask.from, ask.to, fenceFromLink(ask.diagram), '```mermaid\n'.length),
+      userEvent: 'input.paste',
+      annotations: CM.isolateHistory.of('full'),
+    });
+  }
+  view.focus();
+}
+
+function wireDiagrams() {
+  const menu = $('#deck-diagram-menu');
+  const toggle = $('#deck-diagram');
+  const live = $('#deck-diagram-live');
+  const close = () => { menu.hidden = true; toggle.setAttribute('aria-expanded', 'false'); };
+  $('#deck-diagram-starters').replaceChildren(...STARTERS.map((starter) => el('button', {
+    type: 'button',
+    'data-diagram': starter.id,
+    onclick: () => { close(); insertDiagram(starter.id); },
+  }, starter.label)));
+  toggle.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    menu.hidden = !menu.hidden;
+    toggle.setAttribute('aria-expanded', String(!menu.hidden));
+    if (!menu.hidden) {
+      const inside = !!fenceAt(text(), view.state.selection.main.head);
+      live.disabled = !inside;
+      live.title = inside ? 'Edit it there; paste its link back here when you are done' : 'Put the cursor in a diagram first';
+    }
+  });
+  document.addEventListener('click', (ev) => { if (!menu.hidden && !ev.target.closest('.deck-diagram-wrap')) close(); });
+  menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { close(); toggle.focus(); } });
+  live.addEventListener('click', () => { close(); openInMermaidLive(); });
+
+  $('#deck-mermaid-diagram').addEventListener('click', () => answerPaste(true));
+  $('#deck-mermaid-link').addEventListener('click', () => answerPaste(false));
+  $('#deck-mermaid-dialog').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') { ev.stopPropagation(); answerPaste(false); }
+  });
+}
 
 function wireToolbar() {
   $$('.deck-toolbar [data-cmd]').forEach((button) => button.addEventListener('click', () => COMMANDS[button.dataset.cmd]?.()));
@@ -1440,12 +1566,18 @@ function saveBlob(name, blob) {
 async function downloadZip() {
   setSaveState('Packing the .zip…');
   try {
-    const { blob, packed, skipped } = await exportZip(text(), {
+    const md = text();
+    // The deck as it is now, for its diagrams' pictures (Issue #235).
+    const exportId = `export:${await deckId(md)}`;
+    const drawn = /```mermaid/.test(md) ? await renderDeckSource(md, exportId).catch(() => null) : null;
+    forgetDeck(exportId);
+    const { blob, packed, skipped, diagrams } = await exportZip(md, {
       name: fileName(),
       resolve: (src) => (src.startsWith('asset:') ? planPictures.get(src.slice(6)) || null : null),
+      diagrams: drawn?.diagrams || [],
     });
     saveBlob(fileName().replace(/\.md$/, '.zip'), blob);
-    setSaveState(`Downloaded, with ${packed} file${packed === 1 ? '' : 's'}`);
+    setSaveState(`Downloaded, with ${packed} file${packed === 1 ? '' : 's'}${diagrams ? ` and ${diagrams} diagram picture${diagrams === 1 ? '' : 's'}` : ''}`);
     if (skipped.length) warn(`Left out of the .zip, because this page could not fetch them: ${skipped.join(', ')}`);
   } catch (err) {
     warn(`That did not download: ${err.message}`);
@@ -1629,6 +1761,7 @@ window.addEventListener('beforeunload', (ev) => {
 });
 
 wireToolbar();
+wireDiagrams();
 wireSlidePanel();
 wireDeckSettings();
 wirePageDrops();

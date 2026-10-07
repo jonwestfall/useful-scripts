@@ -2354,6 +2354,14 @@ body.deck-editor .topbar { flex: none; }
 }
 .deck-menu button { text-align: left; min-height: 34px; font-size: 13px; }
 .deck-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; width: 100%; }
+.deck-menu-left { left: 0; right: auto; }
+.deck-menu-group { display: flex; flex-direction: column; gap: 4px; }
+.deck-menu .hint { margin: 2px 4px; max-width: 32ch; font-size: 12px; }
+.deck-toolbar .deck-diagram-wrap { gap: 0; }
+.deck-mermaid-preview {
+  max-height: 14em; overflow: auto; margin: 8px 0; padding: 8px 10px; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--line); font-size: 12px; white-space: pre-wrap;
+}
 #deck-warn {
   flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
   background: #2a1e12; border-bottom: 1px solid #6b4a22; color: #ffd9a8;

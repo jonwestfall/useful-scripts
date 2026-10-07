@@ -725,7 +725,8 @@ export async function render(source, id) {
     // so has none.
     videos: videosOf(source, titles.length),
     // Each ```mermaid block (Issue #235): its slide, which one on that slide,
-    // the theme it was drawn in, and why it could not be drawn if it was not.
+    // the theme it was drawn in, why it could not be drawn if it was not, and
+    // the picture it was drawn as (its SVG, for a .zip export).
     diagrams,
   };
   // A deck drawn while the diagram bundle would not load is shown with that
