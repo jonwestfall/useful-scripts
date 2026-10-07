@@ -691,7 +691,8 @@ body.guest {
 .timeline-caption .timeline-what { color: var(--dim); font-style: italic; padding-left: 16px; }
 
 .session-badge { display: flex; align-items: center; gap: 8px; }
-.session-badge .session-who { color: var(--ink); }
+.session-badge .session-who { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--dim); }
+.session-badge .session-who:hover { color: var(--accent); }
 .topbar .session-badge button { min-height: 28px; padding: 0 9px; font-size: 12px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
@@ -2618,3 +2619,40 @@ body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { disp
 .fb-empty { color: var(--dim); font-size: 13px; margin: 8px 0; }
 .fb-foot { margin-top: 10px; }
 .plan-add-from-server { margin-top: 8px; width: 100%; }
+
+/* My Files (Issue #243) ------------------------------------------------------ */
+.me-profile h2 { font-size: 20px; }
+.me-courses { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.me-courses-label { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+.me-course { padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
+.me-course.is-archived { opacity: .55; }
+.me-filters, .me-upload, .me-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.me-filters input[type=search] { flex: 1 1 16rem; min-width: 0; }
+.me-filters select, .me-upload select { width: auto; }
+.me-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); }
+.me-upload { padding: 8px 10px; border: 1px dashed var(--line); border-radius: 6px; font-size: 13px; }
+.me-panel.is-drop .me-upload { border-color: var(--accent); background: var(--panel-2); }
+.me-bulk { padding: 6px 10px; background: var(--panel-2); border-radius: 6px; font-size: 13px; }
+.me-list { display: flex; flex-direction: column; gap: 4px; }
+.me-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.me-row.is-archived { opacity: .7; }
+.me-nocheck { width: 13px; flex: none; }
+.me-chip { flex: none; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); white-space: nowrap; cursor: help; }
+.me-chip.is-owner { border-color: var(--accent); color: var(--accent); }
+.me-chip.is-edit { border-color: #6aa36f; color: #8fd095; }
+.me-chip.is-view { color: var(--dim); }
+.me-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex: none; max-width: 50%; }
+.me-actions .is-bad { color: #ffb3b3; }
+.me-link { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); text-decoration: none; }
+.me-dialog { width: min(440px, 100%); }
+.me-dialog select { width: 100%; }
+.me-password { display: grid; gap: 10px; }
+.me-password label { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
+.hint.is-bad { color: #ffb3b3; }
+@media (max-width: 640px) {
+  .me-row { flex-wrap: wrap; }
+  .me-actions { max-width: none; width: 100%; justify-content: flex-start; }
+}
+:root[data-theme="light"] .me-chip.is-edit, body[data-theme="light"] .me-chip.is-edit { border-color: #2f7a36; color: #1f6326; }
+:root[data-theme="light"] .hint.is-bad, body[data-theme="light"] .hint.is-bad,
+:root[data-theme="light"] .me-actions .is-bad, body[data-theme="light"] .me-actions .is-bad { color: #b42318; }

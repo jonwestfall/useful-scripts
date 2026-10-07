@@ -503,6 +503,8 @@ const expecting = {
   // Issue #221: the Marp bundle's download deliberately refused, to prove a
   // deck still renders once it gets through.
   marpRetry: false,
+  // My Files (Issue #243): a wrong current password, refused on purpose.
+  passwordRefused: false,
 };
 
 const trap = (page, tag) => {
@@ -555,6 +557,7 @@ const trap = (page, tag) => {
     // replaced is a 412 on purpose, and a TA's save a 403.
     if (expecting.deckConflict && /responded with a status of 412/.test(text)) return;
     if (expecting.deckForbidden && /responded with a status of 403/.test(text)) return;
+    if (expecting.passwordRefused && /responded with a status of 403/.test(text)) return;
     if (expecting.kioskOffscopeWarm && KIOSK_OFFSCOPE_WARM.test(text)) return;
     if (expecting.viewerRefused && /responded with a status of 401/.test(text)) return;
     if (expecting.marpRetry && /marp\.esm\.js|ERR_FAILED/.test(where)) return;

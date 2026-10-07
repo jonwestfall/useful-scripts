@@ -121,6 +121,19 @@ function list(db, user) {
   }));
 }
 
+/**
+ * The courses this account is actually a member of, with its role in each -
+ * what My Files' profile shows (Issue #243). Not list() above: an admin is
+ * treated there as owning every course, which is true of what they may do
+ * but not of what the admin set for them. Archived ones included, marked.
+ */
+function memberships(db, user) {
+  return db.prepare(`SELECT c.code, c.title, c.archived_at, cm.role FROM course_members cm
+      JOIN courses c ON c.id = cm.course_id
+     WHERE cm.user_id = ? ORDER BY c.archived_at IS NOT NULL, c.code`).all(user.id)
+    .map((row) => ({ code: row.code, title: row.title || row.code, role: row.role, archived: !!row.archived_at }));
+}
+
 const members = (db, courseId) =>
   db.prepare(`SELECT u.username, u.display_name, u.disabled_at, cm.role
       FROM course_members cm JOIN users u ON u.id = cm.user_id
@@ -311,6 +324,6 @@ function removeMember(db, user, code, username) {
 }
 
 module.exports = {
-  list, members, create, createFromPlanner, codeFor, update, addMember, removeMember, roleOf, mayManage, find,
+  list, memberships, members, create, createFromPlanner, codeFor, update, addMember, removeMember, roleOf, mayManage, find,
   brandingFor, setBranding, cleanBranding, MAX_BRANDING_IMAGE_CHARS,
 };

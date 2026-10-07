@@ -142,6 +142,9 @@ chk('but never display.html, control.html, admin.html, plan.html, deck.html, qui
 // to someone who is not signed in, a kiosk or a viewer.
 chk('quicklook.html is open to nobody who has not signed in', !AUTH_OPEN_PATHS.has('/quicklook.html')
   && !KIOSK_OPEN_PATHS.has('/quicklook.html') && !VIEW_OPEN_PATHS.has('/quicklook.html'));
+// Nor My Files (Issue #243): a person's whole library, and their password.
+chk('me.html is open to nobody who has not signed in', !AUTH_OPEN_PATHS.has('/me.html')
+  && !KIOSK_OPEN_PATHS.has('/me.html') && !VIEW_OPEN_PATHS.has('/me.html'));
 
 if (!ok) {
   console.error('\nSOME TESTS FAILED');

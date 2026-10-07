@@ -77,9 +77,14 @@ export async function mountSessionBadge(el) {
   const info = await serverInfo();
   if (info.auth.mode !== 'accounts' || !info.user) return;
 
-  const who = document.createElement('span');
+  // Your name is the way to My Files and your profile (Issue #243).
+  const who = document.createElement('a');
   who.className = 'session-who';
+  who.href = 'me.html';
+  who.title = 'My Files and profile';
   who.textContent = info.user.displayName || info.user.username;
+  // Never away from a class in progress or a deck being edited.
+  if (/(?:control|deck|plan)\.html$/.test(location.pathname)) who.target = '_blank';
 
   const out = document.createElement('button');
   out.type = 'button';

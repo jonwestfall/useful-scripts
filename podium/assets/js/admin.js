@@ -7,8 +7,9 @@
 import { $, el } from './util.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { createZip } from './zip.js';
-import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg, loadImage, planRecapPages, renderRecapPages } from './pdf-writer.js';
-import { buildRecap, describeEvent as describe, captionText } from './recap.js';
+import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg, loadImage } from './pdf-writer.js';
+import { describeEvent as describe, captionText } from './recap.js';
+import { dayAndTime, spanOf, safeName, downloadSessionRecap } from './recap-pdf.js';
 import { versionStamp } from './protocol.js';
 import { TYPES } from './renderers.js';
 import { mountZipImport } from './zip-review.js';
@@ -189,17 +190,7 @@ let sessionUsage = null;
 const pad = (n) => String(n).padStart(2, '0');
 const clock = (ms) => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
 
-const dayAndTime = (ms) => new Date(ms).toLocaleString(undefined, {
-  weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
-});
 
-/** How long it ran, in the units a person would say it in. */
-function spanOf(lecture) {
-  if (!lecture.endedAt) return 'still open';
-  const minutes = Math.max(0, Math.round((lecture.endedAt - lecture.startedAt) / 60000));
-  if (minutes < 60) return `${minutes} min`;
-  return `${Math.floor(minutes / 60)} h ${pad(minutes % 60)}`;
-}
 
 /** The same rule server/lectures.js enforces, so no button is offered that would 403. */
 function mayEditLecture(lecture) {
@@ -280,10 +271,6 @@ function timelineText(detail) {
   return `${lines.join('\n')}\n`;
 }
 
-const safeName = (detail) => String(detail.title || detail.room || 'session')
-  .replace(/[^a-z0-9-_ ]+/gi, '').trim().replace(/\s+/g, '-')
-  .slice(0, 48)
-  .toLowerCase() || 'session';
 
 /**
  * The session zip, rebuilt from what the lecture kept.
@@ -415,60 +402,6 @@ async function downloadSessionPdf(detail, button) {
   button.textContent = was;
 }
 
-/**
- * The lecture recap (Issue #158): the timeline in order, the captions said
- * over each entry, annotated slides beside the moment they were shown, and
- * each poll's result where it closed - one PDF, from what the session already
- * recorded. See recap.js for the ordering and pdf-writer.js for the pages.
- */
-async function downloadSessionRecap(detail, button) {
-  button.disabled = true;
-  const was = button.textContent;
-  try {
-    const recap = buildRecap(detail);
-    const meta = {
-      title: detail.title || detail.room || 'Podium Session',
-      course: detail.course || '',
-      room: detail.room || '',
-      date: detail.startedAt ? new Date(detail.startedAt) : new Date(),
-    };
-    const summary = [
-      `${dayAndTime(detail.startedAt)} — ${spanOf(detail)}`,
-      `${recap.blocks.filter((b) => b.type === 'entry').length} things on screen`,
-      detail.pollResults.length ? `${detail.pollResults.length} poll${detail.pollResults.length === 1 ? '' : 's'}` : '',
-      recap.captionCount ? `${recap.captionCount} caption line${recap.captionCount === 1 ? '' : 's'}` : 'no captions recorded',
-      detail.truncated ? 'the timeline stops before the lecture did' : '',
-    ].filter(Boolean).join('  ·  ');
-
-    const measureCtx = document.createElement('canvas').getContext('2d');
-    const measure = (text, font) => { measureCtx.font = font; return measureCtx.measureText(text).width; };
-    const plan = planRecapPages(recap, measure, { summary });
-
-    const pages = await renderRecapPages(plan, meta, {
-      loadPicture: async (file) => {
-        const res = await fetch(file.url, { credentials: 'same-origin' });
-        return res.ok ? loadImage(await res.blob()) : null;
-      },
-      onProgress: (done, total) => { button.textContent = `Rendering page ${done} of ${total}…`; },
-    });
-    if (!pages.length) { button.textContent = 'Nothing to put in a recap'; return; }
-
-    button.textContent = 'Building the PDF…';
-    const stamp = new Date(detail.startedAt).toISOString().slice(0, 16).replace(/[:T]/g, '-');
-    const blob = createPdf(pages, { ...meta, title: `${meta.title} — recap` });
-    const a = el('a', { href: URL.createObjectURL(blob), download: `podium-${safeName(detail)}-${stamp}-recap.pdf` });
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 30000);
-  } catch {
-    button.textContent = 'That did not work';
-    return;
-  } finally {
-    button.disabled = false;
-  }
-  button.textContent = was;
-}
 
 function renderSessionBody(detail) {
   const body = el('div', { class: 'session-body' });
