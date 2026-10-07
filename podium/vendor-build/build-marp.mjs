@@ -40,6 +40,8 @@ const result = await esbuild.build({
   entryPoints: ['marp-entry.js'],
   bundle: true, format: 'esm', platform: 'browser', target: 'es2020',
   minify: true, outfile: '../assets/vendor/marp.esm.js', plugins: [stubMathJax, trimHighlight], metafile: true,
+  // KaTeX's stylesheet, for documents (Issue #240): a string, not injected.
+  loader: { '.css': 'text' },
   logLevel: 'warning',
 });
 const sizes = Object.entries(result.metafile.outputs)[0][1].inputs;

@@ -43,6 +43,19 @@ export const PLAN_TYPES = {
       { key: 'src', label: 'or a path on the server', kind: 'text', placeholder: 'content/decks/week3.md' },
     ],
   },
+  // Issue #240: a .md to read rather than present - one page the room
+  // scrolls through. A file whose front matter says `marp: true` is a deck.
+  document: {
+    label: 'Document', icon: '\u{1F4C3}',
+    blurb: 'A markdown page to read - a handout, a reading, lab instructions - shown as one page the room scrolls through.',
+    fields: [
+      { key: 'asset', label: 'Markdown file', kind: 'upload', accept: '.md,.markdown,text/markdown', asset: true,
+        hint: 'The markdown travels inside the plan. A file that starts with marp: true is a slide deck instead.' },
+      { key: 'src', label: 'or a path on the server', kind: 'text', placeholder: 'content/docs/reading3.md' },
+      { key: 'look', label: 'Look', kind: 'select', def: '',
+        options: [['', 'As the file says (light, unless it says theme: dark)'], ['light', 'Light'], ['dark', 'Dark']] },
+    ],
+  },
   imagedeck: {
     label: 'Picture deck', icon: '\u{1F39E}',
     blurb: 'Slides exported as images (PowerPoint: File > Export > PNG), one picture per slide, stepped through like a deck.',

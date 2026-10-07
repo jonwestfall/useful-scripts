@@ -49,6 +49,17 @@ const UPLOADABLE = new Map(Object.entries({
   '.wav': { type: 'audio/wav', kind: 'audio' },
 }));
 
+// Markdown is a slide deck or a document to read (Issue #240): `marp: true`
+// in its front matter makes it a deck, anything else a document. The same
+// rule as isMarpDeck in assets/js/deck-source.js, which the planner uses;
+// test/documents.test.mjs holds the two to the same answers.
+const MARKDOWN_KINDS = new Set(['deck', 'document']);
+const isMarkdownKind = (kind) => MARKDOWN_KINDS.has(kind);
+function markdownKind(text) {
+  const fm = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(String(text || ''));
+  return fm && /^marp[ \t]*:[ \t]*(?:true|["']true["'])[ \t]*(?:#.*)?$/mi.test(fm[1]) ? 'deck' : 'document';
+}
+
 const uploadKindFor = (filename) => UPLOADABLE.get(path.extname(String(filename || '')).toLowerCase()) || null;
 
 const mediaDir = (dataDir) => path.join(dataDir, 'media');
@@ -105,7 +116,7 @@ function itemRow(row) {
     // and `version` (the sha of what is there now) is what an editor checks
     // before saving over it. The content-addressed URL above still answers
     // for anyone holding it; it is just no longer what a deck hands out.
-    ...(row.sha256 && row.kind === 'deck' ? {
+    ...(row.sha256 && isMarkdownKind(row.kind) ? {
       src: deckSrc(row.id, row.filename),
       version: row.sha256,
     } : {}),
@@ -138,11 +149,11 @@ function listItems(db, user) {
       // mayDelete and mayEditDeck below - so a page offers only what the
       // server will then allow, and never has to work the rules out itself.
       const change = user.isAdmin || item.createdBy === user.id || (!!item.course && owned.has(item.course));
-      const edit = item.type === 'deck' && (user.isAdmin || (item.course ? owned.has(item.course) : item.createdBy === user.id));
+      const edit = isMarkdownKind(item.type) && (user.isAdmin || (item.course ? owned.has(item.course) : item.createdBy === user.id));
       const may = { rename: change, move: change, delete: change, edit };
       // Said per deck, so the planner and controller can offer Edit only where
       // saving would be allowed (Issue #226).
-      return item.type === 'deck' ? { ...item, editable: edit, may } : { ...item, may };
+      return isMarkdownKind(item.type) ? { ...item, editable: edit, may } : { ...item, may };
     });
 }
 
@@ -387,7 +398,7 @@ function findDuplicate(db, user, { kind, sha256s }) {
   return match ? itemRow(match) : null;
 }
 
-function renameItem(db, user, id, { title, group, courseCode }) {
+function renameItem(db, user, id, { title, group, courseCode, kind }) {
   const item = getItem(db, user, id);
   if (!item) throw Object.assign(new Error('no such item'), { status: 404 });
   // Seeing an item is not permission to change it. Re-filing one under a
@@ -406,6 +417,15 @@ function renameItem(db, user, id, { title, group, courseCode }) {
   if (title !== undefined) { sets.push('title = ?'); values.push(String(title).slice(0, 200)); }
   if (group !== undefined) { sets.push('group_label = ?'); values.push(String(group).slice(0, 80)); }
   if (courseCode !== undefined) { sets.push('course_id = ?'); values.push(courseIdFor(db, user, courseCode)); }
+  // Shown as slides or as a page to read (Issue #240): the same file either
+  // way, so only between the two markdown kinds.
+  if (kind !== undefined) {
+    if (!isMarkdownKind(item.type) || !isMarkdownKind(kind)) {
+      throw Object.assign(new Error('only markdown can be switched, and only between a deck and a document'), { status: 400 });
+    }
+    sets.push('kind = ?');
+    values.push(kind);
+  }
   if (!sets.length) return item;
 
   sets.push('updated_at = ?');
@@ -497,7 +517,7 @@ const MAX_DECK_SOURCE_BYTES = 2 * 1024 * 1024;
 async function replaceDeckContent(db, user, dataDir, id, text, { ifMatch = '' } = {}) {
   const item = getItem(db, user, id);
   if (!item) throw Object.assign(new Error('no such item'), { status: 404 });
-  if (item.type !== 'deck') throw Object.assign(new Error('only a deck can be edited this way'), { status: 400 });
+  if (!isMarkdownKind(item.type)) throw Object.assign(new Error('only a deck or a document can be edited this way'), { status: 400 });
   if (!mayEditDeck(db, user, item)) {
     throw Object.assign(new Error(item.course
       ? `only an owner of ${item.course.toUpperCase()} or an admin can change this deck`
@@ -539,7 +559,7 @@ async function replaceDeckContent(db, user, dataDir, id, text, { ifMatch = '' } 
  * can see holds those bytes.
  */
 function deckForVersion(db, user, sha256) {
-  const row = db.prepare(`${SELECT_ITEMS} AND ${VISIBLE} AND li.kind = 'deck' AND (m.sha256 = ?3
+  const row = db.prepare(`${SELECT_ITEMS} AND ${VISIBLE} AND li.kind IN ('deck', 'document') AND (m.sha256 = ?3
       OR EXISTS (SELECT 1 FROM deck_revisions dr JOIN media rm ON rm.id = dr.media_id
                   WHERE dr.item_id = li.id AND rm.sha256 = ?3))
     ORDER BY (m.sha256 = ?3) DESC, li.updated_at DESC LIMIT 1`)
@@ -561,7 +581,7 @@ const MAX_DECK_REVISIONS = 20;
 function deckRevisions(db, user, id) {
   const item = getItem(db, user, id);
   if (!item) throw Object.assign(new Error('no such item'), { status: 404 });
-  if (item.type !== 'deck') throw Object.assign(new Error('only a deck has versions'), { status: 400 });
+  if (!isMarkdownKind(item.type)) throw Object.assign(new Error('only a deck or a document has versions'), { status: 400 });
   return db.prepare(`SELECT m.sha256, m.bytes, dr.saved_at, u.display_name, u.username
       FROM deck_revisions dr JOIN media m ON m.id = dr.media_id LEFT JOIN users u ON u.id = dr.saved_by
      WHERE dr.item_id = ? ORDER BY dr.saved_at DESC, dr.id DESC`).all(Number(id))
@@ -594,7 +614,7 @@ function usage(db) {
 module.exports = {
   MAX_UPLOAD_BYTES, UPLOADABLE, uploadKindFor, mediaPath,
   DECK_MEDIA_GROUP, mayAddDeckMedia, findSameMedia, deckRevisions, deckForVersion, MAX_DECK_REVISIONS,
-  listItems, getItem, listCourses, mayReadMedia, courseIdFor,
+  listItems, getItem, listCourses, mayReadMedia, courseIdFor, markdownKind, isMarkdownKind,
   addItem, setItemFiles, findDuplicate, storeUpload, rememberMedia, forgetMediaIfUnused,
   renameItem, deleteItem, mayDelete, usage,
   mayEditDeck, replaceDeckContent, deckSrc, MAX_DECK_SOURCE_BYTES,

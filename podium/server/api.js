@@ -538,6 +538,7 @@ async function handleApi(req, res, url, ctx) {
       const item = library.renameItem(ctx.db, user, rest[0], {
         title: body.title, group: body.group,
         courseCode: 'course' in body ? body.course : undefined,
+        kind: 'type' in body ? body.type : undefined,
       });
       json(res, 200, { item });
       return true;
@@ -1207,9 +1208,19 @@ async function receiveUpload(req, url, ctx, user) {
       const same = library.findSameMedia(ctx.db, user, { kind: allowed.kind, sha256, courseCode });
       if (same) return { item: same, existing: true };
     }
+    // A .md is a deck only when it says `marp: true` (Issue #240); anything
+    // else is a document to read. Its front matter is in the first few KB.
+    let kind = allowed.kind;
+    if (kind === 'deck') {
+      const handle = await fs.promises.open(library.mediaPath(ctx.dataDir, sha256), 'r');
+      try {
+        const { buffer, bytesRead } = await handle.read(Buffer.alloc(8192), 0, 8192, 0);
+        kind = library.markdownKind(buffer.subarray(0, bytesRead).toString('utf8'));
+      } finally { await handle.close(); }
+    }
     const item = library.addItem(ctx.db, user, {
       courseCode,
-      kind: allowed.kind,
+      kind,
       title: url.searchParams.get('title') || filename.replace(/\.[^.]+$/, ''),
       group: url.searchParams.get('group') || (deckMedia ? library.DECK_MEDIA_GROUP : ''),
       filename,

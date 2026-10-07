@@ -1,7 +1,7 @@
 // Podium end-to-end group: the deck editor (Issue #226), and the planner's
 // lecture archive (Issue #239), Quick Look (Issue #242), the server file
-// picker (Issue #241) and My Files (Issue #243), which want the same server
-// with accounts.
+// picker (Issue #241), My Files (Issue #243) and markdown documents (Issue
+// #240), which want the same server with accounts.
 //
 //   node podium/test/e2e/editor.mjs [--only <name>[,<name>...]]
 //
@@ -1727,6 +1727,153 @@ await rootPage.goto(`${base}/me.html`);
 await rootPage.waitForFunction(() => document.querySelector('#me-who')?.textContent.includes('Administrator'), null, { timeout: 10000 }).catch(() => {});
 ok(`an administrator's Files start on Mine ("${await rootPage.inputValue('#files-show')}")`, await rootPage.inputValue('#files-show') === 'mine');
 await root.close();
+}
+
+if (want('Documents: a plain .md shown as one page to read (#240)')) {
+console.log('\n-- Documents: a plain .md shown as one page to read (#240) --');
+const filler = (n) => Array.from({ length: n }, (_, i) => `Paragraph ${i + 1} of the reading, long enough to wrap across the page at projector size and take up some room.`).join('\n\n');
+const reading = [
+  '---', 'title: Reading 3', '---', '',
+  '# Memory and forgetting', '',
+  '<!-- Open with the bus story. -->', '',
+  filler(6), '',
+  '| Store | Lasts |', '|---|---|', '| Sensory | < 1 s |', '| Working | ~20 s |', '',
+  '- [ ] Read section 2', '- [x] Watch the clip', '',
+  '```python', 'def recall(item):', '    return item', '```', '',
+  'Forgetting follows $R = e^{-t/S}$ roughly.', '',
+  '```mermaid', 'graph LR', '  A[Encode] --> B[Store] --> C[Retrieve]', '```', '',
+  '## Part two: interference', '',
+  '<!-- Ask who has moved house recently. -->', '',
+  filler(10), '',
+  '## Part three', '',
+  filler(10),
+].join('\n');
+const owen = await signedIn('owen');
+const desk = await owen.newPage();
+trap(desk, 'documents setup');
+await desk.goto(`${base}/index.html`);
+const upload = (name, body) => desk.evaluate(async ([n, b]) => (await (await fetch(`/api/library/upload?filename=${n}&course=psy415&title=${encodeURIComponent(n)}`, { method: 'POST', body: b })).json()).item, [name, body]);
+const docItem = await upload('reading3.md', reading);
+const marpItem = await upload('slides3.md', '---\nmarp: true\n---\n\n# Still slides\n\n---\n\n## Two\n');
+ok(`a plain .md uploaded to the library is a document (${docItem?.type})`, docItem?.type === 'document');
+ok(`one that says marp: true is still a deck (${marpItem?.type})`, marpItem?.type === 'deck');
+ok('a document has the same stable address a deck has', /^\/media\/deck\/\d+\/reading3\.md$/.test(docItem?.src || ''));
+const switched = await desk.evaluate(async (id) => (await (await fetch(`/api/library/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'document' }) })).json()).item, marpItem.id);
+ok('a deck can be switched to a document, and back', switched?.type === 'document'
+  && (await desk.evaluate(async (id) => (await (await fetch(`/api/library/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'deck' }) })).json()).item?.type, marpItem.id)) === 'deck');
+await desk.close();
+
+const screen = await owen.newPage();
+trap(screen, 'documents display');
+await screen.goto(`${base}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await owen.newPage();
+trap(pad, 'documents controller');
+await pad.goto(`${base}/control.html`);
+await pad.waitForSelector('.tile');
+const tile = pad.locator('.tile', { hasText: 'reading3.md' });
+await tile.click();
+
+const wall = () => screen.evaluate(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-doc');
+  const view = host?.shadowRoot?.querySelector('#view');
+  if (!view) return null;
+  const m = /translate\([\d.]+px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(view.style.transform || '');
+  return {
+    at: m ? Math.round(-Number(m[1]) / Number(m[2])) : null,
+    text: view.textContent,
+    html: view.innerHTML,
+  };
+});
+await until(async () => (await wall())?.text?.includes('Memory and forgetting'), { timeout: 20000 }).catch(() => {});
+const first = await wall();
+ok('it goes up as one page, not as slides', !!first && first.at === 0 && !(await screen.evaluate(() => !!document.querySelector('.layer[data-role="program"] .r-deck'))));
+ok('a table, a task list, highlighted code and math all render',
+  /<table>/.test(first?.html) && /task-box/.test(first?.html) && /hljs-keyword/.test(first?.html) && /class="katex"/.test(first?.html));
+await until(async () => /podium-diagram/.test((await wall())?.html || ''), { timeout: 20000 }).catch(() => {});
+ok('and so does a Mermaid diagram', /podium-diagram/.test((await wall())?.html || ''));
+ok('the presenter notes are never on the display', !/bus story|moved house/.test((await wall())?.text || ''));
+
+// (This controller does not switch tabs on its own - see its settings.)
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForSelector('#doc-tools', { state: 'visible', timeout: 10000 })
+  .then(() => ok('the Now tab has a document\'s own controls', true))
+  .catch(() => ok('the Now tab has a document\'s own controls', false));
+await pad.waitForFunction(() => /Screen 1 of \d+/.test(document.querySelector('#page-label')?.textContent || ''), null, { timeout: 10000 })
+  .then(async () => ok(`which says where the room is ("${await pad.textContent('#page-label')}")`, true))
+  .catch(async () => ok(`which says where the room is ("${await pad.textContent('#page-label')}")`, false));
+await pad.waitForFunction(() => /bus story/.test(document.querySelector('#doc-notes')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('and shows the note for what is on screen', true))
+  .catch(async () => ok(`and shows the note for what is on screen ("${await pad.textContent('#doc-notes')}")`, false));
+
+await pad.click('#next-page');
+await until(async () => (await wall())?.at === 612, { timeout: 8000 }).catch(() => {});
+ok(`Next scrolls the room most of a screen (${(await wall())?.at})`, (await wall())?.at === 612);
+await pad.click('#prev-page');
+await until(async () => (await wall())?.at === 0, { timeout: 8000 }).catch(() => {});
+ok('and Previous back', (await wall())?.at === 0);
+
+const headings = await pad.$$eval('#doc-headings .doc-heading', (bs) => bs.map((b) => b.textContent));
+ok(`the controller lists its headings (${headings.join(' / ')})`, headings.join('|') === 'Memory and forgetting|Part two: interference|Part three');
+await pad.click('#doc-headings .doc-heading:has-text("Part two")');
+await until(async () => ((await wall())?.at || 0) > 612, { timeout: 8000 }).catch(() => {});
+const jumped = await wall();
+const headingTop = await screen.evaluate(() => {
+  const view = document.querySelector('.layer[data-role="program"] .r-doc').shadowRoot.querySelector('#view');
+  const h = view.querySelector('#doc-h-1');
+  return Math.round((h.getBoundingClientRect().top - view.getBoundingClientRect().top) / (view.getBoundingClientRect().width / 1280));
+});
+ok(`a heading jump lands just above the heading (at ${jumped?.at}, heading at ${headingTop})`, jumped && Math.abs(headingTop - 24 - jumped.at) <= 4);
+await pad.waitForFunction(() => /moved house/.test(document.querySelector('#doc-notes')?.textContent || ''), null, { timeout: 8000 })
+  .then(() => ok('the notes follow the document as it scrolls', true))
+  .catch(async () => ok(`the notes follow the document as it scrolls ("${await pad.textContent('#doc-notes')}")`, false));
+ok('and the page label names the section', /Part two/.test(await pad.textContent('#page-label')));
+
+// The controller's mirror and the display agree, at a different window size.
+await pad.setViewportSize({ width: 900, height: 1100 });
+await pad.waitForTimeout(400);
+const mirrorAt = await pad.evaluate(() => {
+  const view = document.querySelector('#now-preview .r-doc')?.shadowRoot?.querySelector('#view');
+  const m = /translate\([\d.]+px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(view?.style.transform || '');
+  return m ? Math.round(-Number(m[1]) / Number(m[2])) : null;
+});
+ok(`the controller's mirror is at the same place in the page (${mirrorAt} / ${jumped?.at})`, mirrorAt === jumped?.at);
+
+// To the end, and Next stops.
+const max = Number(await pad.getAttribute('#doc-scrub', 'max'));
+await pad.evaluate((v) => { const s = document.querySelector('#doc-scrub'); s.value = String(v); s.dispatchEvent(new Event('change')); }, max);
+await until(async () => (await wall())?.at === max, { timeout: 8000 }).catch(() => {});
+ok(`the scrubber goes to the end (${max})`, (await wall())?.at === max && max > 1000);
+ok('where Next has nothing left to do', await pad.isDisabled('#next-page'));
+
+// Quick Look shows it as a document too.
+await pad.click('.tab[data-tab="library"]');
+const [look] = await Promise.all([owen.waitForEvent('page'), tile.locator('.tile-look').click()]);
+trap(look, 'documents quick look');
+await look.waitForFunction(() => /Screen 1 of [2-9]/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 })
+  .then(async () => ok(`Quick Look opens a document as a page ("${await look.textContent('#ql-where')}")`, true))
+  .catch(async () => ok(`Quick Look opens a document as a page ("${await look.textContent('#ql-where')}")`, false));
+await look.click('#ql-next');
+ok('and scrolls it on its own', /Screen 2 of/.test(await look.textContent('#ql-where')) && (await wall())?.at === max);
+await look.close();
+
+// The planner: a plain .md is a document whichever item it is put in, and
+// either can be switched.
+const planner = await owen.newPage();
+trap(planner, 'documents planner');
+await planner.goto(`${base}/plan.html`);
+await planner.click('#plan-new');
+await planner.click('#type-picker .type-btn:has-text("Marp deck")');
+await planner.setInputFiles('#item-fields input[type=file]', { name: 'reading.md', mimeType: 'text/markdown', buffer: Buffer.from(reading) });
+await planner.waitForSelector('#item-fields button:has-text("Show it as slides instead")', { timeout: 8000 }).catch(() => {});
+const shownAs = () => planner.textContent('#item-fields button:has-text("Show it as")').catch(() => '');
+ok(`a plain .md put in a deck item makes it a document ("${await shownAs()}")`, /as slides instead/.test(await shownAs()));
+ok('titled from the file', /Reading 3/.test(await planner.textContent('#order')));
+await planner.click('#item-fields button:has-text("Show it as slides instead")');
+ok('and it can be switched to slides', /as a document instead/.test(await shownAs()));
+await planner.close();
+await owen.close();
 }
 
 if (want('the deck editor: drafts, downloads, completion and checks (#226)')) {

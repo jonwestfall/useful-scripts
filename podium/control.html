@@ -441,6 +441,18 @@ try {
             <span id="page-label"></span>
             <button id="next-page" type="button">Next ▶</button>
           </div>
+          <!-- A markdown document (Issue #240): the paging above scrolls it
+               most of a screen at a time; the scrubber and its headings jump.
+               Its presenter notes are the comments in what is on screen. -->
+          <div id="doc-tools" class="doc-tools" hidden>
+            <label class="doc-scrub-label">Where in the document
+              <input id="doc-scrub" type="range" min="0" max="0" step="1" value="0" aria-label="Where in the document">
+            </label>
+            <div class="notes-head">Headings</div>
+            <div id="doc-headings" class="doc-headings" role="group" aria-label="Jump to a heading"></div>
+            <div class="notes-head">Presenter notes</div>
+            <div id="doc-notes" class="notes doc-notes"></div>
+          </div>
           <!-- Zooms the actual projector image (Issue #82) - not the Ink
                tab's own pad zoom above, which only changes what you see
                while drawing and never leaves this device. -->

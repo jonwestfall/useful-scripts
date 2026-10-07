@@ -1302,7 +1302,8 @@ ok(`and says what it will take (${(await desk.textContent('#upload-help')).slice
   /50 MB/.test(await desk.textContent('#upload-help')) && /\.md/.test(await desk.textContent('#upload-help')));
 
 const uploadDeck = path.join(acctData, 'uploaded-deck.md');
-fs.writeFileSync(uploadDeck, '# Uploaded In Class\n\nThis never went near git.\n\n---\n\n## The second slide\n');
+// marp: true - a .md without it is a document to read (Issue #240).
+fs.writeFileSync(uploadDeck, '---\nmarp: true\n---\n\n# Uploaded In Class\n\nThis never went near git.\n\n---\n\n## The second slide\n');
 await desk.setInputFiles('#up-file', uploadDeck);
 await desk.fill('#up-title', 'Week 1 lecture');
 await desk.selectOption('#up-course', 'psy415');

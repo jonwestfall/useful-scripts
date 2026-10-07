@@ -15,7 +15,7 @@ const CHANNEL = 'podium-quicklook';
 const KEEP_MS = 60_000;   // how long an unasked-for handover waits for its tab
 
 /** Item types Quick Look can show. */
-export const QUICK_LOOK_TYPES = new Set(['deck', 'imagedeck', 'image', 'pdf', 'video', 'audio', 'web', 'slides', 'youtube', 'text', 'set']);
+export const QUICK_LOOK_TYPES = new Set(['deck', 'document', 'imagedeck', 'image', 'pdf', 'video', 'audio', 'web', 'slides', 'youtube', 'text', 'set']);
 
 export function canQuickLook(item) {
   if (!item || !QUICK_LOOK_TYPES.has(item.type)) return false;

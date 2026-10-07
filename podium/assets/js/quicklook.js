@@ -16,7 +16,8 @@
 import { $, el, fmtTime } from './util.js';
 import { createRenderer, TYPES } from './renderers.js';
 import { render as renderDeckSource, deckId, forgetDeck, applyFits, applyPolyfill, deckLocation } from './deck.js';
-import { deckStep } from './protocol.js';
+import { deckStep, clampDocAt, docMaxAt, DOC_VIEW, DOC_STEP } from './protocol.js';
+import { notesInView, headingAt, headingAtTop } from './doc.js';
 import { deckProblems, checkServerMedia } from './deck-checks.js';
 import { parseDeck } from './deck-source.js';
 
@@ -170,6 +171,68 @@ async function showDeck(pkg, { keep = null } = {}) {
     destroy() {
       renderer.destroy?.();
       forgetDeck(id);
+      $('#ql-grid-cells').replaceChildren();
+    },
+  };
+}
+
+// --- a markdown document (Issue #240) ----------------------------------------------
+
+async function showDocument(pkg) {
+  let source = pkg.source;
+  if (source == null) {
+    const res = await fetch(pkg.item.src, { cache: 'no-cache', credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`${pkg.item.src}: HTTP ${res.status}`);
+    source = await res.text();
+  }
+  const id = `quicklook:${await deckId(source)}`;
+  let at = 0;
+  let metrics = null;
+  let height = DOC_VIEW;
+  const box = el('div', { class: 'ql-slide' });
+  box.style.setProperty('--aspect', String(16 / 9));
+  stage.replaceChildren(box);
+  const item = () => ({ type: 'document', deckId: id, look: pkg.item.look || '', at, height });
+  const renderer = createRenderer(item(), {
+    getDeckSource: () => source,
+    onMeasure: (m) => { metrics = m; height = m.height; at = clampDocAt(at, height); draw(); },
+  });
+  box.append(renderer.el);
+
+  function draw() {
+    renderer.update(item());
+    const stride = Math.round(DOC_VIEW * DOC_STEP);
+    const screens = Math.max(1, Math.ceil(docMaxAt(height) / stride) + 1);
+    const heading = headingAtTop(metrics?.headings, at);
+    setWhere(`Screen ${Math.min(screens, Math.round(at / stride) + 1)} of ${screens}${heading ? ` · ${heading.text}` : ''}`);
+    const notes = metrics ? notesInView(metrics.notes, at) : [];
+    $('#ql-notes-text').textContent = notes.length ? notes.map((n) => n.text).join('\n\n') : 'No notes for this part.';
+    $('#ql-notes-text').classList.toggle('is-empty', !notes.length);
+    $('#ql-notes').hidden = !notesOpen;
+    $('#ql-notes-toggle').setAttribute('aria-pressed', String(notesOpen));
+  }
+  const go = (next) => { at = clampDocAt(next, height); draw(); };
+  // The wheel and a trackpad scroll it, as they would any page.
+  box.addEventListener('wheel', (ev) => { ev.preventDefault(); go(at + ev.deltaY * (DOC_VIEW / Math.max(1, box.clientHeight))); }, { passive: false });
+
+  $('#ql-grid-heading').textContent = 'Headings';
+  showControls(['ql-prev', 'ql-next', 'ql-grid-toggle', 'ql-notes-toggle']);
+  draw();
+  return {
+    kind: 'document',
+    next: () => go(at + Math.round(DOC_VIEW * DOC_STEP)),
+    prev: () => go(at - Math.round(DOC_VIEW * DOC_STEP)),
+    first: () => go(0),
+    last: () => go(docMaxAt(height)),
+    openGrid() {
+      const list = el('ol', { class: 'ql-headings' }, ...(metrics?.headings?.length ? metrics.headings.map((h) => el('li', { class: `ql-heading-${Math.min(h.level, 4)}` },
+        el('button', { type: 'button', onclick: () => { $('#ql-grid').hidden = true; go(headingAt(h, height)); } }, h.text)))
+        : [el('li', {}, 'No headings in this document.')]));
+      $('#ql-grid-cells').replaceChildren(list);
+    },
+    toggleNotes() { notesOpen = !notesOpen; draw(); },
+    destroy() {
+      renderer.destroy?.();
       $('#ql-grid-cells').replaceChildren();
     },
   };
@@ -358,6 +421,7 @@ async function show(pkg, { back = null, keep = null } = {}) {
   setTitle(item.title || TYPES[item.type]?.label || 'Quick Look', pkg.from ? `· ${pkg.from}` : '');
   try {
     if (item.type === 'deck') view = await showDeck(pkg, { keep });
+    else if (item.type === 'document') view = await showDocument(pkg);
     else if (item.type === 'pdf') view = await showPdf(pkg);
     else if (item.type === 'imagedeck') view = showPictureDeck(pkg);
     else if (item.type === 'image') view = showPicture(pkg);

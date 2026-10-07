@@ -2656,3 +2656,18 @@ body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { disp
 :root[data-theme="light"] .me-chip.is-edit, body[data-theme="light"] .me-chip.is-edit { border-color: #2f7a36; color: #1f6326; }
 :root[data-theme="light"] .hint.is-bad, body[data-theme="light"] .hint.is-bad,
 :root[data-theme="light"] .me-actions .is-bad, body[data-theme="light"] .me-actions .is-bad { color: #b42318; }
+
+/* Markdown documents on the controller's Now tab (Issue #240) ---------------- */
+.doc-tools { display: grid; gap: 8px; }
+.doc-scrub-label { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
+.doc-headings { display: flex; flex-direction: column; gap: 2px; max-height: 14rem; overflow: auto; }
+.doc-heading { text-align: left; min-height: 32px; padding: 0 10px; font-size: 14px; border-radius: 6px; }
+.doc-heading-2 { padding-left: 22px; }
+.doc-heading-3 { padding-left: 34px; font-size: 13px; }
+.doc-heading-4 { padding-left: 46px; font-size: 13px; }
+.doc-heading.is-on { border-color: var(--accent); color: var(--ink); background: var(--panel-2); }
+/* A document's headings in Quick Look (Issue #240) */
+.ql-headings { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ql-headings button { width: 100%; text-align: left; min-height: 34px; padding: 0 12px; }
+.ql-headings .ql-heading-2 button { padding-left: 26px; }
+.ql-headings .ql-heading-3 button, .ql-headings .ql-heading-4 button { padding-left: 40px; font-size: 14px; }

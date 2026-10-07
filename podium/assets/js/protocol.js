@@ -365,6 +365,24 @@ export function streamLabel(item) {
   return 'YouTube Live';
 }
 
+// --- markdown documents (Issue #240) --------------------------------------------
+//
+// A document is laid out at one fixed width and scaled to every screen, so a
+// position in it - `at`, the y of the top of what the room sees - is in the
+// page's own pixels and means the same on the display, a controller's mirror
+// and a Quick Look tab. One screenful is 16:9 of that width; Next and Previous
+// move most of one. See doc.js for the page itself.
+export const DOC_WIDTH = 1280;
+export const DOC_VIEW = 720;
+export const DOC_STEP = 0.85;
+const MAX_DOC_HEIGHT = 2000000;
+
+/** The furthest a document can be scrolled: its last screenful. */
+export const docMaxAt = (height) => Math.max(0, Math.round((Number(height) || 0) - DOC_VIEW));
+
+/** A position, held to the page. */
+export const clampDocAt = (at, height) => Math.min(docMaxAt(height), Math.max(0, Math.round(Number(at) || 0)));
+
 function normalizeItem(item) {
   if (!item || typeof item !== 'object' || !item.type) return null;
   const copy = { ...item, key: nextKey() };
@@ -447,6 +465,14 @@ function normalizeItem(item) {
       .slice(0, MAX_IMAGEDECK_SLIDES);
     copy.slide = Math.min(Math.max(0, Math.round(Number(copy.slide)) || 0), Math.max(0, copy.images.length - 1));
     copy.fit = copy.fit === 'cover' ? 'cover' : 'contain';
+  }
+  if (copy.type === 'document') {
+    // The rendered page's height in its own pixels, measured by whoever
+    // staged it (a page cannot be scrolled past what it holds), and where
+    // the room is in it. `look` is the page's light or dark.
+    copy.height = Math.min(MAX_DOC_HEIGHT, Math.max(DOC_VIEW, Math.round(Number(copy.height)) || DOC_VIEW));
+    copy.at = clampDocAt(copy.at, copy.height);
+    copy.look = copy.look === 'dark' || copy.look === 'light' ? copy.look : '';
   }
   if (copy.type === 'deck') {
     copy.slide = Math.max(0, Number(copy.slide) || 0);
@@ -914,6 +940,9 @@ export function inkSurfaceKey(item) {
   if (!item) return 'none';
   switch (item.type) {
     case 'deck': return `deck:${item.deckId}:${item.slide || 0}`;
+    // Until ink is pinned to a document's text (Issue #240, phase 2), it is
+    // kept per position: scroll back to the same place and it is there.
+    case 'document': return `document:${item.deckId}:${item.at || 0}`;
     case 'pdf': return `pdf:${item.src}:${item.page || 1}`;
     case 'slides': return `web:${item.src}:${item.slide || 0}`;
     case 'web': return `web:${item.src}`;
@@ -1549,6 +1578,13 @@ function applyOp(state, cmd) {
         // Leaving a video slide pauses its video (Issue #226); the display
         // remembers where, so coming back finds it there.
         if (item.slide !== was) item.playing = false;
+      } else if (item.type === 'document') {
+        // Next and Previous move most of a screen; a jump (a heading, the
+        // scrubber, a drag on the mirror) goes to a position in the page.
+        const target = cmd.dir === 'goto' ? Number(cmd.value) : (item.at || 0) + step * Math.round(DOC_VIEW * DOC_STEP);
+        const was = item.at || 0;
+        item.at = clampDocAt(target, item.height);
+        return item.at !== was;
       } else if (item.type === 'imagedeck') {
         const last = Math.max(0, (item.images?.length || 1) - 1);
         const target = cmd.dir === 'goto' ? Number(cmd.value) || 0 : (item.slide || 0) + step;
@@ -1561,6 +1597,21 @@ function applyOp(state, cmd) {
         item.navDir = cmd.dir;
       } else return false;
       return true;
+    }
+
+    // A document's page grew or shrank once its pictures loaded (Issue #240):
+    // every copy of it on screen or in the cue learns its real height, so
+    // Next stops at the real end.
+    case 'doc-height': {
+      const height = Math.min(MAX_DOC_HEIGHT, Math.max(DOC_VIEW, Math.round(Number(cmd.height)) || DOC_VIEW));
+      let changed = false;
+      for (const it of [state.program, state.preview, ...(state.panels || [])]) {
+        if (it?.type !== 'document' || !cmd.deckId || it.deckId !== cmd.deckId || it.height === height) continue;
+        it.height = height;
+        it.at = clampDocAt(it.at, height);
+        changed = true;
+      }
+      return changed;
     }
 
     case 'fit': {
