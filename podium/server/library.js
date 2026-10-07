@@ -123,12 +123,23 @@ const SELECT_ITEMS = `
    WHERE li.deleted_at IS NULL`;
 
 function listItems(db, user) {
+  // The courses this person owns, asked once rather than once per item.
+  const owned = new Set(db.prepare(`SELECT c.code FROM course_members cm JOIN courses c ON c.id = cm.course_id
+      WHERE cm.user_id = ? AND cm.role = 'owner'`).all(user.id).map((r) => r.code));
   return db.prepare(`${SELECT_ITEMS} AND ${VISIBLE} ORDER BY li.created_at DESC`)
     .all(user.id, user.isAdmin ? 1 : 0)
     .map(itemRow)
-    // Said per deck, so the planner and controller can offer Edit only where
-    // saving would be allowed (Issue #226).
-    .map((item) => (item.type === 'deck' ? { ...item, editable: mayEditDeck(db, user, item) } : item));
+    .map((item) => {
+      // What this person may do with it (Issue #241), from the same rules as
+      // mayDelete and mayEditDeck below - so a page offers only what the
+      // server will then allow, and never has to work the rules out itself.
+      const change = user.isAdmin || item.createdBy === user.id || (!!item.course && owned.has(item.course));
+      const edit = item.type === 'deck' && (user.isAdmin || (item.course ? owned.has(item.course) : item.createdBy === user.id));
+      const may = { rename: change, move: change, delete: change, edit };
+      // Said per deck, so the planner and controller can offer Edit only where
+      // saving would be allowed (Issue #226).
+      return item.type === 'deck' ? { ...item, editable: edit, may } : { ...item, may };
+    });
 }
 
 function getItem(db, user, id) {

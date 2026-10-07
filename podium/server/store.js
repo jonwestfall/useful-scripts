@@ -532,6 +532,21 @@ const MIGRATIONS = [
       CREATE INDEX plan_archive_by_plan ON plan_archive(plan_id);
     `);
   },
+  (db) => {
+    db.exec(`
+      -- The decks someone has opened or saved in the deck editor lately
+      -- (Issue #241), so the planner can offer "the one I just made" first.
+      -- One row per person per address; saved stays set once it was.
+      CREATE TABLE deck_recent (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        src     TEXT    NOT NULL,
+        title   TEXT    NOT NULL DEFAULT '',
+        saved   INTEGER NOT NULL DEFAULT 0,
+        at      INTEGER NOT NULL,
+        PRIMARY KEY (user_id, src)
+      );
+    `);
+  },
 ];
 
 function migrate(db) {

@@ -1295,6 +1295,7 @@ async function openPlan(planId, itemId) {
 }
 
 function describeOrigin() {
+  syncAddToLecture();
   const where = $('#deck-where');
   const label = {
     library: () => `Library${origin.course ? ` · ${origin.course.toUpperCase()}` : ''} · ${origin.name}${origin.editable ? '' : ' · view only'}`,
@@ -1355,6 +1356,33 @@ async function start() {
   renderNow();
   renderDeckSettings();
   renderSlidePanel();
+  noteRecent();
+}
+
+// --- this deck in the planner (Issue #241) ------------------------------------------
+
+/** Where this deck lives on this server, or null: what the planner points a lecture at. */
+function serverAddress() {
+  if (origin.kind === 'library') return origin.item?.src || null;
+  if (origin.kind === 'content' && origin.name) return `content/decks/${origin.name}`;
+  return null;
+}
+
+// Tell the server this person had it open (or saved it), so the planner's
+// "Choose from the server" lists it first.
+function noteRecent({ saved = false } = {}) {
+  const src = serverAddress();
+  if (!src || !info?.user) return;
+  fetch('/api/me/recent-decks', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ src, title: deck?.frontMatter.fields.title || origin.title || '', saved }),
+  }).catch(() => {});
+}
+
+function syncAddToLecture() {
+  $('#deck-add-to-lecture').hidden = !serverAddress();
 }
 
 function offerDraft(loaded) {
@@ -1408,6 +1436,7 @@ function savedOk(message = 'Saved') {
   setSaveState(message);
   setTimeout(refreshSaveState, 2500);
   describeOrigin();
+  noteRecent({ saved: true });
 }
 
 async function saveLibrary({ force = false } = {}) {
@@ -1689,6 +1718,11 @@ function wireSaveMenu() {
   $('#deck-download-zip').addEventListener('click', () => { close(); downloadZip(); });
   $('#deck-download-pdf').addEventListener('click', () => { close(); downloadPdf(); });
   $('#deck-rehearse').addEventListener('click', () => { close(); rehearse(); });
+  $('#deck-add-to-lecture').addEventListener('click', () => {
+    close();
+    const src = serverAddress();
+    if (src) window.open(`plan.html?add=${encodeURIComponent(src)}`, '_blank');
+  });
   $('#deck-save-template').addEventListener('click', () => { close(); templates.open({ kind: 'deck' }); });
   $('#deck-versions').addEventListener('click', () => { close(); openVersions(); });
   $('#deck-new-template').addEventListener('click', () => { close(); templates.open({ kind: 'deck' }); });
