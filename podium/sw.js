@@ -34,7 +34,7 @@ const SHELL = /\.(?:html|css|js|mjs|webmanifest|json|woff2?)$/;
 // included - a deck that cannot render is the difference between a lecture and
 // no lecture.
 const WARM = [
-  './', 'index.html', 'display.html', 'control.html', 'plan.html', 'deck.html', 'admin.html', 'config.json',
+  './', 'index.html', 'display.html', 'control.html', 'plan.html', 'deck.html', 'quicklook.html', 'admin.html', 'config.json',
   'manifest-control.webmanifest', 'manifest-display.webmanifest',
   'assets/css/podium.css',
   'assets/vendor/qrcode.js', 'assets/vendor/marp.esm.js', 'assets/vendor/pdf.min.js',
@@ -48,9 +48,9 @@ const WARM = [
   // display.js or deck-editor.js imports that is missing here fails the whole
   // page offline.
   ...[
-    'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-source', 'deck-templates',
+    'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-checks', 'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-source', 'deck-templates',
     'defaults', 'display', 'duration-probe',
-    'index', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'recap', 'renderers',
+    'index', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'quicklook', 'quicklook-open', 'recap', 'renderers',
     'rtc', 'server', 'store', 'thumbs', 'util', 'watermark', 'zip', 'zip-review',
   ].map((name) => `assets/js/${name}.js`),
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),

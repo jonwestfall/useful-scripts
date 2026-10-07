@@ -892,6 +892,13 @@ body.guest {
   color: var(--dim); padding: 2px 7px; display: grid; place-items: center; border-radius: 8px;
 }
 .tile-edit:hover, .tile-edit:active { background: var(--panel-2); color: var(--accent); }
+/* Issue #242: Quick Look, in the same corner - beside ✎ or ♪ when the tile has one. */
+.tile-look {
+  position: absolute; bottom: 4px; right: 6px; font-size: 14px;
+  color: var(--dim); padding: 2px 7px; display: grid; place-items: center; border-radius: 8px;
+}
+.tile-look.is-beside { right: 40px; }
+.tile-look:hover, .tile-look:active { background: var(--panel-2); color: var(--accent); }
 /* Issue #226: the pictures and videos used in decks, kept out of the tiles until asked for. */
 /* Issue #226: the deck on screen was edited since it went up. */
 .deck-edited { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 10px; border: 1px solid var(--cue); border-radius: 10px; color: var(--cue); font-size: 13px; }
@@ -2521,3 +2528,70 @@ body.deck-editor .topbar { flex: none; }
   .deck-code-col { min-height: 70vh; }
   .deck-col { border-right: 0; border-bottom: 1px solid var(--line); }
 }
+
+/* --- Quick Look (Issue #242) ---------------------------------------------- */
+body.quicklook { display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--bg); }
+body.quicklook .topbar { flex: none; }
+.ql-bar { flex-wrap: wrap; row-gap: 6px; }
+.ql-title { font-weight: 650; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ql-from { white-space: nowrap; }
+.ql-where { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ql-controls { display: flex; flex-wrap: wrap; gap: 4px; }
+.ql-controls button { min-height: 34px; padding: 0 12px; font-size: 13px; }
+.ql-controls button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.ql-warn { flex: none; margin: 0; padding: 8px 14px; background: #2a1e12; border-bottom: 1px solid #6b4a22; color: #ffd9a8; font-size: 13px; }
+.ql-main { flex: 1; min-height: 0; display: flex; }
+.ql-stage {
+  position: relative; flex: 1; min-width: 0; display: grid; place-items: center; overflow: hidden;
+  background: #000; container-type: size;
+}
+/* A slide, letterboxed to its own shape rather than the window's. */
+.ql-slide {
+  position: relative; width: min(100cqw, calc(100cqh * var(--aspect, 1.7778)));
+  aspect-ratio: var(--aspect, 1.7778); background: #fff;
+}
+.ql-fill { position: absolute; inset: 0; }
+.ql-stage.is-zoomed { display: block; overflow: auto; }
+.ql-stage.is-zoomed .r-image { width: auto; height: auto; max-width: none; background: transparent; }
+.ql-stage .r-image { cursor: zoom-in; }
+.ql-stage.is-zoomed .r-image { cursor: zoom-out; }
+.ql-media { max-width: 100%; max-height: 100%; background: #000; }
+video.ql-media { width: 100%; height: 100%; object-fit: contain; }
+audio.ql-media { width: min(640px, 90%); }
+.ql-set { align-self: start; justify-self: stretch; padding: 24px; background: var(--bg); width: 100%; height: 100%; overflow: auto; }
+.ql-set h2 { margin: 0 0 12px; }
+.ql-set ol { margin: 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 6px; }
+.ql-set button { text-align: left; }
+.ql-back { position: absolute; top: 10px; left: 10px; z-index: 5; min-height: 32px; font-size: 13px; }
+.ql-empty { color: var(--dim); padding: 24px; text-align: center; max-width: 52ch; }
+.ql-notes { flex: none; width: min(34%, 420px); border-left: 1px solid var(--line); padding: 14px 16px; overflow: auto; background: var(--panel); }
+.ql-notes h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
+.ql-notes-text { white-space: pre-wrap; font-size: 17px; line-height: 1.5; }
+.ql-notes-text.is-empty { color: var(--dim); font-size: 14px; }
+@media (max-width: 760px) {
+  .ql-main { flex-direction: column; }
+  .ql-notes { width: auto; max-height: 38%; border-left: 0; border-top: 1px solid var(--line); }
+}
+.ql-overlay {
+  position: fixed; inset: 56px 16px 16px; z-index: 50; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 20px 50px rgba(0, 0, 0, .55);
+}
+.ql-overlay[hidden] { display: none; }
+.ql-overlay-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.ql-overlay-head h2 { margin: 0; font-size: 15px; }
+.ql-overlay-head button { min-height: 32px; padding: 0 10px; }
+.ql-grid-cells { flex: 1; overflow: auto; padding: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; align-content: start; }
+.ql-cell { position: relative; padding: 0; border: 2px solid var(--line); border-radius: 6px; background: #fff; overflow: hidden; min-height: 0; cursor: pointer; }
+.ql-cell.is-on { border-color: var(--accent); }
+.ql-cell .ql-cell-num { position: absolute; right: 4px; bottom: 4px; z-index: 2; font-size: 11px; padding: 1px 6px; border-radius: 8px; background: rgba(0, 0, 0, .7); color: #fff; }
+.ql-cell img, .ql-cell canvas { display: block; width: 100%; height: auto; }
+.ql-cell-deck { display: block; width: 100%; grid-column: 1 / -1; }
+.ql-checks { inset: 56px 16px auto auto; width: min(520px, calc(100% - 32px)); max-height: calc(100vh - 72px); }
+.ql-checks-list { list-style: none; margin: 0; padding: 10px 14px; overflow: auto; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.ql-checks-list li { padding: 6px 8px; border-radius: 6px; background: var(--bg); }
+.ql-checks-list li.is-warning { border-left: 3px solid #e3a33b; }
+.ql-checks-list li.is-info { border-left: 3px solid var(--dim); }
+.ql-checks-list li.is-ok { color: var(--dim); }
+.ql-checks-list button { background: none; border: 0; padding: 0; min-height: 0; color: var(--accent); cursor: pointer; font: inherit; }
+.ql-private { flex: none; margin: 0; padding: 4px 14px; font-size: 12px; color: var(--dim); border-top: 1px solid var(--line); }
+body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { display: none; }
