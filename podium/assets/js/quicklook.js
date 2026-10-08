@@ -20,6 +20,10 @@ import { deckStep, clampDocAt, docMaxAt, DOC_VIEW, DOC_STEP } from './protocol.j
 import { notesInView, headingAt, headingAtTop } from './doc.js';
 import { deckProblems, checkServerMedia } from './deck-checks.js';
 import { parseDeck } from './deck-source.js';
+import { startPageTheme } from './theme.js';
+
+// Light or dark, as chosen for every page (see theme.js).
+startPageTheme({ toggleIn: '.ql-controls' });
 
 const CHANNEL = 'podium-quicklook';
 const KEPT = 'podium.quicklook.';      // + token: the handover, kept for a reload of this tab

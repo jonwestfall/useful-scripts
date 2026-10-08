@@ -15,6 +15,10 @@ import { serverInfo, mountSessionBadge } from './server.js';
 import { FILE_TYPES, typeIcon, quickLookFile } from './file-browser.js';
 import { canQuickLook } from './quicklook-open.js';
 import { dayAndTime, spanOf, downloadSessionRecap } from './recap-pdf.js';
+import { startPageTheme, setThemeChoice, onThemeChange } from './theme.js';
+
+// Light or dark, as chosen for every page (see theme.js).
+startPageTheme();
 
 let me = null;
 let profileCourses = [];      // where this account is a member, as the admin set it
@@ -531,6 +535,14 @@ async function start() {
     if (await changePassword()) {
       $('#me-who').textContent = `${$('#me-who').textContent.split(' — ')[0]} — password changed. Every other device has been signed out.`;
     }
+  });
+  // Appearance: saved on the account, so it follows them to every device.
+  onThemeChange((effective, choice) => { $('#me-theme').value = choice; });
+  $('#me-theme').addEventListener('change', async (ev) => {
+    $('#me-theme-note').textContent = 'Saving…';
+    $('#me-theme-note').textContent = await setThemeChoice(ev.target.value)
+      ? 'Saved — every page, on every device you sign in from.'
+      : 'Used on this device, but not saved to your account. Try again in a moment.';
   });
   wireFiles();
   $('#lectures-search').addEventListener('input', renderLectures);

@@ -90,5 +90,14 @@ const blocked = await accounts.changeOwnPassword(db, owen, 'a good long password
 ok('even the right password, until the lockout passes', blocked.ok === false && blocked.retryAfterMs > 0);
 ok('and the login form is throttled for that account too', !!(await accounts.login(db, 'owen', 'a good long password', { ip: '192.0.2.51' })).retryAfterMs);
 
+console.log('\n-- appearance: light or dark on every page, per account --');
+ok('nobody has chosen until they do', owen.theme === '' && accounts.findUser(db, 'owen') && accounts.publicUser(accounts.findUser(db, 'owen')).theme === '');
+ok('a choice is kept on the account', accounts.setTheme(db, owen, 'light') === 'light'
+  && accounts.publicUser(accounts.findUser(db, 'owen')).theme === 'light');
+ok('and comes back with their session, wherever they sign in', accounts.sessionUser(db, accounts.startSession(db, owen.id, 'test'))?.theme === 'light');
+ok('it is theirs alone', accounts.publicUser(accounts.findUser(db, 'tia')).theme === '');
+ok('only auto, light or dark', status(() => accounts.setTheme(db, owen, 'purple')) === 400
+  && accounts.publicUser(accounts.findUser(db, 'owen')).theme === 'light');
+
 console.log(fails.length ? `\n${fails.length} FAILED` : '\nALL PASS');
 process.exit(fails.length ? 1 : 0);

@@ -1079,7 +1079,9 @@ await until(async () => (await drawnInStrip()) === 1, { timeout: 20000 }).catch(
 ok('a starter goes in as a ```mermaid block and is drawn', /```mermaid\npie title/.test(await doc()) && (await drawnInStrip()) === 1);
 const coloured = await page.evaluate(() => {
   const line = [...document.querySelectorAll('.cm-content .cm-line')].find((l) => /^pie title/.test(l.textContent));
-  return line ? [...line.querySelectorAll('span')].some((sp) => getComputedStyle(sp).color === 'rgb(196, 155, 255)' && /pie/.test(sp.textContent)) : false;
+  // Mermaid's keyword colour, in whichever look the page is in.
+  const keyword = ['rgb(196, 155, 255)', 'rgb(107, 63, 200)'];
+  return line ? [...line.querySelectorAll('span')].some((sp) => keyword.includes(getComputedStyle(sp).color) && /pie/.test(sp.textContent)) : false;
 });
 ok('and its text is coloured as Mermaid', coloured);
 
@@ -1379,7 +1381,7 @@ const [look] = await Promise.all([owen.waitForEvent('page'), tile.locator('.tile
 trap(look, 'quick look (deck)');
 let sockets = 0;
 look.on('websocket', () => { sockets += 1; });
-await look.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+await look.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 })
   .then(() => ok('↗ opens the deck in a new tab', true))
   .catch(async () => ok(`↗ opens the deck in a new tab ("${await look.textContent('#ql-where').catch(() => '')}")`, false));
 ok(`a library file opens by its id (${new URL(look.url()).search})`, new URL(look.url()).searchParams.get('library') === String(lookDeck.id));
@@ -1411,7 +1413,7 @@ await look.close();
 const pdfLook = await owen.newPage();
 trap(pdfLook, 'quick look (pdf)');
 await pdfLook.goto(`${base}/quicklook.html?library=${lookPdf.id}`);
-await pdfLook.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+await pdfLook.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 })
   .then(async () => ok(`a library PDF opens page by page ("${await pdfLook.textContent('#ql-where')}")`, true))
   .catch(async () => ok(`a library PDF opens page by page ("${await pdfLook.textContent('#ql-where')}")`, false));
 await pdfLook.click('#ql-grid-toggle');
@@ -1438,13 +1440,15 @@ await editor.waitForFunction(() => document.querySelector('#deck-strip')?.shadow
 await editor.click('#deck-save-more');
 const [rehearsal] = await Promise.all([owen.waitForEvent('page'), editor.click('#deck-rehearse')]);
 trap(rehearsal, 'quick look (rehearsal)');
-await rehearsal.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+// The new tab starts as about:blank; ask nothing of it until it is Quick Look.
+await rehearsal.waitForLoadState('domcontentloaded');
+await rehearsal.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 })
   .then(() => ok('"Open in a new tab to rehearse" opens the deck in Quick Look', true))
   .catch(() => ok('"Open in a new tab to rehearse" opens the deck in Quick Look', false));
 ok('saying it follows the editor', /follows your edits/.test(await rehearsal.textContent('#ql-from')));
 await rehearsal.keyboard.press('ArrowRight');
 await editor.click('#deck-add-slide');
-await rehearsal.waitForFunction(() => /of 5/.test(document.querySelector('#ql-where').textContent), null, { timeout: 10000 })
+await rehearsal.waitForFunction(() => /of 5/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 10000 })
   .then(() => ok('an unsaved new slide in the editor appears in the rehearsal tab', true))
   .catch(async () => ok(`an unsaved new slide in the editor appears in the rehearsal tab ("${await rehearsal.textContent('#ql-where')}")`, false));
 ok(`where you were in it ("${await rehearsal.textContent('#ql-where')}")`, /^Slide 2 of 5/.test(await rehearsal.textContent('#ql-where')));
@@ -1467,13 +1471,14 @@ await planner.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('
 ok('a planner item offers ↗ Quick Look', await planner.locator('#order .order-row button[aria-label^="Quick Look"]').count() === 1);
 const [inPlan] = await Promise.all([solo.waitForEvent('page'), planner.click('#order .order-row button[aria-label^="Quick Look"]')]);
 trap(inPlan, 'quick look (from the plan)');
-await inPlan.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+await inPlan.waitForLoadState('domcontentloaded');
+await inPlan.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 })
   .then(() => ok('a deck kept inside the plan opens in Quick Look, handed over with no server', true))
   .catch(async () => ok(`a deck kept inside the plan opens in Quick Look ("${await inPlan.textContent('.ql-stage').catch(() => '')}")`, false));
 ok(`a handover is not an address anyone else could open (${new URL(inPlan.url()).hash.slice(0, 18)}…)`, /^#handoff=[0-9a-f]{24}$/.test(new URL(inPlan.url()).hash));
 await inPlan.keyboard.press('End');
 await inPlan.reload();
-await inPlan.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 10000 })
+await inPlan.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 10000 })
   .then(() => ok('and a reload of that tab still shows it', true))
   .catch(() => ok('and a reload of that tab still shows it', false));
 await solo.close();
@@ -1537,7 +1542,7 @@ ok(`open beside the page, not over it (${JSON.stringify(seen.entries)})`, seen.o
 ok('a document no longer offers a Grid', await look.isHidden('#ql-grid-toggle'));
 ok(`and the first heading is marked as where you are ("${seen.current}")`, seen.current === 'Memory');
 await look.click('#ql-outline-list button:text-is("Retrieval")');
-await look.waitForFunction(() => /Retrieval/.test(document.querySelector('#ql-where').textContent), null, { timeout: 5000 })
+await look.waitForFunction(() => /Retrieval/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 5000 })
   .then(() => ok('clicking a heading jumps there', true))
   .catch(async () => ok(`clicking a heading jumps there ("${await look.textContent('#ql-where')}")`, false));
 seen = await outline();
@@ -1581,11 +1586,53 @@ ok(`a bookmark goes to its page ("${await look.textContent('#ql-where')}")`, /Pa
 
 // A PDF without bookmarks: no outline, the grid as before.
 await look.goto(`${BASE}/quicklook.html?src=content/sample.pdf`);
-await look.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 });
+await look.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 });
 await look.waitForTimeout(500);
 seen = await outline();
 ok('a PDF with no bookmarks has no Outline button, and keeps its Grid', !seen.button && !seen.open && await look.isVisible('#ql-grid-toggle'));
 await ctx.close();
+}
+
+if (want('appearance on My Files: one theme for every page, on every device')) {
+console.log('\n-- appearance on My Files: one theme for every page, on every device --');
+const laptop = await signedIn('tia');
+const page = await laptop.newPage();
+trap(page, 'appearance');
+await page.goto(`${base}/me.html`);
+await page.waitForSelector('#me-theme', { state: 'visible', timeout: 10000 });
+ok('My Files offers Appearance, following each device until chosen', (await page.$eval('#me-theme', (s) => s.value)) === 'auto');
+await page.selectOption('#me-theme', 'light');
+await page.waitForFunction(() => /Saved/.test(document.querySelector('#me-theme-note').textContent), null, { timeout: 5000 })
+  .then(() => ok('choosing Light saves it to the account', true))
+  .catch(async () => ok(`choosing Light saves it to the account ("${await page.textContent('#me-theme-note')}")`, false));
+ok('and the page turns light at once', await page.evaluate(() => document.documentElement.dataset.theme) === 'light');
+ok('the account says so', (await page.evaluate(() => fetch('/api/capabilities').then((r) => r.json()))).user.theme === 'light');
+
+// Another device, set to dark, that has never chosen: it takes the account's.
+const tablet = await signedIn('tia');
+const other = await tablet.newPage();
+trap(other, 'appearance (another device)');
+await other.emulateMedia({ colorScheme: 'dark' });
+await other.goto(`${base}/plan.html`);
+await other.waitForFunction(() => document.documentElement.dataset.theme === 'light', null, { timeout: 10000 })
+  .then(() => ok('signing in on another device brings the account\'s Light with it', true))
+  .catch(() => ok('signing in on another device brings the account\'s Light with it', false));
+// The top-bar toggle, signed in, changes the account too.
+await other.click('.theme-toggle');            // light -> dark
+await other.waitForTimeout(500);
+ok('the ☀/☾ toggle, signed in, changes the account as well',
+  (await other.evaluate(() => fetch('/api/capabilities').then((r) => r.json()))).user.theme === 'dark');
+await page.reload();
+await page.waitForSelector('#me-theme', { state: 'visible' });
+ok('which the first device picks up on its next page', (await page.$eval('#me-theme', (s) => s.value)) === 'dark'
+  && await page.evaluate(() => document.documentElement.dataset.theme) === 'dark');
+// Someone else's account is untouched.
+const owenCtx = await signedIn('owen');
+const owenPage = await owenCtx.newPage();
+await owenPage.goto(`${base}/me.html`);
+await owenPage.waitForSelector('#me-theme', { state: 'visible' });
+ok('another person\'s choice is their own', (await owenPage.$eval('#me-theme', (s) => s.value)) === 'auto');
+await Promise.all([laptop.close(), tablet.close(), owenCtx.close()]);
 }
 
 if (want('the planner: choosing files from the server (#241)')) {

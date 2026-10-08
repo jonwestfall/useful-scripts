@@ -25,6 +25,7 @@ import { createThumbnailer } from './thumbs.js';
 import { loadDefaults, defaultCommands, defaultsDelta, changedDefaultCommands, createDefaultsPanel, DEFAULTS_KEY } from './defaults.js';
 import { createPipPanel } from './pip.js';
 import { createDurationProber } from './duration-probe.js';
+import { initTheme, themeChoice, setThemeChoice, onThemeChange, THEME_KEY } from './theme.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -7855,21 +7856,15 @@ function applyDensity() {
   window.dispatchEvent(new Event('resize'));
 }
 
-function applyTheme() {
-  const theme = presentation.theme || 'auto';
-  let effective = theme;
-  if (theme === 'auto') {
-    effective = (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+// Light or dark: the one choice every Podium page shares (see theme.js). A
+// controller theme chosen before there was one carries over, once.
+try {
+  if (localStorage.getItem(THEME_KEY) === null && presentation.theme && presentation.theme !== 'auto') {
+    localStorage.setItem(THEME_KEY, presentation.theme);
   }
-  document.documentElement.dataset.theme = effective;
-  document.body.dataset.theme = effective;
-}
-if (typeof window !== 'undefined' && window.matchMedia) {
-  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
-    if (presentation.theme === 'auto') applyTheme();
-  });
-}
-applyTheme();
+} catch { /* storage blocked: this device follows itself */ }
+initTheme();
+onThemeChange((effective, choice) => { const pick = $('#pref-theme'); if (pick) pick.value = choice; });
 applyDensity();
 
 function settingsTab(name) {
@@ -7883,11 +7878,7 @@ function settingsTab(name) {
 }
 $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () => settingsTab(b.dataset.settingsTab)));
 
-$('#pref-theme')?.addEventListener('change', (ev) => {
-  presentation.theme = ev.target.value;
-  savePresentation();
-  applyTheme();
-});
+$('#pref-theme')?.addEventListener('change', (ev) => { setThemeChoice(ev.target.value); });
 $('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
 $('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
 $('#pref-auto-switch-tab').addEventListener('change', (ev) => { presentation.autoSwitchTab = ev.target.checked; savePresentation(); });
@@ -8002,7 +7993,7 @@ function showSetup() {
   settingsTab(isConfigured(cfg) ? 'presentation' : 'connection');
   hidePassphrase();
   const prefTheme = $('#pref-theme');
-  if (prefTheme) prefTheme.value = presentation.theme || 'auto';
+  if (prefTheme) prefTheme.value = themeChoice();
   $('#pref-poll-url').checked = presentation.showPollUrl;
   $('#pref-blank-on-connect').checked = presentation.blankOnConnect;
   $('#pref-keep-awake').checked = presentation.keepAwake;

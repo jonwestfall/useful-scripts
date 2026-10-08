@@ -40,6 +40,10 @@ import {
   mermaidStreamParser,
 } from './deck-diagrams.js';
 import * as CM from '../vendor/codemirror.esm.js';
+import { startPageTheme } from './theme.js';
+
+// Light or dark, as chosen for every page (see theme.js).
+startPageTheme();
 
 const params = new URLSearchParams(location.search);
 const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('podium-decks') : null;
@@ -308,34 +312,35 @@ const editorTheme = CM.EditorView.theme({
   '.cm-marp-sep': { backgroundColor: 'rgba(255, 201, 77, 0.10)', borderTop: '1px solid rgba(255, 201, 77, 0.35)' },
   '.cm-marp-current': { backgroundColor: 'rgba(255, 255, 255, 0.025)' },
   // The markdown highlighter colours a comment's inner spans too; these win.
-  '.cm-marp-directive, .cm-marp-directive *': { color: '#c49bff !important' },
-  '.cm-marp-note, .cm-marp-note *': { color: '#7fc8a9 !important', fontStyle: 'italic' },
+  '.cm-marp-directive, .cm-marp-directive *': { color: 'var(--code-keyword) !important' },
+  '.cm-marp-note, .cm-marp-note *': { color: 'var(--code-comment) !important', fontStyle: 'italic' },
   '.cm-tooltip': { backgroundColor: 'var(--panel)', border: '1px solid var(--line)', color: 'var(--ink)' },
   '.cm-tooltip-autocomplete ul li[aria-selected]': { backgroundColor: 'var(--accent)', color: 'var(--on-accent)' },
   '.cm-panels': { backgroundColor: 'var(--bg)', color: 'var(--ink)' },
   '.cm-foldPlaceholder': { backgroundColor: 'var(--panel-2)', border: '1px solid var(--line)', color: 'var(--dim)' },
 }, { dark: true });
 
+// Colours from podium.css (--code-*), so the light theme has its own.
 const highlight = CM.HighlightStyle.define([
-  { tag: CM.tags.heading, color: '#ffd166', fontWeight: '700' },
+  { tag: CM.tags.heading, color: 'var(--code-heading)', fontWeight: '700' },
   { tag: CM.tags.strong, fontWeight: '700' },
   { tag: CM.tags.emphasis, fontStyle: 'italic' },
-  { tag: CM.tags.link, color: '#6ea8fe' },
-  { tag: CM.tags.url, color: '#6ea8fe' },
-  { tag: CM.tags.monospace, color: '#ffb38a' },
-  { tag: CM.tags.list, color: '#97a2b0' },
-  { tag: CM.tags.quote, color: '#b7c0cc', fontStyle: 'italic' },
-  { tag: CM.tags.comment, color: '#7fc8a9' },
-  { tag: CM.tags.meta, color: '#97a2b0' },
-  { tag: CM.tags.processingInstruction, color: '#97a2b0' },
-  { tag: CM.tags.contentSeparator, color: '#ffc94d', fontWeight: '700' },
-  { tag: CM.tags.tagName, color: '#ff8fa3' },
-  { tag: CM.tags.attributeName, color: '#ffb38a' },
-  { tag: CM.tags.string, color: '#a5d6a7' },
+  { tag: CM.tags.link, color: 'var(--code-link)' },
+  { tag: CM.tags.url, color: 'var(--code-link)' },
+  { tag: CM.tags.monospace, color: 'var(--code-mono)' },
+  { tag: CM.tags.list, color: 'var(--code-dim)' },
+  { tag: CM.tags.quote, color: 'var(--code-quote)', fontStyle: 'italic' },
+  { tag: CM.tags.comment, color: 'var(--code-comment)' },
+  { tag: CM.tags.meta, color: 'var(--code-dim)' },
+  { tag: CM.tags.processingInstruction, color: 'var(--code-dim)' },
+  { tag: CM.tags.contentSeparator, color: 'var(--code-sep)', fontWeight: '700' },
+  { tag: CM.tags.tagName, color: 'var(--code-tag)' },
+  { tag: CM.tags.attributeName, color: 'var(--code-mono)' },
+  { tag: CM.tags.string, color: 'var(--code-string)' },
   // Inside a ```mermaid block (Issue #235).
-  { tag: CM.tags.keyword, color: '#c49bff' },
-  { tag: CM.tags.operator, color: '#ffc94d' },
-  { tag: CM.tags.number, color: '#ffb38a' },
+  { tag: CM.tags.keyword, color: 'var(--code-keyword)' },
+  { tag: CM.tags.operator, color: 'var(--code-sep)' },
+  { tag: CM.tags.number, color: 'var(--code-mono)' },
 ]);
 
 // The text of a ```mermaid block, coloured as Mermaid rather than plain code.
@@ -643,11 +648,11 @@ function buildOutline() {
   const style = `<style>
     :host { display: block; }
     .h { display: block; width: 100%; margin: 0 0 2px; padding: 6px 8px; text-align: left; background: none; border: 1px solid transparent;
-         border-radius: 6px; color: #d6dde6; font: 13px/1.35 system-ui, sans-serif; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .h:hover { border-color: #2a3038; }
-    .h.on { border-color: #6ea8fe; color: #fff; font-weight: 600; }
-    .l2 { padding-left: 20px; } .l3 { padding-left: 32px; font-size: 12px; } .l4, .l5, .l6 { padding-left: 44px; font-size: 12px; color: #b7c0cc; }
-    .none { color: #8b96a3; font: 13px/1.4 system-ui, sans-serif; padding: 6px 8px; }
+         border-radius: 6px; color: var(--ink); font: 13px/1.35 system-ui, sans-serif; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .h:hover { border-color: var(--line); }
+    .h.on { border-color: var(--accent); color: var(--ink); font-weight: 600; }
+    .l2 { padding-left: 20px; } .l3 { padding-left: 32px; font-size: 12px; } .l4, .l5, .l6 { padding-left: 44px; font-size: 12px; color: var(--dim); }
+    .none { color: var(--dim); font: 13px/1.4 system-ui, sans-serif; padding: 6px 8px; }
   </style>`;
   stripShadow.innerHTML = style;
   if (!docRendered.outline.length) {
@@ -721,8 +726,8 @@ function buildStrip() {
   stripShadow.innerHTML = `<style>
     :host { display: block; }
     .cell { display: block; width: 100%; margin: 0 0 10px; padding: 0; text-align: left; background: none; border: 0; color: inherit; cursor: pointer; }
-    .thumb { position: relative; aspect-ratio: ${rendered.aspects?.[0] || 16 / 9}; overflow: hidden; background: #fff; border: 2px solid #2a3038; border-radius: 8px; }
-    .cell.on .thumb { border-color: #6ea8fe; }
+    .thumb { position: relative; aspect-ratio: ${rendered.aspects?.[0] || 16 / 9}; overflow: hidden; background: #fff; border: 2px solid var(--line); border-radius: 8px; }
+    .cell.on .thumb { border-color: var(--accent); }
     .cell.drop .thumb { border-color: #ffc94d; border-style: dashed; }
     .thumb .marpit { position: absolute; inset: 0; }
     .thumb svg { display: block; width: 100%; height: 100%; }
@@ -731,13 +736,13 @@ function buildStrip() {
     .badges { position: absolute; left: 3px; bottom: 3px; display: flex; gap: 3px; }
     .badge { padding: 0 4px; border-radius: 4px; font: 700 11px/1.6 system-ui, sans-serif; background: rgba(0,0,0,.65); color: #fff; }
     .badge.warn { background: #ffc94d; color: #151b23; }
-    .cap { margin-top: 4px; font: 12px/1.3 system-ui, sans-serif; color: #b7c0cc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .cell.on .cap { color: #e7ecf2; font-weight: 600; }
+    .cap { margin-top: 4px; font: 12px/1.3 system-ui, sans-serif; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cell.on .cap { color: var(--ink); font-weight: 600; }
     .acts { display: none; gap: 4px; margin-top: 4px; }
     .cell.on .acts { display: flex; }
-    .acts button { flex: 1; min-height: 28px; font: 12px system-ui, sans-serif; color: #e8ecf1; background: #1b2027; border: 1px solid #2a3038; border-radius: 6px; cursor: pointer; }
+    .acts button { flex: 1; min-height: 28px; font: 12px system-ui, sans-serif; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
     .acts button:disabled { opacity: .4; cursor: default; }
-    .acts button.armed { background: #6b1a1a; border-color: #ff4d4f; }
+    .acts button.armed { background: #6b1a1a; border-color: #ff4d4f; color: #fff; }
     /* Narrow (Issue #231): the editor is one column, so the slides are one
        row of small thumbnails that scrolls sideways. */
     @media (max-width: 960px) {

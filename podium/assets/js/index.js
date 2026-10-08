@@ -13,6 +13,10 @@
 import { $, el } from './util.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { versionStamp } from './protocol.js';
+import { startPageTheme } from './theme.js';
+
+// Light or dark, as chosen for every page (see theme.js).
+startPageTheme();
 
 const stamp = $('#landing-version-stamp');
 if (stamp) stamp.textContent = versionStamp();

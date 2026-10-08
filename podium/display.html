@@ -215,11 +215,12 @@
     <!-- Outside the form on purpose: it is not part of the connection, so it
          applies the moment it changes and never makes Save reconnect. Only
          this screen's own sheets change - never the stage the room sees,
-         which stays black (Issue #210). -->
+         which stays black (Issue #210). The same choice as every other
+         Podium page in this browser (see theme.js). -->
     <div class="field" style="margin-top:16px">
       <label for="d-sheet-theme">Look of these setup screens</label>
       <select id="d-sheet-theme">
-        <option value="auto">Match this computer (default)</option>
+        <option value="auto">Follow this computer (default)</option>
         <option value="dark">Dark</option>
         <option value="light">Light / High contrast</option>
       </select>

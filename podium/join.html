@@ -16,7 +16,18 @@
   :root {
     color-scheme: dark;
     --bg: #0b0d10; --panel: #151a21; --line: #273040; --ink: #e8ecf2;
-    --dim: #93a0b4; --accent: #4c8dff; --live: #21c07a;
+    --dim: #93a0b4; --accent: #4c8dff; --button: #2b66d9; --field: #0f141b; --picked: #10251d; --bad: #ff9d9d; --live: #21c07a;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f7f8fa; --panel: #ffffff; --line: #d7dde5; --ink: #121821;
+    --dim: #4f5b6b; --accent: #1f5fcc; --button: #1f5fcc; --live: #13804f; --field: #ffffff;
+    --picked: #e3f4ec; --bad: #b42318;
+  }
+  .theme-toggle {
+    position: fixed; top: 12px; right: 12px; width: auto; min-height: 0;
+    padding: 6px 10px; font-size: 16px; line-height: 1; font-weight: 400;
+    background: var(--panel); border-color: var(--line); color: var(--dim);
   }
   * { box-sizing: border-box; }
   body {
@@ -30,7 +41,7 @@
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
   label { display: block; font-size: 14px; color: var(--dim); margin-bottom: 6px; }
   input, textarea, button {
-    font: inherit; color: var(--ink); background: #0f141b;
+    font: inherit; color: var(--ink); background: var(--field);
     border: 1px solid var(--line); border-radius: 10px; padding: 12px;
     width: 100%; -webkit-appearance: none;
   }
@@ -38,13 +49,13 @@
     text-transform: uppercase; letter-spacing: .4em; text-align: center;
     font-size: 30px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
-  button { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  button { background: var(--button); border-color: var(--button); color: #fff; font-weight: 600; cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
   /* Thumb-sized, because this is answered standing up, one-handed, in a
      lecture hall - not clicked with a mouse. */
   .choice {
     display: flex; align-items: center; gap: 12px; text-align: left;
-    background: #0f141b; border-color: var(--line); color: var(--ink);
+    background: var(--field); border-color: var(--line); color: var(--ink);
     font-weight: 500; min-height: 62px; margin-bottom: 10px;
   }
   .choice .letter {
@@ -52,27 +63,41 @@
     display: grid; place-items: center; font-weight: 700;
     background: var(--line); color: var(--ink);
   }
-  .choice[aria-pressed="true"] { border-color: var(--live); background: #10251d; }
-  .choice[aria-pressed="true"] .letter { background: var(--live); color: #06120d; }
+  .choice[aria-pressed="true"] { border-color: var(--live); background: var(--picked); }
+  .choice[aria-pressed="true"] .letter { background: var(--live); color: var(--bg); }
   .question { font-size: 19px; font-weight: 600; margin: 0 0 16px; }
   .note { margin-top: 14px; font-size: 14px; color: var(--dim); min-height: 1.4em; }
   .note.good { color: var(--live); }
-  .note.bad { color: #ff9d9d; }
+  .note.bad { color: var(--bad); }
   .row { display: flex; gap: 10px; margin-top: 10px; }
   .version-stamp { text-align: center; margin-top: 28px; font-size: 11px; color: var(--dim); opacity: 0.7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   
-  .qna-item { display: flex; gap: 12px; background: #0f141b; border: 1px solid var(--line); padding: 12px; border-radius: 10px; align-items: flex-start; }
+  .qna-item { display: flex; gap: 12px; background: var(--field); border: 1px solid var(--line); padding: 12px; border-radius: 10px; align-items: flex-start; }
   .qna-item.is-answered { opacity: 0.5; }
   .qna-item-text { flex: 1; font-size: 15px; word-break: break-word; margin-top: 2px; }
   .qna-item-upvote { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; background: none; border: none; padding: 4px 8px; border-radius: 6px; cursor: pointer; color: var(--dim); width: auto; min-width: 44px; }
-  .qna-item-upvote[aria-pressed="true"] { color: var(--live); background: #10251d; }
+  .qna-item-upvote[aria-pressed="true"] { color: var(--live); background: var(--picked); }
   .qna-item-upvote svg { width: 16px; height: 16px; fill: currentColor; margin-bottom: 2px; }
   .qna-item-upvote span { font-size: 13px; font-weight: 600; }
   
   [hidden] { display: none !important; }
 </style>
+<script>
+// Light or dark, as chosen for every Podium page in this browser - inline,
+// like everything else this page needs (see theme-boot.js for the shared one).
+(function () {
+  try {
+    var choice = localStorage.getItem('podium.theme');
+    if (choice !== 'light' && choice !== 'dark') {
+      choice = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    document.documentElement.dataset.theme = choice;
+  } catch (_e) { /* storage blocked: dark */ }
+}());
+</script>
 </head>
 <body>
+<button id="theme-toggle" class="theme-toggle" type="button" aria-label="Theme: light or dark">◐</button>
 
 <h1>Podium</h1>
 <p class="sub">Answer from your phone. Nothing here asks who you are.</p>
@@ -113,5 +138,34 @@
 <p id="join-version-stamp" class="version-stamp">v1.2 · build 98 · 03b4b94</p>
 
 <script type="module" src="assets/js/join.js"></script>
+<script>
+// The ☀ / ☾ / ◐ button: Dark, Light or Follow this device, shared with every
+// Podium page in this browser (theme.js does the same on the others).
+(function () {
+  var button = document.getElementById('theme-toggle');
+  if (!button) return;
+  var order = ['auto', 'light', 'dark'];
+  var icons = { auto: '◐', light: '☀', dark: '☾' };
+  var names = { auto: 'Follow this device', light: 'Light', dark: 'Dark' };
+  function choice() {
+    try { var c = localStorage.getItem('podium.theme'); return order.indexOf(c) >= 0 ? c : 'auto'; } catch (_e) { return 'auto'; }
+  }
+  function paint() {
+    var c = choice();
+    var light = c === 'light' || (c === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+    document.documentElement.dataset.theme = light ? 'light' : 'dark';
+    button.textContent = icons[c];
+    button.setAttribute('aria-label', 'Theme: ' + names[c]);
+    button.title = 'Theme: ' + names[c];
+  }
+  button.addEventListener('click', function () {
+    var next = order[(order.indexOf(choice()) + 1) % order.length];
+    try { localStorage.setItem('podium.theme', next); } catch (_e) { /* this visit only */ }
+    paint();
+  });
+  if (window.matchMedia) window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', paint);
+  paint();
+}());
+</script>
 </body>
 </html>

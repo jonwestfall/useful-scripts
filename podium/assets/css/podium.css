@@ -10,6 +10,10 @@
   /* Text fields and dropdowns: a shade darker than a panel here, white in
      every light scope below - the light theme, and a light display sheet. */
   --field: #0e1216;
+  /* The deck editor's markdown colours, each readable on its own panel. */
+  --code-heading: #ffd166; --code-sep: #ffc94d; --code-link: #6ea8fe; --code-mono: #ffb38a;
+  --code-dim: #97a2b0; --code-quote: #b7c0cc; --code-comment: #7fc8a9; --code-tag: #ff8fa3;
+  --code-string: #a5d6a7; --code-keyword: #c49bff;
   --accent: #6ea8fe;
   --live: #ff4d4f;
   /* A red FILL with white text on it (Take, Laser, a confirmed delete).
@@ -752,7 +756,7 @@ body.guest {
 .relay-target { word-break: break-all; }
 .relay-log {
   margin: 8px 0 0; padding: 8px 10px; max-height: 130px; overflow: auto;
-  background: #0b0f14; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--field); border: 1px solid var(--line); border-radius: 8px;
   color: var(--dim); font-size: 11.5px; line-height: 1.55;
   white-space: pre-wrap; word-break: break-word; text-align: left;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -2171,6 +2175,9 @@ details.help > .hint { margin-top: 4px; }
   --live-fill: #b91c1c;
   --on-accent: #ffffff;
   --field: #ffffff;
+  --code-heading: #7a4f00; --code-sep: #8a5a00; --code-link: #1f5fcc; --code-mono: #a3401a;
+  --code-dim: #566273; --code-quote: #4f5b6b; --code-comment: #1b6e46; --code-tag: #b4234a;
+  --code-string: #2e6b31; --code-keyword: #6b3fc8;
   color-scheme: light;
 }
 
@@ -2198,7 +2205,8 @@ details.help > .hint { margin-top: 4px; }
   border-color: var(--accent);
   color: #ffffff;
 }
-:root[data-theme="light"] button.danger-outline {
+:root[data-theme="light"] button.danger-outline,
+body.display[data-sheet-theme="light"] .sheet button.danger-outline {
   border-color: #fca5a5;
   color: #b91c1c;
 }
@@ -2249,6 +2257,7 @@ details.help > .hint { margin-top: 4px; }
 :root[data-theme="light"] .music-row.is-on,
 :root[data-theme="light"] button.set-row.is-on,
 :root[data-theme="light"] .order-row.is-on,
+:root[data-theme="light"] .order-settings.is-on,
 :root[data-theme="light"] .plan-row.is-on,
 :root[data-theme="light"] .music-quick-chip.is-on,
 :root[data-theme="light"] .timer-chip.is-on {
@@ -2713,3 +2722,9 @@ body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { disp
 /* The deck editor's document mode (Issue #240) ----------------------------- */
 body.is-doc .deck-only { display: none !important; }
 body:not(.is-doc) .doc-only { display: none !important; }
+
+/* Light or dark on every page (theme.js) -------------------------------------- */
+.theme-toggle { min-width: 36px; min-height: 32px; padding: 0 8px; font-size: 16px; line-height: 1; flex: none; }
+.me-appearance { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 14px; }
+.me-appearance label { font-size: 14px; color: var(--dim); }
+.me-appearance select { width: auto; min-width: 12rem; }

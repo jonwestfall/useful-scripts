@@ -121,6 +121,9 @@ const AUTH_OPEN_PATHS = new Set([
   // display.html, plan.html and admin.html are untouched by this.
   '/assets/css/podium.css', '/assets/js/server.js', '/assets/js/protocol.js',
   '/assets/js/util.js', '/assets/js/index.js', '/assets/icons/apple-touch-icon.png',
+  // Light or dark (theme.js): the landing page, the guide and a guest's
+  // controller all start with it, and it is no more than a colour choice.
+  '/assets/js/theme.js', '/assets/js/theme-boot.js',
 ]);
 
 // index.html itself, reachable without signing in even where accounts are
@@ -131,8 +134,9 @@ const AUTH_OPEN_PATHS = new Set([
 // instance using the simpler AUTH_PASSWORD gate instead of accounts chose
 // that specifically to keep the whole thing off the public internet, splash
 // included, and still gets challenged for these paths like every other.
-// guide.html is the same kind of page: a self-contained, script-free tour
-// of what Podium is, linked from the showcase and loading nothing else.
+// guide.html is the same kind of page: a self-contained tour of what Podium
+// is, linked from the showcase, loading nothing but the light/dark choice
+// (theme.js, open above).
 const AUTH_PUBLIC_WITH_ACCOUNTS = new Set(['/', '/index.html', '/guide.html']);
 
 // What a provisioned kiosk (Issue #151) is let onto with its own cookie
@@ -148,7 +152,7 @@ const KIOSK_OPEN_PATHS = new Set([
   '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
-  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js',
+  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
 ]);
 
 // What view.html (Guest View, Issue #150) needs to load, open to everyone
@@ -163,7 +167,7 @@ const VIEW_OPEN_PATHS = new Set([
   '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
-  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js',
+  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
 ]);
 for (const openPath of VIEW_OPEN_PATHS) AUTH_OPEN_PATHS.add(openPath);
 

@@ -15,6 +15,10 @@ import { TYPES } from './renderers.js';
 import { mountZipImport } from './zip-review.js';
 import { downscaleImage } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
+import { startPageTheme } from './theme.js';
+
+// Light or dark, as chosen for every page (see theme.js).
+startPageTheme();
 
 mountSessionBadge($('#session-badge'));
 const stampEl = $('#admin-version-stamp');
