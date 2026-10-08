@@ -1700,9 +1700,11 @@ await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
 await pad.click('.tab[data-tab="setup"]');
 ok('the real draft starts clean with just the two tiles picked for it', (await pad.$$('#sets-build-entries .set-row')).length === 2);
 
-const secInputs = await pad.$$('#sets-build-entries .set-row-secs');
-await secInputs[0].fill('2'); await secInputs[0].dispatchEvent('change');
-await secInputs[1].fill('3'); await secInputs[1].dispatchEvent('change');
+// Found again each time: a change can redraw the list, which would leave a
+// handle taken before it pointing at a row that is gone.
+const secInput = (i) => pad.locator('#sets-build-entries .set-row-secs').nth(i);
+await secInput(0).fill('2'); await secInput(0).dispatchEvent('change');
+await secInput(1).fill('3'); await secInput(1).dispatchEvent('change');
 await pad.click('#sets-build-save');
 ok('saving closes the builder and lists it', await pad.isHidden('#sets-build') && /Pre-show/.test(await pad.textContent('#sets-list')));
 
