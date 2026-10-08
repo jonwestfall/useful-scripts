@@ -280,7 +280,8 @@ Podium gives you dedicated remote transport controls for all media:
   - Independent channel faders for content media vs. background music.
 - **Pre-Class Background Music**:
   - Queue playlists to play music as students enter the room.
-  - Automatically ducks under lecture video when content media is played.
+  - Automatically ducks to a fifth of its level while a video or clip with sound is on screen (a video on its own, a deck's video slide, or one inside a Set), and comes back up when it goes.
+  - **Safari** lets a page make a sound only from players it was clicked for, so the display makes its video and audio players during the **Go live** click and reuses them all lecture. A display that went live without a click (kiosk mode) can still have a clip's sound refused; the controller's status line then says *The display's browser blocked this clip's sound — click once on the display*, and one click there starts it. To avoid that click altogether on a kiosk Mac, set the Podium site to **Allow All Auto-Play** in Safari's *Settings for This Website*.
 
 #### Live Streams (Twitch & YouTube Live)
 

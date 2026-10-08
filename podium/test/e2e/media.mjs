@@ -1266,6 +1266,170 @@ await pad.waitForFunction(() => !/blocking sound/.test(document.querySelector('#
 await ctx.close();
 }
 
+if (want('a video over background music under Safari\'s rule: heard, with the music ducked')) {
+console.log('\n-- a video over background music under Safari\'s rule: heard, with the music ducked --');
+// Safari's rule, which the simulations above are kinder than: a click lets
+// the players on the page at that moment make a sound, and any it plays
+// unmuted - but a muted play does not count, and a player made after the
+// click is not covered. So the music (on the page from the start) was heard,
+// while a video picked well after Go live was refused outright: its picture
+// stood still on the projector, the music was never ducked, and the room
+// heard nothing.
+const videoFile = path.join(HERE, 'fixtures', 'tone-video.webm');
+if (!fs.existsSync(videoFile)) {
+  // A few seconds of colour with a tone under it, recorded in the browser -
+  // nothing in the repo has a video with sound, and nothing here has ffmpeg.
+  const maker = await browser.newContext();
+  const page = await maker.newPage();
+  await page.goto(`${BASE}/index.html`);
+  const b64 = await page.evaluate(async () => {
+    const canvas = Object.assign(document.createElement('canvas'), { width: 160, height: 90 });
+    const g = canvas.getContext('2d');
+    const audio = new AudioContext();
+    const tone = audio.createOscillator();
+    const out = audio.createMediaStreamDestination();
+    tone.connect(out);
+    tone.start();
+    const stream = new MediaStream([...canvas.captureStream(15).getVideoTracks(), ...out.stream.getAudioTracks()]);
+    const rec = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus' });
+    const chunks = [];
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    let frame = 0;
+    const paint = setInterval(() => { g.fillStyle = `hsl(${(frame++ * 20) % 360},80%,50%)`; g.fillRect(0, 0, 160, 90); }, 66);
+    const stopped = new Promise((resolve) => { rec.onstop = resolve; });
+    rec.start();
+    await new Promise((resolve) => setTimeout(resolve, 8000));
+    rec.stop();
+    await stopped;
+    clearInterval(paint);
+    const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
+    let s = '';
+    for (const b of bytes) s += String.fromCharCode(b);
+    return btoa(s);
+  });
+  fs.writeFileSync(videoFile, Buffer.from(b64, 'base64'));
+  await maker.close();
+}
+
+const safariRule = () => {
+  const allowed = new WeakSet();
+  let inGesture = false;
+  const gesture = () => {
+    inGesture = true;
+    for (const media of document.querySelectorAll('audio, video')) allowed.add(media);
+    setTimeout(() => { inGesture = false; }, 0);
+  };
+  for (const type of ['pointerdown', 'click', 'keydown']) document.addEventListener(type, gesture, { capture: true });
+  const nativePlay = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () {
+    if (inGesture && !this.muted) allowed.add(this);
+    if (this.muted || allowed.has(this)) return nativePlay.call(this);
+    return Promise.reject(new DOMException('simulated Safari autoplay block', 'NotAllowedError'));
+  };
+};
+
+const startDuckRoom = async (room, extra = {}) => {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+    JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room, passphrase: 'clip over music', ...extra }));
+  await ctx.addInitScript(safariRule);
+  const screen = await ctx.newPage();
+  trap(screen, `${room} display`);
+  await screen.goto(`${BASE}/display.html`);
+  if (!extra.kiosk) await screen.click('#arm-button');
+  await screen.waitForSelector('#hud[data-status="online"]');
+  const pad = await ctx.newPage();
+  trap(pad, `${room} control`);
+  await pad.goto(`${BASE}/control.html`);
+  await pad.waitForSelector('.tile');
+  await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+  return { ctx, screen, pad };
+};
+const sound = (screen) => screen.evaluate(() => {
+  const music = document.querySelector('audio#music');
+  const video = document.querySelector('.layer[data-role="program"] video');
+  return {
+    music: Math.round(music.volume * 1000) / 1000,
+    video: video && { playing: !video.paused && video.currentTime > 0.3, muted: video.muted, volume: video.volume },
+  };
+});
+const putVideoUp = async (pad) => {
+  await pad.click('.tab[data-tab="library"]');
+  if (!(await pad.isVisible('#url-input'))) await pad.click('#lib-add-toggle');
+  await pad.fill('#url-input', `${BASE}/test/fixtures/tone-video.webm`);
+  await pad.click('#url-form button[type=submit]');
+};
+
+{
+  const { ctx, screen, pad } = await startDuckRoom('duck-room');
+  await pad.click('.tab[data-tab="music"]');
+  await pad.click('#music-autoplay');
+  await pad.click('#music-load');
+  await screen.waitForFunction(() => { const m = document.querySelector('audio#music'); return !m.paused && m.currentTime > 0; }, null, { timeout: 15000 });
+  // Let the fade-in finish, so "before" is the level the music sits at.
+  await screen.waitForTimeout(3500);
+  const before = (await sound(screen)).music;
+
+  await putVideoUp(pad);
+  await screen.waitForFunction(() => {
+    const v = document.querySelector('.layer[data-role="program"] video');
+    return v && !v.paused && v.currentTime > 0.3;
+  }, null, { timeout: 8000 })
+    .then(() => ok('a video picked well after Go live plays on the projector', true))
+    .catch(() => ok('a video picked well after Go live plays on the projector', false));
+  await screen.waitForTimeout(1200);
+  const during = await sound(screen);
+  ok(`with its sound on, at the room's level (${JSON.stringify(during.video)})`,
+    !!during.video?.playing && !during.video.muted && during.video.volume > 0.5);
+  ok(`and the music ducks to a fifth of its level under it (${before} -> ${during.music})`,
+    before > 0.2 && Math.abs(during.music / before - 0.2) < 0.03);
+  ok('the controller says the music is ducked',
+    await pad.evaluate(() => /ducked while a clip plays/.test(document.querySelector('#music-sub').textContent)));
+  ok('and nothing claims the sound was blocked',
+    !/blocked/.test(await pad.textContent('#display-state')));
+
+  await pad.click('.tab[data-tab="library"]');
+  await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
+  await screen.waitForSelector('.r-whiteboard', { timeout: 10000 });
+  await screen.waitForTimeout(1500);
+  const after = (await sound(screen)).music;
+  ok(`the music comes back up when the video goes (${after})`, Math.abs(after - before) < 0.02);
+
+  // Again, on a player handed back and used a second time.
+  await putVideoUp(pad);
+  await screen.waitForFunction(() => {
+    const v = document.querySelector('.layer[data-role="program"] video');
+    return v && !v.paused && v.currentTime > 0.3;
+  }, null, { timeout: 8000 })
+    .then(() => ok('and a second video later on is heard too', true))
+    .catch(() => ok('and a second video later on is heard too', false));
+  await ctx.close();
+}
+
+{
+  // A kiosk display goes live with nobody clicking it, so nothing has been
+  // allowed to make a sound - the one case the fix cannot help. It must
+  // not be a silent mystery: the controller says what to do.
+  const { ctx, screen, pad } = await startDuckRoom('duck-kiosk-room', { kiosk: true });
+  await putVideoUp(pad);
+  await pad.waitForFunction(() => /blocked this clip’s sound/.test(document.querySelector('#display-state').textContent), null, { timeout: 8000 })
+    .then(() => ok('a video the display\'s browser will not play with sound is reported on the controller', true))
+    .catch(() => ok('a video the display\'s browser will not play with sound is reported on the controller', false));
+  ok('as a problem, not a hint', await pad.evaluate(() => document.querySelector('#display-state').classList.contains('is-bad')));
+  await screen.mouse.click(400, 300);
+  await screen.waitForFunction(() => {
+    const v = document.querySelector('.layer[data-role="program"] video');
+    return v && !v.paused && v.currentTime > 0.3;
+  }, null, { timeout: 8000 })
+    .then(() => ok('one click on the display starts it', true))
+    .catch(() => ok('one click on the display starts it', false));
+  await pad.waitForFunction(() => !/blocked/.test(document.querySelector('#display-state').textContent), null, { timeout: 5000 })
+    .then(() => ok('and the warning goes', true))
+    .catch(() => ok('and the warning goes', false));
+  await ctx.close();
+}
+}
+
 if (want('more than one clock, and a laser you can pick the colour of')) {
 console.log('\n-- more than one clock, and a laser you can pick the colour of --');
 const roomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'clocks', passphrase: 'tick' });
@@ -1536,9 +1700,11 @@ await pad.click('.tile:has(.tile-title:text-is("Chalkboard"))');
 await pad.click('.tab[data-tab="setup"]');
 ok('the real draft starts clean with just the two tiles picked for it', (await pad.$$('#sets-build-entries .set-row')).length === 2);
 
-const secInputs = await pad.$$('#sets-build-entries .set-row-secs');
-await secInputs[0].fill('2'); await secInputs[0].dispatchEvent('change');
-await secInputs[1].fill('3'); await secInputs[1].dispatchEvent('change');
+// Found again each time: a change can redraw the list, which would leave a
+// handle taken before it pointing at a row that is gone.
+const secInput = (i) => pad.locator('#sets-build-entries .set-row-secs').nth(i);
+await secInput(0).fill('2'); await secInput(0).dispatchEvent('change');
+await secInput(1).fill('3'); await secInput(1).dispatchEvent('change');
 await pad.click('#sets-build-save');
 ok('saving closes the builder and lists it', await pad.isHidden('#sets-build') && /Pre-show/.test(await pad.textContent('#sets-list')));
 

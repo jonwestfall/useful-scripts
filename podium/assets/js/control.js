@@ -5440,12 +5440,16 @@ function renderConnection() {
   else if (theirs < BUILD) label = `Display is on build ${theirs}, this is build ${BUILD} — reload the display`;
   else if (theirs > BUILD) label = `Display is on build ${theirs}, this is build ${BUILD} — reload THIS device`;
   else if (state.armed === false) label = 'Display open — click “Go live” on it';
+  // Its browser would not let a clip on screen make a sound (Safari, when the
+  // page has not been clicked since that player was made). One click on the
+  // display's page lets it, and the clip starts.
+  else if (state.soundBlocked) label = 'The display’s browser blocked this clip’s sound — click once on the display';
   else label = `Display connected${display.rtt ? ` · ${display.rtt} ms` : ''} · build ${BUILD}`;
 
   $('#display-state').textContent = label;
   $('.topbar-status').title = label;
   announce('display', label.replace(/ · \d+ ms/, ''));
-  $('#display-state').classList.toggle('is-bad', !display || !!mismatch);
+  $('#display-state').classList.toggle('is-bad', !display || !!mismatch || (!!display && !!state.soundBlocked));
   $('#peer-count').textContent = [
     others.length ? `+${others.length} other controller${others.length > 1 ? 's' : ''}` : '',
     // Guest View (Issue #150): confirmation people are watching, never who.
