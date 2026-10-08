@@ -7,6 +7,9 @@
   --line: #2a3038;
   --ink: #e8ecf1;
   --dim: #97a2b0;
+  /* Text fields and dropdowns: a shade darker than a panel here, white in
+     every light scope below - the light theme, and a light display sheet. */
+  --field: #0e1216;
   --accent: #6ea8fe;
   --live: #ff4d4f;
   /* A red FILL with white text on it (Take, Laser, a confirmed delete).
@@ -69,8 +72,9 @@ button.is-on { background: var(--accent); border-color: var(--accent); color: va
 button.is-danger { background: var(--live-fill); border-color: var(--live-fill); color: #fff; font-weight: 600; }
 button.danger-outline { border-color: #6b2b2b; color: #ff9d9d; }
 
-input[type=text], input[type=url], input[type=number], input[type=password], select, textarea {
-  background: #0e1216;
+input[type=text], input[type=url], input[type=number], input[type=password], input[type=search], input[type=email], select, textarea {
+  background: var(--field);
+  color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 11px 12px;
@@ -2166,6 +2170,7 @@ details.help > .hint { margin-top: 4px; }
   --ok: #15803d;
   --live-fill: #b91c1c;
   --on-accent: #ffffff;
+  --field: #ffffff;
   color-scheme: light;
 }
 
@@ -2356,6 +2361,7 @@ body.display[data-sheet-theme="light"] .sheet {
   --ok: #15803d;
   --live-fill: #b91c1c;
   --on-accent: #ffffff;
+  --field: #ffffff;
   color-scheme: light;
   color: var(--ink);
 }
