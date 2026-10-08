@@ -18,7 +18,7 @@ const chk = (label, cond) => {
   }
 };
 
-const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'music', 'mixer', 'setup'];
+const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'attendance', 'music', 'mixer', 'setup'];
 
 console.log('-- loadPresentation sanitizes a saved tab order/hidden set --');
 
@@ -100,8 +100,8 @@ function simulateToggleHidden(hiddenTabs, id, hide) {
 chk('hiding a tab adds it once', JSON.stringify(simulateToggleHidden([], 'camera', true)) === JSON.stringify(['camera']));
 chk('un-hiding removes it', JSON.stringify(simulateToggleHidden(['camera'], 'camera', false)) === JSON.stringify([]));
 chk('hiding the last visible tab is refused', () => {
-  const eleven = TAB_IDS.slice(0, 11);
-  return JSON.stringify(simulateToggleHidden(eleven, TAB_IDS[11], true)) === JSON.stringify(eleven);
+  const allButOne = TAB_IDS.slice(0, -1);
+  return JSON.stringify(simulateToggleHidden(allButOne, TAB_IDS[TAB_IDS.length - 1], true)) === JSON.stringify(allButOne);
 });
 
 console.log('-- DOM and CSS verification --');
@@ -122,7 +122,9 @@ console.log('-- DOM and CSS verification --');
   chk('podium.css styles .tab-order-row', css.includes('.tab-order-row'));
 
   const js = fs.readFileSync(path.join(ROOT, 'assets/js/control.js'), 'utf8');
-  chk('control.js has the 12-tab TAB_IDS list', js.includes("const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'music', 'mixer', 'setup']"));
+  chk('control.js has the 13-tab TAB_IDS list', js.includes("const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'attendance', 'music', 'mixer', 'setup']"));
+  chk('Attendance stays out of sight until a server with accounts says it can (Issue #256)',
+    js.includes("const UNAVAILABLE_TABS = new Set(['attendance'])") && html.includes('data-tab="attendance" type="button" hidden'));
   chk('control.js has renderTabBar', js.includes('function renderTabBar()'));
   chk('control.js has renderTabsMoreMenu', js.includes('function renderTabsMoreMenu()'));
   chk('control.js has moveTab', js.includes('function moveTab('));

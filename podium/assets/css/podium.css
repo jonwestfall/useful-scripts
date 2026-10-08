@@ -360,7 +360,7 @@ dl.keys dd { margin: 0; color: var(--dim); }
    content far outside a 300px preview. */
 
 .layer, #preview-stage, #item-preview, #message-preview-box { container-type: size; }
-.r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set, .r-poll { position: absolute; inset: 0; }
+.r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set, .r-poll, .r-att { position: absolute; inset: 0; }
 .r-black { background: #000; }
 .r-image, .r-video { width: 100%; height: 100%; display: block; background: #000; }
 .r-frame { width: 100%; height: 100%; border: 0; background: #fff; }
@@ -454,6 +454,24 @@ dl.keys dd { margin: 0; color: var(--dim); }
 .r-poll-answers { display: flex; flex-direction: column; gap: 1cqh; max-height: 70cqh; overflow: auto; }
 .r-poll-answer { font-size: clamp(9px, 2.6cqw, 34px); background: #151b23; border-radius: 1.2cqh; padding: 1.2cqh 1.8cqw; text-align: left; }
 .r-poll-answer.r-poll-empty { color: var(--dim); text-align: center; }
+
+/* Check-in on screen (Issue #256): white, like a QR code item, so a phone
+   across the room can read it. */
+.r-att {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2.2cqh; background: #fff; color: #111; padding: 4cqh 6cqw; text-align: center;
+}
+.r-att-heading { font-size: clamp(10px, 4.2cqw, 64px); font-weight: 700; line-height: 1.15; }
+.r-att-qr svg { width: min(46cqh, 46cqw); height: auto; display: block; }
+.r-att-code { font-family: ui-monospace, Menlo, monospace; font-weight: 800; font-size: clamp(18px, 9cqw, 150px); letter-spacing: 0.08em; line-height: 1; font-variant-numeric: tabular-nums; }
+.r-att-bar { width: min(40cqw, 520px); height: 1cqh; min-height: 3px; background: #e3e7ee; border-radius: 999px; overflow: hidden; }
+.r-att-bar span { display: block; height: 100%; width: 0; background: #1f5fcc; border-radius: 999px; }
+.r-att-url { font-size: clamp(7px, 2cqw, 30px); color: #444; }
+.r-att-count { font-size: clamp(8px, 2.8cqw, 40px); font-weight: 700; color: #13804f; }
+.r-att-late { font-size: clamp(8px, 2.4cqw, 34px); font-weight: 700; color: #8a5a00; }
+.r-att-late:empty, .r-att-count:empty { display: none; }
+.r-att.is-closed .r-att-code { color: #777; font-size: clamp(14px, 6cqw, 96px); }
+.r-att.is-closed .r-att-bar, .r-att.is-elsewhere .r-att-bar, .r-att.is-elsewhere .r-att-code { display: none; }
 
 .r-poll-cloud {
   display: flex;
@@ -2745,3 +2763,17 @@ body:not(.is-doc) .doc-only { display: none !important; }
 .roster-diff { margin: 8px 0; padding-left: 1.2em; display: grid; gap: 4px; font-size: 14px; }
 .roster-diff .is-bad strong { color: var(--live); }
 .roster-form label { display: grid; gap: 4px; }
+
+/* The controller's Attendance tab (Issue #256). */
+.att-list { display: flex; flex-direction: column; gap: 6px; }
+.att-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px;
+}
+.att-row.is-flagged { border-color: var(--cue); }
+.att-who { display: flex; flex-direction: column; min-width: 0; }
+.att-name { font-weight: 600; overflow-wrap: anywhere; }
+.att-meta { font-size: 12px; color: var(--dim); }
+.att-flag { font-size: 12px; color: var(--cue); font-weight: 600; }
+.att-status { flex: none; width: auto; min-width: 110px; }
+.att-row.is-unmarked .att-status { color: var(--dim); }

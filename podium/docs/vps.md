@@ -152,6 +152,35 @@ the people attendance is taken for - a name, and optionally a student ID and
 email - kept by the course's owners on My Files. A student on a roster is not
 an account and never signs in; removing one only marks them removed.
 
+Attendance (Issue #256, phase 2) adds three tables. `attendance_sessions` is
+one check-in window for a course (usually one per lecture, reopened rather
+than repeated), holding the late rule, the code's rotation and two random
+values: the secret the six-digit code is worked out from (with the clock - the
+code itself is never stored) and the key a display uses to ask for it.
+`attendance_marks` is one row per person per session: a roster entry or a
+guest's name, ID and email, a status (`present`, `late`, `absent`,
+`excused`), how it was made (`scan`, `code`, `hand`) and any flags.
+`attendance_evidence` holds, per check-in, HMAC-SHA256 hashes of the
+browser's random token and the network address, keyed with a per-server
+secret kept in `system_settings` - so a copy of the database alone does not
+reveal who checked in from where. Evidence older than the
+`attendance_retention_days` setting (Admin → Server → Attendance, default 30)
+is deleted by an hourly sweep; the marks and the flags already raised stay.
+
+**What a syllabus can say.** *Attendance is taken with Podium: scan the code
+on the screen and pick your name. The record keeps your name, the time, and
+whether you were present or late. To catch one phone checking in several
+people, it also keeps a scrambled (hashed) form of your browser's random
+identifier and your network address for {30} days, after which they are
+deleted. No location, contacts or other phone data is collected.*
+
+The students' side is public, like `/poll`: `GET /attend` (redirects to
+`attend.html`), `POST /attend/code` (a code for a ticket good for ten
+minutes, tied to that browser), `POST /attend/people` (a name search over
+the roster - names and the end of an ID only), `POST /attend/checkin`, and
+`GET /attend/screen/<id>?k=<key>` for a display. The instructor's side is
+`/api/attendance/...`, for any member of the course.
+
 Passwords are `scrypt` with a per-user random salt, stored as
 `scrypt$N$r$p$salt$hash` so the parameters travel with the hash and can be
 raised later without invalidating anyone. Session tokens are 32 random bytes;

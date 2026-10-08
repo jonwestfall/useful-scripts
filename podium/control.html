@@ -174,6 +174,8 @@
         <button class="tab" data-tab="say" type="button">Say</button>
         <button class="tab" data-tab="timer" type="button">Timer</button>
         <button class="tab" data-tab="polls" type="button">Polls</button>
+        <!-- Only on a server with accounts (Issue #256): shown once it says so. -->
+        <button class="tab" data-tab="attendance" type="button" hidden>Attendance</button>
         <button class="tab" data-tab="music" type="button">Music</button>
         <button class="tab" data-tab="mixer" type="button">Mixer</button>
         <button class="tab" data-tab="setup" type="button">Setup</button>
@@ -965,6 +967,64 @@
           </details>
           <div id="poll-history" class="stack"></div>
           <p class="empty" id="poll-history-empty">No polls ended yet this session.</p>
+        </section>
+
+        <!-- Attendance (Issue #256): check-in from the students' own phones -->
+        <section class="panel" data-panel="attendance" hidden>
+          <p id="att-none" class="hint" hidden>
+            You are not in any course on this server yet. Attendance is taken
+            for a course — an administrator adds you to one, or you make one
+            from the planner.
+          </p>
+          <div id="att-body" class="stack">
+            <div class="inline">
+              <label for="att-course" class="hint" style="margin: 0">Course</label>
+              <select id="att-course" class="grow"></select>
+            </div>
+            <div id="att-start" class="stack">
+              <div class="inline">
+                <label class="check" style="margin: 0">
+                  <input id="att-late-after-on" type="checkbox">
+                  Count as late after
+                </label>
+                <input id="att-late-after" aria-label="Minutes from now until check-ins count as late" type="number" min="0" max="600" value="10" style="max-width: 80px" disabled>
+                <span class="hint">minutes from now</span>
+              </div>
+              <button id="att-open" type="button">Open check-in</button>
+            </div>
+            <div id="att-live" class="stack" hidden>
+              <div id="att-summary" class="poll-running-question" role="status"></div>
+              <div class="inline">
+                <button id="att-show" type="button">Show on screen</button>
+                <button id="att-toggle-open" type="button">Close check-in</button>
+              </div>
+              <div class="inline">
+                <label class="check" style="margin: 0">
+                  <input id="att-late-now" type="checkbox">
+                  Now marking late
+                </label>
+                <span id="att-late-rule" class="hint"></span>
+              </div>
+              <input id="att-search" type="search" aria-label="Find someone to mark by hand" placeholder="Find someone to mark by hand">
+              <div id="att-list" class="att-list" role="list"></div>
+            </div>
+            <p id="att-note" class="hint" role="status"></p>
+          </div>
+          <details class="help">
+            <summary>How this works</summary>
+            <p class="hint">
+            <b>Open check-in</b>, then <b>Show on screen</b>: the projector
+            shows a QR code and a six-digit code that change every 15 seconds,
+            so a photo texted to someone outside stops working almost at once.
+            Students scan or type it on their own phone, find their name on the
+            course roster (or sign in as a guest) and get a receipt.
+            Two people checked in from the same phone are both recorded and
+            flagged <b>⚑</b> for you to look at; a weaker <b>⚐</b> means a couple of
+            check-ins came from one network address within a minute or two.
+            Anyone without a phone, you mark by hand from the list. Closing
+            check-in and opening it again in the same lecture keeps one record.
+          </p>
+          </details>
         </section>
 
         <!-- Camera -->
