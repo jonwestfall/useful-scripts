@@ -2575,9 +2575,17 @@ audio.ql-media { width: min(640px, 90%); }
 .ql-notes h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
 .ql-notes-text { white-space: pre-wrap; font-size: 17px; line-height: 1.5; }
 .ql-notes-text.is-empty { color: var(--dim); font-size: 14px; }
+/* The outline (Issue #253): on the left, the notes on the right. */
+.ql-outline { flex: none; width: min(26%, 300px); border-right: 1px solid var(--line); padding: 14px 10px; overflow: auto; background: var(--panel); }
+.ql-outline h2 { margin: 0 0 8px 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
+.ql-outline .ql-headings button { min-height: 32px; font-size: 14px; border-color: transparent; background: transparent; }
+.ql-outline .ql-headings button:hover { background: var(--panel-2); }
+.ql-outline .ql-headings button[aria-current="true"] { border-color: var(--accent); background: var(--panel-2); color: var(--ink); }
+.ql-outline .ql-headings .ql-outline-num { color: var(--dim); font-variant-numeric: tabular-nums; margin-right: 6px; }
 @media (max-width: 760px) {
   .ql-main { flex-direction: column; }
   .ql-notes { width: auto; max-height: 38%; border-left: 0; border-top: 1px solid var(--line); }
+  .ql-outline { width: auto; max-height: 30%; border-right: 0; border-bottom: 1px solid var(--line); }
 }
 .ql-overlay {
   position: fixed; inset: 56px 16px 16px; z-index: 50; display: flex; flex-direction: column;
@@ -2672,7 +2680,7 @@ body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { disp
 .doc-heading-3 { padding-left: 34px; font-size: 13px; }
 .doc-heading-4 { padding-left: 46px; font-size: 13px; }
 .doc-heading.is-on { border-color: var(--accent); color: var(--ink); background: var(--panel-2); }
-/* A document's headings in Quick Look (Issue #240) */
+/* A document's headings in Quick Look (Issue #240), now its outline (Issue #253) */
 .ql-headings { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .ql-headings button { width: 100%; text-align: left; min-height: 34px; padding: 0 12px; }
 .ql-headings .ql-heading-2 button { padding-left: 26px; }

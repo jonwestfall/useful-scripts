@@ -55,11 +55,62 @@ function clearStage() {
   $('#ql-notes').hidden = true;
   $('#ql-grid').hidden = true;
   $('#ql-checks').hidden = true;
+  setOutline([]);
   setWhere('');
   showControls([]);
 }
 
 const message = (text) => stage.replaceChildren(el('p', { class: 'ql-empty' }, text));
+
+// --- the outline (Issue #253) -------------------------------------------------
+//
+// A document's headings, a deck's slide titles, a PDF's bookmarks: a list on
+// the left to jump from, beside the page rather than over it, marking where
+// you are as you go. It opens on its own when there is something to list;
+// hiding it (☰ Outline, or O) is remembered on this device.
+
+const OUTLINE_KEY = 'podium.quicklook.outline';
+let outlineKey = '';
+
+function outlineWanted() {
+  try { return localStorage.getItem(OUTLINE_KEY) !== 'closed'; } catch { return true; }
+}
+
+function showOutline(open) {
+  $('#ql-outline').hidden = !open;
+  $('#ql-outline-toggle').setAttribute('aria-pressed', String(open));
+}
+
+/** entries: [{ text, level (1-4), num?, go() }] - none hides the outline and its button. */
+function setOutline(entries) {
+  const list = entries || [];
+  // A document measured again (a resize) lists the same headings: keep the list.
+  const key = JSON.stringify(list.map((e) => [e.text, e.level, e.num]));
+  if (key === outlineKey) return;
+  outlineKey = key;
+  $('#ql-outline-toggle').hidden = !list.length;
+  $('#ql-outline-list').replaceChildren(...list.map((entry) => el('li', { class: `ql-heading-${Math.min(4, Math.max(1, entry.level || 1))}` },
+    el('button', { type: 'button', onclick: entry.go },
+      entry.num ? el('span', { class: 'ql-outline-num' }, entry.num) : null, entry.text))));
+  showOutline(list.length > 0 && outlineWanted());
+}
+
+/** Mark the entry for where you are (-1: none). */
+function markOutline(index) {
+  const buttons = $('#ql-outline-list').querySelectorAll('button');
+  buttons.forEach((button, i) => {
+    if (i === index) button.setAttribute('aria-current', 'true');
+    else button.removeAttribute('aria-current');
+  });
+  if (!$('#ql-outline').hidden) buttons[index]?.scrollIntoView?.({ block: 'nearest' });
+}
+
+function toggleOutline() {
+  if ($('#ql-outline-toggle').hidden) return;
+  const open = $('#ql-outline').hidden;
+  showOutline(open);
+  try { localStorage.setItem(OUTLINE_KEY, open ? 'open' : 'closed'); } catch { /* remembered for this visit only */ }
+}
 
 // --- a deck -------------------------------------------------------------------
 
@@ -106,6 +157,7 @@ async function showDeck(pkg, { keep = null } = {}) {
     $('#ql-play').textContent = playing ? '⏸ Pause' : '▶ Play';
     $('#ql-mute').textContent = muted ? '🔇 Unmute' : '🔊 Mute';
     markGrid(pos.slide);
+    markOutline(pos.slide);
   }
   function go(next) {
     if (next.slide !== pos.slide) playing = false;
@@ -155,6 +207,7 @@ async function showDeck(pkg, { keep = null } = {}) {
 
   $('#ql-grid-heading').textContent = 'Every slide';
   showControls(['ql-prev', 'ql-next', 'ql-grid-toggle', 'ql-notes-toggle', 'ql-checks-toggle']);
+  setOutline((rendered.titles || []).map((text, i) => ({ text, level: 1, num: String(i + 1), go: () => go({ slide: i, step: 0 }) })));
   draw();
 
   return {
@@ -195,7 +248,13 @@ async function showDocument(pkg) {
   const item = () => ({ type: 'document', deckId: id, look: pkg.item.look || '', at, height });
   const renderer = createRenderer(item(), {
     getDeckSource: () => source,
-    onMeasure: (m) => { metrics = m; height = m.height; at = clampDocAt(at, height); draw(); },
+    onMeasure: (m) => {
+      metrics = m;
+      height = m.height;
+      at = clampDocAt(at, height);
+      setOutline((m.headings || []).map((h) => ({ text: h.text, level: h.level, go: () => go(headingAt(h, height)) })));
+      draw();
+    },
   });
   box.append(renderer.el);
 
@@ -204,6 +263,9 @@ async function showDocument(pkg) {
     const stride = Math.round(DOC_VIEW * DOC_STEP);
     const screens = Math.max(1, Math.ceil(docMaxAt(height) / stride) + 1);
     const heading = headingAtTop(metrics?.headings, at);
+    // Above the first heading, it is still the one in view.
+    const first = metrics?.headings?.[0];
+    markOutline(heading ? metrics.headings.indexOf(heading) : (first && first.y < at + DOC_VIEW ? 0 : -1));
     setWhere(`Screen ${Math.min(screens, Math.round(at / stride) + 1)} of ${screens}${heading ? ` · ${heading.text}` : ''}`);
     const notes = metrics ? notesInView(metrics.notes, at) : [];
     $('#ql-notes-text').textContent = notes.length ? notes.map((n) => n.text).join('\n\n') : 'No notes for this part.';
@@ -215,8 +277,8 @@ async function showDocument(pkg) {
   // The wheel and a trackpad scroll it, as they would any page.
   box.addEventListener('wheel', (ev) => { ev.preventDefault(); go(at + ev.deltaY * (DOC_VIEW / Math.max(1, box.clientHeight))); }, { passive: false });
 
-  $('#ql-grid-heading').textContent = 'Headings';
-  showControls(['ql-prev', 'ql-next', 'ql-grid-toggle', 'ql-notes-toggle']);
+  // Its headings are the outline (Issue #253); a document has no grid.
+  showControls(['ql-prev', 'ql-next', 'ql-notes-toggle']);
   draw();
   return {
     kind: 'document',
@@ -224,17 +286,8 @@ async function showDocument(pkg) {
     prev: () => go(at - Math.round(DOC_VIEW * DOC_STEP)),
     first: () => go(0),
     last: () => go(docMaxAt(height)),
-    openGrid() {
-      const list = el('ol', { class: 'ql-headings' }, ...(metrics?.headings?.length ? metrics.headings.map((h) => el('li', { class: `ql-heading-${Math.min(h.level, 4)}` },
-        el('button', { type: 'button', onclick: () => { $('#ql-grid').hidden = true; go(headingAt(h, height)); } }, h.text)))
-        : [el('li', {}, 'No headings in this document.')]));
-      $('#ql-grid-cells').replaceChildren(list);
-    },
     toggleNotes() { notesOpen = !notesOpen; draw(); },
-    destroy() {
-      renderer.destroy?.();
-      $('#ql-grid-cells').replaceChildren();
-    },
+    destroy() { renderer.destroy?.(); },
   };
 }
 
@@ -245,6 +298,29 @@ async function pdfDocument(src) {
   if (!pdfjs) return null;
   if (pdfjs.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) pdfjs.GlobalWorkerOptions.workerSrc = 'assets/vendor/pdf.worker.min.js';
   return pdfjs.getDocument(src).promise;
+}
+
+// A PDF's bookmarks, flattened: [{ text, level, page }], in order. One that
+// does not lead to a page is left out; whatever is nested under it is kept.
+async function pdfOutline(doc) {
+  const items = await doc.getOutline().catch(() => null);
+  const found = [];
+  async function walk(list, level) {
+    for (const item of list || []) {
+      let page = null;
+      try {
+        const dest = typeof item.dest === 'string' ? await doc.getDestination(item.dest) : item.dest;
+        const target = Array.isArray(dest) ? dest[0] : null;
+        if (target && typeof target === 'object') page = (await doc.getPageIndex(target)) + 1;
+        else if (Number.isInteger(target)) page = target + 1;
+      } catch { /* a broken bookmark: left out */ }
+      const text = String(item.title || '').trim();
+      if (page && text) found.push({ text, level, page });
+      await walk(item.items, Math.min(4, level + 1));
+    }
+  }
+  await walk(items, 1);
+  return found;
 }
 
 async function showPdf(pkg) {
@@ -261,6 +337,18 @@ async function showPdf(pkg) {
     renderer.update({ ...item, type: 'pdf', page });
     setWhere(pages ? `Page ${page} of ${pages}` : `Page ${page}`);
     cells?.forEach((cell, i) => cell.classList.toggle('is-on', i + 1 === page));
+    markOutline(bookmarks.findLastIndex((b) => b.page <= page));
+  }
+  // Its bookmarks, if it has any, are the outline (Issue #253).
+  let bookmarks = [];
+  let alive = true;
+  if (doc) {
+    pdfOutline(doc).then((found) => {
+      if (!alive) return;
+      bookmarks = found;
+      setOutline(found.map((b) => ({ text: b.text, level: b.level, go: () => go(b.page) })));
+      go(page);
+    });
   }
   let cells = null;
   function buildGrid() {
@@ -299,7 +387,7 @@ async function showPdf(pkg) {
     first: () => go(1),
     last: () => go(pages || page),
     openGrid() { if (!cells) buildGrid(); go(page); },
-    destroy() { renderer.destroy?.(); doc?.destroy?.(); },
+    destroy() { alive = false; renderer.destroy?.(); doc?.destroy?.(); },
   };
 }
 
@@ -546,6 +634,7 @@ $('#ql-next').addEventListener('click', () => view?.next?.());
 $('#ql-play').addEventListener('click', () => view?.play?.());
 $('#ql-mute').addEventListener('click', () => view?.mute?.());
 $('#ql-grid-toggle').addEventListener('click', () => toggleOverlay('#ql-grid'));
+$('#ql-outline-toggle').addEventListener('click', toggleOutline);
 $('#ql-checks-toggle').addEventListener('click', () => toggleOverlay('#ql-checks'));
 $('#ql-notes-toggle').addEventListener('click', () => view?.toggleNotes?.());
 $('#ql-grid-close').addEventListener('click', () => { $('#ql-grid').hidden = true; });
@@ -567,6 +656,7 @@ document.addEventListener('keydown', (ev) => {
     ArrowLeft: () => view?.prev?.(), PageUp: () => view?.prev?.(),
     Home: () => view?.first?.(), End: () => view?.last?.(),
     g: () => !$('#ql-grid-toggle').hidden && toggleOverlay('#ql-grid'),
+    o: toggleOutline,
     c: () => !$('#ql-checks-toggle').hidden && toggleOverlay('#ql-checks'),
     n: () => view?.toggleNotes?.(),
     f: () => $('#ql-full').click(),

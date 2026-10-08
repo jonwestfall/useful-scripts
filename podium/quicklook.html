@@ -27,6 +27,7 @@
     <button id="ql-next" type="button" aria-label="Next (→)" title="Next (→)" hidden>▶</button>
     <button id="ql-play" type="button" hidden>▶ Play</button>
     <button id="ql-mute" type="button" hidden>🔇 Unmute</button>
+    <button id="ql-outline-toggle" type="button" title="Outline: jump to a heading (O)" aria-pressed="false" aria-controls="ql-outline" hidden>☰ Outline</button>
     <button id="ql-grid-toggle" type="button" title="Every slide or page (G)" hidden>▦ Grid</button>
     <button id="ql-notes-toggle" type="button" title="Presenter notes (N)" aria-pressed="true" hidden>Notes</button>
     <button id="ql-checks-toggle" type="button" title="Check before class (C)" hidden>Check</button>
@@ -36,6 +37,12 @@
 <p id="ql-warn" class="ql-warn" role="alert" hidden></p>
 
 <main class="ql-main">
+  <!-- Issue #253: the headings of a document, the slide titles of a deck or
+       the bookmarks of a PDF, beside what you are reading rather than over it. -->
+  <nav id="ql-outline" class="ql-outline" aria-label="Outline" hidden>
+    <h2>Outline</h2>
+    <ol id="ql-outline-list" class="ql-headings"></ol>
+  </nav>
   <div id="ql-stage" class="ql-stage"></div>
   <aside id="ql-notes" class="ql-notes" hidden>
     <h2>Notes</h2>
