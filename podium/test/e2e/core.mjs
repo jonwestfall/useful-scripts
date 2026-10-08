@@ -2587,7 +2587,7 @@ const fieldsBelow = (page) => page.evaluate(() => {
 });
 for (const look of ['light', 'dark']) {
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 900 }, colorScheme: look });
-  await ctx.addInitScript((l) => { try { localStorage.setItem('podium.display.sheetTheme', l); } catch { /* about:blank */ } }, look);
+  await ctx.addInitScript((l) => { try { localStorage.setItem('podium.theme', l); } catch { /* about:blank */ } }, look);
   const d = await ctx.newPage();
   await d.goto(`${BASE}/display.html`);
   await d.waitForSelector('#setup:not([hidden]), #arm:not([hidden]), #standby:not([hidden])', { timeout: 10000 }).catch(() => {});
@@ -2596,7 +2596,7 @@ for (const look of ['light', 'dark']) {
   ok(`the display's setup screen is readable in ${look} (${displayBad.join(', ') || 'every field at least 4.5:1'})`, displayBad.length === 0);
   const c = await ctx.newPage();
   await c.goto(`${BASE}/control.html`);
-  await c.evaluate((l) => { document.documentElement.dataset.theme = l; document.body.dataset.theme = l; }, look);
+  await c.waitForFunction((l) => document.body.dataset.theme === l, look, { timeout: 10000 }).catch(() => {});
   await c.evaluate(() => { document.querySelectorAll('.sheet').forEach((n) => { n.hidden = true; }); document.getElementById('setup').hidden = false; });
   const controlBad = [];
   for (const i of await c.$$eval('#setup .tab', (bs) => bs.map((b, n) => n))) {
@@ -2606,6 +2606,86 @@ for (const look of ['light', 'dark']) {
   ok(`the controller's Settings are readable in ${look} (${controlBad.join(', ') || 'every field at least 4.5:1'})`, controlBad.length === 0);
   await ctx.close();
 }
+}
+
+if (want('light or dark on every page, chosen once')) {
+console.log('\n-- light or dark on every page, chosen once --');
+// A device set to light, so "follow this device" means light.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'light' });
+const page = await ctx.newPage();
+trap(page, 'theme');
+const look = () => page.evaluate(() => ({
+  theme: document.documentElement.dataset.theme,
+  body: document.body.dataset.theme || '',
+  bg: getComputedStyle(document.body).backgroundColor,
+  toggle: document.querySelector('.theme-toggle')?.dataset.themeChoice || '',
+}));
+const isLight = (bg) => { const [r, g, b] = bg.match(/\d+/g).map(Number); return r + g + b > 600; };
+
+const pages = ['index.html', 'plan.html', 'deck.html', 'quicklook.html?src=content/decks/example-builds.md', 'me.html', 'admin.html', 'guest.html', 'guide.html'];
+for (const url of pages) {
+  await page.goto(`${BASE}/${url}`);
+  await page.waitForSelector('.theme-toggle', { timeout: 10000 }).catch(() => {});
+  const seen = await look();
+  ok(`${url.split('?')[0]} has the ☀/☾ toggle and follows a light device (${seen.theme}, ${seen.bg})`,
+    seen.toggle === 'auto' && seen.theme === 'light' && isLight(seen.bg));
+}
+
+// Chosen on one page, kept on every other, and from the first paint.
+await page.goto(`${BASE}/plan.html`);
+await page.waitForSelector('.theme-toggle');
+await page.click('.theme-toggle');            // auto -> light
+await page.click('.theme-toggle');            // light -> dark
+let seen = await look();
+ok(`the toggle steps through Light to Dark (${seen.toggle}, ${seen.bg})`, seen.toggle === 'dark' && seen.theme === 'dark' && !isLight(seen.bg));
+await ctx.addInitScript(() => {
+  // What the page is before any module runs: theme-boot.js's doing alone.
+  document.addEventListener('DOMContentLoaded', () => { window.__firstTheme = document.documentElement.dataset.theme; }, { once: true });
+});
+for (const url of ['index.html', 'deck.html', 'me.html', 'guide.html', 'login.html', 'join.html']) {
+  await page.goto(`${BASE}/${url}`);
+  await page.waitForTimeout(300);
+  seen = await look();
+  const first = await page.evaluate(() => window.__firstTheme);
+  ok(`${url} is dark too, before its scripts run (${first}, ${seen.bg})`, first === 'dark' && seen.theme === 'dark' && !isLight(seen.bg));
+}
+await page.goto(`${BASE}/join.html`);
+await page.click('.theme-toggle');            // dark -> auto (a light device)
+seen = await look();
+ok(`the join page's own toggle changes it for every page (${seen.theme})`, seen.theme === 'light' && isLight(seen.bg)
+  && await page.evaluate(() => localStorage.getItem('podium.theme')) === 'auto');
+
+// The controller's Settings choice is the same one.
+await ctx.addInitScript((cfg) => { try { localStorage.setItem('podium.config.v2', cfg); } catch { /* about:blank */ } },
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'theme-room', passphrase: 'light and dark' }));
+await page.goto(`${BASE}/control.html`);
+await page.waitForSelector('.tile', { timeout: 15000 });
+ok('the controller\'s Settings show the same choice', (await page.$eval('#pref-theme', (s) => s.value)) === 'auto' && (await look()).body === 'light');
+await page.evaluate(() => { const s = document.querySelector('#pref-theme'); s.value = 'dark'; s.dispatchEvent(new Event('change')); });
+ok('and changing it there changes it for every page', (await look()).body === 'dark' && await page.evaluate(() => localStorage.getItem('podium.theme')) === 'dark');
+
+// The projector: only its own setup sheets follow; the stage stays as it is.
+const screen = await ctx.newPage();
+trap(screen, 'theme display');
+await screen.goto(`${BASE}/display.html`);
+await screen.waitForSelector('#arm:not([hidden]), #setup:not([hidden])', { timeout: 10000 });
+ok('the display\'s sheets follow it (dark)', await screen.evaluate(() => document.body.dataset.sheetTheme) === 'dark');
+ok('while the projector page itself is never themed', await screen.evaluate(() => !document.documentElement.dataset.theme && !document.body.dataset.theme));
+await page.evaluate(() => { const s = document.querySelector('#pref-theme'); s.value = 'light'; s.dispatchEvent(new Event('change')); });
+await screen.waitForFunction(() => document.body.dataset.sheetTheme === 'light', null, { timeout: 5000 })
+  .then(() => ok('and change with it, from another tab', true))
+  .catch(() => ok('and change with it, from another tab', false));
+await ctx.close();
+
+// A controller theme chosen before there was one shared choice carries over.
+const old = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' });
+await old.addInitScript(() => { try { if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem('podium.presentation.v1', JSON.stringify({ theme: 'light' })); } } catch { /* about:blank */ } });
+const oldPage = await old.newPage();
+await oldPage.goto(`${BASE}/control.html`);
+await oldPage.waitForTimeout(800);
+ok('a controller theme chosen before carries over to every page', await oldPage.evaluate(() => localStorage.getItem('podium.theme')) === 'light'
+  && await oldPage.evaluate(() => document.body.dataset.theme) === 'light');
+await old.close();
 }
 
 reportErrors();

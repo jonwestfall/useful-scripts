@@ -27,6 +27,10 @@ import { openFileBrowser } from './file-browser.js';
 import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS, deckStep } from './protocol.js';
 import { mountSessionBadge, serverInfo } from './server.js';
 import { mountZipImport } from './zip-review.js';
+import { startPageTheme } from './theme.js';
+
+// Light or dark, as chosen for every page (see theme.js).
+startPageTheme();
 
 mountSessionBadge($('#session-badge'));
 

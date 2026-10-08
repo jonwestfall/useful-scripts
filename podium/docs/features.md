@@ -467,8 +467,11 @@ Any item in a lecture plan can carry pre-written **caption or audio-description 
 ### Screen Readers, Contrast & Themes
 
 - The controller and display went through an accessibility pass: every control has a name a screen reader can say, toggles announce their state, connection changes and action results are announced through live regions, keyboard focus is always drawn, and text meets WCAG AA contrast. Automated tests keep it that way. The full findings, including what's still open, are in the [accessibility audit](accessibility.md).
-- **Controller theme** (Settings → Presentation): **Match this device** (default, following the iPad's or computer's own light/dark setting), **Dark**, or **Light / High contrast** for bright rooms and window glare.
-- **The display's own screens** (Go live, pairing, setup) can be light or dark too, from the display's Settings ("Look of these setup screens", following the computer by default). What the room sees on the stage is never themed.
+- **Light or dark, on every page**: **Follow this device** (default, following the iPad's or computer's own light/dark setting), **Dark**, or **Light / High contrast** for bright rooms and window glare. It is one choice for every Podium page in the browser: the landing page, controller, planner, deck editor, Quick Look, My Files, Admin, the guide, sign-in, the audience join page and a guest's controller. It applies before the page draws, so nothing flashes the wrong colour.
+  - **Where to change it**: the **☀ / ☾ / ◐** button at the end of each page's top bar (it steps Follow this device → Light → Dark), the controller's **Settings → Presentation → Theme**, or the display's **Look of these setup screens**. All three are the same setting.
+  - **On a server with accounts** it is yours, not the device's: set **Appearance on every page** on **My Files**, and it follows you to every device you sign in from, overriding whatever that device had. The top-bar button changes it on your account too while you're signed in.
+  - **The projector**: only the display's own screens (Go live, pairing, setup) follow it. What the room sees on the stage is never themed.
+  - A controller theme or display setup-screen look chosen before this setting existed carries over the first time.
 - [Guest View](#guest-view-watching-on-your-own-device) puts the projector on a student's own screen, which helps anyone who can't see the wall well.
 - Every lectern action has a [keyboard shortcut](#keyboard-shortcuts).
 

@@ -7,6 +7,7 @@
 <meta name="robots" content="noindex">
 <title>My Files — Podium</title>
 <link rel="stylesheet" href="assets/css/podium.css">
+<script src="assets/js/theme-boot.js"></script>
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
 <!-- My Files (Issue #243): everything this account has on the server - library
      files, lectures, deck templates and recorded lectures - each saying what
@@ -45,6 +46,17 @@
     <div class="me-courses" id="me-courses"></div>
     <div class="admin-actions">
       <button type="button" class="admin-small" id="me-password">Change password</button>
+    </div>
+    <!-- Light or dark on every Podium page you open, from any device: kept on
+         your account (see theme.js). -->
+    <div class="me-appearance">
+      <label for="me-theme">Appearance on every page</label>
+      <select id="me-theme">
+        <option value="auto">Follow each device</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+      <span class="hint" id="me-theme-note" role="status"></span>
     </div>
   </section>
 

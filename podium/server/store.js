@@ -547,6 +547,13 @@ const MIGRATIONS = [
       );
     `);
   },
+  (db) => {
+    db.exec(`
+      -- Light or dark on every page (set on My Files): 'auto', 'light',
+      -- 'dark', or '' for never chosen, which leaves each device its own.
+      ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT '';
+    `);
+  },
 ];
 
 function migrate(db) {

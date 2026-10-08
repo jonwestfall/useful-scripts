@@ -25,6 +25,7 @@ import {
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS, clearStaleMusic, liveInkSurfaces, inkCapturesFor, MEDIA_TYPES,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, blessMediaElements } from './renderers.js';
+import { initTheme, onThemeChange, setThemeChoice, THEME_KEY } from './theme.js';
 import { encodeToFit } from './store.js';
 import { MAX_ASSET_CHARS, itemForStage, readPlan } from './planfile.js';
 import { createCameraReceiver, createMicReceiver } from './rtc.js';
@@ -76,27 +77,21 @@ const docReader = VIEWER ? createDocReader({ getSource: (item) => getDeckSource(
 let cfg = VIEWER ? viewerConfig() : await loadConfig();
 
 // The look of this screen's own sheets - Go live, pairing, setup, standby -
-// light or dark (Issue #210). Per device, outside the connection config so a
-// change never needs Save or a reconnect, and following the computer's own
-// setting unless chosen. The stage itself is never themed: see the CSS.
-const SHEET_THEME_KEY = 'podium.display.sheetTheme';
-const lightPreferred = window.matchMedia?.('(prefers-color-scheme: light)');
-function sheetThemeChoice() {
-  try { const t = localStorage.getItem(SHEET_THEME_KEY); return ['auto', 'dark', 'light'].includes(t) ? t : 'auto'; } catch { return 'auto'; }
-}
-function applySheetTheme() {
-  const choice = sheetThemeChoice();
-  document.body.dataset.sheetTheme = choice === 'auto' ? (lightPreferred?.matches ? 'light' : 'dark') : choice;
-}
-applySheetTheme();
-lightPreferred?.addEventListener('change', applySheetTheme);
-if ($('#d-sheet-theme')) {
-  $('#d-sheet-theme').value = sheetThemeChoice();
-  $('#d-sheet-theme').addEventListener('change', (ev) => {
-    safeStorageSet(localStorage, SHEET_THEME_KEY, ev.target.value);
-    applySheetTheme();
-  });
-}
+// light or dark (Issue #210): the same choice as every other Podium page in
+// this browser (see theme.js), outside the connection config so a change never
+// needs Save or a reconnect. The stage itself is never themed: see the CSS.
+// A choice made here before there was one shared choice carries over, once.
+try {
+  const before = localStorage.getItem('podium.display.sheetTheme');
+  if (localStorage.getItem(THEME_KEY) === null && (before === 'light' || before === 'dark')) localStorage.setItem(THEME_KEY, before);
+} catch { /* storage blocked: this screen follows the computer */ }
+// A viewer's phone has nobody signed in to ask about.
+initTheme({ apply: false, account: !VIEWER });
+onThemeChange((effective, choice) => {
+  document.body.dataset.sheetTheme = effective;
+  if ($('#d-sheet-theme')) $('#d-sheet-theme').value = choice;
+});
+$('#d-sheet-theme')?.addEventListener('change', (ev) => { setThemeChoice(ev.target.value); });
 let bus = null;
 let state = initialState();
 let cameraStream = null;

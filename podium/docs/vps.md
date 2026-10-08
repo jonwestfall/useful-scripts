@@ -143,7 +143,11 @@ course_members(course_id, user_id, role)        -- owner | member
 Later phases add `media`, `library_items`, `plans`, `course_settings`,
 `lectures`, `lecture_events`, `lecture_polls`, `lecture_files`.
 Every migration is a numbered step against `PRAGMA user_version`, applied in
-order at startup, and only ever adds.
+order at startup, and only ever adds. One of them gives `users` a `theme`
+column: each person's light/dark choice for every page (`auto`, `light`,
+`dark`, or empty for never chosen), set on My Files with
+`POST /api/me/preferences` and handed to every page with their session in
+`/api/capabilities`.
 
 Passwords are `scrypt` with a per-user random salt, stored as
 `scrypt$N$r$p$salt$hash` so the parameters travel with the hash and can be

@@ -19,6 +19,11 @@ import { $, $$, throttle } from './util.js';
 import { loadConfig, isConfigured } from './config.js';
 import { createBus } from './bus.js';
 import { focusedItem, BLACK, versionStamp, isPlayable } from './protocol.js';
+import { startPageTheme } from './theme.js';
+
+// Light or dark, as chosen for every page (see theme.js).
+// A guest has no account here: this device's choice only.
+startPageTheme({ account: false });
 
 const cfg = await loadConfig();
 

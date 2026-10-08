@@ -9,20 +9,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Podium">
 <link rel="stylesheet" href="assets/css/podium.css">
+<script src="assets/js/theme-boot.js"></script>
 <link rel="manifest" href="manifest-control.webmanifest">
 <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
 <meta name="theme-color" content="#0b0d10">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<script>
-try {
-  const p = JSON.parse(localStorage.getItem('podium.presentation.v1') || '{}');
-  const t = p.theme || 'auto';
-  const eff = t === 'auto' ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : t;
-  if (eff === 'light') document.documentElement.dataset.theme = 'light';
-} catch {}
-</script>
 </head>
 <body class="control">
 
@@ -1198,9 +1191,9 @@ try {
       <p class="hint">Tighter spacing and smaller buttons, with the "How this works" explanations put away - for a small phone or a crowded lectern screen. This device only.</p>
 
       <div class="field" style="margin-top:12px;">
-        <label for="pref-theme">Controller theme</label>
+        <label for="pref-theme">Theme</label>
         <select id="pref-theme" class="grow">
-          <option value="auto">Match this device (default)</option>
+          <option value="auto">Follow this device (default)</option>
           <option value="dark">Dark</option>
           <option value="light">Light / High contrast</option>
         </select>
@@ -1208,7 +1201,9 @@ try {
           <summary>How this works</summary>
           <p class="hint">
           Light theme uses a clean, high-contrast palette for bright classrooms, outdoor lectures, or rooms with window glare.
-          "Match this device" follows the iPad's or computer's own light/dark setting, and changes with it.
+          "Follow this device" follows the iPad's or computer's own light/dark setting, and changes with it.
+          It is one choice for every Podium page in this browser - the ☀ / ☾ button on the other pages changes it too - and,
+          signed in on a server with accounts, it is yours on every device (My Files keeps it).
         </p>
         </details>
       </div>

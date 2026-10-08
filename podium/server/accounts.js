@@ -66,6 +66,8 @@ async function verifyPassword(password, stored) {
   return got.length === expected.length && crypto.timingSafeEqual(got, expected);
 }
 
+const THEMES = ['auto', 'light', 'dark'];
+
 function normalizeUsername(raw) {
   return String(raw || '').trim().toLowerCase();
 }
@@ -77,6 +79,8 @@ function publicUser(row) {
     username: row.username,
     displayName: row.display_name || row.username,
     isAdmin: !!row.is_admin,
+    // Their light/dark choice for every page, or '' if they never made one.
+    theme: THEMES.includes(row.theme) ? row.theme : '',
   };
 }
 
@@ -191,6 +195,13 @@ function setDisplayName(db, username, displayName) {
   const { changes } = db.prepare('UPDATE users SET display_name = ? WHERE username = ?')
     .run(String(displayName || '').slice(0, 120), name);
   if (!changes) throw Object.assign(new Error(`no account called ${name}`), { status: 404 });
+}
+
+/** Their own light/dark choice for every page (My Files). */
+function setTheme(db, user, theme) {
+  if (!THEMES.includes(theme)) throw Object.assign(new Error('theme must be auto, light or dark'), { status: 400 });
+  db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(theme, user.id);
+  return theme;
 }
 
 async function setPassword(db, username, password) {
@@ -414,7 +425,7 @@ const pruneLogs = (db, cutoffMs) =>
 module.exports = {
   hashPassword, verifyPassword, normalizeUsername, publicUser,
   createUser, findUser, listUsers, countUsers, countEnabledUsers, countEnabledAdmins,
-  setPassword, setDisabled, setAdmin, setDisplayName, assertAnotherAdminRemains,
+  setPassword, setDisabled, setAdmin, setDisplayName, setTheme, assertAnotherAdminRemains,
   startSession, sessionUser, endSession, pruneSessions, login, changeOwnPassword,
   logEvent, pruneLogs,
   SESSION_MS,

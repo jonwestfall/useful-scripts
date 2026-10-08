@@ -171,7 +171,7 @@ function tick() {
   const m = Math.floor(remaining / 60);
   const s = String(remaining % 60).padStart(2, '0');
   cd.textContent = remaining >= 60 ? `${m}:${s}` : s;
-  cd.style.color = remaining <= 10 ? '#ff9d9d' : 'var(--dim)';
+  cd.style.color = remaining <= 10 ? 'var(--bad)' : 'var(--dim)';
   if (remaining === 0 && current.open) {
     current.open = false;
     render();

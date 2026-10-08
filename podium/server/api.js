@@ -571,6 +571,13 @@ async function handleApi(req, res, url, ctx) {
       return true;
     }
 
+    // Light or dark on every page they open, from any device (set on My Files).
+    if (head === 'me' && rest.length === 1 && rest[0] === 'preferences' && req.method === 'POST') {
+      const body = await readJson(req, 4 * 1024);
+      json(res, 200, { ok: true, theme: accounts.setTheme(ctx.db, user, body.theme) });
+      return true;
+    }
+
     if (head === 'me' && rest.length === 1 && rest[0] === 'password' && req.method === 'POST') {
       const body = await readJson(req, 8 * 1024);
       const result = await accounts.changeOwnPassword(ctx.db, user, body.current, body.password, {

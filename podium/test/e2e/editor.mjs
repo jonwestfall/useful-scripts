@@ -1588,6 +1588,48 @@ ok('a PDF with no bookmarks has no Outline button, and keeps its Grid', !seen.bu
 await ctx.close();
 }
 
+if (want('appearance on My Files: one theme for every page, on every device')) {
+console.log('\n-- appearance on My Files: one theme for every page, on every device --');
+const laptop = await signedIn('tia');
+const page = await laptop.newPage();
+trap(page, 'appearance');
+await page.goto(`${base}/me.html`);
+await page.waitForSelector('#me-theme', { state: 'visible', timeout: 10000 });
+ok('My Files offers Appearance, following each device until chosen', (await page.$eval('#me-theme', (s) => s.value)) === 'auto');
+await page.selectOption('#me-theme', 'light');
+await page.waitForFunction(() => /Saved/.test(document.querySelector('#me-theme-note').textContent), null, { timeout: 5000 })
+  .then(() => ok('choosing Light saves it to the account', true))
+  .catch(async () => ok(`choosing Light saves it to the account ("${await page.textContent('#me-theme-note')}")`, false));
+ok('and the page turns light at once', await page.evaluate(() => document.documentElement.dataset.theme) === 'light');
+ok('the account says so', (await page.evaluate(() => fetch('/api/capabilities').then((r) => r.json()))).user.theme === 'light');
+
+// Another device, set to dark, that has never chosen: it takes the account's.
+const tablet = await signedIn('tia');
+const other = await tablet.newPage();
+trap(other, 'appearance (another device)');
+await other.emulateMedia({ colorScheme: 'dark' });
+await other.goto(`${base}/plan.html`);
+await other.waitForFunction(() => document.documentElement.dataset.theme === 'light', null, { timeout: 10000 })
+  .then(() => ok('signing in on another device brings the account\'s Light with it', true))
+  .catch(() => ok('signing in on another device brings the account\'s Light with it', false));
+// The top-bar toggle, signed in, changes the account too.
+await other.click('.theme-toggle');            // light -> dark
+await other.waitForTimeout(500);
+ok('the ☀/☾ toggle, signed in, changes the account as well',
+  (await other.evaluate(() => fetch('/api/capabilities').then((r) => r.json()))).user.theme === 'dark');
+await page.reload();
+await page.waitForSelector('#me-theme', { state: 'visible' });
+ok('which the first device picks up on its next page', (await page.$eval('#me-theme', (s) => s.value)) === 'dark'
+  && await page.evaluate(() => document.documentElement.dataset.theme) === 'dark');
+// Someone else's account is untouched.
+const owenCtx = await signedIn('owen');
+const owenPage = await owenCtx.newPage();
+await owenPage.goto(`${base}/me.html`);
+await owenPage.waitForSelector('#me-theme', { state: 'visible' });
+ok('another person\'s choice is their own', (await owenPage.$eval('#me-theme', (s) => s.value)) === 'auto');
+await Promise.all([laptop.close(), tablet.close(), owenCtx.close()]);
+}
+
 if (want('the planner: choosing files from the server (#241)')) {
 console.log('\n-- the planner: choosing files from the server (#241) --');
 admin('course', 'add', 'pick101', '--title', 'Picking 101');
