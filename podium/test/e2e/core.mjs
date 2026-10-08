@@ -2214,7 +2214,7 @@ await uPad.click('#lib-add-toggle');
 
 // #191 / #192: whole titles and thumbnails.
 ok('a tile carries its whole title, wherever two lines are not enough (Issue #191)',
-  !!(await uPad.$('.tile[title="Day 6 — Weighing the Evidence"]')));
+  !!(await uPad.waitForSelector('.tile[title="Day 6 — Weighing the Evidence"]', { timeout: 10000 }).catch(() => null)));
 await uPad.waitForFunction(() => !!document.querySelector('.tile[title="Day 6 — Weighing the Evidence"] .tile-thumb.has-thumb'), null, { timeout: 30000 });
 ok('a deck tile gets a picture of its first slide (Issue #192)', true);
 ok('and a manifest entry marked thumbnail: false never tries to make one', await uPad.evaluate(() =>
