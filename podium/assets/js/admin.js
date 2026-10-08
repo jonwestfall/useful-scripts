@@ -1247,6 +1247,10 @@ function renderCourses() {
         onclick: () => { openCourse = openCourse === course.code ? null : course.code; renderCourses(); },
       }, openCourse === course.code ? 'Close' : 'Open'));
     }
+    // Its roster (Issue #256), kept on My Files - any member may read it.
+    if (!course.archived) {
+      row.append(el('a', { class: 'admin-small linkish', href: `me.html#roster:${encodeURIComponent(course.code)}`, title: 'The people attendance is taken for' }, 'Roster'));
+    }
     if (me?.isAdmin) {
       row.append(el('button', {
         class: 'admin-small', type: 'button',

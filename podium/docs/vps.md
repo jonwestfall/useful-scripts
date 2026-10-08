@@ -147,7 +147,10 @@ order at startup, and only ever adds. One of them gives `users` a `theme`
 column: each person's light/dark choice for every page (`auto`, `light`,
 `dark`, or empty for never chosen), set on My Files with
 `POST /api/me/preferences` and handed to every page with their session in
-`/api/capabilities`.
+`/api/capabilities`. Another gives each course a `course_roster` (Issue #256):
+the people attendance is taken for - a name, and optionally a student ID and
+email - kept by the course's owners on My Files. A student on a roster is not
+an account and never signs in; removing one only marks them removed.
 
 Passwords are `scrypt` with a per-user random salt, stored as
 `scrypt$N$r$p$salt$hash` so the parameters travel with the hash and can be

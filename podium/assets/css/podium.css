@@ -2739,3 +2739,9 @@ body:not(.is-doc) .doc-only { display: none !important; }
 .word-choice-option > span { display: grid; gap: 4px; }
 .word-choice-option:has(input:checked) { border-color: var(--accent); background: var(--panel-2); }
 .word-choice-option.is-off { cursor: default; opacity: .75; }
+
+/* A course's roster on My Files (Issue #256) ------------------------------------ */
+.roster-import { width: min(560px, 100%); }
+.roster-diff { margin: 8px 0; padding-left: 1.2em; display: grid; gap: 4px; font-size: 14px; }
+.roster-diff .is-bad strong { color: var(--live); }
+.roster-form label { display: grid; gap: 4px; }

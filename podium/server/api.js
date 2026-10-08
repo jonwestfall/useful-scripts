@@ -35,6 +35,7 @@ const content = require('./content.js');
 const store = require('./store.js');
 const kiosks = require('./kiosks.js');
 const pptxConvert = require('./pptx-convert.js');
+const roster = require('./roster.js');
 const zipImport = require('./zip-import.js');
 const zipStaging = require('./zip-staging.js');
 
@@ -398,6 +399,62 @@ async function handleApi(req, res, url, ctx) {
     if (head === 'courses' && rest.length === 3 && rest[1] === 'members' && req.method === 'DELETE') {
       json(res, 200, { people: courses.removeMember(ctx.db, user, rest[0], decodeURIComponent(rest[2])) });
       return true;
+    }
+
+    // --- a course's roster (Issue #256) -------------------------------------
+    //
+    // Who attendance is taken for. Its owners (and admins) change it; its
+    // other members can read it. See roster.js.
+
+    if (head === 'courses' && rest[1] === 'roster') {
+      const code = rest[0];
+      const what = rest.slice(2);
+      if (!what.length && req.method === 'GET') {
+        json(res, 200, roster.list(ctx.db, user, code, { removed: url.searchParams.get('removed') === '1' }));
+        return true;
+      }
+      if (!what.length && req.method === 'POST') {
+        const person = roster.add(ctx.db, user, code, await readJson(req, 8 * 1024));
+        auditLog(ctx, req, user, 'roster_added', { courseCode: String(code).toLowerCase(), name: person.name });
+        json(res, 200, { person });
+        return true;
+      }
+      if (what.length === 1 && what[0] === 'export' && req.method === 'GET') {
+        const csv = roster.exportCsv(ctx.db, user, code);
+        res.writeHead(200, {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': `attachment; filename="${String(code).toLowerCase().replace(/[^a-z0-9._-]/g, '')}-roster.csv"`,
+          'cache-control': 'no-store',
+        });
+        res.end(csv);
+        return true;
+      }
+      // An import: the CSV is the body. ?apply=1 does it; otherwise it is a
+      // preview of what it would do. ?replace=1 also takes off anyone not in it.
+      if (what.length === 1 && what[0] === 'import' && req.method === 'POST') {
+        const text = (await readBuffer(req, 2 * 1024 * 1024)).toString('utf8');
+        const replace = url.searchParams.get('replace') === '1';
+        if (url.searchParams.get('apply') === '1') {
+          const result = roster.applyImport(ctx.db, user, code, text, { replace });
+          auditLog(ctx, req, user, 'roster_imported', { courseCode: String(code).toLowerCase(), replace, ...result, problems: result.problems.length });
+          json(res, 200, result);
+        } else {
+          json(res, 200, roster.previewImport(ctx.db, user, code, text, { replace }));
+        }
+        return true;
+      }
+      if (what.length === 1 && req.method === 'PATCH') {
+        const person = roster.update(ctx.db, user, code, what[0], await readJson(req, 8 * 1024));
+        auditLog(ctx, req, user, 'roster_modified', { courseCode: String(code).toLowerCase(), id: person.id, name: person.name });
+        json(res, 200, { person });
+        return true;
+      }
+      if (what.length === 1 && req.method === 'DELETE') {
+        const person = roster.remove(ctx.db, user, code, what[0]);
+        auditLog(ctx, req, user, 'roster_removed', { courseCode: String(code).toLowerCase(), id: person.id, name: person.name });
+        json(res, 200, { person });
+        return true;
+      }
     }
 
     // --- accounts ---------------------------------------------------------

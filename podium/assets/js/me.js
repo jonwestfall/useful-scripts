@@ -17,6 +17,7 @@ import { canQuickLook } from './quicklook-open.js';
 import { dayAndTime, spanOf, downloadSessionRecap } from './recap-pdf.js';
 import { startPageTheme, setThemeChoice, onThemeChange } from './theme.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
+import { createRosterPanel } from './roster-panel.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -515,7 +516,21 @@ async function deleteRecorded(l) {
 
 // --- tabs, and starting up -----------------------------------------------------
 
-const LOADERS = { 'panel-files': loadFiles, 'panel-lectures': loadLectures, 'panel-templates': loadTemplates, 'panel-recorded': loadRecorded };
+// Rosters (Issue #256): the courses this person is in - every course, for an
+// administrator, who may keep any of them.
+let rosterPanel = null;
+async function loadRoster() {
+  let list = profileCourses.filter((c) => !c.archived);
+  if (me.isAdmin) {
+    try { list = (await api('/api/courses')).courses.filter((c) => !c.archived); } catch { /* their own, then */ }
+  }
+  rosterPanel ??= createRosterPanel({ api, dialog, courses: () => list, initial: rosterWanted });
+  await rosterPanel.open();
+}
+// #roster:psy415 opens that course's roster (Admin links here).
+const rosterWanted = /^#roster:(.+)$/.exec(location.hash)?.[1] || '';
+
+const LOADERS = { 'panel-files': loadFiles, 'panel-lectures': loadLectures, 'panel-templates': loadTemplates, 'panel-recorded': loadRecorded, 'panel-roster': loadRoster };
 const loaded = new Set();
 
 function showTab(target) {
@@ -526,7 +541,8 @@ function showTab(target) {
     $(`#${tab.dataset.target}`).hidden = !on;
   }
   if (!loaded.has(target)) { loaded.add(target); LOADERS[target](); }
-  history.replaceState(null, '', `#${target.replace('panel-', '')}`);
+  // The roster tab keeps its course in the address itself (roster-panel.js).
+  if (target !== 'panel-roster') history.replaceState(null, '', `#${target.replace('panel-', '')}`);
 }
 
 async function start() {
@@ -558,7 +574,7 @@ async function start() {
   $('#lectures-search').addEventListener('input', renderLectures);
   $('#lectures-archived').addEventListener('change', renderLectures);
   for (const tab of $$('.me-tabs .tab')) tab.addEventListener('click', () => showTab(tab.dataset.target));
-  const wanted = `panel-${location.hash.slice(1)}`;
+  const wanted = `panel-${location.hash.slice(1).split(':')[0]}`;
   showTab(LOADERS[wanted] ? wanted : 'panel-files');
 }
 

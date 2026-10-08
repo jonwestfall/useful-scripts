@@ -1959,6 +1959,91 @@ fs.writeFileSync(doc, Buffer.from('not really a Word 97 file'));
 }
 }
 
+if (want('rosters: a course\'s class list on My Files (#256)')) {
+console.log('\n-- rosters: a course\'s class list on My Files (#256) --');
+const owner = await signedIn('owen');
+const page = await owner.newPage();
+trap(page, 'roster (owner)');
+await page.goto(`${base}/me.html#roster:psy415`);
+await page.waitForSelector('#panel-roster:not([hidden])', { timeout: 10000 })
+  .then(() => ok('#roster:psy415 opens the Rosters tab on that course', true))
+  .catch(() => ok('#roster:psy415 opens the Rosters tab on that course', false));
+await page.waitForFunction(() => /Nobody on this roster yet/.test(document.querySelector('#roster-list')?.textContent || ''), null, { timeout: 10000 });
+ok('an empty roster says how to fill it, and its owner gets the tools', await page.isVisible('#roster-import') && await page.isVisible('#roster-add'));
+
+// A Canvas-style export: "Last, First", an SIS ID, an email, and the Points row.
+const csvFile = path.join(ROOT, 'test', 'fixtures', 'psy415-roster.csv');
+fs.writeFileSync(csvFile, 'Student,ID,SIS User ID,Email\n    Points Possible,,,\n"Doe, Jane",1,A100,jane@school.edu\n"Lee, Sam",2,A200,sam@school.edu\n"Kim, Bo",3,A300,\n');
+await page.setInputFiles('#roster-file', csvFile);
+await page.waitForSelector('.roster-import', { timeout: 5000 });
+const preview = await page.textContent('.roster-import');
+ok(`importing shows a preview first: what it read and who is new (${preview.replace(/\s+/g, ' ').slice(0, 110)}…)`,
+  /“Student”/.test(preview) && /“SIS User ID”/.test(preview) && /3 new/.test(preview) && /Jane Doe/.test(preview));
+await page.click('.roster-import button.primary');
+await page.waitForFunction(() => /Imported: 3 added/.test(document.querySelector('#roster-note')?.textContent || ''), null, { timeout: 5000 })
+  .then(() => ok('and Import adds them', true))
+  .catch(async () => ok(`and Import adds them ("${await page.textContent('#roster-note')}")`, false));
+ok(`the roster lists them by name, with ID and email (${await page.textContent('#roster-count')})`,
+  (await page.$$('#roster-list .me-row')).length === 3 && /ID A100 · jane@school\.edu/.test(await page.textContent('#roster-list')));
+
+// The same file again with one change and one person gone, as the whole class.
+fs.writeFileSync(csvFile, 'Student,SIS User ID,Email\n"Doe, Jane",A100,jane.doe@school.edu\n"Lee, Sam",A200,sam@school.edu\n');
+await page.setInputFiles('#roster-file', csvFile);
+await page.waitForSelector('.roster-import', { timeout: 5000 });
+await page.click('.roster-import input[type=checkbox]');
+await page.waitForFunction(() => /1 taken off/.test(document.querySelector('.roster-import')?.textContent || ''), null, { timeout: 5000 });
+const second = (await page.textContent('.roster-import')).replace(/\s+/g, ' ');
+ok(`a changed file says who is updated, unchanged and (as the whole class) taken off (${second.slice(0, 140)}…)`,
+  /1 updated — Jane Doe \(email\)/.test(second) && /1 unchanged/.test(second) && /1 taken off — Bo Kim/.test(second));
+await page.click('.roster-import button.primary');
+await page.waitForFunction(() => /1 updated, 1 unchanged, 1 taken off/.test(document.querySelector('#roster-note')?.textContent || ''), null, { timeout: 5000 });
+ok('and applies exactly that', (await page.$$('#roster-list .me-row')).length === 2);
+
+// By hand: add, edit, remove, put back.
+await page.click('#roster-add');
+await page.fill('.roster-form input[data-key="name"]', 'Ann Visitor');
+await page.fill('.roster-form input[data-key="studentId"]', 'A100');
+expecting.rosterConflict = true;
+await page.click('.roster-form button[type=submit]');
+await page.waitForFunction(() => /already has the student ID A100/.test(document.querySelector('.roster-form')?.textContent || ''), null, { timeout: 5000 })
+  .then(() => ok('adding someone with another person\'s ID is refused in the form, saying whose', true))
+  .catch(() => ok('adding someone with another person\'s ID is refused in the form, saying whose', false));
+expecting.rosterConflict = false;
+await page.fill('.roster-form input[data-key="studentId"]', 'A400');
+await page.click('.roster-form button[type=submit]');
+await page.waitForFunction(() => document.querySelectorAll('#roster-list .me-row').length === 3, null, { timeout: 5000 });
+ok('with an ID of their own, they are added', /Ann Visitor/.test(await page.textContent('#roster-list')));
+await page.click('#roster-list .me-row:has-text("Ann Visitor") button:has-text("Remove")');
+await page.click('.deck-dialog-card button.primary');
+await page.waitForFunction(() => document.querySelectorAll('#roster-list .me-row').length === 2, null, { timeout: 5000 });
+ok('Remove takes them off', !/Ann Visitor/.test(await page.textContent('#roster-list')));
+await page.check('#roster-removed');
+await page.waitForSelector('#roster-list .me-row.is-archived:has-text("Ann Visitor")', { timeout: 5000 });
+await page.click('#roster-list .me-row:has-text("Ann Visitor") button:has-text("Put back")');
+await page.waitForFunction(() => /back on the roster/.test(document.querySelector('#roster-note')?.textContent || ''), null, { timeout: 5000 });
+ok('Show removed lists them, and Put back restores them', !(await page.$('#roster-list .me-row.is-archived:has-text("Ann Visitor")')));
+
+// Export: the same three columns the import reads.
+const exported = await page.evaluate(() => fetch(document.querySelector('#roster-export').href).then((r) => r.text()));
+ok(`Export CSV gives the roster back (${JSON.stringify(exported.split('\r\n')[0])})`, /name,student id,email/.test(exported) && /Jane Doe,A100,jane\.doe@school\.edu/.test(exported));
+await owner.close();
+
+// A TA reads it, and cannot change it.
+const ta = await signedIn('tia');
+const taPage = await ta.newPage();
+trap(taPage, 'roster (TA)');
+await taPage.goto(`${base}/me.html#roster:psy415`);
+await taPage.waitForFunction(() => document.querySelectorAll('#roster-list .me-row').length === 3, null, { timeout: 10000 });
+ok('a TA sees the roster', /Jane Doe/.test(await taPage.textContent('#roster-list')));
+ok('but no import, add, edit or remove', await taPage.isHidden('#roster-tools') && !(await taPage.$('#roster-list button')));
+ok('and is told its owners change it', /owners change it/.test(await taPage.textContent('#roster-count')));
+expecting.deckForbidden = true;
+const tried = await taPage.evaluate(() => fetch('/api/courses/psy415/roster', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Sneaky' }) }).then((r) => r.status));
+expecting.deckForbidden = false;
+ok(`and the server refuses a TA's change too (${tried})`, tried === 403);
+await ta.close();
+}
+
 if (want('My Files: everything I have, and what I may do with it (#243)')) {
 console.log('\n-- My Files: everything I have, and what I may do with it (#243) --');
 // A TA of their own, so changing a password here leaves everyone else's alone.
