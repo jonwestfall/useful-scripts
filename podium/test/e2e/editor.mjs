@@ -1079,7 +1079,9 @@ await until(async () => (await drawnInStrip()) === 1, { timeout: 20000 }).catch(
 ok('a starter goes in as a ```mermaid block and is drawn', /```mermaid\npie title/.test(await doc()) && (await drawnInStrip()) === 1);
 const coloured = await page.evaluate(() => {
   const line = [...document.querySelectorAll('.cm-content .cm-line')].find((l) => /^pie title/.test(l.textContent));
-  return line ? [...line.querySelectorAll('span')].some((sp) => getComputedStyle(sp).color === 'rgb(196, 155, 255)' && /pie/.test(sp.textContent)) : false;
+  // Mermaid's keyword colour, in whichever look the page is in.
+  const keyword = ['rgb(196, 155, 255)', 'rgb(107, 63, 200)'];
+  return line ? [...line.querySelectorAll('span')].some((sp) => keyword.includes(getComputedStyle(sp).color) && /pie/.test(sp.textContent)) : false;
 });
 ok('and its text is coloured as Mermaid', coloured);
 

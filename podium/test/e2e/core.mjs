@@ -668,8 +668,8 @@ ok('theme defaults to matching the device (light, in this browser)', await pad.e
 await pad.selectOption('#pref-theme', 'dark');
 ok('and choosing Dark outright overrides the device', await pad.evaluate(() => document.documentElement.dataset.theme === 'dark'));
 await pad.selectOption('#pref-theme', 'light');
-ok('picking light theme applies data-theme="light" immediately and persists',
-  await pad.evaluate(() => document.documentElement.dataset.theme === 'light' && JSON.parse(localStorage.getItem('podium.presentation.v1')).theme === 'light'));
+ok('picking light theme applies data-theme="light" immediately and persists, for every page',
+  await pad.evaluate(() => document.documentElement.dataset.theme === 'light' && localStorage.getItem('podium.theme') === 'light'));
 await pad.selectOption('#pref-theme', 'dark');
 
 // Controller tabs (Issue #76): hide one, reorder another, and check both the

@@ -1243,8 +1243,10 @@ await pad.waitForSelector('#form');
 ok(`asking for the controller signed out lands on the login page (${new URL(pad.url()).pathname})`,
   new URL(pad.url()).pathname === '/login.html');
 ok('carrying where you were trying to go', new URL(pad.url()).searchParams.get('next') === '/control.html');
+// Its own dark or light (the browser here reports a light device), never the
+// browser's unstyled white.
 ok('and the login page styles itself, having nothing behind the gate to fetch',
-  await pad.evaluate(() => getComputedStyle(document.body).backgroundColor) === 'rgb(11, 13, 16)');
+  ['rgb(11, 13, 16)', 'rgb(247, 248, 250)'].includes(await pad.evaluate(() => getComputedStyle(document.body).backgroundColor)));
 
 await pad.fill('#username', 'jon');
 await pad.fill('#password', 'not the password');
