@@ -2214,7 +2214,7 @@ await uPad.click('#lib-add-toggle');
 
 // #191 / #192: whole titles and thumbnails.
 ok('a tile carries its whole title, wherever two lines are not enough (Issue #191)',
-  !!(await uPad.$('.tile[title="Day 6 — Weighing the Evidence"]')));
+  !!(await uPad.waitForSelector('.tile[title="Day 6 — Weighing the Evidence"]', { timeout: 10000 }).catch(() => null)));
 await uPad.waitForFunction(() => !!document.querySelector('.tile[title="Day 6 — Weighing the Evidence"] .tile-thumb.has-thumb'), null, { timeout: 30000 });
 ok('a deck tile gets a picture of its first slide (Issue #192)', true);
 ok('and a manifest entry marked thumbnail: false never tries to make one', await uPad.evaluate(() =>
@@ -2564,6 +2564,48 @@ await fPad.waitForFunction(() => document.querySelector('#deck-theme')?.textCont
 ok(`and the controller's Slides tab renders it too (${refused.control} downloads refused first)`, refused.control === 2);
 expecting.marpRetry = false;
 await fctx.close();
+}
+
+if (want('settings readable in light and dark')) {
+console.log('\n-- settings readable in light and dark --');
+// Every text field and dropdown on the display's own screens and the
+// controller's Settings, in both looks: its text against its own background.
+// A light setup screen once left them black with dark text - 1.05:1.
+const fieldsBelow = (page) => page.evaluate(() => {
+  const parse = (c) => (c.match(/[\d.]+/g) || [0, 0, 0, 1]).slice(0, 4).map(Number);
+  const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  const bgOf = (node) => { for (let n = node; n; n = n.parentElement) { const c = parse(getComputedStyle(n).backgroundColor); if (c[3] === undefined || c[3] > 0.5) return c; } return [255, 255, 255]; };
+  const bad = [];
+  document.querySelectorAll('input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file]):not([type=hidden]), select, textarea').forEach((n) => {
+    const r = n.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const k = ratio(parse(getComputedStyle(n).color), bgOf(n));
+    if (k < 4.5) bad.push(`#${n.id || n.tagName} ${k.toFixed(2)}:1`);
+  });
+  return bad;
+});
+for (const look of ['light', 'dark']) {
+  const ctx = await browser.newContext({ viewport: { width: 1100, height: 900 }, colorScheme: look });
+  await ctx.addInitScript((l) => { try { localStorage.setItem('podium.display.sheetTheme', l); } catch { /* about:blank */ } }, look);
+  const d = await ctx.newPage();
+  await d.goto(`${BASE}/display.html`);
+  await d.waitForSelector('#setup:not([hidden]), #arm:not([hidden]), #standby:not([hidden])', { timeout: 10000 }).catch(() => {});
+  await d.evaluate(() => { document.querySelectorAll('.sheet').forEach((n) => { n.hidden = true; }); document.getElementById('setup').hidden = false; });
+  const displayBad = await fieldsBelow(d);
+  ok(`the display's setup screen is readable in ${look} (${displayBad.join(', ') || 'every field at least 4.5:1'})`, displayBad.length === 0);
+  const c = await ctx.newPage();
+  await c.goto(`${BASE}/control.html`);
+  await c.evaluate((l) => { document.documentElement.dataset.theme = l; document.body.dataset.theme = l; }, look);
+  await c.evaluate(() => { document.querySelectorAll('.sheet').forEach((n) => { n.hidden = true; }); document.getElementById('setup').hidden = false; });
+  const controlBad = [];
+  for (const i of await c.$$eval('#setup .tab', (bs) => bs.map((b, n) => n))) {
+    await c.evaluate((n) => document.querySelectorAll('#setup .tab')[n]?.click(), i);
+    controlBad.push(...await fieldsBelow(c));
+  }
+  ok(`the controller's Settings are readable in ${look} (${controlBad.join(', ') || 'every field at least 4.5:1'})`, controlBad.length === 0);
+  await ctx.close();
+}
 }
 
 reportErrors();
