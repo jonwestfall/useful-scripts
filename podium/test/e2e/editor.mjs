@@ -13,6 +13,7 @@ import {
   ROOT, fs, path, os, spawn, execFileSync, freePort, BASE, browser, ok, want, trap, expecting,
   reportErrors, teardown, exitWithResult, writeImageFixture,
 } from './harness.mjs';
+import { makeDocx, makeRtf } from '../word-fixtures.mjs';
 
 const exampleDeck = fs.readFileSync(path.join(ROOT, 'content', 'decks', 'example-builds.md'), 'utf8');
 
@@ -1842,6 +1843,120 @@ await toPlan.waitForFunction((n) => document.querySelectorAll('#order .order-row
   .catch(() => ok('and Add puts it in the lecture', false));
 ok('the planner\'s address is tidied back to plain', !new URL(toPlan.url()).searchParams.has('add'));
 await owen.close();
+}
+
+if (want('Word and RTF files as documents or PDFs (#258)')) {
+console.log('\n-- Word and RTF files as documents or PDFs (#258) --');
+const fixtures = path.join(ROOT, 'test', 'fixtures');
+fs.mkdirSync(fixtures, { recursive: true });
+const docx = path.join(fixtures, 'memory.docx');
+const rtf = path.join(fixtures, 'memory.rtf');
+const doc = path.join(fixtures, 'old.doc');
+fs.writeFileSync(docx, await makeDocx());
+fs.writeFileSync(rtf, makeRtf(), 'latin1');
+fs.writeFileSync(doc, Buffer.from('not really a Word 97 file'));
+
+// --- With no server: the planner converts it in the browser, into the plan. ---
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const planner = await ctx.newPage();
+  trap(planner, 'word (planner, no server)');
+  await planner.goto(`${BASE}/plan.html`);
+  await planner.waitForSelector('#type-picker .type-btn');
+  await planner.click('#type-picker .type-btn:has-text("Document")');
+  const fileInput = planner.locator('#item-fields input[type=file]').first();
+  ok('the Document item takes Word and RTF files', /\.docx/.test(await fileInput.getAttribute('accept')) && /\.rtf/.test(await fileInput.getAttribute('accept')));
+  await fileInput.setInputFiles(docx);
+  await planner.waitForSelector('.word-choice', { timeout: 5000 });
+  const options = await planner.$$eval('.word-choice input[type=radio]', (rs) => rs.map((r) => ({ value: r.value, disabled: r.disabled, checked: r.checked })));
+  ok(`it asks: a document or a PDF (${JSON.stringify(options)})`, options.length === 2 && options[0].value === 'markdown');
+  ok('a PDF is not on offer with no server, and it says why', options[1].disabled
+    && /server with accounts/.test(await planner.textContent('.word-choice-option.is-off')));
+  ok('so it starts on the document', options[0].checked);
+  await planner.click('.word-choice button.primary');
+  await planner.waitForFunction(() => !document.querySelector('.word-choice'), null, { timeout: 15000 });
+  const planned = await planner.evaluate(() => {
+    const plan = JSON.parse(localStorage.getItem(Object.keys(localStorage).find((k) => k.startsWith('podium.plan')) || '') || 'null');
+    return plan;
+  }).catch(() => null);
+  await planner.waitForFunction(() => /Memory and Learning/.test(document.querySelector('#order')?.textContent || ''), null, { timeout: 10000 })
+    .then(() => ok('it becomes a Document titled from the Word file', true))
+    .catch(async () => ok(`it becomes a Document titled from the Word file ("${await planner.textContent('#order')}")`, false));
+  void planned;
+  const report = await planner.textContent('#plan-warn');
+  ok(`and says what was kept and what was not (${report.slice(0, 120)}…)`, /Kept 1 picture, 1 table, 1 footnote, 1 comment/.test(report) && /not carried over/.test(report));
+  // The page as the class will see it: rendered from the markdown in the plan.
+  await planner.waitForFunction(() => {
+    const page = document.querySelector('.r-doc')?.shadowRoot;
+    return page && /Encoding/.test(page.textContent || '') && page.querySelector('table') && page.querySelector('img[src^="data:"]');
+  }, null, { timeout: 15000 })
+    .then(() => ok('its preview shows the headings, the table and the picture (kept inside the plan)', true))
+    .catch(() => ok('its preview shows the headings, the table and the picture (kept inside the plan)', false));
+
+  // An RTF file, the same way.
+  await planner.click('#type-picker .type-btn:has-text("Document")');
+  await planner.locator('#item-fields input[type=file]').first().setInputFiles(rtf);
+  await planner.waitForSelector('.word-choice', { timeout: 5000 });
+  await planner.click('.word-choice button.primary');
+  await planner.waitForFunction(() => {
+    const page = document.querySelector('.r-doc')?.shadowRoot;
+    return page && /Smart “quotes” and €uro/.test(page.textContent || '') && page.querySelector('img');
+  }, null, { timeout: 15000 })
+    .then(() => ok('an RTF file becomes a document too, accents, quotes and its picture intact', true))
+    .catch(() => ok('an RTF file becomes a document too, accents, quotes and its picture intact', false));
+
+  // An old .doc needs a server: neither choice is possible here.
+  await planner.click('#type-picker .type-btn:has-text("Document")');
+  await planner.locator('#item-fields input[type=file]').first().setInputFiles(doc);
+  await planner.waitForSelector('.word-choice', { timeout: 5000 });
+  ok('an old .doc with no server says it needs one, and cannot be converted',
+    await planner.isDisabled('.word-choice button.primary') && /LibreOffice/.test(await planner.textContent('.word-choice')));
+  await planner.click('.word-choice button:has-text("Cancel")');
+  ok('Cancel leaves the item as it was', !(await planner.$('.word-choice')));
+  await ctx.close();
+}
+
+// --- On a server: My Files puts it in the library. ---
+{
+  const ctx = await signedIn('owen');
+  const page = await ctx.newPage();
+  trap(page, 'word (my files)');
+  await page.goto(`${base}/me.html`);
+  await page.waitForSelector('#upload-file', { state: 'attached', timeout: 10000 });
+  await page.selectOption('#upload-course', 'psy415');
+  await page.setInputFiles('#upload-file', docx);
+  await page.waitForSelector('.word-choice', { timeout: 5000 });
+  // A PDF is offered exactly when this server has LibreOffice, and says why not otherwise.
+  const office = (await page.evaluate(() => fetch('/api/capabilities').then((r) => r.json()))).officeConvert;
+  ok(`PDF is offered only where LibreOffice is installed (${office ? 'installed' : 'not installed'})`, office
+    ? !(await page.isDisabled('.word-choice input[value="pdf"]'))
+    : await page.isDisabled('.word-choice input[value="pdf"]') && /LibreOffice is not installed/.test(await page.textContent('.word-choice')));
+  await page.click('.word-choice button.primary');
+  await page.waitForFunction(() => /Converted “Memory and Learning” from Word/.test(document.querySelector('#upload-note')?.textContent || ''), null, { timeout: 15000 })
+    .then(() => ok('choosing a document converts it and says what was kept', true))
+    .catch(async () => ok(`choosing a document converts it and says what was kept ("${await page.textContent('#upload-note')}")`, false));
+  const items = (await page.evaluate(() => fetch('/api/library').then((r) => r.json()))).items;
+  const made = items.find((i) => i.title === 'Memory and Learning');
+  ok(`it is a library document under the course (${made?.type}, ${made?.course})`, made?.type === 'document' && made?.course === 'psy415');
+  const md = made ? await serverText(page, made.src) : '';
+  const picture = items.find((i) => i.deckMedia && /picture-1\.png$/.test(i.filename || ''));
+  ok('its picture went into the library as deck media, and the markdown points at it',
+    !!picture && md.includes(picture.src) && /^# Memory and Learning/m.test(md) && /<!-- Ask the class first\. -->/.test(md));
+  // The server will not take the raw file without a choice, and says so.
+  expecting.wordRefused = true;
+  const raw = await page.evaluate(async () => {
+    const res = await fetch('/api/library/upload?filename=x.docx&title=x&course=', { method: 'POST', body: new Blob(['x']) });
+    return { status: res.status, error: (await res.json()).error };
+  });
+  ok(`a raw Word file is refused until a choice is made (${raw.status})`, raw.status === 415 && /document .* or as a PDF/.test(raw.error));
+  const pdf = await page.evaluate(async () => {
+    const res = await fetch('/api/library/upload?filename=x.docx&title=x&course=&as=pdf', { method: 'POST', body: new Blob(['x']) });
+    return { status: res.status, error: (await res.json()).error };
+  });
+  ok(`a PDF that cannot be made says why, naming LibreOffice (${pdf.status})`, pdf.status === 422 && /LibreOffice/.test(pdf.error) && /Word or RTF/.test(pdf.error));
+  await ctx.close();
+  expecting.wordRefused = false;
+}
 }
 
 if (want('My Files: everything I have, and what I may do with it (#243)')) {

@@ -505,6 +505,9 @@ const expecting = {
   marpRetry: false,
   // My Files (Issue #243): a wrong current password, refused on purpose.
   passwordRefused: false,
+  // Issue #258: a raw Word file refused without a choice (415), and a PDF
+  // asked of a server that cannot make one (422) - both on purpose.
+  wordRefused: false,
 };
 
 const trap = (page, tag) => {
@@ -558,6 +561,7 @@ const trap = (page, tag) => {
     if (expecting.deckConflict && /responded with a status of 412/.test(text)) return;
     if (expecting.deckForbidden && /responded with a status of 403/.test(text)) return;
     if (expecting.passwordRefused && /responded with a status of 403/.test(text)) return;
+    if (expecting.wordRefused && /responded with a status of 4(15|22)/.test(text)) return;
     if (expecting.kioskOffscopeWarm && KIOSK_OFFSCOPE_WARM.test(text)) return;
     if (expecting.viewerRefused && /responded with a status of 401/.test(text)) return;
     if (expecting.marpRetry && /marp\.esm\.js|ERR_FAILED/.test(where)) return;

@@ -49,8 +49,11 @@ export const PLAN_TYPES = {
     label: 'Document', icon: '\u{1F4C3}',
     blurb: 'A markdown page to read - a handout, a reading, lab instructions - shown as one page the room scrolls through.',
     fields: [
-      { key: 'asset', label: 'Markdown file', kind: 'upload', accept: '.md,.markdown,text/markdown', asset: true,
-        hint: 'The markdown travels inside the plan. A file that starts with marp: true is a slide deck instead.' },
+      // Issue #258: a Word or RTF file is taken too - converted to markdown
+      // in the browser (or, if chosen, to a PDF on the server).
+      { key: 'asset', label: 'Markdown, Word or RTF file', kind: 'upload', asset: true,
+        accept: '.md,.markdown,text/markdown,.docx,.rtf,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/rtf,application/msword',
+        hint: 'The markdown travels inside the plan. A file that starts with marp: true is a slide deck instead. A Word or RTF file asks whether you want it as a document or as a PDF.' },
       { key: 'src', label: 'or a path on the server', kind: 'text', placeholder: 'content/docs/reading3.md' },
       { key: 'look', label: 'Look', kind: 'select', def: '',
         options: [['', 'As the file says (light, unless it says theme: dark)'], ['light', 'Light'], ['dark', 'Dark']] },
@@ -156,8 +159,8 @@ export const PLAN_TYPES = {
       // Issue #107: a .ppt/.pptx is accepted here too, and converted to a
       // PDF on the way in - the server upload route does the conversion,
       // so this is the only planner-side change the feature needed.
-      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.pdf,.ppt,.pptx,application/pdf',
-        hint: 'Stored on the server - works from any signed-in device, nothing to carry. A PowerPoint file is converted to a PDF.' },
+      { key: 'src', label: 'Upload to this server', kind: 'server-upload', accept: '.pdf,.ppt,.pptx,.docx,.doc,.rtf,application/pdf',
+        hint: 'Stored on the server - works from any signed-in device, nothing to carry. A PowerPoint, Word or RTF file is converted to a PDF.' },
       { key: 'src', label: 'or a path or URL', kind: 'text', placeholder: 'content/handouts/ch4.pdf' },
       { key: 'page', label: 'Open at page', kind: 'number', def: 1, min: 1, max: 9999 },
     ],

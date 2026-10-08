@@ -28,6 +28,7 @@ import { BUILD, VERSION, COMMIT, versionStamp, MAX_TIMERS, LAYOUTS, deckStep } f
 import { mountSessionBadge, serverInfo } from './server.js';
 import { mountZipImport } from './zip-review.js';
 import { startPageTheme } from './theme.js';
+import { wordKind, askWordChoice, wordToDocument, wordToLibraryPdf, reportLine } from './word-upload.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -1064,6 +1065,11 @@ function uploadField(item, spec) {
       const file = ev.target.files?.[0];
       ev.target.value = '';
       if (!file) return;
+      // A Word or RTF file (Issue #258): a document in this plan, or a PDF on the server.
+      if (wordKind(file.name) && (item.type === 'document' || item.type === 'deck')) {
+        await addWordFile(item, file, note);
+        return;
+      }
       note.textContent = `Reading ${file.name}…`;
       try {
         const text = await readFileText(file);
@@ -1096,6 +1102,55 @@ function uploadField(item, spec) {
   return field(spec.label, el('div', {}, input, note));
 }
 
+/**
+ * A Word or RTF file put into a Document item (Issue #258), as the person
+ * chose: converted here into markdown that travels inside the plan (its
+ * pictures with it, resized to fit), or a PDF on the server, which turns the
+ * item into a PDF item.
+ */
+async function addWordFile(item, file, note) {
+  const choice = await askWordChoice({ fileName: file.name, server: !!serverLibraryUpload });
+  if (!choice) { note.textContent = ''; return; }
+  note.textContent = `Converting ${file.name}…`;
+  try {
+    if (choice === 'pdf') {
+      const { item: uploaded } = await wordToLibraryPdf(file, { title: item.title || '' });
+      if (item.asset) delete plan.assets[item.asset];
+      Object.assign(item, { type: 'pdf', src: uploaded.src, page: 1, asset: undefined });
+      delete item.asset;
+      if (!item.title) item.title = uploaded.title;
+      touch();
+      renderOrder();
+      renderEditor();
+      setTimeout(() => warn(`“${file.name}” is now a PDF on the server, keeping Word’s layout.`), 0);
+      return;
+    }
+    const tooBig = [];
+    const { markdown, title, report } = await wordToDocument(file, {
+      placePicture: async (blob, name) => {
+        const shrunk = await downscaleImage(blob, MAX_ASSET_CHARS);
+        if (shrunk.tooBig) tooBig.push(name);
+        const id = uid(10);
+        plan.assets[id] = { name, mime: 'image/jpeg', data: shrunk.dataUrl };
+        return assetRef(id);
+      },
+    });
+    if (item.asset) delete plan.assets[item.asset];
+    const id = uid(10);
+    plan.assets[id] = { name: `${file.name.replace(/\.[^.]+$/, '')}.md`, mime: 'text/markdown', data: markdown };
+    item.asset = id;
+    item.src = '';
+    item.type = 'document';
+    if (!item.title) item.title = title;
+    touch();
+    renderOrder();
+    renderEditor();
+    setTimeout(() => warn(`${reportLine(report, item.title)}${tooBig.length ? ` ${tooBig.length} picture${tooBig.length === 1 ? ' is' : 's are'} still large after resizing and may not reach the projector.` : ''}`), 0);
+  } catch (err) {
+    note.textContent = `Could not convert that file: ${err.message}`;
+  }
+}
+
 // Issue #108: uploads a real file to this server's library - the same
 // endpoint admin.html and the controller's own PDF upload use - rather than
 // embedding it as a plan asset the way uploadField() does. A PDF handout or
@@ -1118,6 +1173,8 @@ function serverUploadField(item, spec) {
         const params = new URLSearchParams({
           filename: file.name, title: item.title || file.name.replace(/\.[^.]+$/, ''), course: '', group: '',
         });
+        // A Word or RTF file put into a PDF item was chosen as a PDF (#258).
+        if (wordKind(file.name)) params.set('as', 'pdf');
         const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || 'that did not work');

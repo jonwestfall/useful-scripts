@@ -43,6 +43,9 @@ const WARM = [
   // Diagrams in decks (Issue #235), 5 MB - only ever loaded by a deck with a
   // diagram in it, but that deck has to draw offline like any other.
   'assets/vendor/mermaid.esm.js',
+  // Word files as documents (Issue #258), ~300 KB - converted in the browser,
+  // so a lecture planned offline can still take one.
+  'assets/vendor/mammoth.esm.js',
   'assets/icons/icon-192.png', 'assets/icons/apple-touch-icon.png',
   // Kept complete by test/offline-shell.test.mjs: a module control.js,
   // display.js or deck-editor.js imports that is missing here fails the whole
@@ -51,7 +54,7 @@ const WARM = [
     'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-checks', 'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-source', 'deck-templates',
     'defaults', 'display', 'doc', 'doc-reader', 'duration-probe', 'file-browser',
     'index', 'me', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'quicklook', 'quicklook-open', 'recap', 'recap-pdf', 'renderers',
-    'rtc', 'server', 'store', 'theme', 'theme-boot', 'thumbs', 'util', 'watermark', 'zip', 'zip-review',
+    'rtc', 'server', 'store', 'theme', 'theme-boot', 'thumbs', 'util', 'watermark', 'word-import', 'word-upload', 'zip', 'zip-review',
   ].map((name) => `assets/js/${name}.js`),
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),
 ];
