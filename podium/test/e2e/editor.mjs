@@ -1482,6 +1482,112 @@ await solo.close();
 ok('signed out, quicklook.html is not served', [302, 401, 403].includes((await fetch(`${base}/quicklook.html`, { redirect: 'manual' })).status));
 }
 
+if (want('Quick Look: an outline beside the page, for documents, decks and PDFs (#253)')) {
+console.log('\n-- Quick Look: an outline beside the page, for documents, decks and PDFs (#253) --');
+const fixtures = path.join(ROOT, 'test', 'fixtures');
+fs.mkdirSync(fixtures, { recursive: true });
+const filler = (n) => Array.from({ length: n }, (_, i) => `A line of reading, number ${i + 1}, to give the section some length.`).join('\n\n');
+fs.writeFileSync(path.join(fixtures, 'outline-doc.md'),
+  `# Memory\n\n${filler(8)}\n\n## Encoding\n\n${filler(14)}\n\n## Retrieval\n\n${filler(14)}\n\n### Cues\n\n${filler(14)}\n`);
+fs.writeFileSync(path.join(fixtures, 'outline-deck.md'),
+  '---\nmarp: true\n---\n\n# Welcome\n\n---\n\n# Attention\n\nSome words.\n\n---\n\n## Working memory\n\nMore words.\n');
+// A three-page PDF with two bookmarks (the second nested), written out by
+// hand: nothing in the repo has one, and pdf.js reads this the same way.
+{
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R /Outlines 6 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] >>',
+    '<< /Type /Outlines /First 7 0 R /Last 7 0 R /Count 2 >>',
+    '<< /Title (Introduction) /Parent 6 0 R /Dest [3 0 R /Fit] /First 8 0 R /Last 8 0 R /Count 1 >>',
+    '<< /Title (The findings) /Parent 7 0 R /Dest [5 0 R /Fit] >>',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = objects.map((body, i) => {
+    const at = pdf.length;
+    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
+    return at;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')}`;
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  fs.writeFileSync(path.join(fixtures, 'outline.pdf'), pdf, 'latin1');
+}
+
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+const look = await ctx.newPage();
+trap(look, 'quick look outline');
+const outline = () => look.evaluate(() => ({
+  open: !document.querySelector('#ql-outline').hidden,
+  button: !document.querySelector('#ql-outline-toggle').hidden,
+  entries: [...document.querySelectorAll('#ql-outline-list button')].map((b) => b.textContent.trim()),
+  current: document.querySelector('#ql-outline-list button[aria-current="true"]')?.textContent.trim() || '',
+}));
+
+// A document: its headings, open beside it, following along.
+await look.goto(`${BASE}/quicklook.html?src=test/fixtures/outline-doc.md&type=document`);
+await look.waitForFunction(() => document.querySelectorAll('#ql-outline-list button').length === 4, null, { timeout: 20000 })
+  .then(() => ok('a document\'s headings are listed in an outline', true))
+  .catch(() => ok('a document\'s headings are listed in an outline', false));
+let seen = await outline();
+ok(`open beside the page, not over it (${JSON.stringify(seen.entries)})`, seen.open && await look.isHidden('#ql-grid')
+  && seen.entries.join('|') === 'Memory|Encoding|Retrieval|Cues');
+ok('a document no longer offers a Grid', await look.isHidden('#ql-grid-toggle'));
+ok(`and the first heading is marked as where you are ("${seen.current}")`, seen.current === 'Memory');
+await look.click('#ql-outline-list button:text-is("Retrieval")');
+await look.waitForFunction(() => /Retrieval/.test(document.querySelector('#ql-where').textContent), null, { timeout: 5000 })
+  .then(() => ok('clicking a heading jumps there', true))
+  .catch(async () => ok(`clicking a heading jumps there ("${await look.textContent('#ql-where')}")`, false));
+seen = await outline();
+ok(`and the outline stays open, marking it ("${seen.current}")`, seen.open && seen.current === 'Retrieval');
+await look.keyboard.press('End');
+await look.waitForTimeout(300);
+ok(`it follows the page as it moves ("${(await outline()).current}")`, (await outline()).current === 'Cues');
+
+// Hidden and shown, and the choice kept.
+await look.click('#ql-outline-toggle');
+ok('☰ Outline hides it', !(await outline()).open && (await look.getAttribute('#ql-outline-toggle', 'aria-pressed')) === 'false');
+await look.reload();
+await look.waitForFunction(() => !document.querySelector('#ql-outline-toggle').hidden, null, { timeout: 20000 });
+ok('and it stays hidden on this device', !(await outline()).open);
+await look.keyboard.press('o');
+ok('O shows it again', (await outline()).open);
+
+// A deck: every slide by its title, alongside the grid.
+await look.goto(`${BASE}/quicklook.html?src=test/fixtures/outline-deck.md`);
+await look.waitForFunction(() => document.querySelectorAll('#ql-outline-list button').length === 3, null, { timeout: 20000 })
+  .catch(() => {});
+seen = await outline();
+ok(`a deck's outline is its slide titles (${JSON.stringify(seen.entries)})`,
+  seen.open && seen.entries.join('|') === '1Welcome|2Attention|3Working memory');
+ok('and it keeps its Grid of slides', await look.isVisible('#ql-grid-toggle'));
+await look.click('#ql-outline-list button:has-text("Working memory")');
+ok(`a title goes to its slide ("${await look.textContent('#ql-where')}")`, /Slide 3 of 3/.test(await look.textContent('#ql-where'))
+  && (await outline()).current === '3Working memory');
+
+// A PDF: its bookmarks, nested, each to its page.
+await look.goto(`${BASE}/quicklook.html?src=test/fixtures/outline.pdf`);
+await look.waitForFunction(() => document.querySelectorAll('#ql-outline-list button').length === 2, null, { timeout: 20000 })
+  .then(() => ok('a PDF\'s bookmarks are its outline', true))
+  .catch(() => ok('a PDF\'s bookmarks are its outline', false));
+seen = await outline();
+ok(`nested as they are in the file (${JSON.stringify(seen.entries)})`, seen.entries.join('|') === 'Introduction|The findings'
+  && await look.evaluate(() => !!document.querySelector('#ql-outline-list li.ql-heading-2 button')));
+await look.click('#ql-outline-list button:text-is("The findings")');
+ok(`a bookmark goes to its page ("${await look.textContent('#ql-where')}")`, /Page 3 of 3/.test(await look.textContent('#ql-where'))
+  && (await outline()).current === 'The findings');
+
+// A PDF without bookmarks: no outline, the grid as before.
+await look.goto(`${BASE}/quicklook.html?src=content/sample.pdf`);
+await look.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 });
+await look.waitForTimeout(500);
+seen = await outline();
+ok('a PDF with no bookmarks has no Outline button, and keeps its Grid', !seen.button && !seen.open && await look.isVisible('#ql-grid-toggle'));
+await ctx.close();
+}
+
 if (want('the planner: choosing files from the server (#241)')) {
 console.log('\n-- the planner: choosing files from the server (#241) --');
 admin('course', 'add', 'pick101', '--title', 'Picking 101');

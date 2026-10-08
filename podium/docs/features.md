@@ -106,7 +106,7 @@ A `.md` that is not a slide deck goes up as what it is: **one page the room read
   - The label says which screen of how many, and which section the top of the screen is in.
   - **Headings** jump to a section, landing just above its heading. A **scrubber** goes anywhere, and the room follows as you drag it. Dragging the Now mirror up or down scrolls the room too, as a finger would the page.
 - **Presenter notes**: HTML comments (`<!-- … -->`) are notes, as in a deck. The Now tab shows the notes in what is on screen, plus the nearest one above it, so a note at the top of a section stays while the section is up. They are never on the display, and a viewer's copy never has them.
-- **Quick Look** opens a document as a page, with its own Next/Previous, the mouse wheel, its headings and its notes.
+- **Quick Look** opens a document as a page, with its own Next/Previous, the mouse wheel, its notes, and its headings as an outline beside it (Issue #253).
 
 - **Ink stays on the text**: what you draw on a document is pinned to the words under it. It scrolls with the page on the display, the Ink tab and Guest View, and is there again when that part of the page comes back. It is one surface for the whole document, kept with the lecture like slide ink, and a photo of the panel (*Save a photo*, auto-save) shows the page with its ink.
 - **Guest View** follows the room: the page as the projector shows it, at the presenter's place, with the presenter's ink. On a phone, **Read at my own pace** opens the same document reflowed to fit the phone, to scroll freely, with a marker showing where the class is. **Back to the presenter** rejoins. Ink is not shown while reading, since reflowed text no longer lines up with it. A viewer never receives the presenter notes.
@@ -175,8 +175,9 @@ The deck editor writes and edits Marp decks without leaving Podium (Issue #226).
 
 - **Where**: ↗ on a controller tile (library files and the lecture's items alike), ↗ on an item in the planner's running order and *↗ Quick Look* in its settings, and **▾ → Open in a new tab to rehearse** in the deck editor.
 - **Its own navigation**: nothing in the tab reaches the display, and moving the display never moves the tab. It doesn't connect to the room at all.
-- **Decks**: the slide with its **presenter notes** beside it (N hides them), **→ / ←** step through builds as in class, **G** shows every slide to jump to, and **C** is *Check before class* with the same list the deck editor gives. A video slide plays in the tab.
-- **PDFs** page by page, with **G** for every page; **picture decks** picture by picture; a **picture** fits the tab, and a click shows it at its own size.
+- **The outline** (Issue #253): **☰ Outline** is a list on the left to jump from, beside the page rather than over it, with where you are marked as you go. It holds a document's headings, a deck's slide titles and a PDF's bookmarks. It opens by itself when there is something to list; hiding it (the button, or **O**) is remembered on this device. A PDF without bookmarks has no outline.
+- **Decks**: the slide with its **presenter notes** beside it (N hides them), **→ / ←** step through builds as in class, **G** shows every slide as a picture to jump to, and **C** is *Check before class* with the same list the deck editor gives. A video slide plays in the tab.
+- **PDFs** page by page, with **G** for every page as a picture; **picture decks** picture by picture; a **picture** fits the tab, and a click shows it at its own size.
 - **Video and audio always start muted**, with *Unmute* beside them, because a presenter laptop's sound is often what the room hears.
 - **Web pages, YouTube and text** as the display shows them (the first two need the network); an **automated set** lists its entries, each one a click away.
 - **Rehearsing from the deck editor**: the tab shows the deck as it is in the editor, unsaved changes included, and follows your edits as you type, staying on the slide you were on.
