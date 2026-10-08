@@ -29,6 +29,14 @@ const { execFile } = require('node:child_process');
 // screen (see zip-import.js) instead of this quietly growing past its title.
 const CONVERTIBLE_EXTS = new Set(['.ppt', '.pptx']);
 
+// Word and RTF (Issue #258) go through LibreOffice too, but only when the
+// person uploading chose a PDF over a markdown document - never on their own,
+// unlike PowerPoint, which has nothing else to become.
+const WORD_EXTS = new Set(['.doc', '.docx', '.rtf']);
+
+const WHAT = (ext) => (WORD_EXTS.has(ext) ? { noun: 'document', plural: 'Word or RTF files', alt: 'save it as a PDF from Word and upload that instead' }
+  : { noun: 'presentation', plural: 'PowerPoint files', alt: 'export the slides as images or a PDF and upload those instead' });
+
 // A very large, image-heavy deck is the case this has to be generous for;
 // anything actually stuck this long is not going to finish on its own.
 const TIMEOUT_MS = 120000;
@@ -52,23 +60,37 @@ class ConversionError extends Error {
  * and `--headless` alone does not prevent that.
  */
 async function convertToPdf(buffer, ext) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'podium-pptx-'));
+  return convert(buffer, ext, 'pdf');
+}
+
+/**
+ * A legacy Word .doc as a .docx (Issue #258), which the browser can then turn
+ * into a markdown document itself: one converter for both, not a second one
+ * on the server.
+ */
+async function convertToDocx(buffer) {
+  return convert(buffer, '.doc', 'docx');
+}
+
+async function convert(buffer, ext, to) {
+  const what = WHAT(ext);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'podium-convert-'));
   try {
     const inputPath = path.join(dir, `input${ext}`);
     await fs.writeFile(inputPath, buffer, { mode: 0o600 });
     await new Promise((resolve, reject) => {
       execFile('soffice', [
         '--headless', '--norestore', `-env:UserInstallation=file://${path.join(dir, 'profile')}`,
-        '--convert-to', 'pdf', '--outdir', dir, inputPath,
+        '--convert-to', to, '--outdir', dir, inputPath,
       ], { timeout: TIMEOUT_MS, killSignal: 'SIGKILL' }, (err) => {
         if (err?.killed) {
           reject(new ConversionError(
-            'Converting that presentation took too long and was stopped. A smaller or simpler file is more likely to work.', 504,
+            `Converting that ${what.noun} took too long and was stopped. A smaller or simpler file is more likely to work.`, 504,
           ));
         } else if (err?.code === 'ENOENT') {
           reject(new ConversionError(
-            'This server cannot convert PowerPoint files: LibreOffice (the "soffice" command) is not installed. '
-            + 'Ask an administrator to install it (see docs/vps.md), or export the slides as images or a PDF and upload those instead.',
+            `This server cannot convert ${what.plural}: LibreOffice (the "soffice" command) is not installed. `
+            + `Ask an administrator to install it (see docs/vps.md), or ${what.alt}.`,
           ));
         } else {
           // Anything else - LibreOffice does not use its exit code to report
@@ -80,10 +102,10 @@ async function convertToPdf(buffer, ext) {
       });
     });
     try {
-      return await fs.readFile(path.join(dir, 'input.pdf'));
+      return await fs.readFile(path.join(dir, `input.${to}`));
     } catch {
       throw new ConversionError(
-        'That file could not be converted - it may not really be a PowerPoint presentation, or it uses something LibreOffice cannot open.',
+        `That file could not be converted - it may not really be a ${what.noun === 'document' ? 'Word or RTF document' : 'PowerPoint presentation'}, or it uses something LibreOffice cannot open.`,
       );
     }
   } finally {
@@ -91,4 +113,18 @@ async function convertToPdf(buffer, ext) {
   }
 }
 
-module.exports = { CONVERTIBLE_EXTS, ConversionError, TIMEOUT_MS, convertToPdf };
+/**
+ * Whether LibreOffice is here at all - asked once, so a page can offer "PDF"
+ * and ".doc" only where they will work rather than failing after an upload.
+ */
+let found = null;
+function hasLibreOffice() {
+  if (found !== null) return found;
+  const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  found = dirs.some((dir) => {
+    try { require('node:fs').accessSync(path.join(dir, 'soffice'), require('node:fs').constants.X_OK); return true; } catch { return false; }
+  });
+  return found;
+}
+
+module.exports = { CONVERTIBLE_EXTS, WORD_EXTS, ConversionError, TIMEOUT_MS, convertToPdf, convertToDocx, hasLibreOffice };

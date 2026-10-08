@@ -188,6 +188,8 @@ function capabilities(ctx, user) {
     version: API_VERSION,
     features,
     allowPollNames,
+    // Word/RTF as a PDF, and old .doc files at all, need LibreOffice (#258).
+    officeConvert: !!(ctx.db && ctx.hasAccounts() && pptxConvert.hasLibreOffice()),
     auth: {
       mode: ctx.hasAccounts() ? 'accounts' : (ctx.basicPassword ? 'password' : 'open'),
       required: ctx.hasAccounts() || !!ctx.basicPassword,
@@ -475,6 +477,21 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'library' && rest[0] === 'upload' && req.method === 'POST') {
       json(res, 200, await receiveUpload(req, url, ctx, user));
+      return true;
+    }
+
+    // An old binary Word .doc, turned into a .docx by LibreOffice so the
+    // browser can make a document of it the way it does any .docx (#258).
+    // Nothing is kept: the bytes go back in the answer.
+    if (head === 'convert' && rest[0] === 'docx' && req.method === 'POST') {
+      const raw = await readBuffer(req, library.MAX_UPLOAD_BYTES);
+      const docx = await pptxConvert.convertToDocx(raw);
+      res.writeHead(200, {
+        'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'content-length': docx.length,
+        'cache-control': 'no-store',
+      });
+      res.end(docx);
       return true;
     }
 
@@ -1054,7 +1071,8 @@ async function handleApi(req, res, url, ctx) {
           // is what it is about to be - the rest of this route never learns
           // the upload was anything else.
           const ext = path.extname(filename).toLowerCase();
-          if (category === 'pdfs' && pptxConvert.CONVERTIBLE_EXTS.has(ext)) {
+          // A Word or RTF file put into PDFs (Issue #258) was chosen as a PDF.
+          if (category === 'pdfs' && (pptxConvert.CONVERTIBLE_EXTS.has(ext) || pptxConvert.WORD_EXTS.has(ext))) {
             buf = await pptxConvert.convertToPdf(buf, ext);
             filename = `${filename.slice(0, -ext.length)}.pdf`;
           }
@@ -1165,7 +1183,16 @@ async function handleApi(req, res, url, ctx) {
 async function receiveUpload(req, url, ctx, user) {
   let filename = String(url.searchParams.get('filename') || '').split(/[\\/]/).pop().slice(0, 200);
   const ext = path.extname(filename).toLowerCase();
-  const converts = pptxConvert.CONVERTIBLE_EXTS.has(ext);
+  // A Word or RTF file (Issue #258) is stored as a PDF only when the person
+  // chose that over a markdown document; the document is made in the browser
+  // and arrives here as an ordinary .md, so the raw file is not taken.
+  const word = pptxConvert.WORD_EXTS.has(ext);
+  if (word && url.searchParams.get('as') !== 'pdf') {
+    throw Object.assign(new Error(
+      'Choose how to show a Word or RTF file: as a document (it is converted in your browser) or as a PDF (keeping its layout).',
+    ), { status: 415 });
+  }
+  const converts = word || pptxConvert.CONVERTIBLE_EXTS.has(ext);
   const allowed = converts ? { type: 'application/pdf', kind: 'pdf' } : library.uploadKindFor(filename);
   if (!allowed) {
     throw Object.assign(new Error(

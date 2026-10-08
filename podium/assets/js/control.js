@@ -26,6 +26,7 @@ import { loadDefaults, defaultCommands, defaultsDelta, changedDefaultCommands, c
 import { createPipPanel } from './pip.js';
 import { createDurationProber } from './duration-probe.js';
 import { initTheme, themeChoice, setThemeChoice, onThemeChange, THEME_KEY } from './theme.js';
+import { wordKind, uploadWordFile } from './word-upload.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -6094,6 +6095,19 @@ $('#pdf-upload').addEventListener('change', async (ev) => {
   if (!file) return;
   const note = $('#pdf-upload-note');
   note.textContent = `Uploading ${file.name}…`;
+  // A Word or RTF file (Issue #258): a document or a PDF, as chosen.
+  if (wordKind(file.name)) {
+    try {
+      const done = await uploadWordFile(file);
+      if (!done) { note.textContent = ''; return; }
+      note.textContent = done.message;
+      await loadLibrary();
+      stage(done.item);
+    } catch (err) {
+      note.textContent = `That did not upload: ${err.message}`;
+    }
+    return;
+  }
   try {
     // Issue #107: a .ppt/.pptx picked here is converted to a PDF by the same
     // upload route admin.html and the planner use - .pdf$ alone would leave

@@ -1,12 +1,13 @@
 {
   "name": "podium-vendor-build",
   "private": true,
-  "description": "Rebuilds the vendored browser bundles: Marp, CodeMirror for the deck editor, and Mermaid for diagrams in decks",
+  "description": "Rebuilds the vendored browser bundles: Marp, CodeMirror for the deck editor, Mermaid for diagrams in decks, and mammoth for Word files",
   "scripts": {
-    "build": "node build-marp.mjs && node build-codemirror.mjs && node build-mermaid.mjs",
+    "build": "node build-marp.mjs && node build-codemirror.mjs && node build-mermaid.mjs && node build-mammoth.mjs",
     "build:marp": "node build-marp.mjs",
     "build:codemirror": "node build-codemirror.mjs",
-    "build:mermaid": "node build-mermaid.mjs"
+    "build:mermaid": "node build-mermaid.mjs",
+    "build:mammoth": "node build-mammoth.mjs"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "6.20.3",
@@ -21,6 +22,7 @@
     "@lezer/highlight": "1.2.5",
     "@marp-team/marp-core": "4.4.0",
     "esbuild": "^0.25.0",
+    "mammoth": "1.13.0",
     "mermaid": "12.1.0"
   }
 }

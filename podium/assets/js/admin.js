@@ -16,6 +16,7 @@ import { mountZipImport } from './zip-review.js';
 import { downscaleImage } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
 import { startPageTheme } from './theme.js';
+import { wordKind, uploadWordFile } from './word-upload.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -150,6 +151,23 @@ async function upload() {
   if (!file) { say('Pick a file first.', true); return; }
   $('#up-go').disabled = true;
   say(`Uploading ${file.name}…`);
+
+  // A Word or RTF file (Issue #258): a document or a PDF, as chosen.
+  if (wordKind(file.name)) {
+    try {
+      const done = await uploadWordFile(file, { title: $('#up-title').value.trim(), course: $('#up-course').value, group: $('#up-group').value.trim() });
+      if (!done) { say(''); return; }
+      say(done.message);
+      $('#up-file').value = '';
+      $('#up-title').value = '';
+      await refresh();
+    } catch (err) {
+      say(err.message, true);
+    } finally {
+      $('#up-go').disabled = false;
+    }
+    return;
+  }
 
   // The file IS the body. No multipart: the three strings that go with it fit
   // in a query string, and parsing multipart by hand to carry them would be

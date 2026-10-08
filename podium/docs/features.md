@@ -561,6 +561,19 @@ On a self-hosted server with LibreOffice installed (see [Installing LibreOffice 
 
 The converted file is named after the original with `.pdf` in place of `.ppt`/`.pptx`; nothing about the upload — the size limit, who may use it, where it is filed — differs from uploading a PDF directly, since converting happens before anything is stored. Without LibreOffice installed, uploading one of these files fails with a plain error saying so, rather than a silent no-op; every other upload keeps working as it always has. Speaker notes are not carried over.
 
+#### Word and RTF Files (Issue #258)
+
+A Word (`.docx`, `.doc`) or RTF (`.rtf`) file can be added anywhere a document or a PDF can: the planner's **Document** item, My Files, the admin library upload, and the controller's **Upload a PDF, PowerPoint or Word file…**. Each time, Podium asks how it should be shown:
+
+- **As a document (Markdown)**: converted in your browser into a [document](#markdown-documents-a-page-to-read) Podium scrolls on the projector, with an outline from its headings, its comments as presenter notes, and editing in the deck editor.
+  - **Carried over:** headings (and Word's Title style), paragraphs, bold/italic/underline/strike, nested lists, tables (merged cells flattened), links, pictures, footnotes (numbered, gathered under *Notes* at the end), and comments (as presenter notes where they were anchored; the room never sees them).
+  - **Not carried over:** page layout, headers and footers, text boxes, fonts and colours. A short report after the conversion says what was kept.
+  - **Where the pictures go:** with a server they go into the library as deck media, under the same course. In a plan with no server, they are kept inside the plan, resized to fit.
+  - `.docx` and `.rtf` convert with **no server at all**, offline too. The old binary `.doc` needs a server with LibreOffice, which turns it into a `.docx` first.
+- **As a PDF**: converted on the server by LibreOffice, keeping Word's exact layout page for page, and shown like any PDF. This needs a server with LibreOffice (with its Writer component, see [vps.md](vps.md#installing-libreoffice-for-powerpoint-uploads)). Where it isn't available, the choice is shown switched off with the reason.
+
+A Word or RTF file put into the planner's **PDF** item, or into Admin's **PDFs** content category, is always made into a PDF.
+
 ---
 
 ## Part 9 — Making the Controller Yours

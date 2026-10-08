@@ -328,13 +328,19 @@ there at all.
 #### Installing LibreOffice for PowerPoint uploads
 
 Optional - every other upload works without it. `libreoffice-impress` is the
-one package this actually needs (Draw and its own dependencies come with
-it); the full `libreoffice` metapackage works too but installs Writer, Calc
-and the rest for nothing this feature uses:
+one package PowerPoint needs (Draw and its own dependencies come with it).
+Word and RTF files as PDFs, and old `.doc` files at all (Issue #258), need
+`libreoffice-writer` as well; the full `libreoffice` metapackage covers both
+but also installs Calc and the rest for nothing Podium uses:
 
 ```
-apt install libreoffice-impress
+apt install libreoffice-impress libreoffice-writer
 ```
+
+A server with `soffice` on its `PATH` says so in `/api/capabilities`
+(`officeConvert`), which is how the pages decide whether to offer a Word file
+as a PDF. Converting Word or RTF to a *document* needs none of this: that
+happens in the browser.
 
 No further configuration; the server finds `soffice` on `PATH`. Confirm it
 works with `soffice --headless --convert-to pdf --outdir /tmp yourfile.pptx`.

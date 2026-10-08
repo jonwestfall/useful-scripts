@@ -2731,3 +2731,11 @@ body:not(.is-doc) .doc-only { display: none !important; }
 .me-appearance { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 14px; }
 .me-appearance label { font-size: 14px; color: var(--dim); }
 .me-appearance select { width: auto; min-width: 12rem; }
+
+/* Word and RTF files (Issue #258): document or PDF ------------------------------ */
+.word-choice { width: min(520px, 100%); }
+.word-choice-option { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; padding: 10px 12px; margin: 0 0 8px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.word-choice-option input { margin-top: 3px; }
+.word-choice-option > span { display: grid; gap: 4px; }
+.word-choice-option:has(input:checked) { border-color: var(--accent); background: var(--panel-2); }
+.word-choice-option.is-off { cursor: default; opacity: .75; }

@@ -16,6 +16,7 @@ import { FILE_TYPES, typeIcon, quickLookFile } from './file-browser.js';
 import { canQuickLook } from './quicklook-open.js';
 import { dayAndTime, spanOf, downloadSessionRecap } from './recap-pdf.js';
 import { startPageTheme, setThemeChoice, onThemeChange } from './theme.js';
+import { wordKind, uploadWordFile } from './word-upload.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -334,13 +335,22 @@ async function upload(list) {
   const course = $('#upload-course').value;
   let done = 0;
   const failed = [];
+  const reports = [];
   for (const file of chosen) {
     note('#upload-note', `Uploading ${file.name}…`);
+    // A Word or RTF file (Issue #258): a document or a PDF, as chosen.
+    if (wordKind(file.name)) {
+      try {
+        const result = await uploadWordFile(file, { course });
+        if (result) { done += 1; reports.push(result.message); }
+      } catch (err) { failed.push(`${file.name}: ${err.message}`); }
+      continue;
+    }
     const params = new URLSearchParams({ filename: file.name, title: file.name.replace(/\.[^.]+$/, ''), course, group: '' });
     try { await api(`/api/library/upload?${params}`, { method: 'POST', raw: file }); done += 1; } catch (err) { failed.push(`${file.name}: ${err.message}`); }
   }
   note('#upload-note', [done && `Added ${done} file${done === 1 ? '' : 's'} to the library${course ? ` under ${COURSE(course)}` : ''}.`,
-    failed.length && `Not uploaded: ${failed.join(' · ')}`].filter(Boolean).join(' '), !!failed.length);
+    ...reports, failed.length && `Not uploaded: ${failed.join(' · ')}`].filter(Boolean).join(' '), !!failed.length);
   await loadFiles();
 }
 
