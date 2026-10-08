@@ -205,8 +205,77 @@ function renderImageDeck(item) {
   };
 }
 
+// --- players Safari will let make a sound -------------------------------------
+//
+// Safari only lets a <video> or <audio> play with sound once that very element
+// has been played from a click or tap. The display's one click is Go live, and
+// a video picked ten minutes later is a brand-new element nobody clicked - so
+// Safari refused it, the picture never moved on the projector, the music was
+// never ducked, and the room heard nothing (Chrome lets the whole page play
+// once it has been clicked, which is why only Safari showed it).
+//
+// So Go live makes a few players here and plays each one, for a moment and
+// silently, inside its click - unmuted, which is what counts. A video or audio
+// item, or a deck's video slide, then takes one of these instead of making
+// its own, and hands it back when it is done, still allowed to make a sound.
+// The same idea as howler.js's pool of unlocked HTML5 players.
+const mediaPool = { video: [], audio: [] };
+const blessed = new WeakSet();
+
+/**
+ * Inside a click or tap: make (up to) `counts` players and let each play a
+ * silent clip, so each is allowed to make a sound from now on.
+ */
+export function blessMediaElements(silentClip, counts = { video: 6, audio: 3 }) {
+  for (const tag of ['video', 'audio']) {
+    while (mediaPool[tag].length < (counts[tag] || 0)) {
+      const media = document.createElement(tag);
+      media.src = silentClip;
+      // Marked, so a test - or anyone inspecting the projector's page - can
+      // tell a player Go live made from one made later.
+      media.dataset.podiumBlessed = '';
+      blessed.add(media);
+      mediaPool[tag].push(media);
+      // play() has to be called now, inside the click; what follows can wait.
+      // A player already taken by the time it settles is someone else's.
+      Promise.resolve(media.play())
+        .catch(() => { /* blocked or cut short - it is still a player */ })
+        .then(() => {
+          if (!mediaPool[tag].includes(media)) return;
+          media.pause();
+          media.removeAttribute('src');
+          media.load();
+        });
+    }
+  }
+}
+
+function takeMedia(tag) {
+  return mediaPool[tag].pop() || document.createElement(tag);
+}
+
+// A player from the pool goes back into it, emptied; any other is dropped.
+function releaseMedia(media) {
+  media.pause();
+  if (media.getAttribute('src')) { media.removeAttribute('src'); media.load(); }
+  media.remove();
+  if (!blessed.has(media)) return;
+  media.removeAttribute('class');
+  media.removeAttribute('style');
+  media.removeAttribute('poster');
+  media.loop = false;
+  media.muted = false;
+  media.volume = 1;
+  const tag = media.localName;
+  if (!mediaPool[tag].includes(media)) mediaPool[tag].push(media);
+}
+
 // Shared plumbing for <video> and <audio>.
 function mediaRenderer(item, opts, media, node) {
+  // Listeners come off with the player: a pooled one goes on to play other
+  // things, and must not tell this item it ended.
+  const listening = new AbortController();
+  const { signal } = listening;
   let lastSeek = item.seekNonce || 0;
   media.playsInline = true;
   media.preload = 'auto';
@@ -217,7 +286,7 @@ function mediaRenderer(item, opts, media, node) {
   // currentTime before metadata is silently dropped, so cue on loadedmetadata.
   let cueTo = item.startAt || 0;
   const cue = () => { if (cueTo) { media.currentTime = cueTo; cueTo = 0; } };
-  media.addEventListener('loadedmetadata', cue);
+  media.addEventListener('loadedmetadata', cue, { signal });
   if (media.readyState >= 1) cue();
 
   // Without loop, the browser pauses on its own at the end - but nothing in
@@ -229,7 +298,7 @@ function mediaRenderer(item, opts, media, node) {
   // hook to mark it played-out in state itself, once, the same way a manual
   // pause already does - not fired for a preview instance, which reconcile()
   // never actually lets run long enough to reach its own end.
-  if (!opts.preview) media.addEventListener('ended', () => opts.onEnded?.());
+  if (!opts.preview) media.addEventListener('ended', () => opts.onEnded?.(), { signal });
 
   // Nothing here starts itself. reconcile() is the only thing that presses
   // play, so an item cued into the hidden layer stays parked on its first
@@ -249,10 +318,15 @@ function mediaRenderer(item, opts, media, node) {
     // that is ALSO blocked re-arms itself for the next interaction instead
     // of giving up after one try.
     const retry = () => { retryArmed = false; play(); };
-    document.addEventListener('pointerdown', retry, { once: true, capture: true });
-    document.addEventListener('keydown', retry, { once: true, capture: true });
+    document.addEventListener('pointerdown', retry, { once: true, capture: true, signal });
+    document.addEventListener('keydown', retry, { once: true, capture: true, signal });
   };
-  const play = () => media.play().catch(() => armRetry());
+  // A refusal is also said out loud (opts.onSoundBlocked), so the presenter
+  // learns the screen needs a click rather than wondering why it is silent.
+  const play = () => media.play().then(() => opts.onSoundBlocked?.(false), (err) => {
+    if (err?.name === 'NotAllowedError') opts.onSoundBlocked?.(true);
+    armRetry();
+  });
 
   return {
     el: node,
@@ -278,17 +352,17 @@ function mediaRenderer(item, opts, media, node) {
     telemetry: () => ({ time: media.currentTime || 0, duration: media.duration || 0, playing: !media.paused }),
     syncTo(seconds) { if (Number.isFinite(seconds)) media.currentTime = Math.max(0, seconds); },
     destroy() {
-      media.pause();
-      media.removeEventListener('loadedmetadata', cue);
-      media.removeAttribute('src');
-      media.load();
+      listening.abort();
+      releaseMedia(media);
       node.remove();
     },
   };
 }
 
 function renderVideo(item, opts) {
-  const video = el('video', { class: 'r-video', playsinline: true });
+  const video = takeMedia('video');
+  video.className = 'r-video';
+  video.setAttribute('playsinline', '');
   let fit = item.fit;
   video.style.objectFit = item.fit === 'cover' ? 'cover' : 'contain';
   if (item.poster) video.poster = item.poster;
@@ -315,7 +389,7 @@ function renderVideo(item, opts) {
 }
 
 function renderAudio(item, opts) {
-  const audioEl = el('audio');
+  const audioEl = takeMedia('audio');
   const bars = el('div', { class: 'r-bars' }, ...Array.from({ length: 9 }, (_, i) => el('span', { style: { animationDelay: `${i * 0.11}s` } })));
   const title = el('div', { class: 'r-audio-title' }, item.title || 'Audio');
   const sub = el('div', { class: 'r-audio-sub' }, item.artist || '');
@@ -1242,12 +1316,15 @@ function renderDeck(item, opts) {
     #video-box.is-on { display: block; }
     #video-box video { width: 100%; height: 100%; object-fit: contain; background: transparent; visibility: hidden; }
     #video-box video.has-frame { visibility: visible; }
-  </style><div id="status">Loading deck…</div><div id="wrap"></div><div id="video-box"><video playsinline></video></div>`;
+  </style><div id="status">Loading deck…</div><div id="wrap"></div><div id="video-box"></div>`;
 
   const statusEl = shadow.getElementById('status');
   const wrap = shadow.getElementById('wrap');
   const videoBox = shadow.getElementById('video-box');
-  const video = videoBox.querySelector('video');
+  // A player from the pool on the display, so Safari lets it make a sound.
+  const video = takeMedia('video');
+  video.setAttribute('playsinline', '');
+  videoBox.append(video);
   let slides = [];
   let videos = [];
   let mountedId = null;
@@ -1291,9 +1368,11 @@ function renderDeck(item, opts) {
   let lastSeek = item.seekNonce || 0;
   video.preload = 'auto';
   video.muted = !!opts.preview;
-  video.addEventListener('loadedmetadata', () => { if (cueTo) { video.currentTime = cueTo; cueTo = 0; } });
-  video.addEventListener('loadeddata', () => video.classList.add('has-frame'));
-  if (!opts.preview) video.addEventListener('ended', () => opts.onEnded?.());
+  const listening = new AbortController();
+  const { signal } = listening;
+  video.addEventListener('loadedmetadata', () => { if (cueTo) { video.currentTime = cueTo; cueTo = 0; } }, { signal });
+  video.addEventListener('loadeddata', () => video.classList.add('has-frame'), { signal });
+  if (!opts.preview) video.addEventListener('ended', () => opts.onEnded?.(), { signal });
 
   function showVideo() {
     const wanted = videos[current.slide] || null;
@@ -1316,12 +1395,13 @@ function renderDeck(item, opts) {
   // A blocked play() (an autoplay policy the Go Live tap did not satisfy)
   // retries on the next tap or key anywhere, as a video item's does.
   let retryArmed = false;
-  const playVideo = () => video.play().catch(() => {
+  const playVideo = () => video.play().then(() => opts.onSoundBlocked?.(false), (err) => {
+    if (err?.name === 'NotAllowedError') opts.onSoundBlocked?.(true);
     if (retryArmed) return;
     retryArmed = true;
     const retry = () => { retryArmed = false; if (videoSlide >= 0) playVideo(); };
-    document.addEventListener('pointerdown', retry, { once: true, capture: true });
-    document.addEventListener('keydown', retry, { once: true, capture: true });
+    document.addEventListener('pointerdown', retry, { once: true, capture: true, signal });
+    document.addEventListener('keydown', retry, { once: true, capture: true, signal });
   });
 
   // A deck inside a lecture plan, with no server, keeps its pictures in the
@@ -1468,8 +1548,8 @@ function renderDeck(item, opts) {
     destroy() {
       generation++;
       polyfill?.cleanup?.();
-      video.pause();
-      if (video.getAttribute('src')) { video.removeAttribute('src'); video.load(); }
+      listening.abort();
+      releaseMedia(video);
       host.remove();
     },
   };

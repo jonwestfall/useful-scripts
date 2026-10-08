@@ -24,7 +24,7 @@ import {
   watermarkForNewLecture, viewerState, viewChannel, stripDeckNotes,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS, clearStaleMusic, liveInkSurfaces, inkCapturesFor, MEDIA_TYPES,
 } from './protocol.js';
-import { createRenderer, itemTitle, TYPES } from './renderers.js';
+import { createRenderer, itemTitle, TYPES, blessMediaElements } from './renderers.js';
 import { encodeToFit } from './store.js';
 import { MAX_ASSET_CHARS, itemForStage, readPlan } from './planfile.js';
 import { createCameraReceiver, createMicReceiver } from './rtc.js';
@@ -250,6 +250,7 @@ const extraLayers = EXTRA_PANEL_IDS.map((id) => {
 });
 
 function freeLayer(layer) {
+  if (soundBlocked.delete(layer.key)) broadcastSoon();
   layer.renderer?.destroy();
   layer.renderer = null;
   layer.key = null;
@@ -257,6 +258,11 @@ function freeLayer(layer) {
 }
 
 let cameraStatus = 'idle';
+
+// Items on screen whose sound this browser refused to play (it wants a click
+// on this page first - Safari, mostly). The controllers say so, since nobody
+// is looking at the projector's own tab to find out.
+const soundBlocked = new Set();
 
 // A clip that reaches its own end, unlooped, pauses itself in the DOM but
 // nothing in `state` ever hears about it - so `item.playing` stays true
@@ -309,6 +315,11 @@ function mount(layer, item) {
     // A document gliding to a new place (Issue #240): its ink goes with it.
     onScroll: () => redrawInk(),
     onEnded: () => handleMediaEnded(key),
+    onSoundBlocked: (blocked) => {
+      if (blocked === soundBlocked.has(key)) return;
+      if (blocked) soundBlocked.add(key); else soundBlocked.delete(key);
+      broadcastSoon();
+    },
     getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId),
   });
   layer.node.append(layer.renderer.el);
@@ -941,10 +952,13 @@ function rampMusic(to, ms) {
 // actually be competing with the music.
 function contentIsSounding() {
   return activePanels().some((panel) => {
+    // A set is whichever of its entries is up now - a video in it ducks the
+    // music the same as the video on its own would.
+    const item = panel.item?.type === 'set' ? panel.item.entries?.[panel.item.index]?.item : panel.item;
     // A stream shown as video only is muted (Issue #175) - not competing.
-    if (panel.item?.type === 'stream' && panel.item.show === 'video') return false;
+    if (item?.type === 'stream' && item.show === 'video') return false;
     // A deck counts while its video slide plays (Issue #226).
-    if (!MEDIA_TYPES.includes(panel.item?.type) && panel.item?.type !== 'deck') return false;
+    if (!MEDIA_TYPES.includes(item?.type) && item?.type !== 'deck') return false;
     return !!panel.renderer?.telemetry?.().playing;
   });
 }
@@ -1961,6 +1975,9 @@ function wireState() {
       ducked: state.music.playing && contentIsSounding(),
       error: musicError,
     },
+    // A clip on screen this browser will not let make a sound until someone
+    // clicks the projector's page.
+    soundBlocked: soundBlocked.size > 0,
     // So a controller can tell you when this screen is running older code
     // than it is, rather than leaving you to diagnose it as a bug.
     build: BUILD,
@@ -2857,16 +2874,35 @@ const SILENT_CLIP = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AA
 // honors for that is a real media element's play() from inside the gesture,
 // so it goes first. Fullscreen goes last of the three because it is the one
 // that SPENDS the gesture - the other two only check that there was one.
+// The music's player, played from the Go live click. Silent: it is at
+// level zero until a track ramps it up, and empty unless a track is queued.
+// commit() right after this starts it properly if it should be playing; if
+// not, it is put back where it was.
+function blessMusic() {
+  const empty = !musicEl.getAttribute('src');
+  if (empty) musicEl.src = SILENT_CLIP;
+  const wasAt = musicEl.currentTime || 0;
+  return Promise.resolve(musicEl.play())
+    .catch(() => { /* blocked, or a real track arrived and cut it short */ })
+    .then(() => {
+      if (state.music.playing) return;
+      musicEl.pause();
+      if (musicEl.getAttribute('src') === SILENT_CLIP) { musicEl.removeAttribute('src'); musicEl.load(); }
+      else if (!empty) { try { musicEl.currentTime = wasAt; } catch { /* not loaded yet */ } }
+    });
+}
+
 function goLive() {
   armEl.hidden = true;
   document.body.classList.add('is-live');
   state.armed = true;
 
-  const unlock = new Audio(SILENT_CLIP);
-  unlock.muted = true;
-  const audio = Promise.resolve(unlock.play())
-    .then(() => unlock.pause())
-    .catch(() => { /* best effort - each clip retries on the next gesture */ });
+  // Safari lets a player make a sound only once that same player has been
+  // played from a click - a muted one does not count, and a player made later
+  // is not covered. So the players videos and clips will use are made and
+  // played here (see blessMediaElements), and so is the music's own.
+  blessMediaElements(SILENT_CLIP);
+  const audio = blessMusic();
 
   let context = Promise.resolve();
   try { context = new (window.AudioContext || window.webkitAudioContext)().resume(); } catch { /* noop */ }
@@ -3224,9 +3260,8 @@ async function startViewer() {
     // The one gesture a browser needs before it will play sound - the same
     // unlock Go live does on the projector, without the fullscreen, wake lock
     // or recording that come with it there.
-    const unlock = new Audio(SILENT_CLIP);
-    unlock.muted = true;
-    Promise.resolve(unlock.play()).then(() => unlock.pause()).catch(() => { /* retried on the next tap */ });
+    blessMediaElements(SILENT_CLIP);
+    blessMusic();
     try { new (window.AudioContext || window.webkitAudioContext)().resume(); } catch { /* noop */ }
     $('#viewer-offair').hidden = state.armed !== false;
     bus?.send({ t: 'sync' });

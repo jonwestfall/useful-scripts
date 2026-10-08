@@ -79,8 +79,9 @@ export const MUSIC_FADE_OUT_MS = 3000;
 // button, not like a decision. Short enough to read as immediate, long enough
 // not to click.
 export const MUSIC_PAUSE_MS = 400;
-// What the music drops to while a clip with its own sound is on screen.
-export const MUSIC_DUCK = 0.15;
+// What the music drops to while a clip with its own sound is on screen:
+// a fifth of its level, under the clip but still there.
+export const MUSIC_DUCK = 0.2;
 export const MUSIC_DUCK_MS = 600;
 
 // An automated set that rotates on its own: a QR code, a photo, a text sign,
