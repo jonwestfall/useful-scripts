@@ -1635,6 +1635,92 @@ ok('another person\'s choice is their own', (await owenPage.$eval('#me-theme', (
 await Promise.all([laptop.close(), tablet.close(), owenCtx.close()]);
 }
 
+if (want('Quick Look: a finger scrolls a document on an iPad (#257)')) {
+console.log('\n-- Quick Look: a finger scrolls a document on an iPad (#257) --');
+const fixtures = path.join(ROOT, 'test', 'fixtures');
+fs.mkdirSync(fixtures, { recursive: true });
+const lines = (n) => Array.from({ length: n }, (_, i) => `A line to read, number ${i + 1}, long enough to fill the page.`).join('\n\n');
+fs.writeFileSync(path.join(fixtures, 'touch-doc.md'), `# Reading\n\n${lines(40)}\n\n## Further\n\n${lines(40)}\n`);
+
+// An iPad: a touch screen, and no mouse wheel to fall back on.
+const ctx = await browser.newContext({ viewport: { width: 1024, height: 768 }, hasTouch: true, isMobile: true });
+const look = await ctx.newPage();
+trap(look, 'quick look (touch)');
+await look.goto(`${BASE}/quicklook.html?src=test/fixtures/touch-doc.md&type=document`);
+await look.waitForFunction(() => /Screen 1 of \d+/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 });
+const cdp = await ctx.newCDPSession(look);
+const box = await look.locator('.ql-slide').boundingBox();
+const x = box.x + box.width / 2;
+const touch = (type, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
+// Where the page is showing, in page units (the renderer's own reading).
+const shown = () => look.evaluate(() => {
+  const view = document.querySelector('.ql-slide .r-doc')?.shadowRoot?.querySelector('#view');
+  const m = /translate\([\d.-]+px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(view?.style.transform || '');
+  return m ? Math.round(-Number(m[1]) / Number(m[2])) : null;
+});
+const drag = async (fromY, toY, steps, pauseMs, holdMs = 0) => {
+  await touch('touchStart', fromY);
+  for (let i = 1; i <= steps; i++) {
+    await touch('touchMove', fromY + ((toY - fromY) * i) / steps);
+    if (pauseMs) await look.waitForTimeout(pauseMs);
+  }
+  if (holdMs) await look.waitForTimeout(holdMs);
+  await touch('touchEnd');
+};
+// Until the page has stopped moving.
+const atRest = async () => {
+  for (let last = await shown(); ; ) {
+    await look.waitForTimeout(150);
+    const now = await shown();
+    if (now === last) return now;
+    last = now;
+  }
+};
+
+const top = await shown();
+// A drag upward, held still before lifting: the page follows the finger,
+// and stays where the finger stopped.
+await drag(box.y + box.height * 0.8, box.y + box.height * 0.3, 12, 40, 200);
+const afterSlow = await shown();
+ok(`a finger dragging up scrolls the document down (${top} -> ${afterSlow})`, afterSlow > top + 100);
+await look.waitForTimeout(500);
+ok('and a finger that stops before lifting leaves it there', (await shown()) === afterSlow);
+ok(`the position label follows ("${await look.textContent('#ql-where')}")`, !/Screen 1 of/.test(await look.textContent('#ql-where')));
+
+// A quick flick: it coasts on after the finger lifts, then stops.
+const beforeFlick = await shown();
+await drag(box.y + box.height * 0.7, box.y + box.height * 0.4, 4, 0);
+const atLift = await shown();
+await look.waitForTimeout(700);
+const coasted = await shown();
+ok(`a flick coasts on after the finger lifts (${beforeFlick} -> ${atLift} -> ${coasted})`, atLift > beforeFlick && coasted > atLift + 20);
+await look.waitForTimeout(1200);
+const settled = await shown();
+await look.waitForTimeout(300);
+ok('and comes to rest', (await shown()) === settled);
+
+// Dragging down goes back up the page.
+await drag(box.y + box.height * 0.3, box.y + box.height * 0.8, 12, 40);
+await look.waitForTimeout(400);
+ok(`a finger dragging down scrolls back up (${settled} -> ${await shown()})`, (await shown()) < settled - 100);
+
+// A tap is not a scroll.
+const beforeTap = await atRest();
+await touch('touchStart', box.y + box.height / 2);
+await touch('touchEnd');
+await look.waitForTimeout(400);
+ok('a tap that does not move leaves the page where it is', (await shown()) === beforeTap);
+
+// Next still works after all that, and a flick does not fight it.
+await drag(box.y + box.height * 0.7, box.y + box.height * 0.4, 4, 0);
+await look.click('#ql-next');
+await look.waitForTimeout(900);
+const afterNext = await shown();
+await look.waitForTimeout(400);
+ok('Next during a coast stops the coast and goes a screenful', (await shown()) === afterNext);
+await ctx.close();
+}
+
 if (want('the planner: choosing files from the server (#241)')) {
 console.log('\n-- the planner: choosing files from the server (#241) --');
 admin('course', 'add', 'pick101', '--title', 'Picking 101');

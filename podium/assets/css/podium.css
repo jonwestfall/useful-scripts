@@ -2567,6 +2567,9 @@ body.quicklook .topbar { flex: none; }
   aspect-ratio: var(--aspect, 1.7778); background: #fff;
 }
 .ql-fill { position: absolute; inset: 0; }
+/* A document: a finger drag scrolls it (quicklook.js, Issue #257), so the
+   browser must not take the drag for itself. Pinching to zoom still works. */
+.ql-slide.ql-doc-page { touch-action: pinch-zoom; }
 .ql-stage.is-zoomed { display: block; overflow: auto; }
 .ql-stage.is-zoomed .r-image { width: auto; height: auto; max-width: none; background: transparent; }
 .ql-stage .r-image { cursor: zoom-in; }
