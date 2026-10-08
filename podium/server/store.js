@@ -554,6 +554,29 @@ const MIGRATIONS = [
       ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT '';
     `);
   },
+  (db) => {
+    db.exec(`
+      -- A course's roster (Issue #256): the people attendance is taken for.
+      -- Not accounts - a student never signs in to Podium. Removing someone
+      -- only marks them removed, so a past session still knows who they were.
+      CREATE TABLE course_roster (
+        id          INTEGER PRIMARY KEY,
+        course_id   INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        name        TEXT    NOT NULL,
+        student_id  TEXT    NOT NULL DEFAULT '',
+        email       TEXT    NOT NULL DEFAULT '',
+        source      TEXT    NOT NULL DEFAULT 'manual',   -- csv | manual | guest
+        added_at    INTEGER NOT NULL,
+        added_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_at  INTEGER NOT NULL,
+        removed_at  INTEGER
+      );
+      CREATE INDEX course_roster_by_course ON course_roster(course_id, removed_at);
+      -- One person per student ID in a course, while they are on it.
+      CREATE UNIQUE INDEX course_roster_student_id ON course_roster(course_id, lower(student_id))
+        WHERE student_id <> '' AND removed_at IS NULL;
+    `);
+  },
 ];
 
 function migrate(db) {

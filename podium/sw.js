@@ -53,7 +53,7 @@ const WARM = [
   ...[
     'admin', 'assets', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-checks', 'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-source', 'deck-templates',
     'defaults', 'display', 'doc', 'doc-reader', 'duration-probe', 'file-browser',
-    'index', 'me', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'quicklook', 'quicklook-open', 'recap', 'recap-pdf', 'renderers',
+    'index', 'me', 'pdf-writer', 'pip', 'plan', 'planfile', 'protocol', 'quicklook', 'quicklook-open', 'recap', 'recap-pdf', 'renderers', 'roster-panel',
     'rtc', 'server', 'store', 'theme', 'theme-boot', 'thumbs', 'util', 'watermark', 'word-import', 'word-upload', 'zip', 'zip-review',
   ].map((name) => `assets/js/${name}.js`),
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),

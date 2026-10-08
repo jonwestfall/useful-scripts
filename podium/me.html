@@ -65,6 +65,7 @@
     <button type="button" class="tab" role="tab" data-target="panel-lectures" aria-selected="false">Lectures</button>
     <button type="button" class="tab" role="tab" data-target="panel-templates" aria-selected="false">Deck templates</button>
     <button type="button" class="tab" role="tab" data-target="panel-recorded" aria-selected="false">Recorded lectures</button>
+    <button type="button" class="tab" role="tab" data-target="panel-roster" aria-selected="false">Rosters</button>
   </div>
 
   <section class="card me-panel" id="panel-files" role="tabpanel" aria-label="Files">
@@ -114,6 +115,28 @@
   <section class="card me-panel" id="panel-recorded" role="tabpanel" aria-label="Recorded lectures" hidden>
     <div class="me-list" id="recorded-list" role="list"><p class="hint">Looking…</p></div>
     <p class="hint" id="recorded-note" role="status"></p>
+  </section>
+
+  <!-- A course's roster (Issue #256): the people attendance is taken for. Its
+       owners change it; its other members read it. See roster-panel.js. -->
+  <section class="card me-panel" id="panel-roster" role="tabpanel" aria-label="Rosters" hidden>
+    <p class="hint" id="roster-none" hidden>You are not in any course yet, so there is no roster to show. An administrator adds you to a course.</p>
+    <div id="roster-body">
+      <div class="me-filters">
+        <select id="roster-course" aria-label="Course"></select>
+        <input id="roster-search" type="search" placeholder="Search by name, ID or email" aria-label="Search the roster" autocomplete="off">
+        <label class="me-check" hidden><input type="checkbox" id="roster-removed"> Show removed</label>
+      </div>
+      <div class="me-upload" id="roster-tools" hidden>
+        <button type="button" class="admin-small" id="roster-import">Import a CSV…</button>
+        <input type="file" id="roster-file" accept=".csv,text/csv,.txt" hidden>
+        <button type="button" class="admin-small" id="roster-add">Add someone</button>
+        <span class="hint">A class list from Canvas, Blackboard, Moodle or a spreadsheet: a name (or first and last name) column, and a student ID and email if it has them.</span>
+      </div>
+      <p class="hint"><span id="roster-count"></span> · <a id="roster-export" class="linkish" href="#" download>Export CSV</a></p>
+      <div class="me-list" id="roster-list" role="list"><p class="hint">Looking…</p></div>
+      <p class="hint" id="roster-note" role="status"></p>
+    </div>
   </section>
 </div>
 

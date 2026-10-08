@@ -704,6 +704,14 @@ Running Podium's own server (`server/podium-server.js` with a `DATA_DIR`) adds a
   - **Lectures:** your plans and the ones shared with you through your courses, with the planner's personal archive (*Show archived*). Open in the planner, **Present** (opens it in the controller), Archive/Unarchive, and Delete for your own.
   - **Deck templates:** yours and your courses'. Use (a new deck from it), Edit, Rename and Delete where you may.
   - **Recorded lectures:** what was recorded in your classes, with its recap PDF, and Delete where you may.
+  - **Rosters** (Issue #256): each course's class list, the people [attendance](https://github.com/jonwestfall/useful-scripts/issues/256) will be taken for. Students are not accounts here, just a name, and a student ID and email if you have them.
+    - **Import a CSV** from Canvas, Blackboard, Moodle or a spreadsheet. Columns are found by their headers: a name (or first and last name; Canvas's "Last, First" is turned round), a student ID (an institution's SIS ID is preferred over an LMS's own), and an email. A file with no header is read as name, ID, email.
+    - **The import is previewed first:** which columns it read, who is new, who is updated (and what changed), who is unchanged, and any lines it couldn't use. People are matched by student ID, then email, then name.
+    - Tick **This is the whole class** to also take off anyone not in the file.
+    - **Add, edit and remove** people by hand. Two people can't share a student ID.
+    - **Removing someone is soft:** past attendance keeps them, and **Show removed** lets you put them back.
+    - **Export CSV** gives the roster back in the same three columns.
+    - **Who may do what:** a course's owners and administrators change its roster. Its other members (TAs) can read and export it. Admin's course list links to each roster.
 - **Plans on the server**: a lecture saves itself to the server from the planner and is on the iPad in class without a file to carry. A plan file you exported stays untouched either way. Two edits to the same plan are caught rather than silently overwriting each other.
 
 ### Kiosks & Unattended Signage
