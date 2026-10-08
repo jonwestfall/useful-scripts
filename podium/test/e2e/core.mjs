@@ -1085,9 +1085,10 @@ const settle = (pad, re) => pad.waitForFunction((src) => new RegExp(src).test(do
 }
 {
   // The mirror image: this controller is the one behind. An integer build is
-  // what makes that answerable rather than just "these differ".
-  const { pad, close } = await pair('ver-new', (t) => t.replace(/export const BUILD = \d+;/, 'export const BUILD = 99;'));
-  await settle(pad, /build 99/);
+  // what makes that answerable rather than just "these differ". Far ahead of
+  // any real build: this once said 99, and the real build caught up with it.
+  const { pad, close } = await pair('ver-new', (t) => t.replace(/export const BUILD = \d+;/, 'export const BUILD = 999999;'));
+  await settle(pad, /build 999999/);
   const label = await pad.textContent('#display-state');
   ok(`it points at THIS device when this is the older one ("${label}")`, /reload THIS device/.test(label));
   await close();

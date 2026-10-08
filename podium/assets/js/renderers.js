@@ -1854,7 +1854,18 @@ function renderDocument(item, opts) {
       }
       height = Number(it.height) || height;
       const next = Number(it.at) || 0;
-      if (next !== at) { at = next; glideTo(at); }
+      if (next === at) return;
+      at = next;
+      // A finger dragging the page (Quick Look, Issue #257) moves it with the
+      // finger: a glide would trail behind.
+      if (it.glide === false) {
+        cancelAnimationFrame(glide);
+        shownAt = at;
+        place();
+        opts.onScroll?.();
+      } else {
+        glideTo(at);
+      }
     },
     reconcile() {},
     telemetry: noTelemetry,

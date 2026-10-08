@@ -249,7 +249,8 @@ async function showDocument(pkg) {
   const box = el('div', { class: 'ql-slide' });
   box.style.setProperty('--aspect', String(16 / 9));
   stage.replaceChildren(box);
-  const item = () => ({ type: 'document', deckId: id, look: pkg.item.look || '', at, height });
+  let glide = true;
+  const item = () => ({ type: 'document', deckId: id, look: pkg.item.look || '', at, height, glide });
   const renderer = createRenderer(item(), {
     getDeckSource: () => source,
     onMeasure: (m) => {
@@ -277,9 +278,61 @@ async function showDocument(pkg) {
     $('#ql-notes').hidden = !notesOpen;
     $('#ql-notes-toggle').setAttribute('aria-pressed', String(notesOpen));
   }
-  const go = (next) => { at = clampDocAt(next, height); draw(); };
+  // Any other move (Next, a heading, the wheel) ends a coast first.
+  const go = (next) => { stopFling(); glide = true; at = clampDocAt(next, height); draw(); };
+  // Straight there, with no glide: for a finger, which the page has to keep up with.
+  const follow = (next) => { glide = false; at = clampDocAt(next, height); draw(); };
+  // Page units per screen pixel: the page is drawn scaled to fit the box.
+  const perPixel = () => DOC_VIEW / Math.max(1, box.clientHeight);
   // The wheel and a trackpad scroll it, as they would any page.
-  box.addEventListener('wheel', (ev) => { ev.preventDefault(); go(at + ev.deltaY * (DOC_VIEW / Math.max(1, box.clientHeight))); }, { passive: false });
+  box.addEventListener('wheel', (ev) => { ev.preventDefault(); go(at + ev.deltaY * perPixel()); }, { passive: false });
+
+  // A finger or a pencil (Issue #257): the page follows the drag and coasts
+  // on when it is let go, the way a page scrolls on an iPad. The page is a
+  // drawing moved by `at`, not something the browser scrolls, so without this
+  // only a trackpad could move it. A tap that does not move is left alone.
+  let drag = null;
+  let fling = 0;
+  const stopFling = () => { cancelAnimationFrame(fling); fling = 0; };
+  box.addEventListener('pointerdown', (ev) => {
+    if (ev.pointerType === 'mouse' || !ev.isPrimary) return;
+    stopFling();
+    drag = { id: ev.pointerId, y: ev.clientY, t: ev.timeStamp, v: 0, moved: false };
+  });
+  box.addEventListener('pointermove', (ev) => {
+    if (!drag || ev.pointerId !== drag.id) return;
+    const dy = ev.clientY - drag.y;
+    if (!drag.moved && Math.abs(dy) < 6) return;
+    if (!drag.moved) { drag.moved = true; box.setPointerCapture?.(ev.pointerId); }
+    const dt = Math.max(1, ev.timeStamp - drag.t);
+    // Pixels per millisecond, smoothed: the speed it will coast on with.
+    drag.v = 0.8 * (dy / dt) + 0.2 * drag.v;
+    drag.y = ev.clientY;
+    drag.t = ev.timeStamp;
+    follow(at - dy * perPixel());
+  });
+  const letGo = (ev) => {
+    if (!drag || ev.pointerId !== drag.id) return;
+    const { moved } = drag;
+    // A finger that stopped before lifting meant to stop there.
+    let v = moved && ev.type === 'pointerup' && ev.timeStamp - drag.t < 80 ? drag.v : 0;
+    drag = null;
+    if (Math.abs(v) < 0.05) return;
+    let last = performance.now();
+    const coast = (now) => {
+      const dt = Math.min(64, now - last);
+      last = now;
+      const before = at;
+      follow(at - v * dt * perPixel());
+      v *= 0.95 ** (dt / 16);
+      // Stop when it has slowed to nothing, or run into either end.
+      fling = Math.abs(v) > 0.02 && at !== before ? requestAnimationFrame(coast) : 0;
+    };
+    fling = requestAnimationFrame(coast);
+  };
+  box.addEventListener('pointerup', letGo);
+  box.addEventListener('pointercancel', letGo);
+  box.classList.add('ql-doc-page');
 
   // Its headings are the outline (Issue #253); a document has no grid.
   showControls(['ql-prev', 'ql-next', 'ql-notes-toggle']);
@@ -291,7 +344,7 @@ async function showDocument(pkg) {
     first: () => go(0),
     last: () => go(docMaxAt(height)),
     toggleNotes() { notesOpen = !notesOpen; draw(); },
-    destroy() { renderer.destroy?.(); },
+    destroy() { stopFling(); renderer.destroy?.(); },
   };
 }
 
