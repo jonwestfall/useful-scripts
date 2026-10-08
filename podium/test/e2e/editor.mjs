@@ -1381,7 +1381,7 @@ const [look] = await Promise.all([owen.waitForEvent('page'), tile.locator('.tile
 trap(look, 'quick look (deck)');
 let sockets = 0;
 look.on('websocket', () => { sockets += 1; });
-await look.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+await look.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 })
   .then(() => ok('↗ opens the deck in a new tab', true))
   .catch(async () => ok(`↗ opens the deck in a new tab ("${await look.textContent('#ql-where').catch(() => '')}")`, false));
 ok(`a library file opens by its id (${new URL(look.url()).search})`, new URL(look.url()).searchParams.get('library') === String(lookDeck.id));
@@ -1413,7 +1413,7 @@ await look.close();
 const pdfLook = await owen.newPage();
 trap(pdfLook, 'quick look (pdf)');
 await pdfLook.goto(`${base}/quicklook.html?library=${lookPdf.id}`);
-await pdfLook.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+await pdfLook.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 })
   .then(async () => ok(`a library PDF opens page by page ("${await pdfLook.textContent('#ql-where')}")`, true))
   .catch(async () => ok(`a library PDF opens page by page ("${await pdfLook.textContent('#ql-where')}")`, false));
 await pdfLook.click('#ql-grid-toggle');
@@ -1440,13 +1440,15 @@ await editor.waitForFunction(() => document.querySelector('#deck-strip')?.shadow
 await editor.click('#deck-save-more');
 const [rehearsal] = await Promise.all([owen.waitForEvent('page'), editor.click('#deck-rehearse')]);
 trap(rehearsal, 'quick look (rehearsal)');
-await rehearsal.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+// The new tab starts as about:blank; ask nothing of it until it is Quick Look.
+await rehearsal.waitForLoadState('domcontentloaded');
+await rehearsal.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 })
   .then(() => ok('"Open in a new tab to rehearse" opens the deck in Quick Look', true))
   .catch(() => ok('"Open in a new tab to rehearse" opens the deck in Quick Look', false));
 ok('saying it follows the editor', /follows your edits/.test(await rehearsal.textContent('#ql-from')));
 await rehearsal.keyboard.press('ArrowRight');
 await editor.click('#deck-add-slide');
-await rehearsal.waitForFunction(() => /of 5/.test(document.querySelector('#ql-where').textContent), null, { timeout: 10000 })
+await rehearsal.waitForFunction(() => /of 5/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 10000 })
   .then(() => ok('an unsaved new slide in the editor appears in the rehearsal tab', true))
   .catch(async () => ok(`an unsaved new slide in the editor appears in the rehearsal tab ("${await rehearsal.textContent('#ql-where')}")`, false));
 ok(`where you were in it ("${await rehearsal.textContent('#ql-where')}")`, /^Slide 2 of 5/.test(await rehearsal.textContent('#ql-where')));
@@ -1469,13 +1471,14 @@ await planner.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('
 ok('a planner item offers ↗ Quick Look', await planner.locator('#order .order-row button[aria-label^="Quick Look"]').count() === 1);
 const [inPlan] = await Promise.all([solo.waitForEvent('page'), planner.click('#order .order-row button[aria-label^="Quick Look"]')]);
 trap(inPlan, 'quick look (from the plan)');
-await inPlan.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 })
+await inPlan.waitForLoadState('domcontentloaded');
+await inPlan.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 })
   .then(() => ok('a deck kept inside the plan opens in Quick Look, handed over with no server', true))
   .catch(async () => ok(`a deck kept inside the plan opens in Quick Look ("${await inPlan.textContent('.ql-stage').catch(() => '')}")`, false));
 ok(`a handover is not an address anyone else could open (${new URL(inPlan.url()).hash.slice(0, 18)}…)`, /^#handoff=[0-9a-f]{24}$/.test(new URL(inPlan.url()).hash));
 await inPlan.keyboard.press('End');
 await inPlan.reload();
-await inPlan.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where').textContent), null, { timeout: 10000 })
+await inPlan.waitForFunction(() => /Slide 1 of 4/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 10000 })
   .then(() => ok('and a reload of that tab still shows it', true))
   .catch(() => ok('and a reload of that tab still shows it', false));
 await solo.close();
@@ -1539,7 +1542,7 @@ ok(`open beside the page, not over it (${JSON.stringify(seen.entries)})`, seen.o
 ok('a document no longer offers a Grid', await look.isHidden('#ql-grid-toggle'));
 ok(`and the first heading is marked as where you are ("${seen.current}")`, seen.current === 'Memory');
 await look.click('#ql-outline-list button:text-is("Retrieval")');
-await look.waitForFunction(() => /Retrieval/.test(document.querySelector('#ql-where').textContent), null, { timeout: 5000 })
+await look.waitForFunction(() => /Retrieval/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 5000 })
   .then(() => ok('clicking a heading jumps there', true))
   .catch(async () => ok(`clicking a heading jumps there ("${await look.textContent('#ql-where')}")`, false));
 seen = await outline();
@@ -1583,7 +1586,7 @@ ok(`a bookmark goes to its page ("${await look.textContent('#ql-where')}")`, /Pa
 
 // A PDF without bookmarks: no outline, the grid as before.
 await look.goto(`${BASE}/quicklook.html?src=content/sample.pdf`);
-await look.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where').textContent), null, { timeout: 20000 });
+await look.waitForFunction(() => /Page 1 of \d+/.test(document.querySelector('#ql-where')?.textContent || ''), null, { timeout: 20000 });
 await look.waitForTimeout(500);
 seen = await outline();
 ok('a PDF with no bookmarks has no Outline button, and keeps its Grid', !seen.button && !seen.open && await look.isVisible('#ql-grid-toggle'));
