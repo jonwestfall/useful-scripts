@@ -30,6 +30,7 @@
 const crypto = require('node:crypto');
 const courses = require('./courses.js');
 const store = require('./store.js');
+const roster = require('./roster.js');
 
 const ROTATIONS = [10, 15, 30];          // seconds a code is up for
 const DEFAULT_ROTATE = 15;
@@ -545,28 +546,57 @@ function getSession(db, user, id, { now = Date.now() } = {}) {
      WHERE m.session_id = ? ORDER BY m.at, m.id`).all(session.id)
     .map((m) => ({ ...m, name: m.roster_id ? m.roster_name || '(removed)' : m.guest_name }));
   const flags = flagsFor(db, marks);
+  const userName = (uid) => (uid ? db.prepare('SELECT display_name, username FROM users WHERE id = ?').get(uid) : null);
+  const who = (uid) => { const u = userName(uid); return u ? u.display_name || u.username : ''; };
   const markView = (m) => ({
     id: m.id, status: m.status, how: m.how, at: m.at, flags: flags.get(m.id) || [], edited: !!m.edited_at,
+    editedBy: m.edited_at ? who(m.edited_by) : '',
+    // Flags looked at and let go: still listed, no longer asking for attention.
+    dismissed: m.flags_dismissed_at ? { at: m.flags_dismissed_at, by: who(m.flags_dismissed_by) } : null,
   });
   const marked = new Map(marks.filter((m) => m.roster_id).map((m) => [m.roster_id, m]));
-  const roster = db.prepare('SELECT id, name, student_id, removed_at FROM course_roster WHERE course_id = ? ORDER BY lower(name), id')
+  const open = isOpen(session, now);
+  const roster = db.prepare('SELECT id, name, student_id, email, added_at, removed_at FROM course_roster WHERE course_id = ? ORDER BY lower(name), id')
     .all(session.course_id)
-    .filter((r) => !r.removed_at || marked.has(r.id));
+    .filter((r) => marked.has(r.id) || !r.removed_at || enrolled(r, session));
+  const history = db.prepare(`SELECT a.*, u.display_name, u.username FROM attendance_audit a LEFT JOIN users u ON u.id = a.user_id
+      WHERE a.session_id = ? ORDER BY a.at DESC, a.id DESC LIMIT 500`).all(session.id)
+    .map((a) => ({ at: a.at, action: a.action, name: a.name, before: a.before, after: a.after, by: a.display_name || a.username || '' }));
   return {
     session: sessionView(db, session, now),
+    mayEditRoster: courses.roleOf(db, user, courseOf(db, session).code) === 'owner',
     people: roster.map((r) => ({
       rosterId: r.id, name: r.name, studentId: r.student_id, removed: !!r.removed_at,
       mark: marked.has(r.id) ? markView(marked.get(r.id)) : null,
+      // Once check-in has closed, someone on the roster who never checked in
+      // was absent - without anyone having to mark them so.
+      absent: !marked.has(r.id) && !open && enrolled(r, session),
     })),
     guests: marks.filter((m) => !m.roster_id).map((m) => ({
       name: m.guest_name, studentId: m.guest_student_id, email: m.guest_email, mark: markView(m),
     })),
+    history,
   };
+}
+
+/**
+ * Whether someone on the roster was expected at a session: on the roster when
+ * it began, and not taken off before it. Someone added later is not marked
+ * absent from classes held before they joined.
+ */
+function enrolled(person, session) {
+  return person.added_at <= session.created_at && (!person.removed_at || person.removed_at > session.created_at);
 }
 
 function cleanStatus(status) {
   if (!STATUSES.includes(status)) throw fail(`a mark is one of ${STATUSES.join(', ')}`);
   return status;
+}
+
+/** One line of a session's history: who changed which mark, from what to what. */
+function audit(db, { session, markId = null, user, action, name = '', before = null, after = null, now = Date.now() }) {
+  db.prepare(`INSERT INTO attendance_audit (session_id, mark_id, user_id, at, action, name, before, after)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(session.id, markId, user?.id ?? null, now, action, name, before, after);
 }
 
 /**
@@ -582,10 +612,14 @@ function markByHand(db, user, id, { rosterId, status = 'present' } = {}, { now =
   const existing = db.prepare('SELECT * FROM attendance_marks WHERE session_id = ? AND roster_id = ?').get(session.id, person.id);
   if (existing) {
     db.prepare('UPDATE attendance_marks SET status = ?, edited_by = ?, edited_at = ? WHERE id = ?').run(clean, user.id, now, existing.id);
+    if (existing.status !== clean) {
+      audit(db, { session, markId: existing.id, user, action: 'changed', name: person.name, before: existing.status, after: clean, now });
+    }
     return { name: person.name, before: existing.status, status: clean, markId: existing.id };
   }
   const { lastInsertRowid } = db.prepare(`INSERT INTO attendance_marks (session_id, roster_id, status, how, at, marked_by)
       VALUES (?, ?, ?, 'hand', ?, ?)`).run(session.id, person.id, clean, now, user.id);
+  audit(db, { session, markId: Number(lastInsertRowid), user, action: 'marked', name: person.name, after: clean, now });
   return { name: person.name, before: null, status: clean, markId: Number(lastInsertRowid) };
 }
 
@@ -600,16 +634,19 @@ function changeMark(db, user, id, markId, { status } = {}, { now = Date.now() } 
   const session = sessionFor(db, user, id);
   const mark = markIn(db, session, markId);
   const clean = cleanStatus(status);
+  const name = markName(db, mark);
   db.prepare('UPDATE attendance_marks SET status = ?, edited_by = ?, edited_at = ? WHERE id = ?').run(clean, user.id, now, mark.id);
-  return { name: markName(db, mark), before: mark.status, status: clean, markId: mark.id };
+  if (mark.status !== clean) audit(db, { session, markId: mark.id, user, action: 'changed', name, before: mark.status, after: clean, now });
+  return { name, before: mark.status, status: clean, markId: mark.id };
 }
 
 /** Take a mark back off: a mis-tap, or a check-in that should not have been. */
-function removeMark(db, user, id, markId) {
+function removeMark(db, user, id, markId, { now = Date.now() } = {}) {
   const session = sessionFor(db, user, id);
   const mark = markIn(db, session, markId);
   const name = markName(db, mark);
   db.prepare('DELETE FROM attendance_marks WHERE id = ?').run(mark.id);
+  audit(db, { session, markId: mark.id, user, action: 'removed', name, before: mark.status, now });
   // The others it was flagged with no longer share a phone with anyone here.
   for (const other of db.prepare('SELECT id, flags FROM attendance_marks WHERE session_id = ?').all(session.id)) {
     const flags = parseFlags(other.flags);
@@ -623,6 +660,212 @@ function removeMark(db, user, id, markId) {
     }
   }
   return { name, before: mark.status, markId: mark.id };
+}
+
+/** Let a mark's flags go: looked at, and nothing wrong. */
+function dismissFlags(db, user, id, markId, { now = Date.now() } = {}) {
+  const session = sessionFor(db, user, id);
+  const mark = markIn(db, session, markId);
+  const name = markName(db, mark);
+  db.prepare('UPDATE attendance_marks SET flags_dismissed_at = ?, flags_dismissed_by = ? WHERE id = ?').run(now, user.id, mark.id);
+  audit(db, { session, markId: mark.id, user, action: 'flags_dismissed', name, now });
+  return { name, markId: mark.id };
+}
+
+/**
+ * Put a guest on the course's roster in one step: a late add who checked in
+ * as a guest. Their check-ins as a guest in this course - this one and any
+ * other with the same email - become theirs on the roster. Only someone who
+ * may change the roster (an owner, an admin) may do it.
+ */
+function addGuestToRoster(db, user, id, markId, { now = Date.now() } = {}) {
+  const session = sessionFor(db, user, id);
+  const mark = markIn(db, session, markId);
+  if (mark.roster_id) throw fail('they are already on the roster', 409);
+  const code = courseOf(db, session).code;
+  const person = roster.add(db, user, code, { name: mark.guest_name, studentId: mark.guest_student_id, email: mark.guest_email }, { source: 'guest', now });
+  // On the roster from their first check-in here, so the term grid does not
+  // count them absent from classes they were at as a guest.
+  const first = db.prepare(`SELECT MIN(s.created_at) AS t FROM attendance_marks m JOIN attendance_sessions s ON s.id = m.session_id
+      WHERE s.course_id = ? AND m.roster_id IS NULL AND m.guest_email = ?`).get(session.course_id, mark.guest_email).t;
+  if (first) db.prepare('UPDATE course_roster SET added_at = ? WHERE id = ?').run(Math.min(first, now), person.id);
+  const { changes } = db.prepare(`UPDATE attendance_marks SET roster_id = ?, guest_name = '', guest_student_id = '', guest_email = ''
+      WHERE roster_id IS NULL AND guest_email = ? AND guest_email <> ''
+        AND session_id IN (SELECT id FROM attendance_sessions WHERE course_id = ?)`).run(person.id, mark.guest_email, session.course_id);
+  audit(db, { session, markId: mark.id, user, action: 'added_to_roster', name: person.name, now });
+  return { person, linked: Number(changes) };
+}
+
+/** Delete a whole session: a check-in opened by mistake. Owners and admins only. */
+function deleteSession(db, user, id) {
+  const session = sessionFor(db, user, id);
+  const course = courseOf(db, session);
+  if (courses.roleOf(db, user, course.code) !== 'owner') {
+    throw fail(`only an owner of ${course.code.toUpperCase()} or an admin can delete a check-in session`, 403);
+  }
+  const marks = db.prepare('SELECT COUNT(*) AS n FROM attendance_marks WHERE session_id = ?').get(session.id).n;
+  db.prepare('DELETE FROM attendance_sessions WHERE id = ?').run(session.id);
+  return { id: session.id, course: course.code, marks };
+}
+
+// --- after class: the course's sessions, the term grid, exports ---------------
+
+function sessionsIn(db, courseId, { from = 0, to = 0 } = {}) {
+  return db.prepare(`SELECT * FROM attendance_sessions WHERE course_id = ?
+      AND created_at >= ? AND created_at < ? ORDER BY created_at, id`)
+    .all(courseId, Number(from) || 0, Number(to) || 8.64e15);
+}
+
+/** A course's sessions, newest first, with their counts. */
+function listSessions(db, user, code, { from, to, now = Date.now() } = {}) {
+  const course = courseFor(db, user, code);
+  const rows = sessionsIn(db, course.id, { from, to }).reverse();
+  const flagged = db.prepare(`SELECT COUNT(*) AS n FROM attendance_marks WHERE session_id = ? AND flags <> '[]' AND flags_dismissed_at IS NULL`);
+  const people = db.prepare('SELECT id, added_at, removed_at FROM course_roster WHERE course_id = ?').all(course.id);
+  return {
+    course: course.code,
+    mayEditRoster: courses.roleOf(db, user, code) === 'owner',
+    sessions: rows.map((row) => {
+      const marked = new Set(db.prepare('SELECT roster_id FROM attendance_marks WHERE session_id = ? AND roster_id IS NOT NULL').all(row.id).map((m) => m.roster_id));
+      // Who never checked in to a closed session: absent, though nobody marked them so.
+      const notCheckedIn = isOpen(row, now) ? 0 : people.filter((p) => !marked.has(p.id) && enrolled(p, row)).length;
+      return { ...sessionView(db, row, now), screenKey: undefined, flagged: flagged.get(row.id).n, notCheckedIn };
+    }),
+  };
+}
+
+// A local calendar date for a moment, given the reader's offset from UTC in
+// minutes (what Date#getTimezoneOffset says): a 7 pm class in Chicago is that
+// day's, not tomorrow's in UTC.
+const dateKey = (ms, tz = 0) => new Date(ms - (Number(tz) || 0) * 60000).toISOString().slice(0, 10);
+
+const LETTER = { present: 'P', late: 'L', absent: 'A', excused: 'E' };
+
+/**
+ * The term grid: everyone x every session in range. A cell is a status, or
+ * '' where the person was not expected (not yet on the roster, already taken
+ * off, or check-in still open and they have not come). Someone on the roster
+ * who never checked in to a closed session is absent. Guests get a row each,
+ * by email, after the roster.
+ *
+ * The rate is (present + late) / (present + late + absent): excused classes
+ * count for nothing either way.
+ */
+function grid(db, user, code, { from, to, tz = 0, now = Date.now() } = {}) {
+  const course = courseFor(db, user, code);
+  const sessions = sessionsIn(db, course.id, { from, to });
+  const ids = sessions.map((s) => s.id);
+  const marks = ids.length
+    ? db.prepare(`SELECT * FROM attendance_marks WHERE session_id IN (${ids.map(() => '?').join(',')})`).all(...ids)
+    : [];
+  const byPerson = new Map();   // roster id -> session id -> mark
+  const guests = new Map();     // email -> { name, studentId, email, marks: session id -> mark }
+  for (const m of marks) {
+    if (m.roster_id) {
+      if (!byPerson.has(m.roster_id)) byPerson.set(m.roster_id, new Map());
+      byPerson.get(m.roster_id).set(m.session_id, m);
+    } else {
+      const key = m.guest_email || `#${m.id}`;
+      if (!guests.has(key)) guests.set(key, { name: m.guest_name, studentId: m.guest_student_id, email: m.guest_email, marks: new Map() });
+      guests.get(key).marks.set(m.session_id, m);
+    }
+  }
+  const people = db.prepare('SELECT * FROM course_roster WHERE course_id = ? ORDER BY lower(name), id').all(course.id)
+    .filter((r) => byPerson.has(r.id) || sessions.some((s) => enrolled(r, s)));
+  const total = (cells) => {
+    const t = { present: 0, late: 0, absent: 0, excused: 0 };
+    for (const c of cells) if (c) t[c] += 1;
+    const counted = t.present + t.late + t.absent;
+    return { ...t, rate: counted ? (t.present + t.late) / counted : null };
+  };
+  const rows = people.map((r) => {
+    const mine = byPerson.get(r.id) || new Map();
+    const cells = sessions.map((s) => mine.get(s.id)?.status || (enrolled(r, s) && !isOpen(s, now) ? 'absent' : ''));
+    return { rosterId: r.id, name: r.name, studentId: r.student_id, email: r.email, removed: !!r.removed_at, guest: false, cells, totals: total(cells) };
+  });
+  for (const g of guests.values()) {
+    const cells = sessions.map((s) => g.marks.get(s.id)?.status || '');
+    rows.push({ rosterId: null, name: g.name, studentId: g.studentId, email: g.email, removed: false, guest: true, cells, totals: total(cells) });
+  }
+  // Two sessions on one day are told apart by a number, so columns stay unique.
+  const seen = new Map();
+  const columns = sessions.map((s) => {
+    const day = dateKey(s.created_at, tz);
+    const n = (seen.get(day) || 0) + 1;
+    seen.set(day, n);
+    return { id: s.id, date: day, label: n > 1 ? `${day} (${n})` : day, title: s.title || '', at: s.created_at, open: isOpen(s, now) };
+  });
+  for (const c of columns) if (seen.get(c.date) > 1 && c.label === c.date) c.label = `${c.date} (1)`;
+  return { course: course.code, courseTitle: course.title || '', sessions: columns, rows };
+}
+
+const csvField = (v) => (/[",\n\r]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? ''));
+const csvLine = (fields) => fields.map(csvField).join(',');
+
+function cleanPoints(raw, fallback) {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  if (String(raw).toLowerCase() === 'ex') return 'EX';
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 1000) throw fail('points must be a number from 0 to 1000 (or EX for excused)');
+  return n;
+}
+
+/**
+ * A course's attendance as a CSV, in one of three shapes:
+ *
+ *   long    one row per person per session, with how and when they checked in
+ *   grid    the term grid: one row per person, a P/L/A/E column per session,
+ *           and the totals
+ *   canvas  a Canvas gradebook import: Student, ID, SIS User ID, SIS Login ID,
+ *           Section, then one column of points per session, with the
+ *           "Points Possible" row Canvas expects. Present, late, excused and
+ *           absent are worth what the caller says (1, 0.5, EX, 0 by default);
+ *           EX is Canvas's own "excused". Roster people only - Canvas has
+ *           nowhere to put a guest.
+ */
+function exportCsv(db, user, code, { format = 'long', from, to, tz = 0, points = {}, now = Date.now() } = {}) {
+  const data = grid(db, user, code, { from, to, tz, now });
+  const lines = [];
+  if (format === 'grid') {
+    lines.push(csvLine(['name', 'student id', 'email', 'guest', ...data.sessions.map((s) => s.label), 'present', 'late', 'absent', 'excused', 'rate']));
+    for (const r of data.rows) {
+      lines.push(csvLine([r.name, r.studentId, r.email, r.guest ? 'yes' : '', ...r.cells.map((c) => LETTER[c] || ''),
+        r.totals.present, r.totals.late, r.totals.absent, r.totals.excused, r.totals.rate == null ? '' : `${Math.round(r.totals.rate * 100)}%`]));
+    }
+  } else if (format === 'canvas') {
+    const pts = {
+      present: cleanPoints(points.present, 1),
+      late: cleanPoints(points.late, 0.5),
+      excused: cleanPoints(points.excused, 'EX'),
+      absent: cleanPoints(points.absent, 0),
+    };
+    const possible = typeof pts.present === 'number' ? pts.present : 1;
+    lines.push(csvLine(['Student', 'ID', 'SIS User ID', 'SIS Login ID', 'Section', ...data.sessions.map((s) => `Attendance ${s.label}`)]));
+    lines.push(csvLine(['Points Possible', '', '', '', '', ...data.sessions.map(() => possible)]));
+    for (const r of data.rows.filter((row) => !row.guest)) {
+      lines.push(csvLine([r.name, '', r.studentId, '', '', ...r.cells.map((c) => (c ? pts[c] : ''))]));
+    }
+  } else {
+    const sessions = new Map(data.sessions.map((s) => [s.id, s]));
+    const ids = data.sessions.map((s) => s.id);
+    const marks = ids.length
+      ? db.prepare(`SELECT * FROM attendance_marks WHERE session_id IN (${ids.map(() => '?').join(',')})`).all(...ids)
+      : [];
+    const markOf = new Map(marks.map((m) => [`${m.session_id}:${m.roster_id ?? `g:${m.guest_email || m.id}`}`, m]));
+    lines.push(csvLine(['date', 'session', 'name', 'student id', 'email', 'on roster', 'status', 'how', 'checked in at', 'flags']));
+    for (const r of data.rows) {
+      r.cells.forEach((cell, i) => {
+        if (!cell) return;
+        const s = data.sessions[i];
+        const m = markOf.get(`${s.id}:${r.guest ? `g:${r.email}` : r.rosterId}`);
+        const flags = m ? parseFlags(m.flags).map((f) => (f.kind === 'device' ? 'same phone' : f.kind)).join('; ') : '';
+        lines.push(csvLine([sessions.get(s.id).date, s.title, r.name, r.studentId, r.email, r.guest ? 'guest' : 'yes', cell,
+          m ? m.how : 'not checked in', m && m.how !== 'hand' ? new Date(m.at - (Number(tz) || 0) * 60000).toISOString().slice(11, 16) : '',
+          flags + (m?.flags_dismissed_at && flags ? ' (dismissed)' : '')]));
+      });
+    }
+  }
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
 // --- retention ------------------------------------------------------------------
@@ -661,6 +904,8 @@ module.exports = {
   redeemCode, searchPeople, checkIn, screen,
   // the instructor's side
   mayTake, openSession, currentSession, changeSession, getSession, markByHand, changeMark, removeMark,
+  // after class
+  dismissFlags, addGuestToRoster, deleteSession, listSessions, grid, exportCsv,
   // retention
   retentionDays, setRetentionDays, prune,
   // for tests

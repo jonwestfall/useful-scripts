@@ -181,6 +181,15 @@ the roster - names and the end of an ID only), `POST /attend/checkin`, and
 `GET /attend/screen/<id>?k=<key>` for a display. The instructor's side is
 `/api/attendance/...`, for any member of the course.
 
+Phase 3 adds `attendance_audit`, one row per change made to a mark after the
+fact: the action (`marked`, `changed`, `removed`, `flags_dismissed`,
+`added_to_roster`), who made it, when, and the status before and after. A mark
+also records when its flags were dismissed, and by whom. The review, the term
+grid and the exports are computed from marks and the roster as they stand. An
+unmarked person counts as absent from a closed session only if they were on
+the roster when it began. The lecture timeline gains `attendance` entries,
+which the server writes itself while the lecture is running.
+
 Passwords are `scrypt` with a per-user random salt, stored as
 `scrypt$N$r$p$salt$hash` so the parameters travel with the hash and can be
 raised later without invalidating anyone. Session tokens are 32 random bytes;

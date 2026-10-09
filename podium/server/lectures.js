@@ -805,7 +805,23 @@ function deleteLecture(db, user, id, { dataDir } = {}) {
   return row;
 }
 
+/**
+ * Attendance opened or closed during a lecture (Issue #256): a line on its
+ * timeline, so the record and the recap say when check-in happened and how
+ * many came. Written by the server itself rather than the display, and only
+ * while the lecture is still running and has room.
+ */
+function noteAttendance(db, lectureId, { at = Date.now(), title, detail = {} } = {}) {
+  const lecture = db.prepare(`SELECT id, ended_at, (SELECT COUNT(*) FROM lecture_events e WHERE e.lecture_id = l.id) AS n
+      FROM lectures l WHERE id = ?`).get(Number(lectureId));
+  if (!lecture || lecture.ended_at != null || lecture.n >= MAX_EVENTS) return false;
+  db.prepare("INSERT INTO lecture_events (lecture_id, at, kind, title, detail) VALUES (?, ?, 'attendance', ?, ?)")
+    .run(lecture.id, at, String(title || 'Attendance').slice(0, MAX_TITLE), JSON.stringify(detail));
+  return true;
+}
+
 module.exports = {
+  noteAttendance,
   listLectures, getLecture, startLecture, endLecture, appendEvents, recordPoll, keepAlive, closeIdleLectures, IDLE_MS, HEARTBEAT_MS,
   renameLecture, deleteLecture, mayDelete, courseIdForRoom,
   addFile, removeFile, listFiles, pruneFiles, usage, keepableType, cleanName, visibleLecture,

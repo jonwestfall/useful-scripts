@@ -719,6 +719,15 @@ Running Podium's own server (`server/podium-server.js` with a `DATA_DIR`) adds a
   - **The live list:** everyone on the roster with their status, then guests. Any row's status can be set by hand (*present, late, excused, absent* or *not marked*); a hand mark is never flagged. **Now marking late** marks every check-in after it as late. **Close check-in** takes the code off the screen (a phone already past the code has two minutes to finish); opening it again in the same lecture continues the same record.
   - **Kept:** marks stay for good. The browser token and network address behind a flag are kept only as keyed hashes, and only for the period an administrator sets on Admin → Server → **Attendance** (30 days by default). Wrong codes are throttled per phone (5 a minute) and per network address.
   - A Guest View viewer sees "Check-in is on the screen in the room", never the code.
+  - **After class, on My Files → Attendance** (Issue #256, phase 3): pick a course; Admin's course list links here too.
+    - **Sessions:** every check-in, newest first, with its counts and how many flags still need looking at. Owners and admins can **Delete** one opened by mistake.
+    - **Review:** everyone on the roster and every guest, with how each check-in was made (scanning or typing the code, or by hand) and when. Once check-in is closed, anyone on the roster who never checked in shows as **absent (not checked in)**, but only if they were on the roster when the session began. Change any status; **Dismiss flag** marks a flag as looked at (it stays on record, with who dismissed it); **Add to roster** (owners and admins) puts a guest on the course roster, and every check-in they made as a guest in that course becomes theirs. **Only what is flagged** narrows the list, and **History** shows every change made after check-in: who, when, and from what to what.
+    - **Term grid:** students × sessions, with **P**/**L**/**A**/**E** and totals per student, plus a rate of (present + late) ÷ (present + late + absent). Excused classes count for nothing either way. Filter by a date range; a date heading opens that session's review.
+    - **Exports**, for the same date range:
+      - **CSV**: one row per person per session, with status, how, time and flags.
+      - **The grid as CSV.**
+      - **Canvas gradebook…**: Canvas's import layout, with one column per session and a *Points Possible* row. Rows are matched by SIS User ID, which is the roster's student ID. You choose the points for present, late, excused and absent; the defaults are 1, 0.5, EX (Canvas's "excused") and 0.
+    - A recorded lecture's timeline, and so its recap, says when attendance opened and closed and how many checked in.
 - **Plans on the server**: a lecture saves itself to the server from the planner and is on the iPad in class without a file to carry. A plan file you exported stays untouched either way. Two edits to the same plan are caught rather than silently overwriting each other.
 
 ### Kiosks & Unattended Signage
