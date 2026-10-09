@@ -1415,8 +1415,29 @@ await pad.reload().catch(() => {});
 await pad.waitForTimeout(1500);
 ok('so the controller still opens with no network at all',
   await pad.evaluate(() => !!document.querySelector('.topbar') && document.querySelectorAll('.tab').length > 3));
-ok(`and says plainly that the relay is what is missing ("${(await pad.$eval('#status', (n) => n.textContent)).slice(0, 44)}…")`,
-  /could not open|Reconnecting|Relay problem/.test(await pad.$eval('#status', (n) => n.textContent)));
+// The relay retries with backoff, and every attempt flips the bar to
+// "Connecting…" while it dials before the close puts the problem back - so
+// wait for the problem rather than sampling once, and read the bar once.
+// "Connecting…" is not accepted: it does not say the relay is missing.
+const relayMissing = /could not open|Reconnecting|Relay problem/;
+await pad.evaluate(() => {
+  const bar = document.querySelector('#status');
+  window.__statusSeen = [bar.textContent];
+  new MutationObserver(() => window.__statusSeen.push(bar.textContent))
+    .observe(bar, { childList: true, characterData: true, subtree: true });
+});
+const missingText = await pad.waitForFunction(
+  (src) => {
+    const text = document.querySelector('#status').textContent;
+    return new RegExp(src).test(text) && text;
+  }, relayMissing.source, { timeout: 5000 },
+).then((h) => h.jsonValue()).catch(() => null);
+const statusText = missingText ?? await pad.$eval('#status', (n) => n.textContent);
+if (!missingText) {
+  console.log('    #status went through:', await pad.evaluate(() => window.__statusSeen));
+}
+ok(`and says plainly that the relay is what is missing ("${statusText.slice(0, 44)}…")`,
+  relayMissing.test(statusText));
 await tablet.setOffline(false);
 
 await tablet.close();
