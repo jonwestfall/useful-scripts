@@ -891,44 +891,72 @@ function searchLectures(db, user, raw, { course = null, limit = MAX_RESULTS } = 
   const match = ftsQuery(raw);
   if (!match) throw Object.assign(new Error('type something to search for'), { status: 400 });
   const code = course ? String(course).trim().toLowerCase() : null;
+  // Timeline events and polls (rowid % 4 of 0 and 1) carry their lecture.
+  // Attendance (2: a check-in's questions, 3: a parking-lot question) is
+  // looked up through its check-in, which may or may not be tied to a lecture
+  // - and is only ever found by a member of the check-in's course (or an
+  // admin), the same rule as reading it in My Files › Attendance. Tied to a
+  // lecture, that lecture has to be one this account can see as well.
   const rows = db.prepare(`
-    SELECT s.rowid AS rid, s.lecture_id, s.kind, s.ref, s.at, s.body,
+    SELECT s.rowid AS rid, s.kind, s.ref, s.at, s.body, l.id AS lecture_id,
+           a.id AS attendance_id, a.title AS attendance_title, a.created_at AS attendance_at,
+           ac.code AS attendance_course, p.name AS asker,
            snippet(lecture_search, 0, '${MARK_ON}', '${MARK_OFF}', '…', 16) AS snip
       FROM lecture_search s
-      JOIN lectures l ON l.id = s.lecture_id
+      LEFT JOIN attendance_parking p ON s.rowid % 4 = 3 AND p.id = s.ref
+      LEFT JOIN attendance_sessions a ON s.rowid % 4 >= 2
+            AND a.id = CASE s.rowid % 4 WHEN 2 THEN s.ref ELSE p.session_id END
+      LEFT JOIN courses ac ON ac.id = a.course_id
+      LEFT JOIN lectures l ON l.id = CASE WHEN s.rowid % 4 < 2 THEN s.lecture_id ELSE a.lecture_id END
       LEFT JOIN courses c ON c.id = l.course_id
-     WHERE lecture_search MATCH ?3 AND ${VISIBLE}
-       AND (?4 IS NULL OR c.code = ?4)
+     WHERE lecture_search MATCH ?3
+       AND (s.rowid % 4 < 2 OR (a.id IS NOT NULL AND (?2 = 1
+            OR EXISTS (SELECT 1 FROM course_members cm WHERE cm.course_id = a.course_id AND cm.user_id = ?1))))
+       AND ((l.id IS NOT NULL AND ${VISIBLE}) OR (s.rowid % 4 >= 2 AND l.id IS NULL))
+       AND (?4 IS NULL OR COALESCE(c.code, ac.code) = ?4)
      ORDER BY bm25(lecture_search)
      LIMIT 1000`).all(user.id, user.isAdmin ? 1 : 0, match, code);
 
   const max = Math.min(Math.max(Number(limit) || MAX_RESULTS, 1), MAX_RESULTS);
-  const byLecture = new Map();
+  const groups = new Map();
   for (const row of rows) {
-    let group = byLecture.get(row.lecture_id);
+    // A check-in with no recorded lecture is its own result.
+    const key = row.lecture_id ? `l${row.lecture_id}` : `a${row.attendance_id}`;
+    let group = groups.get(key);
     if (!group) {
-      if (byLecture.size >= max) continue;
-      group = { id: row.lecture_id, hits: [], seen: new Set(), more: 0 };
-      byLecture.set(row.lecture_id, group);
+      if (groups.size >= max) continue;
+      group = { row, hits: [], seen: new Set(), more: 0 };
+      groups.set(key, group);
     }
     // A poll is in the timeline as it runs AND filed with its tally: one hit.
-    const same = `${row.kind === 'poll' ? 'poll' : row.ref}:${row.body.trim().toLowerCase()}`;
+    const same = `${row.kind === 'poll' ? 'poll' : `${row.kind}${row.ref}`}:${row.body.trim().toLowerCase()}`;
     if (group.seen.has(same)) continue;
     group.seen.add(same);
     if (group.hits.length >= HITS_PER_LECTURE) { group.more++; continue; }
+    const slot = Number(row.rid) % 4;
     group.hits.push({
       kind: row.kind,
       at: row.at,
-      ...(Number(row.rid) % 4 === 1 ? { pollId: Number(row.ref) } : { eventId: Number(row.ref) }),
+      ...(slot === 0 ? { eventId: Number(row.ref) } : {}),
+      ...(slot === 1 ? { pollId: Number(row.ref) } : {}),
+      ...(slot >= 2 ? { attendanceId: row.attendance_id } : {}),
+      // A parking-lot question asked in someone's name says whose; an
+      // anonymous one has no name to say - nothing was ever kept.
+      ...(slot === 3 ? { parkingId: Number(row.ref), ...(row.asker ? { who: row.asker } : {}) } : {}),
       snippet: snippetParts(row.snip),
     });
   }
   const results = [];
-  for (const group of byLecture.values()) {
-    const found = findLecture(db, user, group.id);
-    if (!found) continue;
+  for (const group of groups.values()) {
     group.hits.sort((a, b) => a.at - b.at);
-    results.push({ lecture: lectureRow(found), hits: group.hits, more: group.more });
+    if (group.row.lecture_id) {
+      const found = findLecture(db, user, group.row.lecture_id);
+      if (!found) continue;
+      results.push({ lecture: lectureRow(found), hits: group.hits, more: group.more });
+    } else {
+      const { attendance_id: id, attendance_title: title, attendance_at: at, attendance_course: courseCode } = group.row;
+      results.push({ attendance: { id, title, startedAt: at, course: courseCode }, hits: group.hits, more: group.more });
+    }
   }
   return { query: String(raw || '').slice(0, MAX_QUERY), results };
 }

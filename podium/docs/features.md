@@ -703,10 +703,15 @@ On a server with accounts, the display writes down what it showed as it goes: a 
 - download a session's ZIP or PDF again, or its [recap](#lecture-recaps);
 - **Download all sessions**, or **Delete sessions older than** a number of days.
 
-**Searching past sessions** (Issue #159): the server keeps a full-text index of every session's caption lines, what was on screen, timeline notes and poll questions. It is kept up to date as the display records, and history from before the index existed is added the first time the server starts.
+**Searching past sessions** (Issue #159): the server keeps a full-text index of every session's caption lines, what was on screen, timeline notes and poll questions, plus what attendance asked: each check-in's entry and exit questions and its parking-lot questions. It is kept up to date as the display records, and history from before the index existed is added the first time the server starts.
 - `GET /api/lectures/search?q=…` searches every session you could already open (your own, and your courses'), best match first. `&course=psy415` narrows it to one course.
 - Matching is by word, ignoring case and accents, with word endings folded ("remember" finds "remembering"). `"a phrase"` must appear in order, `memor*` matches a prefix, and `-word` leaves a word out.
 - Each hit says which session and which moment of its timeline it came from, with the matched words marked.
+- **Attendance:**
+  - A check-in's questions and parking-lot questions are found only by members of its course (or an admin), the same people who can read it on My Files › Attendance.
+  - If it was taken in a recorded lecture, you also need to be able to open that lecture, and the hit is placed in that lecture's timeline at its moment.
+  - A check-in with no recorded lecture is a result of its own.
+  - A parking-lot question asked in someone's name says who asked it. An anonymous one never shows a name, because none was kept.
 - **Where to search:** the box at the top of **My Files › Recorded lectures**, and the same box on the admin page's **Sessions** tab.
   - Type and the results appear, grouped by session with the matched words highlighted. The usual list steps aside until you clear the box (or press Escape).
   - With lectures in more than one course, a course menu narrows the search.

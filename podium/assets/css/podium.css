@@ -739,6 +739,9 @@ body.guest {
 .ss-hit .timeline-at { min-width: 3rem; }
 .ss-kind { color: var(--dim); font-size: 12px; min-width: 4.5rem; }
 .ss-snip { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ss-who { color: var(--dim); font-size: 12px; }
+.ss-hit.is-static { cursor: default; }
+.ss-hit.is-static:hover { background: none; }
 .session-search mark {
   background: color-mix(in srgb, var(--cue) 35%, transparent); color: inherit; border-radius: 3px; padding: 0 1px;
 }
