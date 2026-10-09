@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Replay — Podium</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="assets/css/podium.css">
+<script src="assets/js/theme-boot.js"></script>
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<meta name="theme-color" content="#0b0d10">
+</head>
+<!-- Replay (Issue #132): a recorded lecture played back - the controller mic
+     audio on the lecture's own clock, with what was on screen, what was being
+     said and when polls closed alongside. Signed-in only, and only a lecture
+     this account may open (the server checks). See assets/js/replay.js and
+     replay-model.js. -->
+<body class="replay">
+
+<div class="topbar rp-bar">
+  <a class="brand" href="me.html" title="My Files">PODIUM</a>
+  <span class="tag">Replay</span>
+  <span id="rp-title" class="rp-title">Opening…</span>
+  <span id="rp-meta" class="hint rp-meta"></span>
+  <span class="spacer"></span>
+  <div id="session-badge" class="session-badge"></div>
+</div>
+<p id="rp-warn" class="ql-warn" role="alert" hidden></p>
+
+<main class="rp-main" id="rp-main" hidden>
+  <section class="rp-stage-wrap" aria-label="What was on screen">
+    <div id="rp-stage" class="rp-stage">
+      <img id="rp-picture" alt="" hidden>
+      <div id="rp-card" class="rp-card">
+        <span id="rp-scene-title" class="rp-scene-title"></span>
+        <span id="rp-scene-note" class="rp-scene-note"></span>
+      </div>
+    </div>
+    <p id="rp-caption" class="rp-caption" aria-live="off"></p>
+  </section>
+
+  <aside class="rp-side" aria-label="Transcript">
+    <h2 class="rp-side-head">Transcript</h2>
+    <ol id="rp-transcript" class="rp-transcript"></ol>
+  </aside>
+
+  <div class="rp-controls" role="toolbar" aria-label="Playback">
+    <button id="rp-back" type="button" title="Back 15 seconds (←)" aria-label="Back 15 seconds">⟲ 15</button>
+    <button id="rp-play" type="button" class="rp-play" title="Play (Space)">▶ Play</button>
+    <button id="rp-fwd" type="button" title="Forward 15 seconds (→)" aria-label="Forward 15 seconds">15 ⟳</button>
+    <span id="rp-time" class="rp-time" aria-live="off">0:00 / 0:00</span>
+    <div class="rp-scrub">
+      <div id="rp-marks" class="rp-marks" aria-hidden="true"></div>
+      <input id="rp-seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Position in the lecture">
+    </div>
+    <label class="rp-speed">Speed
+      <select id="rp-rate" aria-label="Playback speed">
+        <option value="0.75">0.75×</option>
+        <option value="1" selected>1×</option>
+        <option value="1.25">1.25×</option>
+        <option value="1.5">1.5×</option>
+        <option value="2">2×</option>
+      </select>
+    </label>
+  </div>
+  <p id="rp-audio-note" class="hint rp-audio-note" role="status"></p>
+</main>
+
+<script type="module" src="assets/js/replay.js"></script>
+</body>
+</html>

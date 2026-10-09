@@ -2791,6 +2791,126 @@ ok(`(the session was Owen's: ${recorded.long})`, true);
 await root.close();
 }
 
+if (want('Replaying a lecture (#132)')) {
+console.log('\n-- Replaying a lecture (#132) --');
+// A short lecture recorded over the same API a display and a controller use:
+// two things on screen, two caption lines, a poll, and three seconds of "mic"
+// (a tone, recorded in the page) filed as a segment that says its own times.
+const owen = await signedIn('owen');
+const page = await owen.newPage();
+trap(page, 'replay');
+await page.goto(`${base}/index.html`);
+const made = await page.evaluate(async () => {
+  const post = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+  const lecture = (await post('/api/lectures', { room: 'replay-room', fresh: true })).lecture;
+  const start = lecture.startedAt;
+  // Three seconds of a 440 Hz tone, as a controller's MediaRecorder would file it.
+  const ctx = new AudioContext();
+  const osc = ctx.createOscillator();
+  const out = ctx.createMediaStreamDestination();
+  osc.connect(out);
+  osc.start();
+  const recorder = new MediaRecorder(out.stream, { mimeType: 'audio/webm;codecs=opus' });
+  const parts = [];
+  recorder.ondataavailable = (ev) => parts.push(ev.data);
+  const done = new Promise((resolve) => { recorder.onstop = resolve; });
+  recorder.start();
+  await new Promise((r) => setTimeout(r, 3000));
+  recorder.stop();
+  await done;
+  osc.stop();
+  const blob = new Blob(parts, { type: 'audio/webm' });
+  const name = `audio/ctl-e2e-${start}-0000-t${start}-d3000.webm`;
+  await fetch(`/api/lectures/${lecture.id}/files?name=${encodeURIComponent(name)}&kind=audio`, { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: blob });
+  await post(`/api/lectures/${lecture.id}/events`, { events: [
+    { id: 'r0', at: start + 10, kind: 'program', title: 'Introduction' },
+    { id: 'r1', at: start + 200, kind: 'caption', title: 'Hello and welcome', detail: { text: 'Hello and welcome to the lecture' } },
+    { id: 'r2', at: start + 1500, kind: 'program', title: 'Working memory' },
+    { id: 'r3', at: start + 1600, kind: 'caption', title: 'The loop', detail: { text: 'The phonological loop holds sounds' } },
+  ] });
+  await post(`/api/lectures/${lecture.id}/polls`, { poll: { pollId: 'rp1', kind: 'choice', question: 'Which store?', results: { counts: [1, 2] }, voters: 3, endedAt: start + 2500 } });
+  await post(`/api/lectures/${lecture.id}/end`, {});
+  // And one with no audio at all.
+  const quiet = (await post('/api/lectures', { room: 'replay-quiet', fresh: true })).lecture;
+  await post(`/api/lectures/${quiet.id}/events`, { events: [{ id: 'q0', kind: 'program', title: 'Quiet slide' }] });
+  await post(`/api/lectures/${quiet.id}/end`, {});
+  return { id: lecture.id, quiet: quiet.id };
+});
+
+await page.goto(`${base}/replay.html?lecture=${made.id}`);
+await page.waitForSelector('#rp-main:not([hidden])', { timeout: 10000 });
+const replay = () => page.evaluate(() => ({ t: window.__podiumReplay.t, playing: window.__podiumReplay.playing }));
+ok(`the replay opens the lecture (${await page.textContent('#rp-title')})`, (await page.textContent('#rp-title')) === 'replay-room');
+ok(`with its transcript: what went on screen and what was said (${await page.locator('#rp-transcript .rp-line').count()} lines)`,
+  await page.locator('#rp-transcript .rp-line').count() === 4 && /Hello and welcome/.test(await page.textContent('#rp-transcript')));
+ok('and the scrubber marked with each thing on screen and the poll', await page.locator('#rp-marks .rp-mark').count() === 3
+  && await page.locator('#rp-marks .rp-mark-poll').count() === 1);
+ok(`it says a mic was recorded (${await page.textContent('#rp-audio-note')})`, /controller mic recorded/.test(await page.textContent('#rp-audio-note')));
+ok(`it starts at the very beginning (${await page.textContent('#rp-scene-title')})`, (await replay()).t === 0
+  && /Before anything went on screen/.test(await page.textContent('#rp-scene-title')));
+
+await page.click('#rp-play');
+await page.waitForFunction(() => window.__podiumReplay.t > 1800, null, { timeout: 8000 })
+  .then(() => ok('Play runs the lecture\'s clock', true))
+  .catch(async () => ok(`Play runs the lecture's clock (${JSON.stringify(await replay())})`, false));
+const heard = await page.evaluate(() => {
+  const audio = document.querySelector('audio');
+  return { src: audio?.src || '', paused: audio?.paused, time: audio?.currentTime || 0 };
+});
+ok(`the mic segment plays in step (${heard.time.toFixed(2)}s into it)`, /ctl-e2e/.test(heard.src) && !heard.paused && heard.time > 1);
+ok(`the stage follows: what was on screen then (${await page.textContent('#rp-scene-title')})`, /Working memory/.test(await page.textContent('#rp-scene-title')));
+ok(`the caption under it (${await page.textContent('#rp-caption')})`, /phonological loop/.test(await page.textContent('#rp-caption')));
+ok('and the transcript marks the line being said', /phonological loop/.test(await page.textContent('#rp-transcript .is-current')));
+await page.click('#rp-play');
+ok('Pause stops it', !(await replay()).playing && await page.evaluate(() => document.querySelector('audio').paused));
+ok(`and the address keeps the moment (${new URL(page.url()).searchParams.get('at')})`, Number(new URL(page.url()).searchParams.get('at')) > 1500);
+
+await page.locator('#rp-transcript .rp-line', { hasText: 'Hello and welcome' }).locator('button').click();
+const back = await replay();
+ok(`tapping a line in the transcript goes to it (${back.t} ms in)`, back.t >= 190 && back.t <= 260 && /Introduction/.test(await page.textContent('#rp-scene-title')));
+await page.selectOption('#rp-rate', '2');
+await page.click('#rp-play');
+await page.waitForFunction(() => document.querySelector('audio') && !document.querySelector('audio').paused, null, { timeout: 5000 }).catch(() => {});
+ok('a faster speed plays the audio faster', await page.evaluate(() => document.querySelector('audio').playbackRate) === 2);
+await page.click('#rp-play');
+await page.keyboard.press('ArrowRight');
+const end = await page.evaluate(() => ({ t: window.__podiumReplay.t, end: window.__podiumReplay.model.end - window.__podiumReplay.model.start }));
+ok(`→ skips ahead, never past the end (${end.t} of ${end.end})`, end.t === end.end);
+
+await page.goto(`${base}/replay.html?lecture=${made.id}&at=1600`);
+await page.waitForSelector('#rp-main:not([hidden])', { timeout: 10000 });
+ok('?at= opens it at that moment', (await replay()).t === 1600 && /Working memory/.test(await page.textContent('#rp-scene-title')));
+
+await page.goto(`${base}/replay.html?lecture=${made.quiet}`);
+await page.waitForSelector('#rp-main:not([hidden])', { timeout: 10000 });
+ok('a lecture with no mic says it will replay without sound', /No microphone was recorded/.test(await page.textContent('#rp-audio-note'))
+  && await page.locator('audio').count() === 0);
+
+// The way in: My Files' Recorded lectures.
+await page.goto(`${base}/me.html`);
+await page.click('.me-tabs .tab:has-text("Recorded lectures")');
+const row = page.locator('#recorded-list .me-row', { hasText: 'replay-room' });
+await row.waitFor({ timeout: 5000 });
+const [opened] = await Promise.all([owen.waitForEvent('page'), row.locator('button', { hasText: 'Replay' }).click()]);
+trap(opened, 'replay from my files');
+await opened.waitForSelector('#rp-main:not([hidden])', { timeout: 10000 })
+  .then(() => ok('Recorded lectures has a Replay button that opens it', true))
+  .catch(() => ok('Recorded lectures has a Replay button that opens it', false));
+await owen.close();
+
+// Somebody who may not open that lecture gets no replay of it.
+const tia = await signedIn('tia');
+const tiaPage = await tia.newPage();
+trap(tiaPage, 'replay (tia)');
+expecting.lectureNotFound = true;
+await tiaPage.goto(`${base}/replay.html?lecture=${made.id}`);
+await tiaPage.waitForFunction(() => !document.querySelector('#rp-warn').hidden, null, { timeout: 10000 }).catch(() => {});
+ok(`nobody else's lecture replays (${await tiaPage.textContent('#rp-warn')})`, /not one you can open/.test(await tiaPage.textContent('#rp-warn'))
+  && await tiaPage.isHidden('#rp-main'));
+expecting.lectureNotFound = false;
+await tia.close();
+}
+
 if (want('Documents: a plain .md shown as one page to read (#240)')) {
 console.log('\n-- Documents: a plain .md shown as one page to read (#240) --');
 const filler = (n) => Array.from({ length: n }, (_, i) => `Paragraph ${i + 1} of the reading, long enough to wrap across the page at projector size and take up some room.`).join('\n\n');

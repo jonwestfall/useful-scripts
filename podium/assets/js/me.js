@@ -501,6 +501,11 @@ async function loadRecorded() {
         el('span', { class: 'fb-meta' }, [dayAndTime(l.startedAt), l.course && COURSE(l.course), spanOf(l),
           l.polls ? `${l.polls} poll${l.polls === 1 ? '' : 's'}` : '', l.ownerId === me.id ? 'yours' : l.owner && `by ${l.owner}`].filter(Boolean).join(' · '))),
       el('span', { class: 'me-actions' },
+        // Played back on its own clock, mic audio and all (Issue #132).
+        small('▶ Replay', {
+          'aria-label': `Replay ${l.title || l.room || 'this session'}`,
+          onclick: () => window.open(`replay.html?lecture=${l.id}`, '_blank', 'noopener'),
+        }),
         small('Recap (PDF)', {
           'aria-label': `Recap of ${l.title || l.room || 'this session'}`,
           onclick: async (ev) => {

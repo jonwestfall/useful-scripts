@@ -41,6 +41,7 @@ podium/test/
 ├── mail.test.mjs       # Podium's own SMTP client against a fake mail server, and doctor's mail check (Issue #256)
 ├── lecture-search.test.mjs # Searching past sessions: words, stems, phrases, ranking, whose sessions, keeping the index up to date, the backfill (Issue #159)
 ├── lecture-search-attendance.test.mjs # Searching what attendance asked: check-in questions and the parking lot, in their lecture or on their own, who finds them, anonymity, keeping up (Issue #159)
+├── replay-model.test.mjs # Replaying a lecture: mic segment names and placement, tracks, what was on screen and said at a moment (Issue #132)
 ├── zoom.test.mjs       # Zoom that fills the screen: fit presets, clamping, zoom around a point, panning, pinch anchoring, the slider scale (Issue #262)
 ├── documents.test.mjs  # Markdown documents: deck or document, switching, a document in the room, the page's safety, outline and notes (Issue #240)
 ├── plan-archive.test.mjs # Archiving lectures from one's own planner list: personal, bulk, what may be archived (Issue #239)
@@ -62,7 +63,7 @@ podium/test/
     ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen, portrait content and zoom gestures - real touch pinches (Issue #262)
     ├── media.mjs         # Camera, music, audio, clocks, captions, PDFs
     ├── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
-    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242) and its outline (Issue #253); Word and RTF files (Issue #258); rosters, attendance check-in, its review, its questions, location and receipts (Issue #256); choosing files from the server (Issue #241); My Files (Issue #243); searching past sessions on My Files and Admin › Sessions (Issue #159); markdown documents (Issue #240)
+    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242) and its outline (Issue #253); Word and RTF files (Issue #258); rosters, attendance check-in, its review, its questions, location and receipts (Issue #256); choosing files from the server (Issue #241); My Files (Issue #243); searching past sessions on My Files and Admin › Sessions (Issue #159); replaying a lecture with its mic audio (Issue #132); markdown documents (Issue #240)
 ```
 
 ---

@@ -346,7 +346,7 @@ A channel's level and the Master multiply together, and the bottom bar's **mute*
 The **Say** tab can turn the controller's own microphone on (**Start my mic**). This is separate from live captions, which use the browser's speech recognition and never touch a recording.
 
 - **Play through the display's speakers** amplifies your voice (or a co-presenter's, or a student's answering from their own device) through the classroom PC's audio. Several controllers can have a live mic at once. They get their own **Controller mics** channel on the Mixer, and an amplified mic ducks background music the way a video does. It's off by default, and the controller warns you it can howl with feedback if the device is near the display's speakers.
-- **Record this mic to the session** (self-hosted server that records sessions): the audio is uploaded in short, independently playable segments as you go, so a lecture that ends early still keeps what was already recorded.
+- **Record this mic to the session** (self-hosted server that records sessions): the audio is uploaded in short, independently playable segments as you go, so a lecture that ends early still keeps what was already recorded. Each segment's name records when it started and how long it ran, which is how the [replay](#session-history) lines it up with what was on screen.
 
 ---
 
@@ -703,6 +703,13 @@ On a server with accounts, the display writes down what it showed as it goes: a 
 - download a session's ZIP or PDF again, or its [recap](#lecture-recaps);
 - **Download all sessions**, or **Delete sessions older than** a number of days.
 
+**Replaying a lecture** (Issue #132): **▶ Replay** on My Files › Recorded lectures (or a session on the admin page's **Sessions** tab) plays the lecture back on its own clock, in a tab of its own.
+- **The stage:** what was on the projector at each moment, shown as the annotated slide or the marked-up screen where one was kept, otherwise the item's title.
+- **Captions and transcript:** the caption being said appears under the stage. The transcript beside it scrolls along with playback; tap any line to jump there.
+- **Sound:** the controller mic audio plays wherever it was recorded. Several mics play together, and stretches with no recording run silently. A lecture with no mic at all still replays its screens and captions in time.
+- **Controls:** a scrubber marked with each thing that went on screen and each poll, ±15 s, and speeds from 0.75× to 2×. Keys: **Space** plays and pauses, **← / →** skip 15 s, **Home / End** go to the start or end.
+- **Links:** the address keeps your place (`replay.html?lecture=…&at=…`), so a reload or a shared link opens at the same moment. Only someone who could open the lecture can replay it.
+
 **Searching past sessions** (Issue #159): the server keeps a full-text index of every session's caption lines, what was on screen, timeline notes and poll questions, plus what attendance asked: each check-in's entry and exit questions and its parking-lot questions. It is kept up to date as the display records, and history from before the index existed is added the first time the server starts.
 - `GET /api/lectures/search?q=…` searches every session you could already open (your own, and your courses'), best match first. `&course=psy415` narrows it to one course.
 - Matching is by word, ignoring case and accents, with word endings folded ("remember" finds "remembering"). `"a phrase"` must appear in order, `memor*` matches a prefix, and `-word` leaves a word out.
@@ -737,7 +744,7 @@ Running Podium's own server (`server/podium-server.js` with a `DATA_DIR`) adds a
   - **Files:** every library file you can see, with a chip saying **Owner** (you added it), **Can edit** (you own its course, or are an admin) or **View only**, and the reason on hover. Filter by *Show* (all, mine, I can edit, view only), course, kind and search; deck media only when asked for. Each row offers only what you may do: ↗ Quick Look, ✎ Edit (decks), Download, Rename, Move to… (a course you are in, or none, which warns that everyone with an account will see it) and Delete. Several can be ticked to move or delete together, and files can be uploaded (or dropped) straight in under a course. An administrator's page starts on *Mine*.
   - **Lectures:** your plans and the ones shared with you through your courses, with the planner's personal archive (*Show archived*). Open in the planner, **Present** (opens it in the controller), Archive/Unarchive, and Delete for your own.
   - **Deck templates:** yours and your courses'. Use (a new deck from it), Edit, Rename and Delete where you may.
-  - **Recorded lectures:** what was recorded in your classes, with its recap PDF, and Delete where you may. A search box at the top looks inside all of them: what was said, what was on screen, notes and polls (see [Session History](#session-history)).
+  - **Recorded lectures:** what was recorded in your classes, with **▶ Replay**, its recap PDF, and Delete where you may. A search box at the top looks inside all of them: what was said, what was on screen, notes and polls (see [Session History](#session-history)).
   - **Rosters** (Issue #256): each course's class list, the people [attendance](https://github.com/jonwestfall/useful-scripts/issues/256) will be taken for. Students are not accounts here, just a name, and a student ID and email if you have them.
     - **Import a CSV** from Canvas, Blackboard, Moodle or a spreadsheet. Columns are found by their headers: a name (or first and last name; Canvas's "Last, First" is turned round), a student ID (an institution's SIS ID is preferred over an LMS's own), and an email. A file with no header is read as name, ID, email.
     - **The import is previewed first:** which columns it read, who is new, who is updated (and what changed), who is unchanged, and any lines it couldn't use. People are matched by student ID, then email, then name.

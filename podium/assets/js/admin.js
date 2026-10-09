@@ -430,6 +430,11 @@ function renderSessionBody(detail) {
   const body = el('div', { class: 'session-body' });
 
   const actions = el('div', { class: 'admin-actions' },
+    // Played back on its own clock, mic audio and all (Issue #132).
+    el('button', {
+      class: 'admin-small', type: 'button',
+      onclick: () => window.open(`replay.html?lecture=${detail.id}`, '_blank', 'noopener'),
+    }, '▶ Replay'),
     el('button', {
       class: 'admin-small', type: 'button',
       onclick: () => download(`podium-${detail.id}-timeline.txt`, timelineText(detail), 'text/plain'),
