@@ -46,6 +46,7 @@ export const TYPES = {
   camera:     { label: 'Camera',     icon: '\u{1F4F7}' },
   set:        { label: 'Automated set', icon: '\u{1F501}' },
   poll:       { label: 'Poll',       icon: '\u{1F4CA}' },
+  attendance: { label: 'Check-in',   icon: '✅' },
 };
 
 export function itemTitle(item) {
@@ -1065,6 +1066,131 @@ function renderPoll(item, opts) {
   };
 }
 
+// Check-in on screen (Issue #256): a QR code and a six-digit code that change
+// every few seconds, the address to type it at, and how many have checked in.
+// The code is asked of the server (opts.getServerBase) rather than worked out
+// here, so every display and controller agrees on it; a guest viewer's copy has
+// no screen key (see viewerItem in protocol.js) and says where to look instead.
+const ATTEND_TICK_MS = 2000;
+
+function renderAttendance(item, opts) {
+  const heading = el('div', { class: 'r-att-heading' }, 'Check in');
+  const qrHolder = el('div', { class: 'r-att-qr' });
+  const code = el('div', { class: 'r-att-code', 'aria-live': 'off' }, '');
+  const where = el('div', { class: 'r-att-url' }, '');
+  const bar = el('div', { class: 'r-att-bar' }, el('span'));
+  const count = el('div', { class: 'r-att-count' }, '');
+  const late = el('div', { class: 'r-att-late' }, '');
+  const node = el('div', { class: 'r-att' }, heading, qrHolder, code, bar, where, count, late);
+  let current = item;
+  let timer = 0;
+  let gone = false;
+  let shownCode = null;
+  let deadline = 0;
+  let span = 15000;
+  let frame = 0;
+
+  const drawQr = (url) => {
+    if (!url || typeof window.qrcode !== 'function') { qrHolder.replaceChildren(); return; }
+    const qr = window.qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    qrHolder.innerHTML = qr.createSvgTag({ cellSize: 8, margin: 2, scalable: true });
+  };
+
+  // The bar under the code empties as it runs out, so the room can see a new
+  // one is coming rather than type the old one as it changes.
+  const drain = () => {
+    cancelAnimationFrame(frame);
+    if (gone || !deadline) return;
+    const left = Math.max(0, deadline - Date.now());
+    bar.firstChild.style.width = `${(left / span) * 100}%`;
+    if (left > 0) frame = requestAnimationFrame(drain);
+  };
+
+  const base = () => opts.getServerBase?.() || '';
+  const draw = (screen) => {
+    const title = [screen?.course || current.course, screen?.title].filter(Boolean).join(' · ');
+    heading.textContent = title ? `Check in — ${title}` : 'Check in';
+    if (!current.screenKey) {
+      node.classList.add('is-elsewhere');
+      qrHolder.replaceChildren();
+      code.textContent = '';
+      where.textContent = 'Check-in is on the screen in the room.';
+      count.textContent = '';
+      late.textContent = '';
+      return;
+    }
+    if (!screen) return;
+    node.classList.toggle('is-closed', !screen.open);
+    node.classList.toggle('is-late', !!screen.late);
+    count.textContent = `${screen.count} checked in`;
+    late.textContent = screen.late ? 'Now marking late' : '';
+    if (!screen.open) {
+      shownCode = null;
+      deadline = 0;
+      qrHolder.replaceChildren();
+      code.textContent = 'Closed';
+      where.textContent = 'Check-in is closed.';
+      bar.firstChild.style.width = '0';
+      return;
+    }
+    const root = base();
+    const host = root ? new URL(root).host : location.host;
+    where.textContent = `or go to ${host}/attend and type the code`;
+    span = (screen.rotate || 15) * 1000;
+    deadline = Date.now() + screen.rotatesInMs;
+    if (screen.code !== shownCode) {
+      shownCode = screen.code;
+      code.textContent = `${screen.code.slice(0, 3)} ${screen.code.slice(3)}`;
+      drawQr(root ? `${root}attend.html?c=${screen.code}` : '');
+    }
+    drain();
+  };
+
+  const tick = async () => {
+    clearTimeout(timer);
+    if (gone) return;
+    const root = base();
+    if (!current.screenKey || !current.sessionId || !root) { draw(null); return; }
+    let next = ATTEND_TICK_MS;
+    try {
+      const res = await fetch(`${root}attend/screen/${current.sessionId}?k=${encodeURIComponent(current.screenKey)}`, { cache: 'no-store' });
+      if (gone) return;
+      if (res.ok) {
+        const screen = await res.json();
+        draw(screen);
+        // Ask again just after the code changes, not up to two seconds late.
+        if (screen.open && screen.rotatesInMs < next) next = screen.rotatesInMs + 150;
+      } else {
+        node.classList.add('is-lost');
+        where.textContent = 'This check-in is no longer on the server.';
+      }
+    } catch { /* one missed tick: the next one asks again */ }
+    if (!gone) timer = setTimeout(tick, next);
+  };
+
+  draw(null);
+  tick();
+
+  return {
+    el: node,
+    update(it) {
+      const changed = it.sessionId !== current.sessionId || it.screenKey !== current.screenKey;
+      current = it;
+      if (changed) { shownCode = null; tick(); }
+    },
+    reconcile() {},
+    telemetry: noTelemetry,
+    destroy() {
+      gone = true;
+      clearTimeout(timer);
+      cancelAnimationFrame(frame);
+      node.remove();
+    },
+  };
+}
+
 function renderTimer(item, opts) {
   const value = el('div', { class: 'r-timer-value' }, '0:00');
   const label = el('div', { class: 'r-timer-label' }, item.label || '');
@@ -1947,6 +2073,7 @@ const FACTORIES = {
   camera: renderCamera,
   set: renderSet,
   poll: renderPoll,
+  attendance: renderAttendance,
 };
 
 export function createRenderer(item, opts = {}) {

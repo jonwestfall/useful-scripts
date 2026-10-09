@@ -27,6 +27,7 @@ import { createPipPanel } from './pip.js';
 import { createDurationProber } from './duration-probe.js';
 import { initTheme, themeChoice, setThemeChoice, onThemeChange, THEME_KEY } from './theme.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
+import { createAttendancePanel } from './attendance-panel.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -3003,6 +3004,10 @@ function addToPollHistory(entry) {
 // and still on screen, and none of it is worth interrupting a class about.
 let serverKeepsSessions = false;
 let allowPollNames = false;
+let attendancePanel = null;
+// Which tab a reload was on, read before startup puts this one on Library -
+// the Attendance tab only exists once the server has said it can.
+const tabAtLoad = (() => { try { return sessionStorage.getItem('podium.ui.tab'); } catch { return null; } })();
 serverInfo().then((info) => {
   signedInAdmin = !!info.user?.isAdmin;
   if (signedInAdmin) { renderLibrary(); renderSlides(); }   // ✎ on content/decks decks, now that we know
@@ -3014,6 +3019,14 @@ serverInfo().then((info) => {
   // message - so this button only exists where there is a library to upload
   // it to, straight through the same endpoint admin.html's own upload does.
   $('#pdf-upload-row').hidden = !info.features.includes('library');
+  // Attendance (Issue #256): a server with accounts, and someone signed in.
+  if (info.features.includes('attendance') && info.user) {
+    UNAVAILABLE_TABS.delete('attendance');
+    attendancePanel = createAttendancePanel({ stage, lectureId: () => lastKnownLectureId || state.lectureId });
+    renderTabBar();
+    renderTabOrderSettings();
+    if (tabAtLoad === 'attendance') tab('attendance');
+  }
 });
 
 const recordingNow = () => serverKeepsSessions && !!state.lectureId;
@@ -5593,14 +5606,18 @@ async function connect() {
 // Adding a tab here later needs nothing else done to it: an unknown id in a
 // saved order is dropped and a new one not yet saved is appended, the same
 // defensive merge bottomSlots already does above.
-const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'music', 'mixer', 'setup'];
+const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'attendance', 'music', 'mixer', 'setup'];
+// Tabs this controller cannot use where it is: Attendance needs a server with
+// accounts (Issue #256), and is taken off this list once one says it has them.
+const UNAVAILABLE_TABS = new Set(['attendance']);
+const tabAvailable = (id) => !UNAVAILABLE_TABS.has(id);
 const TAB_LABELS = {
   library: 'Library', slides: 'Slides', now: 'Now', ink: 'Ink', camera: 'Camera', photos: 'Photos',
-  say: 'Say', timer: 'Timer', polls: 'Polls', music: 'Music', mixer: 'Mixer', setup: 'Setup',
+  say: 'Say', timer: 'Timer', polls: 'Polls', attendance: 'Attendance', music: 'Music', mixer: 'Mixer', setup: 'Setup',
 };
 const TAB_GROUPS = [
   ['present', 'Present', ['library', 'slides', 'now', 'ink', 'camera', 'photos']],
-  ['room', 'Room', ['say', 'timer', 'polls']],
+  ['room', 'Room', ['say', 'timer', 'polls', 'attendance']],
   ['sound', 'Sound', ['music', 'mixer']],
   ['setup', 'Setup', ['setup']],
 ];
@@ -5619,7 +5636,7 @@ const TAB_KEY = 'podium.ui.tab';
 function rememberedTab() {
   try {
     const saved = sessionStorage.getItem(TAB_KEY);
-    return TAB_IDS.includes(saved) ? saved : null;
+    return TAB_IDS.includes(saved) && tabAvailable(saved) ? saved : null;
   } catch { return null; }
 }
 
@@ -5660,6 +5677,8 @@ function tab(name) {
   // a reload, and reloading the controller mid-lecture is exactly what nobody
   // wants to find out they have to do.
   if (name === 'library' && !$('#plan-server').hidden) refreshServerPlans();
+  if (name === 'attendance') attendancePanel?.opened();
+  else attendancePanel?.closed();
   // Every panel shares one scrolling container (.panels), so a tab switch
   // alone does not reset it - scrolled halfway down a long Library before
   // tapping Ink lands the Ink tab starting from that same halfway point,
@@ -7053,7 +7072,7 @@ window.addEventListener('keydown', (ev) => {
 // skipping whatever it has hidden - never a fixed list, since that
 // preference already decides what "next tab" means. Wraps at both ends.
 function cycleTab(delta) {
-  const visible = presentation.tabOrder.filter((id) => !presentation.hiddenTabs.includes(id));
+  const visible = presentation.tabOrder.filter((id) => !presentation.hiddenTabs.includes(id) && tabAvailable(id));
   if (visible.length < 2) return;
   const current = document.querySelector('.tab[data-tab].is-on:not(#dual-pane-toggle)')?.dataset.tab;
   const at = visible.indexOf(current);
@@ -7410,7 +7429,7 @@ function renderTabBar() {
   for (const id of orderedTabs()) {
     const btn = nav.querySelector(`.tab[data-tab="${id}"]`);
     if (!btn) continue;
-    btn.hidden = presentation.hiddenTabs.includes(id);
+    btn.hidden = presentation.hiddenTabs.includes(id) || !tabAvailable(id);
     const group = groupOfTab(id);
     // A divider only between two groups that both have a tab showing.
     if (!btn.hidden && lastGroup && group !== lastGroup) {
@@ -7423,7 +7442,7 @@ function renderTabBar() {
 }
 
 function renderTabsMoreMenu() {
-  const hiddenIds = orderedTabs().filter((id) => presentation.hiddenTabs.includes(id));
+  const hiddenIds = orderedTabs().filter((id) => presentation.hiddenTabs.includes(id) && tabAvailable(id));
   const moreBtn = $('#tabs-more');
   const menu = $('#tabs-more-menu');
   if (!moreBtn || !menu) return;
@@ -7457,7 +7476,7 @@ function toggleTabHidden(id, hide) {
   if (hide) hiddenTabs.push(id);
   // Hiding every tab would leave nothing to tap without opening Settings
   // first - the one rule the reorder/hide UI enforces on itself.
-  if (hiddenTabs.length >= TAB_IDS.length) return;
+  if (hiddenTabs.length >= TAB_IDS.length || !TAB_IDS.some((t) => tabAvailable(t) && !hiddenTabs.includes(t))) return;
   presentation.hiddenTabs = hiddenTabs;
   savePresentation();
   renderTabBar();
@@ -7469,7 +7488,7 @@ function renderTabOrderSettings() {
   if (!list) return;
   const rows = [];
   for (const [group, label] of TAB_GROUPS) {
-    const ids = presentation.tabOrder.filter((id) => groupOfTab(id) === group);
+    const ids = presentation.tabOrder.filter((id) => groupOfTab(id) === group && tabAvailable(id));
     if (!ids.length) continue;
     rows.push(el('div', { class: 'tab-order-group' }, label));
     ids.forEach((id, i) => {

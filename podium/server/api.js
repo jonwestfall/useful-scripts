@@ -36,6 +36,7 @@ const store = require('./store.js');
 const kiosks = require('./kiosks.js');
 const pptxConvert = require('./pptx-convert.js');
 const roster = require('./roster.js');
+const attendance = require('./attendance.js');
 const zipImport = require('./zip-import.js');
 const zipStaging = require('./zip-staging.js');
 
@@ -182,7 +183,7 @@ function capabilities(ctx, user) {
   // every request answers 401 - a feature announced before it can be used.
   const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
   const features = ctx.db && ctx.hasAccounts()
-    ? ['auth', 'library', 'plans', 'templates', 'deckTemplates', 'settings', 'sessions', 'people', ...(user?.isAdmin ? ['content', 'kiosks'] : [])]
+    ? ['auth', 'library', 'plans', 'templates', 'deckTemplates', 'settings', 'sessions', 'people', 'attendance', ...(user?.isAdmin ? ['content', 'kiosks'] : [])]
     : (ctx.db ? ['auth'] : []);
   return {
     podium: true,
@@ -453,6 +454,60 @@ async function handleApi(req, res, url, ctx) {
         const person = roster.remove(ctx.db, user, code, what[0]);
         auditLog(ctx, req, user, 'roster_removed', { courseCode: String(code).toLowerCase(), id: person.id, name: person.name });
         json(res, 200, { person });
+        return true;
+      }
+    }
+
+    // --- taking attendance (Issue #256) -----------------------------------
+    //
+    // Anyone in a course (owner or TA) opens and closes check-in, watches it
+    // fill and marks people by hand. The students' side is public and lives
+    // under /attend - see handleAttend in podium-server.js.
+
+    if (head === 'attendance') {
+      const courseCode = (session) => String(session.course || '').toLowerCase();
+      if (rest[0] === 'current' && rest.length === 1 && req.method === 'GET') {
+        json(res, 200, attendance.currentSession(ctx.db, user, {
+          course: url.searchParams.get('course'), lectureId: url.searchParams.get('lecture') || null,
+        }));
+        return true;
+      }
+      if (rest[0] === 'sessions' && rest.length === 1 && req.method === 'POST') {
+        const body = await readJson(req, 8 * 1024);
+        const { session, reopened } = attendance.openSession(ctx.db, user, body);
+        auditLog(ctx, req, user, reopened ? 'attendance_reopened' : 'attendance_opened', { courseCode: courseCode(session), sessionId: session.id });
+        json(res, 200, { session, reopened });
+        return true;
+      }
+      if (rest[0] === 'sessions' && rest.length === 2 && req.method === 'GET') {
+        json(res, 200, attendance.getSession(ctx.db, user, rest[1]));
+        return true;
+      }
+      if (rest[0] === 'sessions' && rest.length === 2 && req.method === 'PATCH') {
+        const body = await readJson(req, 8 * 1024);
+        const session = attendance.changeSession(ctx.db, user, rest[1], body);
+        if (body.open !== undefined) {
+          auditLog(ctx, req, user, session.open ? 'attendance_reopened' : 'attendance_closed', { courseCode: courseCode(session), sessionId: session.id });
+        }
+        json(res, 200, { session });
+        return true;
+      }
+      if (rest[0] === 'sessions' && rest[2] === 'marks' && rest.length === 3 && req.method === 'POST') {
+        const changed = attendance.markByHand(ctx.db, user, rest[1], await readJson(req, 8 * 1024));
+        auditLog(ctx, req, user, 'attendance_marked', { sessionId: Number(rest[1]), ...changed });
+        json(res, 200, changed);
+        return true;
+      }
+      if (rest[0] === 'sessions' && rest[2] === 'marks' && rest.length === 4 && req.method === 'PATCH') {
+        const changed = attendance.changeMark(ctx.db, user, rest[1], rest[3], await readJson(req, 8 * 1024));
+        auditLog(ctx, req, user, 'attendance_marked', { sessionId: Number(rest[1]), ...changed });
+        json(res, 200, changed);
+        return true;
+      }
+      if (rest[0] === 'sessions' && rest[2] === 'marks' && rest.length === 4 && req.method === 'DELETE') {
+        const changed = attendance.removeMark(ctx.db, user, rest[1], rest[3]);
+        auditLog(ctx, req, user, 'attendance_unmarked', { sessionId: Number(rest[1]), ...changed });
+        json(res, 200, changed);
         return true;
       }
     }
@@ -1004,6 +1059,9 @@ async function handleApi(req, res, url, ctx) {
         allowPollNames: ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false,
         // Issue #106: the largest ZIP an import accepts, in MB.
         maxZipUploadMb: zipImport.uploadMbSetting(ctx.db, store),
+        // Issue #256: how long the device and network hashes behind an
+        // attendance flag are kept. The marks themselves stay.
+        attendanceRetentionDays: attendance.retentionDays(ctx.db),
       });
       if (rest.length === 1 && req.method === 'GET') {
         json(res, 200, current());
@@ -1021,6 +1079,9 @@ async function handleApi(req, res, url, ctx) {
           }
           store.setSystemSetting(ctx.db, 'max_zip_upload_mb', String(mb));
           changed.maxZipUploadMb = mb;
+        }
+        if (body.attendanceRetentionDays !== undefined) {
+          changed.attendanceRetentionDays = attendance.setRetentionDays(ctx.db, body.attendanceRetentionDays);
         }
         if (body.allowPollNames !== undefined) {
           store.setSystemSetting(ctx.db, 'allow_poll_names', body.allowPollNames ? '1' : '0');

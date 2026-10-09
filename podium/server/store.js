@@ -577,6 +577,67 @@ const MIGRATIONS = [
         WHERE student_id <> '' AND removed_at IS NULL;
     `);
   },
+  (db) => {
+    db.exec(`
+      -- Taking attendance (Issue #256, phase 2). One session is one check-in
+      -- window for one course, usually one per lecture; it can be closed and
+      -- opened again. The code on the projector is worked out from the secret
+      -- and the time, never stored; the screen key is what lets a display ask
+      -- for it.
+      CREATE TABLE attendance_sessions (
+        id          INTEGER PRIMARY KEY,
+        course_id   INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        lecture_id  INTEGER REFERENCES lectures(id) ON DELETE SET NULL,
+        title       TEXT    NOT NULL DEFAULT '',
+        created_at  INTEGER NOT NULL,
+        created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        opened_at   INTEGER,              -- set while check-in is open
+        closed_at   INTEGER,
+        late_rule   TEXT    NOT NULL DEFAULT '{}',   -- {after: minutes or null, from: ms}
+        late_now    INTEGER NOT NULL DEFAULT 0,
+        rotate_s    INTEGER NOT NULL DEFAULT 15,
+        secret      TEXT    NOT NULL,
+        screen_key  TEXT    NOT NULL
+      );
+      CREATE INDEX attendance_sessions_by_course ON attendance_sessions(course_id, created_at);
+      CREATE INDEX attendance_sessions_by_lecture ON attendance_sessions(lecture_id);
+      CREATE INDEX attendance_sessions_open ON attendance_sessions(opened_at) WHERE opened_at IS NOT NULL;
+
+      -- One mark per person per session: someone on the roster, or a guest
+      -- who gave a name and an email. Flags (a shared phone) are kept with
+      -- the mark; the evidence behind them is kept only for the retention
+      -- period, below.
+      CREATE TABLE attendance_marks (
+        id               INTEGER PRIMARY KEY,
+        session_id       INTEGER NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+        roster_id        INTEGER REFERENCES course_roster(id) ON DELETE SET NULL,
+        guest_name       TEXT    NOT NULL DEFAULT '',
+        guest_student_id TEXT    NOT NULL DEFAULT '',
+        guest_email      TEXT    NOT NULL DEFAULT '',
+        status           TEXT    NOT NULL,          -- present | late | absent | excused
+        how              TEXT    NOT NULL,          -- scan | code | hand
+        at               INTEGER NOT NULL,
+        flags            TEXT    NOT NULL DEFAULT '[]',
+        marked_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        edited_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        edited_at        INTEGER
+      );
+      CREATE UNIQUE INDEX attendance_marks_person ON attendance_marks(session_id, roster_id)
+        WHERE roster_id IS NOT NULL;
+      CREATE INDEX attendance_marks_by_session ON attendance_marks(session_id, at);
+
+      -- Keyed hashes of the browser token and network address behind a
+      -- check-in: what a "same phone" flag rests on. Pruned after the
+      -- attendance retention period; the marks stay.
+      CREATE TABLE attendance_evidence (
+        mark_id     INTEGER PRIMARY KEY REFERENCES attendance_marks(id) ON DELETE CASCADE,
+        device_hash TEXT    NOT NULL DEFAULT '',
+        ip_hash     TEXT    NOT NULL DEFAULT '',
+        created_at  INTEGER NOT NULL
+      );
+      CREATE INDEX attendance_evidence_by_age ON attendance_evidence(created_at);
+    `);
+  },
 ];
 
 function migrate(db) {

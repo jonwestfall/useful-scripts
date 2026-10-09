@@ -51,6 +51,7 @@ const kiosks = require('./kiosks.js');
 const api = require('./api.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
+const attendance = require('./attendance.js');
 const zipStaging = require('./zip-staging.js');
 const { createViewCodes, VIEW_ROOM_RE } = require('./view-codes.js');
 
@@ -111,6 +112,9 @@ const AUTH_USER = process.env.AUTH_USER || 'podium';
 const AUTH_PASSWORD = process.env.AUTH_PASSWORD || '';
 const AUTH_OPEN_PATHS = new Set([
   '/join.html', '/assets/js/join.js', '/login.html', '/favicon.ico',
+  // A student checking in (Issue #256) has no account either; the page is
+  // self-contained, and its /attend routes answer nothing without a code.
+  '/attend.html',
   '/guest.html', '/assets/js/guest.js', '/assets/js/bus.js', '/assets/js/config.js',
   '/assets/js/crypto.js', '/assets/js/transport/index.js', '/assets/js/transport/ws.js',
   '/assets/js/transport/mqtt.js', '/assets/js/transport/supabase.js',
@@ -578,6 +582,51 @@ function viewerMayRead(req, pathname) {
   return !!viewerPassHost(req);
 }
 
+// --- attendance check-in (Issue #256) ----------------------------------------
+//
+// The student's side of attendance.js, public for the same reason /poll is: a
+// student checking in has no account and must not be asked for one. What it
+// answers without a valid code is nothing at all; with one, a ticket good for
+// a few minutes, a name search over the roster (names and the end of an ID,
+// never an email), and the check-in itself. /attend/screen is the display's:
+// the current code, for whoever holds the session's screen key.
+async function handleAttend(req, res, url) {
+  const [, , action = '', id = ''] = url.pathname.split('/');
+  if (!action && req.method === 'GET') {
+    res.writeHead(302, { location: `/attend.html${url.search}`, 'cache-control': 'no-store' });
+    res.end();
+    return;
+  }
+  if (!db || !hasAccounts()) { pollJson(res, 404, { error: 'this server does not take attendance' }); return; }
+  const answer = (fn) => {
+    try {
+      pollJson(res, 200, fn());
+    } catch (err) {
+      pollJson(res, err.status || 500, {
+        error: err.status ? err.message : 'that did not work',
+        ...(err.retryAfterSeconds ? { retryAfterSeconds: err.retryAfterSeconds } : {}),
+      });
+    }
+  };
+  if (action === 'screen' && id && req.method === 'GET') {
+    answer(() => attendance.screen(db, { sessionId: id, key: url.searchParams.get('k') || '' }));
+    return;
+  }
+  if (req.method !== 'POST') { pollJson(res, 405, { error: 'not something check-in can do' }); return; }
+  let body;
+  try { body = await readJson(req, 4 * 1024); } catch { pollJson(res, 400, { error: 'bad body' }); return; }
+  const ip = api.clientIp(req);
+  if (action === 'code') { answer(() => attendance.redeemCode(db, { code: body.code, device: body.device, ip })); return; }
+  if (action === 'people') { answer(() => attendance.searchPeople(db, { ticket: body.ticket, device: body.device, q: body.q })); return; }
+  if (action === 'checkin') {
+    answer(() => attendance.checkIn(db, {
+      ticket: body.ticket, device: body.device, ip, rosterId: body.rosterId, guest: body.guest, how: body.how,
+    }));
+    return;
+  }
+  pollJson(res, 404, { error: 'no such check-in route' });
+}
+
 async function handleViewPass(req, res) {
   if (req.method !== 'POST') { api.json(res, 405, { error: 'POST a room' }); return; }
   const body = await readJson(req, 1024);
@@ -654,6 +703,12 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/view-code' || url.pathname.startsWith('/view-code/')) {
     handleViewCode(req, res, url).catch(() => {
       try { pollJson(res, 500, { error: 'viewer code failed' }); } catch { /* response already begun */ }
+    });
+    return;
+  }
+  if (url.pathname === '/attend' || url.pathname.startsWith('/attend/')) {
+    handleAttend(req, res, url).catch(() => {
+      try { pollJson(res, 500, { error: 'check-in failed' }); } catch { /* response already begun */ }
     });
     return;
   }
@@ -1081,6 +1136,23 @@ function pruneLectureFiles() {
   }
 }
 
+// Attendance's own retention (Issue #256): the keyed device and network hashes
+// behind a "same phone" flag go after the period an administrator set (30
+// days unless they chose otherwise); the marks stay. Hourly, so a shortened
+// period takes effect the same day, and once at start.
+function pruneAttendance() {
+  if (!db) return;
+  try {
+    const { removed } = attendance.prune(db);
+    if (removed) console.log(`podium: attendance retention forgot the device details of ${removed} check-in(s)`);
+  } catch (err) {
+    console.error(`podium: attendance retention sweep failed (${err.message})`);
+  }
+}
+pruneAttendance();
+const attendanceSweep = db ? setInterval(pruneAttendance, 60 * 60 * 1000) : null;
+attendanceSweep?.unref();
+
 const retentionSweep = db ? setInterval(pruneLectureFiles, 24 * 60 * 60 * 1000) : null;
 retentionSweep?.unref();
 
@@ -1138,6 +1210,7 @@ server.on('close', () => {
   clearInterval(heartbeat);
   if (sessionSweep) clearInterval(sessionSweep);
   if (retentionSweep) clearInterval(retentionSweep);
+  if (attendanceSweep) clearInterval(attendanceSweep);
 });
 server.listen(PORT, HOST || undefined, () => {
   console.log(`podium relay on ${HOST || '*'}:${PORT}${STATIC ? ` (serving ${STATIC})` : ' (relay only)'}`);

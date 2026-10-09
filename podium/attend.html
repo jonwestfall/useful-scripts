@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="robots" content="noindex">
+<title>Check in — Podium</title>
+<!-- Checking in for attendance (Issue #256). Like join.html, everything this
+     page needs is in this file: it is opened cold by a room full of phones,
+     with no account and whatever signal they have. It talks to the server's
+     /attend routes and nothing else. What it keeps on the phone: a random
+     token that tells the server "the same browser as before" (never who you
+     are), and the receipts of your own check-ins, so reopening the page shows
+     the last one again. -->
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d10; --panel: #151a21; --line: #273040; --ink: #e8ecf2;
+    --dim: #93a0b4; --accent: #4c8dff; --button: #2b66d9; --field: #0f141b; --picked: #10251d; --bad: #ff9d9d; --live: #21c07a; --late: #f5b14c;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f7f8fa; --panel: #ffffff; --line: #d7dde5; --ink: #121821;
+    --dim: #4f5b6b; --accent: #1f5fcc; --button: #1f5fcc; --live: #13804f; --field: #ffffff;
+    --picked: #e3f4ec; --bad: #b42318; --late: #8a5a00;
+  }
+  .theme-toggle {
+    position: fixed; top: 12px; right: 12px; width: auto; min-height: 0;
+    padding: 6px 10px; font-size: 16px; line-height: 1; font-weight: 400;
+    background: var(--panel); border-color: var(--line); color: var(--dim);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
+    background: var(--bg); color: var(--ink);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 34rem; margin-inline: auto;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: .02em; }
+  h2 { font-size: 18px; margin: 0 0 12px; }
+  .sub { color: var(--dim); font-size: 14px; margin: 0 0 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+  label { display: block; font-size: 14px; color: var(--dim); margin: 10px 0 6px; }
+  label:first-child { margin-top: 0; }
+  input, button {
+    font: inherit; color: var(--ink); background: var(--field);
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+    width: 100%; -webkit-appearance: none;
+  }
+  #code {
+    letter-spacing: .35em; text-align: center;
+    font-size: 30px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  button { background: var(--button); border-color: var(--button); color: #fff; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.plain { background: none; border-color: var(--line); color: var(--ink); font-weight: 500; }
+  button.link { background: none; border: 0; color: var(--accent); padding: 8px 0; width: auto; font-weight: 500; text-decoration: underline; }
+  .row { display: flex; gap: 10px; margin-top: 12px; }
+  .note { margin-top: 12px; font-size: 14px; color: var(--dim); min-height: 1.4em; }
+  .note.bad { color: var(--bad); }
+  .course { font-size: 14px; color: var(--dim); margin: 0 0 12px; }
+  /* Thumb-sized: tapped standing up, one-handed, in a doorway. */
+  .person {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left;
+    background: var(--field); border-color: var(--line); color: var(--ink);
+    font-weight: 500; min-height: 56px; margin-top: 8px;
+  }
+  .person .hint { color: var(--dim); font-size: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .receipt { text-align: center; border-color: var(--live); background: var(--picked); }
+  .receipt .tick { font-size: 44px; line-height: 1; color: var(--live); }
+  .receipt .who { font-size: 22px; font-weight: 700; margin: 8px 0 4px; }
+  .receipt .when { font-size: 18px; font-variant-numeric: tabular-nums; }
+  .receipt .status { font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--live); }
+  .receipt.is-late { border-color: var(--late); }
+  .receipt.is-late .status, .receipt.is-late .tick { color: var(--late); }
+  .receipt .small { font-size: 13px; color: var(--dim); margin-top: 10px; }
+  [hidden] { display: none !important; }
+</style>
+<script>
+(function () {
+  try {
+    var choice = localStorage.getItem('podium.theme');
+    if (choice !== 'light' && choice !== 'dark') {
+      choice = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    }
+    document.documentElement.dataset.theme = choice;
+  } catch (_e) { /* storage blocked: dark */ }
+}());
+</script>
+</head>
+<body>
+<button id="theme-toggle" class="theme-toggle" type="button" aria-label="Theme: light or dark">◐</button>
+
+<h1>Check in</h1>
+<p class="sub">Attendance for your class, from your own phone.</p>
+
+<!-- 1. The code: from the QR (in the address) or typed. -->
+<form id="enter" class="card">
+  <label for="code">The six-digit code on the screen</label>
+  <input id="code" name="code" inputmode="numeric" pattern="[0-9 ]*" autocomplete="off" maxlength="7" placeholder="······" aria-label="Six-digit code">
+  <div class="row"><button type="submit">Continue</button></div>
+  <p class="note" id="enter-note" role="status"></p>
+</form>
+
+<!-- 2. Who are you? -->
+<div id="who" class="card" hidden>
+  <p class="course" id="who-course"></p>
+  <div id="find">
+    <label for="search">Find your name</label>
+    <input id="search" type="search" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Start typing your name or ID">
+    <div id="matches" role="list"></div>
+    <button id="not-listed" class="link" type="button">I’m not on the list</button>
+  </div>
+  <div id="confirm" hidden>
+    <h2 id="confirm-name"></h2>
+    <p class="sub" style="margin: 0">Only check in as yourself. Your instructor sees which phone each check-in came from.</p>
+    <div class="row">
+      <button id="confirm-go" type="button">Check in</button>
+      <button id="confirm-back" class="plain" type="button">Back</button>
+    </div>
+  </div>
+  <form id="guest" hidden>
+    <p class="sub" id="guest-why" style="margin: 0 0 6px">Not on the class list? Sign in as a guest, and your instructor can follow up.</p>
+    <label for="guest-name">Your name</label>
+    <input id="guest-name" autocomplete="name" maxlength="120" required>
+    <label for="guest-id">Student ID (if you have one)</label>
+    <input id="guest-id" autocomplete="off" maxlength="64">
+    <label for="guest-email">Email</label>
+    <input id="guest-email" type="email" autocomplete="email" maxlength="200" required>
+    <div class="row">
+      <button type="submit">Check in</button>
+      <button id="guest-back" class="plain" type="button">Back</button>
+    </div>
+  </form>
+  <p class="note" id="who-note" role="status"></p>
+</div>
+
+<!-- 3. The receipt: what to show if a mark is ever disputed. -->
+<div id="receipt" class="card receipt" hidden role="status">
+  <div class="tick" aria-hidden="true">✓</div>
+  <div class="who" id="r-name"></div>
+  <div class="when"><span id="r-time"></span> · <span class="status" id="r-status"></span></div>
+  <div class="small" id="r-course"></div>
+  <div class="small" id="r-already" hidden>You were already checked in — this is your first check-in.</div>
+  <!-- A lent phone: someone else checks in on it. Both check-ins count, and
+       the instructor sees they came from one phone. -->
+  <button id="r-another" class="link" type="button" hidden>Check in someone else on this phone</button>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var DEVICE_KEY = 'podium.attend.device';
+  var RECEIPTS_KEY = 'podium.attend.receipts';
+  var ticket = '';
+  var session = null;
+  var how = 'code';
+  var picked = null;
+
+  // A random token for this browser: "the same phone as before", nothing more.
+  var device = (function () {
+    try {
+      var saved = localStorage.getItem(DEVICE_KEY);
+      if (saved && /^[A-Za-z0-9_-]{16,64}$/.test(saved)) return saved;
+    } catch (_e) { /* storage blocked */ }
+    var bytes = new Uint8Array(18);
+    crypto.getRandomValues(bytes);
+    var made = btoa(String.fromCharCode.apply(null, bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    try { localStorage.setItem(DEVICE_KEY, made); } catch (_e) { /* this visit only */ }
+    return made;
+  }());
+
+  function receipts() {
+    try { var all = JSON.parse(localStorage.getItem(RECEIPTS_KEY) || '{}'); return all && typeof all === 'object' ? all : {}; } catch (_e) { return {}; }
+  }
+  function keepReceipt(r) {
+    var all = receipts();
+    all[r.sessionId] = r;
+    // The last few only: a term of receipts is not this page's to hoard.
+    var ids = Object.keys(all).sort(function (a, b) { return all[b].at - all[a].at; }).slice(0, 10);
+    var kept = {};
+    ids.forEach(function (id) { kept[id] = all[id]; });
+    try { localStorage.setItem(RECEIPTS_KEY, JSON.stringify(kept)); } catch (_e) { /* shown once, not kept */ }
+  }
+
+  async function post(path, body) {
+    var res = await fetch('/attend/' + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(Object.assign({ device: device }, body)),
+    });
+    var data = await res.json().catch(function () { return {}; });
+    if (!res.ok) {
+      var err = new Error(data.error || 'that did not work - try again');
+      err.status = res.status;
+      err.retry = data.retryAfterSeconds;
+      throw err;
+    }
+    return data;
+  }
+
+  function say(id, text, bad) {
+    $(id).textContent = text || '';
+    $(id).classList.toggle('bad', !!bad);
+  }
+
+  function show(step) {
+    $('enter').hidden = step !== 'enter';
+    $('who').hidden = step !== 'who';
+    if (step !== 'receipt') $('receipt').hidden = true;
+  }
+
+  function showReceipt(r) {
+    var time = new Date(r.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    $('r-name').textContent = r.name;
+    $('r-time').textContent = time;
+    $('r-status').textContent = r.status;
+    $('r-course').textContent = [r.course, r.title, new Date(r.at).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })].filter(Boolean).join(' · ');
+    $('r-already').hidden = !r.already;
+    $('r-another').hidden = !ticket || !session || session.id !== r.sessionId;
+    $('receipt').classList.toggle('is-late', r.status === 'late');
+    show('receipt');
+    $('receipt').hidden = false;
+  }
+
+  // --- 1. the code ------------------------------------------------------------
+
+  async function useCode(code) {
+    say('enter-note', 'Checking…');
+    try {
+      var got = await post('code', { code: code });
+      ticket = got.ticket;
+      session = got.session;
+    } catch (err) {
+      say('enter-note', err.status === 429 && err.retry ? err.message + ' (' + err.retry + ' s)' : err.message, true);
+      show('enter');
+      $('code').focus();
+      return;
+    }
+    say('enter-note', '');
+    var mine = receipts()[session.id];
+    if (mine) { showReceipt(Object.assign({}, mine, { already: true })); return; }
+    $('who-course').textContent = [session.course, session.title || session.courseTitle].filter(Boolean).join(' · ')
+      + (session.late ? ' · check-ins now count as late' : '');
+    show('who');
+    if (session.roster) { findStep(); } else { guestStep(false); }
+  }
+
+  $('enter').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var code = $('code').value.replace(/\D/g, '');
+    if (code.length !== 6) { say('enter-note', 'The code is six digits.', true); return; }
+    how = 'code';
+    useCode(code);
+  });
+
+  // --- 2. who are you? -----------------------------------------------------------
+
+  function findStep() {
+    $('find').hidden = false;
+    $('confirm').hidden = true;
+    $('guest').hidden = true;
+    say('who-note', '');
+    $('search').focus();
+  }
+
+  function guestStep(fromList) {
+    $('find').hidden = true;
+    $('confirm').hidden = true;
+    $('guest').hidden = false;
+    $('guest-back').hidden = !fromList;
+    $('guest-why').textContent = fromList
+      ? 'Not on the class list? Sign in as a guest, and your instructor can follow up.'
+      : 'This class has no list yet, so everyone signs in with their name.';
+    say('who-note', '');
+    $('guest-name').focus();
+  }
+
+  var searchSeq = 0;
+  var searchTimer = 0;
+  $('search').addEventListener('input', function () {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(runSearch, 180);
+  });
+
+  async function runSearch() {
+    var q = $('search').value.trim();
+    var seq = ++searchSeq;
+    if (q.length < 2) { $('matches').replaceChildren(); say('who-note', ''); return; }
+    try {
+      var got = await post('people', { ticket: ticket, q: q });
+      if (seq !== searchSeq) return;
+      $('matches').replaceChildren.apply($('matches'), got.people.map(function (p) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'person';
+        b.setAttribute('role', 'listitem');
+        var n = document.createElement('span');
+        n.textContent = p.name;
+        var h = document.createElement('span');
+        h.className = 'hint';
+        h.textContent = p.idHint ? 'ID ' + p.idHint : '';
+        b.append(n, h);
+        b.addEventListener('click', function () { pick(p); });
+        return b;
+      }));
+      say('who-note', got.people.length ? '' : 'Nobody by that name — check the spelling, or use “I’m not on the list”.');
+    } catch (err) {
+      if (seq === searchSeq) failed(err);
+    }
+  }
+
+  function pick(p) {
+    picked = p;
+    $('find').hidden = true;
+    $('confirm').hidden = false;
+    $('confirm-name').textContent = 'Check in as ' + p.name + '?';
+    $('confirm-go').focus();
+  }
+
+  $('confirm-back').addEventListener('click', findStep);
+  $('r-another').addEventListener('click', function () {
+    $('search').value = '';
+    $('matches').replaceChildren();
+    ['guest-name', 'guest-id', 'guest-email'].forEach(function (id) { $(id).value = ''; });
+    show('who');
+    if (session.roster) { findStep(); } else { guestStep(false); }
+  });
+  $('not-listed').addEventListener('click', function () { guestStep(true); });
+  $('guest-back').addEventListener('click', findStep);
+
+  async function send(body, button) {
+    button.disabled = true;
+    say('who-note', 'Checking in…');
+    try {
+      var r = await post('checkin', Object.assign({ ticket: ticket, how: how }, body));
+      keepReceipt(Object.assign({}, r, { already: false }));
+      showReceipt(r);
+    } catch (err) {
+      failed(err);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  $('confirm-go').addEventListener('click', function (ev) { send({ rosterId: picked.id }, ev.currentTarget); });
+  $('guest').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    send({ guest: { name: $('guest-name').value, studentId: $('guest-id').value, email: $('guest-email').value } },
+      ev.currentTarget.querySelector('button[type=submit]'));
+  });
+
+  // A ticket that ran out, or check-in that closed, sends the phone back to
+  // the code; anything else is said where it happened.
+  function failed(err) {
+    if (err.status === 401 || err.status === 410 || (err.status === 404 && /no longer exists/.test(err.message))) {
+      show('enter');
+      say('enter-note', err.message, true);
+      $('code').value = '';
+      $('code').focus();
+      return;
+    }
+    say('who-note', err.message, true);
+  }
+
+  // --- start --------------------------------------------------------------------
+
+  var params = new URLSearchParams(location.search);
+  var fromQr = (params.get('c') || '').replace(/\D/g, '');
+  if (fromQr) {
+    // Out of the address straight away: a reload a minute later must not
+    // send a code that has long since changed.
+    history.replaceState(null, '', location.pathname);
+    how = 'scan';
+    $('code').value = fromQr;
+    useCode(fromQr);
+  } else {
+    // The last check-in on this phone, if it was today: what "show me my
+    // receipt" means when someone asks.
+    var all = receipts();
+    var last = Object.keys(all).map(function (k) { return all[k]; }).sort(function (a, b) { return b.at - a.at; })[0];
+    if (last && new Date(last.at).toDateString() === new Date().toDateString()) {
+      showReceipt(Object.assign({}, last, { already: false }));
+      $('enter').hidden = false;
+    }
+    $('code').focus();
+  }
+}());
+</script>
+<script>
+// The ☀ / ☾ / ◐ button, shared with every Podium page in this browser.
+(function () {
+  var button = document.getElementById('theme-toggle');
+  if (!button) return;
+  var order = ['auto', 'light', 'dark'];
+  var icons = { auto: '◐', light: '☀', dark: '☾' };
+  var names = { auto: 'Follow this device', light: 'Light', dark: 'Dark' };
+  function choice() {
+    try { var c = localStorage.getItem('podium.theme'); return order.indexOf(c) >= 0 ? c : 'auto'; } catch (_e) { return 'auto'; }
+  }
+  function paint() {
+    var c = choice();
+    var light = c === 'light' || (c === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+    document.documentElement.dataset.theme = light ? 'light' : 'dark';
+    button.textContent = icons[c];
+    button.setAttribute('aria-label', 'Theme: ' + names[c]);
+    button.title = 'Theme: ' + names[c];
+  }
+  button.addEventListener('click', function () {
+    var next = order[(order.indexOf(choice()) + 1) % order.length];
+    try { localStorage.setItem('podium.theme', next); } catch (_e) { /* this visit only */ }
+    paint();
+  });
+  if (window.matchMedia) window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', paint);
+  paint();
+}());
+</script>
+</body>
+</html>

@@ -134,6 +134,16 @@
       <span class="hint">Default 200. Each file inside still has to fit its own type's limit, and what a ZIP may unpack to grows with this.</span>
       <span class="hint" id="zip-settings-status" role="status"></span>
     </div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 12px 0">
+    <div class="admin-head">
+      <h2>Attendance</h2>
+    </div>
+    <div class="admin-actions" style="align-items: flex-start; flex-direction: column; gap: 8px;">
+      <label for="attendance-retention-days">Keep check-in device details for (days)</label>
+      <input id="attendance-retention-days" type="number" min="1" max="3650" step="1" inputmode="numeric" style="width: 120px;">
+      <span class="hint">Default 30. A check-in keeps keyed hashes of the phone's browser token and network address, so a phone that checked in several people can be flagged. After this many days they are deleted; the attendance marks themselves, and any flag already raised, stay.</span>
+      <span class="hint" id="attendance-settings-status" role="status"></span>
+    </div>
   </section>
   </div>
 

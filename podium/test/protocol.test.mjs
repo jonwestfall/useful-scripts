@@ -829,6 +829,18 @@ chk('unknown command ignored', applyCommand(s, {op:'nope'}) === false);
     JSON.stringify(v.ink) === JSON.stringify({ surfaces: { 'poll:ABCD': 'd1' } }));
   chk('what is on screen is all there', v.armed && v.layout === 'single' && Array.isArray(v.panels) && v.watermark && v.overlay && v.music);
 
+  // Issue #256: check-in on screen. A viewer is not in the room, so it never
+  // gets the key that fetches the rotating code.
+  const checkin = initialState();
+  applyCommand(checkin, { op: 'stage', item: { type: 'attendance', sessionId: '7', screenKey: 'abcDEF_123-x', course: 'PSY415' } });
+  applyCommand(checkin, { op: 'take' });
+  chk('a check-in item keeps its session and screen key on the display',
+    checkin.program.type === 'attendance' && checkin.program.sessionId === 7 && checkin.program.screenKey === 'abcDEF_123-x');
+  const seen = viewerState({ ...checkin, ink: wire.ink }, {});
+  chk('but a viewer gets it without the key', seen.program.type === 'attendance' && seen.program.screenKey === '' && checkin.program.screenKey === 'abcDEF_123-x');
+  applyCommand(checkin, { op: 'stage', item: { type: 'attendance', sessionId: 8, screenKey: 'not a key!' } });
+  chk('a malformed key is dropped', checkin.preview?.screenKey === '' || checkin.program.screenKey === '');
+
   const deck = [
     '---', 'marp: true', 'theme: default', '---', '',
     '<!-- _class: lead -->', '# Week 6', '', '<!-- Remind them the exam moved to Friday -->', '',

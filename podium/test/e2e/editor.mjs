@@ -2044,6 +2044,145 @@ ok(`and the server refuses a TA's change too (${tried})`, tried === 403);
 await ta.close();
 }
 
+if (want('attendance: checking in from phones (#256)')) {
+console.log('\n-- attendance: checking in from phones (#256) --');
+// Its own course, so the rosters test above can run or not.
+const rootCtx = await signedIn('root');
+const rootPage = await rootCtx.newPage();
+await rootPage.goto(`${base}/me.html`);
+await rootPage.evaluate(async () => {
+  const send = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await send('/api/courses', { code: 'att101', title: 'Attendance 101' });
+  await send('/api/courses/att101/members', { username: 'owen', role: 'owner' });
+  await send('/api/courses/att101/members', { username: 'tia', role: 'member' });
+  await fetch('/api/courses/att101/roster/import?apply=1', { method: 'POST', body: 'name,student id\nJane Doe,A100123\nSam Lee,A200456\nBo Kim,A300789\nAnn Nophone,A400111\n' });
+});
+await rootCtx.close();
+
+const owner = await signedIn('owen');
+const screen = await owner.newPage();
+trap(screen, 'attendance display');
+await screen.goto(`${base}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await owner.newPage();
+trap(pad, 'attendance controller');
+await pad.goto(`${base}/control.html`);
+await pad.waitForSelector('.tab[data-tab="attendance"]:not([hidden])', { timeout: 10000 })
+  .then(() => ok('on a server with accounts the controller has an Attendance tab', true))
+  .catch(() => ok('on a server with accounts the controller has an Attendance tab', false));
+await pad.click('.tab[data-tab="attendance"]');
+await pad.waitForSelector('#att-course option[value="att101"]', { state: 'attached', timeout: 10000 });
+await pad.selectOption('#att-course', 'att101');
+await pad.click('#att-open');
+await pad.waitForSelector('#att-live:not([hidden])', { timeout: 10000 });
+ok(`Open check-in opens it (${await pad.textContent('#att-summary')})`, /Check-in is open · 0 checked in of 4/.test(await pad.textContent('#att-summary')));
+const codeOnScreen = async () => {
+  await screen.waitForFunction(() => /^\d{3} \d{3}$/.test(document.querySelector('.layer[data-role="program"] .r-att-code')?.textContent || ''), null, { timeout: 15000 });
+  return (await screen.textContent('.layer[data-role="program"] .r-att-code')).replace(/\D/g, '');
+};
+const first = await codeOnScreen().catch(() => '');
+ok(`and puts a six-digit code and a QR on the projector (${first})`, /^\d{6}$/.test(first)
+  && await screen.isVisible('.layer[data-role="program"] .r-att-qr svg')
+  && /\/attend and type the code/.test(await screen.textContent('.layer[data-role="program"] .r-att-url')));
+
+const phone = async (tag) => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage();
+  trap(page, tag);
+  return { ctx, page };
+};
+const pickName = async (page, typed, name) => {
+  await page.fill('#search', typed);
+  await page.click(`#matches .person:has-text("${name}")`);
+  await page.click('#confirm-go');
+  await page.waitForSelector('#receipt:not([hidden])', { timeout: 10000 });
+  return (await page.textContent('#receipt')).replace(/\s+/g, ' ');
+};
+
+// Jane scans the QR.
+const jane = await phone('phone (Jane)');
+await jane.page.goto(`${base}/attend.html?c=${await codeOnScreen()}`);
+await jane.page.waitForSelector('#who:not([hidden])', { timeout: 10000 });
+ok('a scanned code goes straight to "find your name", with no sign-in', /ATT101/.test(await jane.page.textContent('#who-course')));
+ok('and the code is out of the address at once', !(await jane.page.evaluate(() => location.search)));
+await jane.page.fill('#search', 'ja');
+await jane.page.waitForSelector('#matches .person', { timeout: 5000 });
+ok(`the search shows names and the end of an ID (${(await jane.page.textContent('#matches')).replace(/\s+/g, ' ')})`,
+  /Jane Doe/.test(await jane.page.textContent('#matches')) && /ID …123/.test(await jane.page.textContent('#matches')));
+const janeReceipt = await pickName(jane.page, 'jane', 'Jane Doe');
+ok(`picking yourself checks you in, with a receipt (${janeReceipt.trim()})`, /Jane Doe/.test(janeReceipt) && /present/i.test(janeReceipt));
+
+// Sam types it, after one typo.
+const sam = await phone('phone (Sam)');
+await sam.page.goto(`${base}/attend`);
+await sam.page.waitForSelector('#code');
+ok('<server>/attend is the page to type the code on', /\/attend\.html$/.test(sam.page.url()));
+expecting.attendRefused = true;
+await sam.page.fill('#code', '000000');
+await sam.page.click('#enter button[type=submit]');
+await sam.page.waitForFunction(() => /not right/.test(document.querySelector('#enter-note').textContent), null, { timeout: 5000 })
+  .then(() => ok('a wrong code is refused, saying it may have changed', true))
+  .catch(() => ok('a wrong code is refused, saying it may have changed', false));
+expecting.attendRefused = false;
+await sam.page.fill('#code', await codeOnScreen());
+await sam.page.click('#enter button[type=submit]');
+await sam.page.waitForSelector('#who:not([hidden])', { timeout: 10000 });
+const samReceipt = await pickName(sam.page, 'sam', 'Sam Lee');
+ok('a typed code works the same', /Sam Lee/.test(samReceipt));
+
+// Jane lends her phone to Bo.
+await jane.page.click('#r-another');
+const boReceipt = await pickName(jane.page, 'bo', 'Bo Kim');
+ok('"Check in someone else on this phone" lets a second person check in', /Bo Kim/.test(boReceipt));
+
+// A visitor, after "now marking late".
+await pad.check('#att-late-now');
+await pad.waitForFunction(() => /now on count as late/.test(document.querySelector('#att-note').textContent), null, { timeout: 5000 });
+const pat = await phone('phone (guest)');
+await pat.page.goto(`${base}/attend.html?c=${await codeOnScreen()}`);
+await pat.page.waitForSelector('#who:not([hidden])', { timeout: 10000 });
+await pat.page.click('#not-listed');
+await pat.page.fill('#guest-name', 'Pat Visitor');
+await pat.page.fill('#guest-email', 'pat@elsewhere.org');
+await pat.page.click('#guest button[type=submit]');
+await pat.page.waitForSelector('#receipt:not([hidden])', { timeout: 10000 });
+ok(`someone not on the list checks in as a guest, late (${(await pat.page.textContent('#receipt')).replace(/\s+/g, ' ').trim()})`,
+  /Pat Visitor/.test(await pat.page.textContent('#receipt')) && /late/i.test(await pat.page.textContent('#r-status')));
+
+// The controller's list.
+await pad.waitForFunction(() => document.querySelectorAll('#att-list .att-row').length === 5, null, { timeout: 10000 });
+const rowText = (name) => pad.textContent(`#att-list .att-row:has(.att-name:text-is("${name}"))`).then((t) => t.replace(/\s+/g, ' '));
+ok(`the list fills as they check in (${await pad.textContent('#att-summary')})`, /4 checked in of 4/.test(await pad.textContent('#att-summary')));
+ok(`one phone, two people: both checked in, both flagged (${await rowText('Bo Kim')})`,
+  /same phone as Jane Doe/.test(await rowText('Bo Kim')) && /same phone as Bo Kim/.test(await rowText('Jane Doe')));
+ok('a phone of their own is not flagged, and one shared address (the room\'s Wi-Fi) is no hint', !/same (phone|network)/.test(await rowText('Sam Lee')));
+ok('the guest is listed with their email', /guest · pat@elsewhere\.org/.test(await rowText('Pat Visitor')));
+await pad.selectOption('#att-list .att-row:has(.att-name:text-is("Ann Nophone")) select', 'present');
+await pad.waitForFunction(() => /Ann Nophone: present/.test(document.querySelector('#att-note').textContent), null, { timeout: 5000 });
+ok(`someone with no phone is marked by hand, unflagged (${await rowText('Ann Nophone')})`, /by hand/.test(await rowText('Ann Nophone')) && !/same/.test(await rowText('Ann Nophone')));
+await screen.waitForFunction(() => /5 checked in/.test(document.querySelector('.layer[data-role="program"] .r-att-count')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('the projector counts them, and says late marking is on', true))
+  .catch(async () => ok(`the projector counts them ("${await screen.textContent('.layer[data-role="program"] .r-att-count')}")`, false));
+
+// Closing.
+await pad.click('#att-toggle-open');
+await screen.waitForFunction(() => /Closed/.test(document.querySelector('.layer[data-role="program"] .r-att-code')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('Close check-in takes the code off the projector', true))
+  .catch(() => ok('Close check-in takes the code off the projector', false));
+
+// The receipt, later, on the same phone.
+await sam.page.goto(`${base}/attend.html`);
+await sam.page.waitForSelector('#receipt:not([hidden])', { timeout: 5000 })
+  .then(async () => ok(`reopening the page shows today's receipt again (${(await sam.page.textContent('#r-name'))})`, /Sam Lee/.test(await sam.page.textContent('#r-name'))))
+  .catch(() => ok('reopening the page shows today\'s receipt again', false));
+
+for (const p of [jane, sam, pat]) await p.ctx.close();
+await screen.close();
+await pad.close();
+await owner.close();
+}
+
 if (want('My Files: everything I have, and what I may do with it (#243)')) {
 console.log('\n-- My Files: everything I have, and what I may do with it (#243) --');
 // A TA of their own, so changing a password here leaves everyone else's alone.

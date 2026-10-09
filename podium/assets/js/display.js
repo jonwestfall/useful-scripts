@@ -316,6 +316,9 @@ function mount(layer, item) {
       broadcastSoon();
     },
     getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId),
+    // Where check-in's code is asked for (Issue #256): the server this display
+    // talks to, or the one that served it.
+    getServerBase: () => pollBaseUrl(cfg) || new URL('/', location.href).href,
   });
   layer.node.append(layer.renderer.el);
 }

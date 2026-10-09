@@ -887,6 +887,8 @@ async function refreshSystemSettings() {
     check.checked = !!body.allowPollNames;
     const zipMb = $('#max-zip-upload-mb');
     if (zipMb) zipMb.value = String(body.maxZipUploadMb ?? 200);
+    const keep = $('#attendance-retention-days');
+    if (keep) keep.value = String(body.attendanceRetentionDays ?? 30);
   } catch { /* ignore */ }
 }
 
@@ -908,6 +910,30 @@ async function updateMaxZipUpload(ev) {
     }
     ev.target.value = String(body.maxZipUploadMb);
     status.textContent = `Saved — ZIP imports now take up to ${body.maxZipUploadMb} MB.`;
+    setTimeout(() => { if (status.textContent.startsWith('Saved')) status.textContent = ''; }, 4000);
+  } catch {
+    status.textContent = 'Could not reach server.';
+  }
+}
+
+async function updateAttendanceRetention(ev) {
+  const status = $('#attendance-settings-status');
+  status.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/system/settings', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ attendanceRetentionDays: Number(ev.target.value) }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      status.textContent = body.error || 'Could not save setting.';
+      await refreshSystemSettings();
+      return;
+    }
+    ev.target.value = String(body.attendanceRetentionDays);
+    status.textContent = `Saved — check-in device details are kept for ${body.attendanceRetentionDays} days.`;
     setTimeout(() => { if (status.textContent.startsWith('Saved')) status.textContent = ''; }, 4000);
   } catch {
     status.textContent = 'Could not reach server.';
@@ -2732,6 +2758,7 @@ if (!info.features.includes('library')) {
       $('#backup-go').addEventListener('click', downloadBackup);
       $('#allow-poll-names-check')?.addEventListener('change', updateAllowPollNames);
       $('#max-zip-upload-mb')?.addEventListener('change', updateMaxZipUpload);
+      $('#attendance-retention-days')?.addEventListener('change', updateAttendanceRetention);
       await Promise.all([refreshPeople(), refreshStorage(), refreshSystemSettings()]);
     }
     await refreshCourses();

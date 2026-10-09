@@ -558,6 +558,15 @@ function normalizeItem(item) {
     // looking at it right now.
     copy.showUrl = copy.showUrl !== false;
   }
+  if (copy.type === 'attendance') {
+    // Check-in on screen (Issue #256). The session and the key that lets a
+    // display ask the server for its current code - never the code itself,
+    // which changes every few seconds and is fetched by the display.
+    copy.sessionId = Math.max(0, Math.trunc(Number(copy.sessionId)) || 0);
+    copy.screenKey = /^[A-Za-z0-9_-]{1,64}$/.test(copy.screenKey || '') ? copy.screenKey : '';
+    copy.course = String(copy.course || '').slice(0, 64);
+    copy.title = String(copy.title || 'Check in').slice(0, 120);
+  }
   if (copy.type === 'trackend') {
     copy.untilQueue = !!copy.untilQueue;
     copy.title = String(copy.title || 'We begin in…').slice(0, 120);
@@ -643,6 +652,10 @@ function viewerPoll(item) {
 function viewerItem(item) {
   if (!item || typeof item !== 'object') return item;
   if (item.type === 'poll') return viewerPoll(item);
+  // A guest viewer is not in the room, so it never gets the key to the
+  // rotating check-in code (Issue #256) - that would be the code texted to
+  // someone outside, kept fresh for them.
+  if (item.type === 'attendance') return { ...item, screenKey: '' };
   if (item.type === 'set' && Array.isArray(item.entries)) {
     return { ...item, entries: item.entries.map((entry) => ({ ...entry, item: viewerItem(entry.item) })) };
   }
@@ -989,6 +1002,7 @@ export function inkSurfaceKey(item) {
     // same question (re-staging with the same pollId) must not orphan
     // whatever was circled on it a moment ago.
     case 'poll': return `poll:${item.pollId}`;
+    case 'attendance': return `attendance:${item.sessionId}`;
     default: return `${item.type}:${item.src || item.deckId || item.key || ''}`;
   }
 }
