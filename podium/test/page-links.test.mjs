@@ -42,7 +42,15 @@ test('every GitHub link names a file or folder that is in the repository', () =>
       if (!href.startsWith(REPO)) continue;
       const m = /^(?:blob|tree)\/main\/(.+)$/.exec(href.slice(REPO.length).split('#')[0]);
       if (!m) continue; // the repository itself, its issues
-      assert.ok(existsSync(m[1].startsWith('podium/') ? path.join(root, m[1].slice('podium/'.length)) : path.join(root, '..', m[1])), `${page}: ${href}`);
+      // In a checkout, paths are relative to the repository's root. Server
+      // releases copy only podium's contents, so map that directory (including
+      // the Source link to podium itself) to the release root instead.
+      const target = m[1] === 'podium'
+        ? root
+        : m[1].startsWith('podium/')
+          ? path.join(root, m[1].slice('podium/'.length))
+          : path.join(root, '..', m[1]);
+      assert.ok(existsSync(target), `${page}: ${href}`);
     }
   }
 });
