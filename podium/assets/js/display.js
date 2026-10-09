@@ -453,8 +453,33 @@ const ink = { ctx: inkCanvas.getContext('2d'), drawnKey: null, drawnStrokes: 0, 
 // the text. The laser and the spotlight point at the screen, not the page,
 // and keep using contentRectFor itself.
 function inkRectFor(slot, renderer) {
+  // A zoomed page or photo (Issue #262): ink is in fractions of the content,
+  // so it goes wherever the zoomed content is - bigger than the panel and
+  // partly off it, clipped to the panel when drawn (see slotRectFor).
+  if (renderer?.viewRect && slot) {
+    const zoomed = renderer.viewRect(slotRectFor(slot));
+    if (zoomed) return zoomed;
+  }
   const rect = contentRectFor(slot, renderer);
   return renderer?.pageRect ? renderer.pageRect(rect) : rect;
+}
+
+/** A panel's own box, in the ink canvas's coordinates. */
+function slotRectFor(slot) {
+  const stageBox = stage.getBoundingClientRect();
+  const box = slot.getBoundingClientRect();
+  return { x: box.left - stageBox.left, y: box.top - stageBox.top, w: box.width, h: box.height };
+}
+
+// Strokes on zoomed content can reach past their panel: drawn inside it only.
+function clipped(ctx, slot, renderer, draw) {
+  if (!renderer?.viewRect || !slot || !renderer.viewRect(slotRectFor(slot))) { draw(); return; }
+  const r = slotRectFor(slot);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(r.x, r.y, r.w, r.h);
+  ctx.clip();
+  try { draw(); } finally { ctx.restore(); }
 }
 
 function contentRectFor(slot, renderer) {
@@ -589,7 +614,7 @@ function redrawSplitInk() {
   for (const panel of activePanels()) {
     const rect = inkRectFor(panel.slot, panel.renderer);
     const strokes = state.ink.bySurface[inkSurfaceKey(panel.item)]?.strokes || [];
-    for (const stroke of strokes) strokePath(ctx, stroke, rect);
+    clipped(ctx, panel.slot, panel.renderer, () => { for (const stroke of strokes) strokePath(ctx, stroke, rect); });
     if (strokes.length) any = true;
   }
   // This path paints panel A somewhere quite different (a quarter of the
@@ -605,6 +630,17 @@ function redrawSplitInk() {
 }
 
 // The ink rectangle's shape for every panel on screen, keyed by its surface.
+/** Each panel's own shape, keyed by surface: what a zoom fills (Issue #262). */
+function slotAspects() {
+  const out = {};
+  for (const panel of activePanels()) {
+    if (!panel.item || !panel.slot) continue;
+    const r = slotRectFor(panel.slot);
+    if (r.w > 0 && r.h > 0) out[inkSurfaceKey(panel.item)] = Math.round((r.w / r.h) * 10000) / 10000;
+  }
+  return out;
+}
+
 function inkAspects() {
   const out = {};
   for (const panel of activePanels()) {
@@ -622,7 +658,7 @@ function inkAspects() {
 // a pad waiting on the shape is ready almost at once.
 let sentInkAspects = '';
 function noteInkAspects() {
-  const now = JSON.stringify(inkAspects());
+  const now = JSON.stringify([inkAspects(), slotAspects()]);
   if (now === sentInkAspects) return;
   sentInkAspects = now;
   // Ink can be redrawn while this file is still starting up, before the
@@ -651,11 +687,12 @@ function redrawInk(force = false) {
     && strokes.length === ink.drawnStrokes
     && !last?.highlighter;
 
+  const renderer = programRenderer();
   if (appended && last) {
-    strokePath(ctx, last, rect, ink.drawnTail);
+    clipped(ctx, slotA, renderer, () => strokePath(ctx, last, rect, ink.drawnTail));
   } else {
     ctx.clearRect(0, 0, stage.clientWidth, stage.clientHeight);
-    for (const stroke of strokes) strokePath(ctx, stroke, rect);
+    clipped(ctx, slotA, renderer, () => { for (const stroke of strokes) strokePath(ctx, stroke, rect); });
   }
   ink.drawnKey = key;
   ink.drawnStrokes = strokes.length;
@@ -1990,6 +2027,7 @@ function wireState() {
     // camera's - which a controller cannot always work out for itself (it
     // never receives the camera, and a split panel is not the stage's shape).
     inkAspects: inkAspects(),
+    slotAspects: slotAspects(),
     // Guest View (Issue #150), for the controllers only - viewerState leaves
     // all three out: how many are watching, and the link and code a
     // controller can put on the projector for the room to scan.

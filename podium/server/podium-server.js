@@ -124,7 +124,7 @@ const AUTH_OPEN_PATHS = new Set([
   // could not already read in the public repo. Opening them exposes no
   // page: gate() still checks each request's own path, so control.html,
   // display.html, plan.html and admin.html are untouched by this.
-  '/assets/css/podium.css', '/assets/js/server.js', '/assets/js/protocol.js',
+  '/assets/css/podium.css', '/assets/js/server.js', '/assets/js/protocol.js', '/assets/js/zoom.js',
   '/assets/js/util.js', '/assets/js/index.js', '/assets/icons/apple-touch-icon.png',
   // Light or dark (theme.js): the landing page, the guide and a guest's
   // controller all start with it, and it is no more than a colour choice.
@@ -158,6 +158,7 @@ const KIOSK_OPEN_PATHS = new Set([
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
+  '/assets/js/zoom.js',
 ]);
 
 // What view.html (Guest View, Issue #150) needs to load, open to everyone
@@ -173,6 +174,7 @@ const VIEW_OPEN_PATHS = new Set([
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
+  '/assets/js/zoom.js',
 ]);
 for (const openPath of VIEW_OPEN_PATHS) AUTH_OPEN_PATHS.add(openPath);
 

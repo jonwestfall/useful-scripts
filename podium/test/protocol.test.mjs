@@ -76,17 +76,25 @@ chk('a freshly staged pdf starts at zoom 1, centered', s.program.zoom === 1 && s
 applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:0.5, panY:0.5});
 chk('zoom sets the level', s.program.zoom === 2);
 applyCommand(s, {op:'zoom', action:'set', zoom:10});
-chk('zoom is capped at 4', s.program.zoom === 4);
-applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:0, panY:0});
-chk('pan is clamped so the view never pans off the page (half the window is 1/(2*2) = 0.25 from either edge)',
-  s.program.panX === 0.25 && s.program.panY === 0.25);
-applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:1, panY:1});
-chk('clamped the other way too', s.program.panX === 0.75 && s.program.panY === 0.75);
+chk('zoom is capped at 6 (Issue #262)', s.program.zoom === 6);
+// Issue #262: where a pan stops depends on the page's shape and the panel's,
+// which only the display and the controller know (see clampView in zoom.js
+// and test/zoom.test.mjs) - the state only keeps it within the page.
+applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:-3, panY:9});
+chk('pan is kept within the page, as fractions of it', s.program.panX === 0 && s.program.panY === 1);
+applyCommand(s, {op:'zoom', action:'set', zoom:2, panX:0.3, panY:0.1});
+chk('and kept as given inside it', s.program.panX === 0.3 && s.program.panY === 0.1);
 applyCommand(s, {op:'zoom', action:'reset'});
 chk('reset returns to zoom 1, centered', s.program.zoom === 1 && s.program.panX === 0.5 && s.program.panY === 0.5);
 applyCommand(s, {op:'stage', item:{type:'text', body:'not a pdf'}});
 const zoomedNonPdf = applyCommand(s, {op:'zoom', action:'set', zoom:2});
 chk('zoom does nothing to a non-pdf item', zoomedNonPdf === false);
+applyCommand(s, {op:'stage', item:{type:'image', src:'photo.jpg'}});
+chk('a photo starts whole (Issue #262)', s.program.zoom === 1 && s.program.panX === 0.5);
+applyCommand(s, {op:'zoom', action:'set', zoom:2.5, panX:0.5, panY:0.2});
+chk('and zooms like a PDF page', s.program.zoom === 2.5 && s.program.panY === 0.2);
+applyCommand(s, {op:'stage', item:{type:'image', src:'photo.jpg', fit:'cover'}});
+chk('but not a photo cropped to fill the screen', applyCommand(s, {op:'zoom', action:'set', zoom:2}) === false);
 
 applyCommand(s, {op:'timer', action:'start', seconds:300, label:'Group work'});
 chk('timer runs', s.timers[0].running && timerRemaining(s.timers[0]) > 299000);

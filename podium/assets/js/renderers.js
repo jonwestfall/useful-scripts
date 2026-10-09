@@ -24,6 +24,7 @@ import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneS
 import { ASSET_REF } from './deck-source.js';
 import { renderDoc, measureDoc, DOC_WIDTH, DOC_VIEW } from './doc.js';
 import { BLANK_PIXEL } from './assets.js';
+import { contentRect, isZoomed } from './zoom.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -140,12 +141,34 @@ function renderBlack() {
 
 function renderImage(item, opts = {}) {
   const img = el('img', { class: 'r-image', src: item.src, alt: item.title || '', decoding: 'async' });
+  const node = el('div', { class: 'r-fill r-image-box' }, img);
+  let fit = item.fit;
+  let view = { zoom: item.zoom, panX: item.panX, panY: item.panY };
+  const aspectOf = () => (fit !== 'cover' && img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : null);
+  // Zoomed (Issue #262): the picture is laid out at its zoomed size, partly
+  // off the panel, so the panel is filled with the part the room should see.
+  const layout = () => {
+    const aspect = aspectOf();
+    const zoomed = aspect && isZoomed(view) && node.clientWidth && node.clientHeight;
+    img.classList.toggle('is-zoomed', !!zoomed);
+    if (!zoomed) { img.style.left = img.style.top = img.style.width = img.style.height = ''; return; }
+    const r = contentRect(node.clientWidth, node.clientHeight, aspect, view);
+    img.style.left = `${r.x}px`;
+    img.style.top = `${r.y}px`;
+    img.style.width = `${r.w}px`;
+    img.style.height = `${r.h}px`;
+  };
   // Its shape is only known once it has loaded (Issue #262): ink laid over it
   // before then was placed against the whole box, so it is placed again.
-  img.addEventListener('load', () => opts.onReady?.());
-  const node = el('div', { class: 'r-fill' }, img);
-  let fit = item.fit;
-  const apply = (it) => { fit = it.fit; img.style.objectFit = it.fit === 'cover' ? 'cover' : 'contain'; };
+  img.addEventListener('load', () => { layout(); opts.onReady?.(); });
+  const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(layout) : null;
+  resize?.observe(node);
+  const apply = (it) => {
+    fit = it.fit;
+    view = { zoom: it.zoom, panX: it.panX, panY: it.panY };
+    img.style.objectFit = it.fit === 'cover' ? 'cover' : 'contain';
+    layout();
+  };
   apply(item);
   return {
     el: node,
@@ -154,15 +177,29 @@ function renderImage(item, opts = {}) {
     telemetry: noTelemetry,
     // Where ink can land: a "contain"-fit image letterboxes inside its box
     // exactly like a video does, so annotating it needs the same math.
-    contentAspect() {
-      if (fit === 'cover') return null;
-      return img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : null;
+    contentAspect: aspectOf,
+    // Zoomed: where the whole picture is, in the panel's box - ink goes there.
+    viewRect(box) {
+      const aspect = aspectOf();
+      if (!aspect || !isZoomed(view)) return null;
+      const r = contentRect(box.w, box.h, aspect, view);
+      return { x: box.x + r.x, y: box.y + r.y, w: r.w, h: r.h };
     },
     snapshot(ctx, rect) {
       paintBackdrop(ctx, rect, node);
+      const aspect = aspectOf();
+      if (aspect && isZoomed(view)) {
+        const r = contentRect(rect.w, rect.h, aspect, view);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(rect.x, rect.y, rect.w, rect.h);
+        ctx.clip();
+        try { ctx.drawImage(img, rect.x + r.x, rect.y + r.y, r.w, r.h); } finally { ctx.restore(); }
+        return true;
+      }
       return drawFitted(ctx, rect, img, img.naturalWidth, img.naturalHeight, objectFitOf(img));
     },
-    destroy() { node.remove(); },
+    destroy() { resize?.disconnect(); node.remove(); },
   };
 }
 
@@ -656,26 +693,32 @@ function renderPdf(item) {
         3
       ));
 
-      // The canvas stays sized to the un-zoomed window (viewport at `scale`)
-      // regardless of zoom - what changes is a transform ahead of it that
-      // renders the page bigger and slides it so the pan point lands centered
-      // in that same window. Keeping the window's own size fixed is what
-      // keeps contentAspect() (and every ink coordinate anchored to it)
-      // correct at any zoom level - zooming crops the view, it never
-      // reshapes the letterboxed surface ink is drawn onto.
-      const viewport = page.getViewport({ scale });
-      canvas.width = Math.round(viewport.width);
-      canvas.height = Math.round(viewport.height);
+      // contentAspect() is the page's own shape at every zoom; ink is in
+      // fractions of the page, placed through viewRect() below when zoomed.
+      let viewport;
+      let transform;
+      const view = { zoom, panX, panY };
+      if (isZoomed(view)) {
+        // Issue #262: zoomed, the canvas is the PANEL's shape and the page is
+        // drawn at its zoomed size behind it, so the room sees the panel
+        // filled - not the page's own letterboxed column, magnified. Drawn
+        // at the panel's real pixels (capped), so text stays sharp at 6x.
+        const cap = Math.min(1, 4096 / Math.max(containerWidth * dpr, containerHeight * dpr));
+        const W = Math.max(1, Math.round(containerWidth * dpr * cap));
+        const H = Math.max(1, Math.round(containerHeight * dpr * cap));
+        const r = contentRect(W, H, aspect, view);
+        viewport = page.getViewport({ scale: r.w / unscaledViewport.width });
+        canvas.width = W;
+        canvas.height = H;
+        transform = [1, 0, 0, 1, r.x, r.y];
+      } else {
+        viewport = page.getViewport({ scale });
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+      }
+      canvas.classList.toggle('is-zoomed', isZoomed(view));
 
       const ctx = canvas.getContext('2d');
-      let transform;
-      if (zoom > 1) {
-        const bigW = viewport.width * zoom;
-        const bigH = viewport.height * zoom;
-        const offsetX = Math.min(bigW - viewport.width, Math.max(0, panX * bigW - viewport.width / 2));
-        const offsetY = Math.min(bigH - viewport.height, Math.max(0, panY * bigH - viewport.height / 2));
-        transform = [zoom, 0, 0, zoom, -offsetX, -offsetY];
-      }
       currentRenderTask = page.render({
         canvasContext: ctx,
         viewport: viewport,
@@ -719,6 +762,14 @@ function renderPdf(item) {
     // falling back to an un-letterboxed guess for the one frame or two this
     // is missing rather than waiting on it.
     contentAspect() { return aspect; },
+    // Zoomed (Issue #262): where the whole page is, in the panel's box - ink
+    // in fractions of the page goes there, and stays on the words it marks.
+    viewRect(box) {
+      const view = { zoom, panX, panY };
+      if (!aspect || !isZoomed(view)) return null;
+      const r = contentRect(box.w, box.h, aspect, view);
+      return { x: box.x + r.x, y: box.y + r.y, w: r.w, h: r.h };
+    },
     snapshot(ctx, rect) {
       if (!canvas || !canvas.width || !canvas.height) return false;
       paintBackdrop(ctx, rect, node, '#000');

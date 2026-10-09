@@ -92,7 +92,7 @@ ok('an anonymous one has none, and nothing in the database ties it to Sam',
   && db.prepare('SELECT mark_id FROM attendance_parking WHERE id = ?').get(anon.id).mark_id === null);
 ok('a phone that never checked in can still ask, anonymously, with a fresh code',
   att.park(db, { ticket: enter('phoneCCCCCCCCCCCCCCCCCCC', T0 + 10000).ticket, device: 'phoneCCCCCCCCCCCCCCCCCCC', text: 'Late question', now: T0 + 10000 }).anonymous);
-ok('an empty question is refused', status(() => att.park(db, { markKey: jane.markKey, device: PHONE_A, text: '   ' })) === 400);
+ok('an empty question is refused', status(() => att.park(db, { markKey: jane.markKey, device: PHONE_A, text: '   ', now: T0 + 10500 })) === 400);
 att.answerParking(db, owen, session.id, named.id, { answered: true }, { now: T0 + 11000 });
 ok('the instructor marks a question answered', !!att.getSession(db, owen, session.id).parking.find((q) => q.id === named.id).answeredAt);
 for (let i = 0; i < 5; i++) att.park(db, { markKey: sam.markKey, device: 'phoneDDDDDDDDDDDDDDDDDDD', text: `q${i}`, anonymous: true, now: T0 + 12000 + i });

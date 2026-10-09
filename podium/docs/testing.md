@@ -39,6 +39,7 @@ podium/test/
 ├── attendance-questions.test.mjs # Entry and exit tickets, the parking lot (named or anonymous), and the answers' summary and CSV (Issue #256)
 ├── attendance-location.test.mjs # In the room (distance only, pruned), the server's defaults, emailed receipts (Issue #256)
 ├── mail.test.mjs       # Podium's own SMTP client against a fake mail server, and doctor's mail check (Issue #256)
+├── zoom.test.mjs       # Zoom that fills the screen: fit presets, clamping, zoom around a point, panning (Issue #262)
 ├── documents.test.mjs  # Markdown documents: deck or document, switching, a document in the room, the page's safety, outline and notes (Issue #240)
 ├── plan-archive.test.mjs # Archiving lectures from one's own planner list: personal, bulk, what may be archived (Issue #239)
 ├── deck-templates.test.mjs # Deck templates: built-in, course and personal, and who may change which (Issue #226)
