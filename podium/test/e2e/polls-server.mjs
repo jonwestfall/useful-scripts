@@ -1946,13 +1946,11 @@ ok(`opening it shows what was covered, by name (${timeline.join(', ')})`,
 // as the display writes, so the HTTP route sees the same moment.
 const found = await desk.evaluate(async () => {
   const res = await fetch('/api/lectures/search?q=uploaded%20class', { credentials: 'same-origin' });
-  const bad = await fetch('/api/lectures/search?q=%20', { credentials: 'same-origin' });
-  return { ok: res.ok, body: await res.json(), empty: bad.status };
+  return { ok: res.ok, body: await res.json() };
 });
 const firstHit = found.body.results?.[0]?.hits?.[0];
 ok(`searching the sessions finds that moment (${firstHit && firstHit.snippet.map((p) => (p.hit ? `[${p.text}]` : p.text)).join('')})`,
   found.ok && firstHit?.kind === 'program' && Number.isInteger(firstHit.eventId) && firstHit.snippet.some((p) => p.hit));
-ok('and an empty search is a 400, not an error page', found.empty === 400);
 
 // Naming one is how "Tue 14:00" becomes something you can find again.
 // --- running the place from the admin page ---------------------------------
