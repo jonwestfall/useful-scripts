@@ -4,7 +4,7 @@
 //
 //   node podium/test/zoom.test.mjs
 
-import { contentRect, visibleWindow, clampView, fitView, zoomAround, panBy, isZoomed, ZOOM_MAX } from '../assets/js/zoom.js';
+import { contentRect, visibleWindow, clampView, fitView, zoomAround, panBy, isZoomed, ZOOM_MAX, viewKeeping, contentPointAt, panelPointOf, zoomToSlider, sliderToZoom } from '../assets/js/zoom.js';
 
 const fails = [];
 const ok = (label, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + label); if (!cond) fails.push(label); };
@@ -56,6 +56,15 @@ const down = panBy(w, 0, 0.5, LETTER, SCREEN);
 ok(`half a window down from the top of a fit-width page (${r2(down)} from ${r2(w)})`, down.panY > w.panY && near(down.zoom, w.zoom));
 ok('panning sideways where the page already fills the width does nothing', near(panBy(w, 1, 0, LETTER, SCREEN).panX, 0.5));
 ok('isZoomed tells fit page from anything else', !isZoomed({ zoom: 1 }) && isZoomed({ zoom: 1.5 }) && !isZoomed(null));
+
+console.log('\n-- for gestures (phase 3) --');
+const kept = viewKeeping(0.3, 0.6, 0.25, 0.5, 3, LETTER, SCREEN);
+const there = panelPointOf(kept, 0.3, 0.6, LETTER, SCREEN);
+ok(`a pinch keeps the words under the fingers under them (${r2(there)})`, near(there.x, 0.25, 1e-6) && near(there.y, 0.5, 1e-6));
+const back = contentPointAt(kept, there.x, there.y, LETTER, SCREEN);
+ok('and the two directions agree', near(back.x, 0.3) && near(back.y, 0.6));
+ok(`the slider runs 0 (1×) to 100 (${ZOOM_MAX}×), evenly in log (2× is ${zoomToSlider(2)})`,
+  zoomToSlider(1) === 0 && zoomToSlider(ZOOM_MAX) === 100 && near(sliderToZoom(zoomToSlider(2)), 2, 0.05) && sliderToZoom(-5) === 1);
 
 console.log(fails.length ? `\n${fails.length} FAILED` : '\nALL PASS');
 process.exit(fails.length ? 1 : 0);

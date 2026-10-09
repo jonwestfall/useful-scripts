@@ -92,25 +92,46 @@ export function fitView(kind, aspect, slotAspect) {
   return { zoom: 1, panX: 0.5, panY: 0.5 };
 }
 
+/** The content point (fractions of it) at (`ax`, `ay`), fractions of the panel. */
+export function contentPointAt(view, ax, ay, aspect, slotAspect) {
+  const r = contentRect(slotAspect, 1, aspect, view);
+  return { x: (ax * slotAspect - r.x) / r.w, y: (ay - r.y) / r.h };
+}
+
+/** Where content point (`fx`, `fy`) is on the panel, as fractions of it. */
+export function panelPointOf(view, fx, fy, aspect, slotAspect) {
+  const r = contentRect(slotAspect, 1, aspect, view);
+  return { x: (r.x + fx * r.w) / slotAspect, y: r.y + fy * r.h };
+}
+
+/**
+ * The view at `zoom` that puts content point (`fx`, `fy`) under panel point
+ * (`ax`, `ay`) - or as near as the content's edges allow. What a pinch is:
+ * the words under your fingers stay under your fingers.
+ */
+export function viewKeeping(fx, fy, ax, ay, zoom, aspect, slotAspect) {
+  const z = Math.min(ZOOM_MAX, Math.max(1, zoom));
+  const fit = Math.min(slotAspect / aspect, 1);
+  const w = aspect * fit * z;
+  const h = fit * z;
+  // panX is the window's middle: the anchor sits (ax - 0.5) panels from it.
+  return clampView({ zoom: z, panX: fx + (0.5 - ax) * slotAspect / w, panY: fy + (0.5 - ay) / h }, aspect, slotAspect);
+}
+
 /**
  * A new zoom, keeping the point at (`ax`, `ay`) - fractions of the panel,
  * 0.5/0.5 being its middle - where it is on screen, the way a pinch or a
  * mouse wheel anchors to where it happens.
  */
 export function zoomAround(view, nextZoom, aspect, slotAspect, ax = 0.5, ay = 0.5) {
-  const before = contentRect(slotAspect, 1, aspect, view);
-  // The content fraction under the anchor now.
-  const fx = (ax * slotAspect - before.x) / before.w;
-  const fy = (ay - before.y) / before.h;
-  const zoom = Math.min(ZOOM_MAX, Math.max(1, nextZoom));
-  const fit = Math.min(slotAspect / aspect, 1);
-  const w = aspect * fit * zoom;
-  const h = fit * zoom;
-  // Put that fraction back under the anchor: panX is the window's middle.
-  const panX = fx + (slotAspect / 2 - ax * slotAspect) / w;
-  const panY = fy + (0.5 - ay) / h;
-  return clampView({ zoom, panX, panY }, aspect, slotAspect);
+  const f = contentPointAt(view, ax, ay, aspect, slotAspect);
+  return viewKeeping(f.x, f.y, ax, ay, nextZoom, aspect, slotAspect);
 }
+
+// The zoom slider: even steps feel even, so it is logarithmic - 0 is 1x,
+// 100 is the most there is.
+export const zoomToSlider = (zoom, max = ZOOM_MAX) => Math.round((Math.log(Math.max(1, zoom)) / Math.log(max)) * 100);
+export const sliderToZoom = (value, max = ZOOM_MAX) => Math.min(max, Math.max(1, max ** (Math.min(100, Math.max(0, Number(value) || 0)) / 100)));
 
 /** Move the window by a fraction of itself (0.5 = half a window). */
 export function panBy(view, dx, dy, aspect, slotAspect) {
