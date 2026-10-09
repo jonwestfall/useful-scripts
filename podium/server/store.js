@@ -773,6 +773,71 @@ const MIGRATIONS = [
         FROM lecture_polls WHERE TRIM(question) <> '';
     `);
   },
+  (db) => {
+    db.exec(`
+      -- What attendance asked and was asked (Issue #159, phase 3), in the same
+      -- index, in the two rowid slots left for it:
+      --
+      --   rowid = id * 4 + 2   a check-in's entry and exit questions, as one
+      --                        row (attendance_sessions.id; kind 'questions')
+      --   rowid = id * 4 + 3   one parking-lot question (attendance_parking.id;
+      --                        kind 'parking')
+      --
+      -- lecture_id is left NULL on these: a check-in can be tied to a lecture
+      -- later, or lose it, and a parking-lot question belongs to its check-in,
+      -- so the search looks both up when it runs (see searchLectures). Only the
+      -- question's text is indexed - never who asked it.
+      CREATE TRIGGER lecture_search_questions_in AFTER INSERT ON attendance_sessions BEGIN
+        INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+        SELECT NEW.id * 4 + 2, b, NULL, 'questions', NEW.id, NEW.created_at
+          FROM (SELECT group_concat(p, ' · ') AS b FROM (
+                  SELECT json_extract(value, '$.prompt') AS p FROM json_each(CASE WHEN json_valid(NEW.questions) THEN NEW.questions ELSE '{}' END, '$.entry')
+                  UNION ALL
+                  SELECT json_extract(value, '$.prompt') FROM json_each(CASE WHEN json_valid(NEW.questions) THEN NEW.questions ELSE '{}' END, '$.exit')))
+         WHERE TRIM(COALESCE(b, '')) <> '';
+      END;
+      CREATE TRIGGER lecture_search_questions_change AFTER UPDATE OF questions ON attendance_sessions BEGIN
+        DELETE FROM lecture_search WHERE rowid = OLD.id * 4 + 2;
+        INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+        SELECT NEW.id * 4 + 2, b, NULL, 'questions', NEW.id, NEW.created_at
+          FROM (SELECT group_concat(p, ' · ') AS b FROM (
+                  SELECT json_extract(value, '$.prompt') AS p FROM json_each(CASE WHEN json_valid(NEW.questions) THEN NEW.questions ELSE '{}' END, '$.entry')
+                  UNION ALL
+                  SELECT json_extract(value, '$.prompt') FROM json_each(CASE WHEN json_valid(NEW.questions) THEN NEW.questions ELSE '{}' END, '$.exit')))
+         WHERE TRIM(COALESCE(b, '')) <> '';
+      END;
+      CREATE TRIGGER lecture_search_questions_out AFTER DELETE ON attendance_sessions BEGIN
+        DELETE FROM lecture_search WHERE rowid = OLD.id * 4 + 2;
+      END;
+
+      CREATE TRIGGER lecture_search_parking_in AFTER INSERT ON attendance_parking
+        WHEN TRIM(NEW.text) <> '' BEGIN
+        INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+        VALUES (NEW.id * 4 + 3, NEW.text, NULL, 'parking', NEW.id, NEW.at);
+      END;
+      CREATE TRIGGER lecture_search_parking_change AFTER UPDATE OF text ON attendance_parking BEGIN
+        DELETE FROM lecture_search WHERE rowid = OLD.id * 4 + 3;
+        INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+        SELECT NEW.id * 4 + 3, NEW.text, NULL, 'parking', NEW.id, NEW.at WHERE TRIM(NEW.text) <> '';
+      END;
+      CREATE TRIGGER lecture_search_parking_out AFTER DELETE ON attendance_parking BEGIN
+        DELETE FROM lecture_search WHERE rowid = OLD.id * 4 + 3;
+      END;
+
+      -- Everything asked before this release.
+      INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+      SELECT id * 4 + 2, b, NULL, 'questions', id, created_at
+        FROM (SELECT a.id, a.created_at,
+                     (SELECT group_concat(p, ' · ') FROM (
+                        SELECT json_extract(value, '$.prompt') AS p FROM json_each(CASE WHEN json_valid(a.questions) THEN a.questions ELSE '{}' END, '$.entry')
+                        UNION ALL
+                        SELECT json_extract(value, '$.prompt') FROM json_each(CASE WHEN json_valid(a.questions) THEN a.questions ELSE '{}' END, '$.exit'))) AS b
+                FROM attendance_sessions a)
+       WHERE TRIM(COALESCE(b, '')) <> '';
+      INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+      SELECT id * 4 + 3, text, NULL, 'parking', id, at FROM attendance_parking WHERE TRIM(text) <> '';
+    `);
+  },
 ];
 
 function migrate(db) {

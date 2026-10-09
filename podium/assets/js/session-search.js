@@ -15,7 +15,10 @@ import { el } from './util.js';
 import { describeEvent, captionText } from './recap.js';
 import { dayAndTime, spanOf } from './recap-pdf.js';
 
-const KIND_LABEL = { caption: 'Said', program: 'On screen', note: 'Note', poll: 'Poll', attendance: 'Attendance' };
+const KIND_LABEL = {
+  caption: 'Said', program: 'On screen', note: 'Note', poll: 'Poll', attendance: 'Attendance',
+  questions: 'Check-in questions', parking: 'Parking lot',
+};
 const kindLabel = (kind) => KIND_LABEL[kind] || kind;
 const pad = (n) => String(n).padStart(2, '0');
 const clock = (ms) => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
@@ -38,7 +41,12 @@ function marked(text, words) {
     .filter((piece) => piece !== '');
 }
 
-const hitKey = (hit) => (hit.pollId ? `p${hit.pollId}` : `e${hit.eventId}`);
+const hitKey = (hit) => (hit.parkingId ? `k${hit.parkingId}`
+  : hit.kind === 'questions' ? `q${hit.attendanceId}`
+    : hit.pollId ? `p${hit.pollId}` : `e${hit.eventId}`);
+// Who asked a parking-lot question: a name only when it was asked in one. An
+// anonymous question never had a name kept to show.
+const askedBy = (hit) => (hit.kind !== 'parking' ? null : hit.who ? `asked by ${hit.who}` : 'anonymous');
 
 /**
  * Mount the search box into `host`.
@@ -112,7 +120,26 @@ export function mountSessionSearch(host, { onActive = () => {}, label = 'Search 
     results.replaceChildren(...found.map(sessionResult));
   }
 
-  function sessionResult({ lecture, hits, more }) {
+  // A check-in taken with no recorded lecture (Issue #159, phase 3): its
+  // questions are found, but there is no timeline to open.
+  function attendanceResult({ attendance, hits, more }) {
+    const name = attendance.title || 'Check-in';
+    return el('section', { class: 'ss-session', 'aria-label': name },
+      el('div', { class: 'ss-head' },
+        el('span', { class: 'fb-title' }, name),
+        el('span', { class: 'fb-meta' }, [dayAndTime(attendance.startedAt), attendance.course && attendance.course.toUpperCase(),
+          'check-in, no recorded lecture'].filter(Boolean).join(' · '))),
+      el('ul', { class: 'ss-hits' }, ...hits.map((hit) => el('li', { class: 'ss-hit is-static' },
+        el('span', { class: 'timeline-at' }, clock(hit.at)),
+        el('span', { class: 'ss-kind' }, kindLabel(hit.kind)),
+        el('span', { class: 'ss-snip' }, ...snippetNodes(hit.snippet),
+          askedBy(hit) ? el('span', { class: 'ss-who' }, ` — ${askedBy(hit)}`) : null)))),
+      el('p', { class: 'hint' }, `${more ? `…and ${more} more. ` : ''}Its answers and the rest of its parking lot are on My Files › Attendance.`));
+  }
+
+  function sessionResult(result) {
+    if (!result.lecture) return attendanceResult(result);
+    const { lecture, hits, more } = result;
     const viewer = el('div', { class: 'ss-viewer', hidden: true });
     const name = lecture.title || lecture.room || 'Untitled session';
     const section = el('section', { class: 'ss-session', 'aria-label': name },
@@ -127,7 +154,8 @@ export function mountSessionSearch(host, { onActive = () => {}, label = 'Search 
         },
         el('span', { class: 'timeline-at' }, clock(hit.at)),
         el('span', { class: 'ss-kind' }, kindLabel(hit.kind)),
-        el('span', { class: 'ss-snip' }, ...snippetNodes(hit.snippet)))))),
+        el('span', { class: 'ss-snip' }, ...snippetNodes(hit.snippet),
+          askedBy(hit) ? el('span', { class: 'ss-who' }, ` — ${askedBy(hit)}`) : null))))),
       more ? el('p', { class: 'hint' }, `…and ${more} more in this session - open it to see them all.`) : null,
       viewer);
     return section;
@@ -156,20 +184,26 @@ export function mountSessionSearch(host, { onActive = () => {}, label = 'Search 
     const rows = [
       ...(detail.timeline || []).map((e) => ({ key: `e${e.id}`, at: e.at, kind: e.kind, event: e })),
       ...(detail.pollResults || []).map((p) => ({ key: `p${p.id}`, at: p.endedAt, kind: 'poll', poll: p })),
+      // What attendance asked is not part of the timeline itself; a match in
+      // it is placed there, at its moment, as the snippet that found it.
+      ...hits.filter((h) => h.kind === 'questions' || h.kind === 'parking')
+        .map((h) => ({ key: hitKey(h), at: h.at, kind: h.kind, asked: h })),
     ].sort((a, b) => a.at - b.at);
     const list = el('div', { class: 'timeline ss-timeline', tabindex: '-1', 'aria-label': `Timeline of ${detail.title || detail.room || 'this session'}` });
     let current = null;
     for (const row of rows) {
       const match = words.get(row.key);
-      const text = row.poll ? `Poll: ${row.poll.question}` : row.kind === 'caption' ? `“${captionText(row.event)}”` : (row.event.title || '—');
+      const text = row.asked ? `${kindLabel(row.kind)}: ${row.asked.snippet.map((p) => p.text).join('')}`
+        : row.poll ? `Poll: ${row.poll.question}` : row.kind === 'caption' ? `“${captionText(row.event)}”` : (row.event.title || '—');
       const node = el('div', {
         class: `timeline-row${row.kind === 'caption' ? ' timeline-caption' : ''}${match ? ' is-match' : ''}`,
         dataset: { key: row.key },
       },
       el('span', { class: 'timeline-at' }, clock(row.at)),
       el('span', { class: 'timeline-what' }, ...(match ? marked(text, match) : [text])),
-      row.poll ? el('span', { class: 'timeline-note' }, `${row.poll.voters} voted`)
-        : row.kind !== 'caption' ? el('span', { class: 'timeline-note' }, describeEvent(row.event)) : null);
+      row.asked ? (askedBy(row.asked) ? el('span', { class: 'timeline-note' }, askedBy(row.asked)) : null)
+        : row.poll ? el('span', { class: 'timeline-note' }, `${row.poll.voters} voted`)
+          : row.kind !== 'caption' ? el('span', { class: 'timeline-note' }, describeEvent(row.event)) : null);
       if (row.key === hitKey(hits[index])) { node.classList.add('is-current'); node.setAttribute('aria-current', 'true'); current = node; }
       list.append(node);
     }

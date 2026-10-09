@@ -113,7 +113,9 @@ console.log('\n-- a database from before the index --');
 const version = db.prepare('PRAGMA user_version').get().user_version;
 db.exec(`DROP TRIGGER lecture_search_event_in; DROP TRIGGER lecture_search_event_out;
   DROP TRIGGER lecture_search_poll_in; DROP TRIGGER lecture_search_poll_change; DROP TRIGGER lecture_search_poll_out;
-  DROP TABLE lecture_search; PRAGMA user_version = ${version - 1};`);
+  DROP TRIGGER lecture_search_questions_in; DROP TRIGGER lecture_search_questions_change; DROP TRIGGER lecture_search_questions_out;
+  DROP TRIGGER lecture_search_parking_in; DROP TRIGGER lecture_search_parking_change; DROP TRIGGER lecture_search_parking_out;
+  DROP TABLE lecture_search; PRAGMA user_version = ${version - 2};`);
 db.prepare("INSERT INTO lecture_events (lecture_id, at, kind, title, detail) VALUES (?, ?, 'caption', 'short', ?)")
   .run(week1.id, T0 + 300000, JSON.stringify({ text: 'Recorded before search existed: mnemonic devices' }));
 db.close();

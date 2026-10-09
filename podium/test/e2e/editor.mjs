@@ -2698,6 +2698,10 @@ const recorded = await page.evaluate(async () => {
   const short = (await post('/api/lectures', { room: 'search-room-b', fresh: true })).lecture;
   await post(`/api/lectures/${short.id}/events`, { events: [{ id: 'sb0', kind: 'caption', title: 'My phone number changed', detail: { text: 'My phone number changed' } }] });
   await post(`/api/lectures/${short.id}/end`, {});
+  // A check-in taken in the long lecture, and one with no lecture at all
+  // (phase 3): their questions are found too.
+  await post('/api/attendance/sessions', { course: 'psy415', lectureId: long.id, questions: { entry: [{ prompt: 'Which store holds a melody?' }] } });
+  await post('/api/attendance/sessions', { course: 'psy415', title: 'Make-up lab', questions: { exit: [{ prompt: 'Which melody condition was hardest?' }] } });
   return { long: long.id, short: short.id };
 });
 
@@ -2747,6 +2751,21 @@ await page.fill('#recorded-search .ss-input', 'zebra crossing');
 await page.waitForFunction(() => /Nothing in your sessions/.test(document.querySelector('#recorded-search .ss-note').textContent), null, { timeout: 5000 })
   .then(() => ok('nothing found says so, with a hint', true))
   .catch(() => ok('nothing found says so, with a hint', false));
+// What a check-in asked (phase 3): placed in the timeline it was taken in,
+// and a check-in with no lecture as a result of its own.
+await page.fill('#recorded-search .ss-input', 'melody');
+await page.waitForFunction(() => document.querySelectorAll('#recorded-search .ss-session').length === 2, null, { timeout: 5000 })
+  .then(() => ok('a check-in\'s questions are found, in the lecture and on their own', true))
+  .catch(async () => ok(`a check-in's questions are found, in the lecture and on their own (${await page.textContent('#recorded-search .ss-note')})`, false));
+const lab = page.locator('#recorded-search .ss-session', { hasText: 'Make-up lab' });
+ok(`the one with no lecture says so (${await lab.locator('.fb-meta').textContent().catch(() => '')})`,
+  /no recorded lecture/.test(await lab.locator('.fb-meta').textContent()) && /Check-in questions/.test(await lab.locator('.ss-kind').textContent()));
+await page.locator('#recorded-search .ss-session', { hasText: 'search-room-a' }).locator('.ss-hit').click();
+await page.waitForSelector('#recorded-search .ss-timeline .is-current', { timeout: 5000 });
+ok(`the one taken in the lecture opens there, at its moment (${await page.textContent('#recorded-search .ss-timeline .is-current')})`,
+  /Check-in questions: Which store holds a melody/.test(await page.textContent('#recorded-search .ss-timeline .is-current'))
+  && await page.locator('#recorded-search .ss-timeline .timeline-row').count() === 63);
+
 await page.focus('#recorded-search .ss-input');
 await page.keyboard.press('Escape');
 ok('Escape clears it and the list comes back', await page.inputValue('#recorded-search .ss-input') === '' && await page.isVisible('#recorded-list')
