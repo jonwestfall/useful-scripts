@@ -2672,6 +2672,106 @@ ok(`an administrator's Files start on Mine ("${await rootPage.inputValue('#files
 await root.close();
 }
 
+if (want('Searching past sessions (#159)')) {
+console.log('\n-- Searching past sessions (#159) --');
+// Two recorded sessions of Owen's, written over the same API a display uses:
+// a long one with the moment to find in its middle, and a short one.
+const owen = await signedIn('owen');
+const page = await owen.newPage();
+trap(page, 'session search');
+await page.goto(`${base}/index.html`);
+const recorded = await page.evaluate(async () => {
+  const post = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+  const long = (await post('/api/lectures', { room: 'search-room-a', fresh: true })).lecture;
+  // The server keeps a moment between the lecture's start and now, so give
+  // the 62 of them a few real milliseconds each.
+  const start = long.startedAt;
+  await new Promise((r) => setTimeout(r, 700));
+  const events = [{ id: 'sa0', at: start, kind: 'program', title: 'Working memory' }];
+  for (let i = 1; i <= 60; i++) {
+    const text = i === 31 ? 'A phone number is held in the phonological loop by rehearsal' : `Filler line ${i} about attention and perception`;
+    events.push({ id: `sa${i}`, at: start + i * 10, kind: 'caption', title: text, detail: { text, live: true } });
+  }
+  events.push({ id: 'sa61', at: start + 650, kind: 'caption', title: 'Call that phone number back later', detail: { text: 'Call that phone number back later' } });
+  await post(`/api/lectures/${long.id}/events`, { events });
+  await post(`/api/lectures/${long.id}/end`, {});
+  const short = (await post('/api/lectures', { room: 'search-room-b', fresh: true })).lecture;
+  await post(`/api/lectures/${short.id}/events`, { events: [{ id: 'sb0', kind: 'caption', title: 'My phone number changed', detail: { text: 'My phone number changed' } }] });
+  await post(`/api/lectures/${short.id}/end`, {});
+  return { long: long.id, short: short.id };
+});
+
+await page.goto(`${base}/me.html`);
+await page.click('.me-tabs .tab:has-text("Recorded lectures")');
+await page.waitForFunction(() => !/Looking/.test(document.querySelector('#recorded-list').textContent), null, { timeout: 5000 });
+await page.fill('#recorded-search .ss-input', 'phone number');
+await page.waitForFunction(() => document.querySelectorAll('#recorded-search .ss-session').length > 0, null, { timeout: 5000 })
+  .then(() => ok('typing a search on Recorded lectures finds the sessions that said it', true))
+  .catch(() => ok('typing a search on Recorded lectures finds the sessions that said it', false));
+const longResult = page.locator('#recorded-search .ss-session', { hasText: 'search-room-a' });
+ok(`each session with its matching moments (${await page.textContent('#recorded-search .ss-note')})`,
+  await page.locator('#recorded-search .ss-session').count() === 2 && await longResult.locator('.ss-hit').count() === 2);
+ok('the matched words are marked', (await page.$$eval('#recorded-search .ss-session mark', (m) => m.map((n) => n.textContent.toLowerCase()))).includes('phone'));
+ok('and the list of lectures steps aside while results show', await page.isHidden('#recorded-list'));
+
+await longResult.locator('.ss-hit').first().click();
+await page.waitForSelector('#recorded-search .ss-timeline .is-current', { timeout: 5000 });
+const opened = await page.evaluate(() => {
+  const list = document.querySelector('#recorded-search .ss-timeline');
+  const cur = list.querySelector('.is-current');
+  const lr = list.getBoundingClientRect();
+  const cr = cur.getBoundingClientRect();
+  return {
+    rows: list.querySelectorAll('.timeline-row').length,
+    text: cur.textContent,
+    marked: [...cur.querySelectorAll('mark')].map((m) => m.textContent),
+    inView: cr.top >= lr.top && cr.bottom <= lr.bottom,
+    scrolled: list.scrollTop,
+    where: document.querySelector('#recorded-search .ss-where').textContent,
+  };
+});
+ok(`opening a hit shows the whole timeline (${opened.rows} rows), at that moment (${opened.where}; in view ${opened.inView}, scrolled ${opened.scrolled})`,
+  opened.rows === 62 && /phonological loop/.test(opened.text) && opened.inView && opened.scrolled > 0);
+ok(`with the words that matched marked in it (${opened.marked.join(', ')})`, opened.marked.map((w) => w.toLowerCase()).join() === 'phone,number');
+ok('the other match in the same session is picked out too', await page.locator('#recorded-search .ss-timeline .is-match').count() === 2);
+await page.click('#recorded-search .ss-nav button:has-text("Next")');
+ok(`Next goes to the next match (${await page.textContent('#recorded-search .ss-where')})`,
+  /Match 2 of 2/.test(await page.textContent('#recorded-search .ss-where'))
+  && /back later/.test(await page.textContent('#recorded-search .ss-timeline .is-current')));
+
+await page.fill('#recorded-search .ss-input', 'phonolog*');
+await page.waitForFunction(() => /1 match in 1 session/.test(document.querySelector('#recorded-search .ss-note').textContent), null, { timeout: 5000 })
+  .then(() => ok('a prefix search finds the stem', true))
+  .catch(async () => ok(`a prefix search finds the stem (${await page.textContent('#recorded-search .ss-note')})`, false));
+await page.fill('#recorded-search .ss-input', 'zebra crossing');
+await page.waitForFunction(() => /Nothing in your sessions/.test(document.querySelector('#recorded-search .ss-note').textContent), null, { timeout: 5000 })
+  .then(() => ok('nothing found says so, with a hint', true))
+  .catch(() => ok('nothing found says so, with a hint', false));
+await page.focus('#recorded-search .ss-input');
+await page.keyboard.press('Escape');
+ok('Escape clears it and the list comes back', await page.inputValue('#recorded-search .ss-input') === '' && await page.isVisible('#recorded-list')
+  && await page.locator('#recorded-search .ss-session').count() === 0);
+await owen.close();
+
+// The admin page's Sessions tab has the same box, over everything an admin sees.
+const root = await signedIn('root');
+const adminPage = await root.newPage();
+trap(adminPage, 'session search (admin)');
+await adminPage.goto(`${base}/admin.html`);
+await adminPage.click('#tab-sessions');
+await adminPage.fill('#sess-find .ss-input', '"phonological loop"');
+await adminPage.waitForFunction(() => document.querySelectorAll('#sess-find .ss-hit').length === 1, null, { timeout: 5000 })
+  .then(() => ok('Admin › Sessions searches every session for a phrase', true))
+  .catch(() => ok('Admin › Sessions searches every session for a phrase', false));
+ok('and the session list steps aside', await adminPage.isHidden('#sessions'));
+await adminPage.click('#sess-find .ss-hit');
+await adminPage.waitForSelector('#sess-find .ss-timeline .is-current', { timeout: 5000 })
+  .then(() => ok('opening it lands on the moment there too', true))
+  .catch(() => ok('opening it lands on the moment there too', false));
+ok(`(the session was Owen's: ${recorded.long})`, true);
+await root.close();
+}
+
 if (want('Documents: a plain .md shown as one page to read (#240)')) {
 console.log('\n-- Documents: a plain .md shown as one page to read (#240) --');
 const filler = (n) => Array.from({ length: n }, (_, i) => `Paragraph ${i + 1} of the reading, long enough to wrap across the page at projector size and take up some room.`).join('\n\n');

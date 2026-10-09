@@ -720,6 +720,39 @@ body.guest {
    something shown - set in from the entries so the two read apart. */
 .timeline-caption .timeline-what { color: var(--dim); font-style: italic; padding-left: 16px; }
 
+/* Searching past sessions (Issue #159): the box, the hits, and a session's
+   timeline opened at the moment that matched. */
+.session-search { margin: 0 0 12px; }
+.ss-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+.ss-input { flex: 1 1 260px; min-width: 0; }
+.ss-course { flex: 0 0 auto; }
+.ss-note:empty { display: none; }
+.ss-results { display: flex; flex-direction: column; gap: 10px; }
+.ss-session { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+.ss-head { display: flex; flex-direction: column; min-width: 0; margin-bottom: 4px; }
+.ss-hits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ss-hit {
+  display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: left;
+  background: none; border: 0; border-radius: 6px; padding: 6px; color: var(--ink); font: inherit; cursor: pointer;
+}
+.ss-hit:hover, .ss-hit:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ss-hit .timeline-at { min-width: 3rem; }
+.ss-kind { color: var(--dim); font-size: 12px; min-width: 4.5rem; }
+.ss-snip { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.session-search mark {
+  background: color-mix(in srgb, var(--cue) 35%, transparent); color: inherit; border-radius: 3px; padding: 0 1px;
+}
+.ss-viewer { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.ss-nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ss-where { flex: 1 1 auto; color: var(--dim); font-size: 13px; }
+.ss-timeline { max-height: min(50vh, 420px); overflow: auto; margin-top: 8px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+.ss-timeline .timeline-row.is-match { background: color-mix(in srgb, var(--cue) 10%, transparent); }
+.ss-timeline .timeline-row.is-current { background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+@media (max-width: 560px) {
+  .ss-hit { flex-wrap: wrap; gap: 4px 10px; }
+  .ss-snip { flex-basis: 100%; }
+}
+
 .session-badge { display: flex; align-items: center; gap: 8px; }
 .session-badge .session-who { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--dim); }
 .session-badge .session-who:hover { color: var(--accent); }

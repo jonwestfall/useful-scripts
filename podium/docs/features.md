@@ -707,7 +707,10 @@ On a server with accounts, the display writes down what it showed as it goes: a 
 - `GET /api/lectures/search?q=…` searches every session you could already open (your own, and your courses'), best match first. `&course=psy415` narrows it to one course.
 - Matching is by word, ignoring case and accents, with word endings folded ("remember" finds "remembering"). `"a phrase"` must appear in order, `memor*` matches a prefix, and `-word` leaves a word out.
 - Each hit says which session and which moment of its timeline it came from, with the matched words marked.
-- A search box on My Files and the Sessions tab comes in the next phase.
+- **Where to search:** the box at the top of **My Files › Recorded lectures**, and the same box on the admin page's **Sessions** tab.
+  - Type and the results appear, grouped by session with the matched words highlighted. The usual list steps aside until you clear the box (or press Escape).
+  - With lectures in more than one course, a course menu narrows the search.
+  - Tap a match to open that session's whole timeline right there, scrolled to that moment and highlighted, with what came before and after for context. Other matches in the same session are tinted; **‹ Previous** and **Next ›** step between them.
 
 A lecture nobody has heard from in 15 minutes closes itself. Retention is configurable; see [deploy/README.md](../deploy/README.md#session-records-and-how-long-they-are-kept).
 
@@ -729,7 +732,7 @@ Running Podium's own server (`server/podium-server.js` with a `DATA_DIR`) adds a
   - **Files:** every library file you can see, with a chip saying **Owner** (you added it), **Can edit** (you own its course, or are an admin) or **View only**, and the reason on hover. Filter by *Show* (all, mine, I can edit, view only), course, kind and search; deck media only when asked for. Each row offers only what you may do: ↗ Quick Look, ✎ Edit (decks), Download, Rename, Move to… (a course you are in, or none, which warns that everyone with an account will see it) and Delete. Several can be ticked to move or delete together, and files can be uploaded (or dropped) straight in under a course. An administrator's page starts on *Mine*.
   - **Lectures:** your plans and the ones shared with you through your courses, with the planner's personal archive (*Show archived*). Open in the planner, **Present** (opens it in the controller), Archive/Unarchive, and Delete for your own.
   - **Deck templates:** yours and your courses'. Use (a new deck from it), Edit, Rename and Delete where you may.
-  - **Recorded lectures:** what was recorded in your classes, with its recap PDF, and Delete where you may.
+  - **Recorded lectures:** what was recorded in your classes, with its recap PDF, and Delete where you may. A search box at the top looks inside all of them: what was said, what was on screen, notes and polls (see [Session History](#session-history)).
   - **Rosters** (Issue #256): each course's class list, the people [attendance](https://github.com/jonwestfall/useful-scripts/issues/256) will be taken for. Students are not accounts here, just a name, and a student ID and email if you have them.
     - **Import a CSV** from Canvas, Blackboard, Moodle or a spreadsheet. Columns are found by their headers: a name (or first and last name; Canvas's "Last, First" is turned round), a student ID (an institution's SIS ID is preferred over an LMS's own), and an email. A file with no header is read as name, ID, email.
     - **The import is previewed first:** which columns it read, who is new, who is updated (and what changed), who is unchanged, and any lines it couldn't use. People are matched by student ID, then email, then name.

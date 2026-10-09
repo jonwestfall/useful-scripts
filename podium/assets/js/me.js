@@ -19,6 +19,7 @@ import { startPageTheme, setThemeChoice, onThemeChange } from './theme.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
 import { createRosterPanel } from './roster-panel.js';
 import { createAttendanceReview } from './attendance-review.js';
+import { mountSessionSearch } from './session-search.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -481,9 +482,17 @@ async function deleteTemplate(t) {
 
 // --- Recorded lectures ---------------------------------------------------------
 
+// Searching what was said and shown in them (Issue #159): while a search is
+// showing results, the list steps aside for them.
+const recordedSearch = mountSessionSearch($('#recorded-search'), {
+  label: 'Search your recorded lectures',
+  onActive: (on) => { $('#recorded-list').hidden = on; },
+});
+
 async function loadRecorded() {
   try {
     const { lectures } = await api('/api/lectures');
+    recordedSearch.setCourses((lectures || []).map((l) => l.course));
     const small = (label, attrs) => el('button', { type: 'button', class: 'admin-small', ...attrs }, label);
     $('#recorded-list').replaceChildren(...((lectures || []).length ? lectures.map((l) => el('div', { class: 'me-row', role: 'listitem' },
       el('span', { class: 'fb-icon', 'aria-hidden': 'true' }, '⏺'),
