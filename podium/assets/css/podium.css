@@ -1198,8 +1198,16 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
   position: absolute; pointer-events: none; box-sizing: border-box;
   border: 2px dashed var(--live); box-shadow: 0 0 0 9999px rgba(0, 0, 0, .28);
 }
-#ink-zoom-level { min-width: 3em; text-align: center; color: var(--dim); }
-.pan-btn { width: 44px; padding: 0; }
+/* Issue #262: one compact zoom bar on Now and Ink - fit presets, a slider,
+   the level. Pinch, drag, the keys and the wheel do the rest. */
+.zoom-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.zoom-bar button { font-size: 13px; min-height: 38px; padding: 0 10px; }
+.zoom-slider { flex: 1 1 140px; min-width: 120px; }
+.zoom-level { min-width: 4em; text-align: right; color: var(--dim); font-variant-numeric: tabular-nums; }
+/* Fingers on a page or photo's preview zoom the projector, not this page; on
+   anything else they scroll the tab as usual. */
+#now-preview.is-zoomable { touch-action: none; }
+#pad-viewport { touch-action: none; }
 
 /* Shared by the Slides tab's Now/Next preview boxes. */
 .mirror-viewport {

@@ -200,10 +200,17 @@ The **Now** tab always opens with a large live view of what the focused pane is 
 
 ### PDFs: Zoom and Pan on the Projector
 
-PDFs page like a deck. When a PDF or a photo is focused (a photo shown whole, not cropped to fill), the **Now** tab adds zoom (1× to 6×), four-way pan, and **Fit page**, **Fit width** and **Fit height**. These change **what the room actually sees**, which is useful for a small figure, a dense table, or a portrait page.
+PDFs page like a deck. When a PDF or a photo is focused (a photo shown whole, not cropped to fill), the **Now** tab adds a compact zoom bar: **Fit page**, **Fit width** and **Fit height**, a zoom slider (1× to 6×) and the current level. These change **what the room actually sees**, which is useful for a small figure, a dense table, or a portrait page.
 - **Zoomed in, the screen is filled** (Issue #262). The room sees a window the screen's own shape, cut from the page, so a portrait page has no black bars beside it.
 - **Fit width** makes a portrait page as wide as the screen, starting at its top; pan down to read on.
 - Pan stops at the page's edges.
+- **Gestures** (Issue #262):
+  - **Pinch** the Now preview to zoom the projector around your fingers. The words under them stay under them.
+  - **Drag** with two fingers (or one, once zoomed) to move around. With a mouse, drag a zoomed preview.
+  - **Double-tap**: zoomed, back to the whole page; at the whole page, fit width (or 2× where you tapped, for content already the screen's shape).
+  - **Mouse wheel** or trackpad pinch over the preview zooms where the pointer is.
+  - **Keyboard**: **+** and **−** zoom; the arrow keys pan while zoomed and page as usual when not.
+  - The same gestures work on the **Ink** pad: a second finger turns the stroke the first one started into a pinch and leaves no mark, so one finger still draws.
 - **Ink stays on the content**:
   - A circle drawn at 1× is still around the same word zoomed in, and comes back with it.
   - Ink drawn while zoomed is in the right place on the whole page.
@@ -251,7 +258,7 @@ Annotate over any slide, PDF, image, or whiteboard with an Apple Pencil or stylu
 - **Auto-save marked-up screens** (Issue #183): with the Ink tab's **Auto-save** on, anything you have drawn on is photographed, marks and all, the moment it is replaced: Next to another slide or page, a new item, or a layout that drops that panel. The same marks are kept once, however often you page past them. The switch belongs to the room, so every controller shows it; **Settings → Presentation → Save marked-up screens automatically** turns it on whenever this controller first connects. Photos land in the Photos tab and, on a self-hosted Podium that records sessions, in the lecture under `screens/`. That happens once, filed by the display, regardless of Keep photos, except for a camera feed or a picture, which Keep photos still governs.
 - **Snap lines and shapes on hold**: pause about half a second at the end of a stroke and it snaps into a clean straight line, arrow, rectangle or circle. Turn this on or off in **Settings → Presentation**.
 - **Apple Pencil only**: ignore finger touches on the pad so a resting palm never draws.
-- **Pad zoom**: zoom the drawing pad on your device (not the projector) and pan with the arrows for precise work.
+- **Pad zoom**: the Ink tab has the same zoom bar as the Now tab. On a PDF page or a photo it zooms the **projector**, and the pad follows the room's view once your fingers lift. On anything else (a slide, a whiteboard, a video) it is a private magnifier on your device only: pinch, two-finger drag, the slider, **+**/**−** and the arrow keys, for precise work. Fit width and Fit height only appear where the projector can use them.
 - **Portrait content** (Issue #262): the pad and the Now preview take the shape of what you're drawing on, so a portrait page, an upright phone photo, a video or the phone camera held upright is the same shape on the iPad as on the projector, and a stroke lands exactly where you drew it.
   - Photos and picture-deck slides are measured on the controller itself; for anything else the display reports the shape its ink lands on, including a split-screen panel that isn't the screen's shape.
   - Until a photo's shape is known, the pad waits rather than guessing.

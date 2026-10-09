@@ -28,7 +28,8 @@ import { createDurationProber } from './duration-probe.js';
 import { initTheme, themeChoice, setThemeChoice, onThemeChange, THEME_KEY } from './theme.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
 import { createAttendancePanel } from './attendance-panel.js';
-import { clampView, fitView, zoomAround, panBy, isZoomed, visibleWindow } from './zoom.js';
+import { clampView, fitView, zoomAround, panBy, isZoomed, visibleWindow, viewKeeping, contentPointAt, panelPointOf, zoomToSlider, sliderToZoom } from './zoom.js';
+import { attachGestures } from './gestures.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -2689,6 +2690,7 @@ function renderNowPreview() {
   // Where its height limit binds, it narrows to the content's width and sits
   // centred, rather than a full-width box with bars down both sides.
   const preview = $('#now-preview');
+  preview.classList.toggle('is-zoomable', zoomableItem(live));
   const aspect = viewAspect(shownAspect);
   const maxH = parseFloat(getComputedStyle(preview).maxHeight) || Infinity;
   const room = preview.parentElement?.clientWidth || 0;
@@ -2748,12 +2750,10 @@ function renderNow() {
   // Projector zoom: a PDF page, or (Issue #262) a photo shown whole.
   const zoomable = zoomableItem(item);
   $('#pdf-zoom').hidden = !zoomable;
-  $('#pdf-pan').hidden = !zoomable;
   if (zoomable) {
     const pdfZoom = item.zoom || 1;
-    $('#pdf-zoom-level').textContent = `${pdfZoom.toFixed(pdfZoom % 1 ? 1 : 0)}×`;
-    $('#pdf-zoom-out').disabled = pdfZoom <= 1;
-    $$('.pan-btn', $('#pdf-pan')).forEach((b) => { b.disabled = pdfZoom <= 1; });
+    $('#pdf-zoom-level').textContent = zoomPercent(pdfZoom);
+    if (document.activeElement !== $('#zoom-slider')) $('#zoom-slider').value = String(zoomToSlider(pdfZoom));
   }
 
   if (isMedia) {
@@ -3767,7 +3767,9 @@ let panY = 0;
 let frameW = 0;
 let frameH = 0;
 
-const ZOOM_MAX = 4;
+// The pad's own magnifier: as far as the projector itself goes (Issue #262),
+// so a pad following a 6x room can show the same.
+const ZOOM_MAX = 6;
 const ZOOM_STEP = 1.6;
 
 // Any deck slide's own aspect ratio (from its viewBox, via deckView's already-
@@ -3983,24 +3985,73 @@ function clampPan() {
   panY = Math.min(0, Math.max(-maxY, panY));
 }
 
-function setZoom(next) {
+function setZoom(next, cx = null, cy = null) {
   // transform-origin is the frame's top-left, so changing scale with the pan
   // left untouched drifts whatever was in view down and to the right - after
   // a couple of taps the visible middle of the slide has scrolled off into
-  // the clipped area. Re-aim the pan so the point currently at the viewport's
-  // center stays there, the same anchor a pinch gesture would use.
+  // the clipped area. Re-aim the pan so the point at the anchor - the
+  // viewport's center, or where a pinch or the wheel is (Issue #262) - stays there.
   const vp = padViewport.getBoundingClientRect();
-  const cx = vp.width / 2;
-  const cy = vp.height / 2;
-  const localX = (cx - panX) / zoom;
-  const localY = (cy - panY) / zoom;
+  const ax = cx ?? vp.width / 2;
+  const ay = cy ?? vp.height / 2;
+  const localX = (ax - padFrameLeft() - panX) / zoom;
+  const localY = (ay - padFrameTop() - panY) / zoom;
   zoom = Math.min(ZOOM_MAX, Math.max(1, next));
   if (zoom === 1) { panX = 0; panY = 0; }
-  else { panX = cx - localX * zoom; panY = cy - localY * zoom; }
+  else { panX = ax - padFrameLeft() - localX * zoom; panY = ay - padFrameTop() - localY * zoom; }
   clampPan();
   applyPadTransform();
-  $('#ink-zoom-level').textContent = `${zoom.toFixed(zoom % 1 ? 1 : 0)}×`;
-  $$('.pan-btn').forEach((b) => { b.disabled = zoom === 1; });
+  renderPadZoomLevel();
+}
+
+// The frame's own (untransformed) corner in the viewport: fitFrame centres it.
+const padFrameLeft = () => parseFloat(padFrame.style.left) || 0;
+const padFrameTop = () => parseFloat(padFrame.style.top) || 0;
+
+function renderPadZoomLevel() {
+  $('#ink-zoom-level').textContent = zoomPercent(zoom);
+  if (document.activeElement !== $('#ink-zoom-slider')) $('#ink-zoom-slider').value = String(zoomToSlider(zoom, ZOOM_MAX));
+}
+
+/** A zoom as the bars say it: 100% is the whole thing. */
+function zoomPercent(z) { return `${Math.round((z || 1) * 100)}%`; }
+
+// Issue #262: with a PDF page or a photo zoomed on the projector, the pad
+// shows the same part of it - the room's window, whole, in the middle of the
+// pad - so what you draw on is what they are looking at. Not while your own
+// fingers are moving it.
+let padFollowsRoom = false;
+let padGesture = false;
+function syncPadToRoom() {
+  const item = workItem();
+  const linked = zoomableItem(item);
+  $('#ink-fit-width').hidden = !linked;
+  $('#ink-fit-height').hidden = !linked;
+  if (!linked) {
+    if (padFollowsRoom) { padFollowsRoom = false; setZoom(1); }
+    return;
+  }
+  if (padGesture || !frameW || !frameH) return;
+  const aspect = contentAspectFor(item);
+  const slot = slotAspectFor(item);
+  const view = clampView(viewOf(item), aspect, slot);
+  padFollowsRoom = true;
+  if (!isZoomed(view)) {
+    zoom = 1; panX = 0; panY = 0;
+  } else {
+    const win = visibleWindow(aspect, slot, view);
+    const vp = padViewport.getBoundingClientRect();
+    zoom = Math.min(ZOOM_MAX, Math.max(1, Math.min(1 / win.w, 1 / win.h) * 0.92));
+    const cx = (win.x + win.w / 2) * frameW;
+    const cy = (win.y + win.h / 2) * frameH;
+    panX = vp.width / 2 - padFrameLeft() - cx * zoom;
+    panY = vp.height / 2 - padFrameTop() - cy * zoom;
+    clampPan();
+  }
+  applyPadTransform();
+  // The pad shows the room's zoom on a linked item, not its own.
+  $('#ink-zoom-level').textContent = zoomPercent(item.zoom || 1);
+  if (document.activeElement !== $('#ink-zoom-slider')) $('#ink-zoom-slider').value = String(zoomToSlider(item.zoom || 1));
 }
 
 function pan(dx, dy) {
@@ -4072,6 +4123,7 @@ function renderPadRoomWindow() {
   const box = $('#pad-room-window');
   const item = workItem();
   if (!box) return;
+  syncPadToRoom();
   if (!zoomableItem(item) || !isZoomed(item)) { box.hidden = true; return; }
   const win = visibleWindow(contentAspectFor(item), slotAspectFor(item), clampView(viewOf(item), contentAspectFor(item), slotAspectFor(item)));
   box.hidden = false;
@@ -4566,6 +4618,31 @@ pad.addEventListener('pointermove', (ev) => {
   }
 });
 
+// A second finger landing (Issue #262): whatever the first one began is not
+// a mark, it was the start of a pinch. The stroke is taken back off the pad
+// and the room; a laser or spotlight is switched off; an erase just stops.
+function abortStroke() {
+  clearTimeout(shapeHoldTimer);
+  shapeHoldTimer = null;
+  if (ink.pointing) {
+    const mode = ink.pointing;
+    ink.pointing = null;
+    if (mode === 'laser') { padLaserDot.classList.remove('is-on'); bus?.send({ t: 'laser', on: false }); }
+    else { padSpotlightPreview.classList.remove('is-on'); bus?.send({ t: 'spotlight', on: false }); }
+  }
+  if (ink.erasing) { ink.erasing = false; ink.lastErasePoint = null; }
+  if (ink.drawing) {
+    ink.drawing = false;
+    currentStrokeSnapped = false;
+    snappedShapeInfo = null;
+    const id = ink.strokeId;
+    ink.strokes = ink.strokes.filter((st) => st.id !== id);
+    ink.buffer = [];
+    send({ op: 'ink', action: 'erase', ids: [id] });
+    redrawPad();
+  }
+}
+
 const endStroke = (ev) => {
   clearTimeout(shapeHoldTimer);
   shapeHoldTimer = null;
@@ -4639,20 +4716,12 @@ pad.addEventListener('pointerup', endStroke);
 pad.addEventListener('pointercancel', endStroke);
 pad.addEventListener('touchstart', (ev) => ev.preventDefault(), { passive: false });
 
-$('#ink-zoom-in').addEventListener('click', () => setZoom(zoom * ZOOM_STEP));
-$('#ink-zoom-out').addEventListener('click', () => setZoom(zoom / ZOOM_STEP));
-$('#ink-zoom-reset').addEventListener('click', () => setZoom(1));
 $('#ink-toggle-mirror').addEventListener('click', (ev) => {
   showMirror = !showMirror;
   padMirror.classList.toggle('is-hidden', !showMirror);
   ev.currentTarget.classList.toggle('is-on', showMirror);
   ev.currentTarget.textContent = showMirror ? 'Showing slide' : 'Slide hidden';
 });
-const PAN_STEP = 80;
-$('#pan-up').addEventListener('click', () => pan(0, PAN_STEP));
-$('#pan-down').addEventListener('click', () => pan(0, -PAN_STEP));
-$('#pan-left').addEventListener('click', () => pan(PAN_STEP, 0));
-$('#pan-right').addEventListener('click', () => pan(-PAN_STEP, 0));
 
 // --- camera -----------------------------------------------------------------
 
@@ -6330,32 +6399,222 @@ function sendView(view) {
   send({ op: 'zoom', action: 'set', zoom: view.zoom, panX: view.panX, panY: view.panY });
 }
 
-function pdfZoomStep(dir) {
+// --- zoom: the bars, gestures, keys and the wheel (Issue #262) --------------
+//
+// One vocabulary for both tabs. On a PDF page or a photo it moves the
+// PROJECTOR (and the Ink pad follows the room); on anything else, on the Ink
+// tab, it is the pad's own magnifier, which the room never sees.
+
+function projectorZoomBy(factor, ax = 0.5, ay = 0.5) {
   const item = workItem();
-  if (!zoomableItem(item)) return;
-  const next = dir > 0 ? (item.zoom || 1) * PDF_ZOOM_STEP : (item.zoom || 1) / PDF_ZOOM_STEP;
-  sendView(zoomAround(viewOf(item), next, contentAspectFor(item), slotAspectFor(item)));
-}
-$('#pdf-zoom-in').addEventListener('click', () => pdfZoomStep(1));
-$('#pdf-zoom-out').addEventListener('click', () => pdfZoomStep(-1));
-for (const b of $$('#pdf-zoom [data-fit]')) {
-  b.addEventListener('click', () => {
-    const item = workItem();
-    if (!zoomableItem(item)) return;
-    sendView(fitView(b.dataset.fit, contentAspectFor(item), slotAspectFor(item)));
-  });
+  if (!zoomableItem(item)) return false;
+  sendView(zoomAround(viewOf(item), (item.zoom || 1) * factor, contentAspectFor(item), slotAspectFor(item), ax, ay));
+  return true;
 }
 
-function pdfPan(dx, dy) {
+function projectorFit(kind) {
   const item = workItem();
-  if (!zoomableItem(item) || (item.zoom || 1) <= 1) return;
-  // Half of what the room can see, whatever the zoom.
-  sendView(panBy(viewOf(item), dx * 0.5, dy * 0.5, contentAspectFor(item), slotAspectFor(item)));
+  if (!zoomableItem(item)) return;
+  sendView(fitView(kind, contentAspectFor(item), slotAspectFor(item)));
 }
-$('#pdf-pan-left').addEventListener('click', () => pdfPan(-1, 0));
-$('#pdf-pan-right').addEventListener('click', () => pdfPan(1, 0));
-$('#pdf-pan-up').addEventListener('click', () => pdfPan(0, -1));
-$('#pdf-pan-down').addEventListener('click', () => pdfPan(0, 1));
+
+function projectorPan(dx, dy) {
+  const item = workItem();
+  if (!zoomableItem(item) || !isZoomed(item)) return false;
+  sendView(panBy(viewOf(item), dx, dy, contentAspectFor(item), slotAspectFor(item)));
+  return true;
+}
+
+// A gesture's stream of views goes out at most ~15 a second; the last one
+// always goes when it ends, so the room settles exactly where the fingers did.
+let pendingView = null;
+const sendViewSoon = throttle(() => { if (pendingView) sendView(pendingView); }, 66);
+function streamView(view, final = false) {
+  pendingView = view;
+  if (final) { sendView(view); pendingView = null; } else sendViewSoon();
+}
+
+// The bars.
+for (const b of $$('#pdf-zoom [data-fit]')) b.addEventListener('click', () => projectorFit(b.dataset.fit));
+const sliderZoom = (input, final) => {
+  const item = workItem();
+  if (!zoomableItem(item)) return;
+  streamView(zoomAround(viewOf(item), sliderToZoom(input.value), contentAspectFor(item), slotAspectFor(item)), final);
+};
+$('#zoom-slider').addEventListener('input', (ev) => sliderZoom(ev.target, false));
+$('#zoom-slider').addEventListener('change', (ev) => sliderZoom(ev.target, true));
+for (const b of $$('#ink-controls [data-fit]')) {
+  b.addEventListener('click', () => {
+    if (zoomableItem(workItem())) projectorFit(b.dataset.fit);
+    else setZoom(1);
+  });
+}
+$('#ink-zoom-slider').addEventListener('input', (ev) => {
+  if (zoomableItem(workItem())) sliderZoom(ev.target, false);
+  else setZoom(sliderToZoom(ev.target.value, ZOOM_MAX));
+});
+$('#ink-zoom-slider').addEventListener('change', (ev) => { if (zoomableItem(workItem())) sliderZoom(ev.target, true); });
+
+// The Now preview: pinch and drag move the projector; double-tap is fit page
+// or fit width; the wheel zooms where the pointer is. Only on what the room
+// is seeing - frozen, the preview is live and the controls work on the cue.
+function nowPreviewGeometry() {
+  const live = focusedItem(state);
+  if (!zoomableItem(live) || workItem() !== live) return null;
+  const frame = $('#now-preview .mirror-frame');
+  if (!frame) return null;
+  const r = frame.getBoundingClientRect();
+  const host = $('#now-preview').getBoundingClientRect();
+  const aspect = contentAspectFor(live);
+  const slot = slotAspectFor(live);
+  const view = clampView(viewOf(live), aspect, slot);
+  // Zoomed, the preview IS the panel; at fit page it is just the content.
+  const isPanel = isZoomed(view);
+  const content = isPanel ? null : panelPointOf(view, 0, 0, aspect, slot);
+  const contentEnd = isPanel ? null : panelPointOf(view, 1, 1, aspect, slot);
+  // Pixels of the preview per panel width/height.
+  const panelW = isPanel ? r.width : r.width / (contentEnd.x - content.x);
+  const panelH = isPanel ? r.height : r.height / (contentEnd.y - content.y);
+  const toPanel = (x, y) => {
+    const px = x - (r.left - host.left);
+    const py = y - (r.top - host.top);
+    return isPanel ? { x: px / r.width, y: py / r.height } : { x: content.x + px / panelW, y: content.y + py / panelH };
+  };
+  return { live, aspect, slot, view, panelW, panelH, toPanel };
+}
+
+let nowGesture = null;
+attachGestures($('#now-preview'), {
+  onPinchStart: ({ x, y }) => {
+    const g = nowPreviewGeometry();
+    if (!g) { nowGesture = null; return; }
+    const a = g.toPanel(x, y);
+    nowGesture = { ...g, a, f: contentPointAt(g.view, a.x, a.y, g.aspect, g.slot) };
+  },
+  onPinch: ({ scale, dx, dy }) => {
+    const g = nowGesture;
+    if (!g) return;
+    streamView(viewKeeping(g.f.x, g.f.y, g.a.x + dx / g.panelW, g.a.y + dy / g.panelH, g.view.zoom * scale, g.aspect, g.slot));
+  },
+  onPinchEnd: () => { if (pendingView) streamView(pendingView, true); nowGesture = null; },
+  // One finger (or the mouse) drags a zoomed page around; on a document it
+  // scrolls as it always has, so nothing here takes it.
+  canDrag: () => !!nowPreviewGeometry() && isZoomed(focusedItem(state)),
+  onDrag: ({ x, y, dx, dy, phase }) => {
+    if (phase === 'start') {
+      const g = nowPreviewGeometry();
+      if (!g) { nowGesture = null; return; }
+      const a = g.toPanel(x, y);
+      nowGesture = { ...g, a, f: contentPointAt(g.view, a.x, a.y, g.aspect, g.slot) };
+      return;
+    }
+    const g = nowGesture;
+    if (!g) return;
+    streamView(viewKeeping(g.f.x, g.f.y, g.a.x + dx / g.panelW, g.a.y + dy / g.panelH, g.view.zoom, g.aspect, g.slot), phase === 'end');
+    if (phase === 'end') nowGesture = null;
+  },
+  onDoubleTap: ({ x, y }) => {
+    const g = nowPreviewGeometry();
+    if (!g) return;
+    if (isZoomed(g.view)) { sendView(fitView('page', g.aspect, g.slot)); return; }
+    const wide = fitView('width', g.aspect, g.slot);
+    const a = g.toPanel(x, y);
+    // Content the screen's own shape has no "fit width": zoom in where tapped.
+    sendView(isZoomed(wide) ? wide : zoomAround(g.view, 2, g.aspect, g.slot, a.x, a.y));
+  },
+  onWheel: ({ factor, x, y }) => {
+    const g = nowPreviewGeometry();
+    if (!g) return false;
+    const a = g.toPanel(x, y);
+    streamView(zoomAround(g.view, g.view.zoom * factor, g.aspect, g.slot, a.x, a.y));
+    return true;
+  },
+});
+
+// The Ink pad: a second finger turns a stroke into a pinch. Linked, it moves
+// the projector (the pad follows when the fingers lift); otherwise it is the
+// pad's own magnifier.
+let padPinch = null;
+attachGestures(padViewport, {
+  onPinchStart: ({ x, y }) => {
+    abortStroke();
+    padGesture = true;
+    const item = workItem();
+    const frame = padFrame.getBoundingClientRect();
+    const vp = padViewport.getBoundingClientRect();
+    if (zoomableItem(item)) {
+      const aspect = contentAspectFor(item);
+      const slot = slotAspectFor(item);
+      const view = clampView(viewOf(item), aspect, slot);
+      // The content point under the fingers, on the pad (which is the content).
+      const f = { x: (x + vp.left - frame.left) / frame.width, y: (y + vp.top - frame.top) / frame.height };
+      padPinch = { linked: true, aspect, slot, view, f, a: panelPointOf(view, f.x, f.y, aspect, slot), fw: frame.width, fh: frame.height };
+    } else {
+      padPinch = { linked: false, zoom0: zoom, x0: x, y0: y, localX: (x - padFrameLeft() - panX) / zoom, localY: (y - padFrameTop() - panY) / zoom };
+    }
+  },
+  onPinch: ({ scale, dx, dy }) => {
+    const p = padPinch;
+    if (!p) return;
+    if (p.linked) {
+      // Fingers dragging the page right bring what is left of it into the room.
+      streamView(viewKeeping(p.f.x - dx / p.fw / scale, p.f.y - dy / p.fh / scale, p.a.x, p.a.y, p.view.zoom * scale, p.aspect, p.slot));
+      return;
+    }
+    zoom = Math.min(ZOOM_MAX, Math.max(1, p.zoom0 * scale));
+    panX = p.x0 + dx - padFrameLeft() - p.localX * zoom;
+    panY = p.y0 + dy - padFrameTop() - p.localY * zoom;
+    clampPan();
+    applyPadTransform();
+    renderPadZoomLevel();
+  },
+  onPinchEnd: () => {
+    if (padPinch?.linked && pendingView) streamView(pendingView, true);
+    padPinch = null;
+    padGesture = false;
+    setTimeout(syncPadToRoom, 120);
+  },
+  onWheel: ({ factor, x, y }) => {
+    const item = workItem();
+    if (zoomableItem(item)) {
+      const frame = padFrame.getBoundingClientRect();
+      const vp = padViewport.getBoundingClientRect();
+      const aspect = contentAspectFor(item);
+      const slot = slotAspectFor(item);
+      const view = clampView(viewOf(item), aspect, slot);
+      const f = { x: (x + vp.left - frame.left) / frame.width, y: (y + vp.top - frame.top) / frame.height };
+      const a = panelPointOf(view, f.x, f.y, aspect, slot);
+      streamView(viewKeeping(f.x, f.y, a.x, a.y, view.zoom * factor, aspect, slot));
+      return true;
+    }
+    setZoom(zoom * factor, x, y);
+    return true;
+  },
+});
+
+/** The keyboard's zoom: + and - zoom, the arrows pan once zoomed. True if it was taken. */
+function zoomKey(ev) {
+  const onNow = !$('[data-panel="now"]').hidden;
+  const onInk = !$('[data-panel="ink"]').hidden;
+  if (!onNow && !onInk) return false;
+  const item = workItem();
+  const linked = zoomableItem(item);
+  if (!linked && !onInk) return false;
+  const inKey = ev.key === '+' || ev.key === '=';
+  const outKey = ev.key === '-' || ev.key === '_';
+  if (inKey || outKey) {
+    if (linked) projectorZoomBy(inKey ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP);
+    else setZoom(inKey ? zoom * ZOOM_STEP : zoom / ZOOM_STEP);
+    return true;
+  }
+  const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  if (!arrows[ev.key]) return false;
+  const [dx, dy] = arrows[ev.key];
+  // Zoomed in, the arrows move around the page; at fit page they keep paging.
+  if (linked) return projectorPan(dx * 0.5, dy * 0.5);
+  if (zoom > 1) { pan(-dx * 80, -dy * 80); return true; }
+  return false;
+}
 
 $('#lib-filter').addEventListener('input', renderLibrary);
 
@@ -7387,6 +7646,10 @@ document.addEventListener('keydown', (ev) => {
     if (ev.key === 'l' || ev.key === 'L') { ev.preventDefault(); setLaserActive(!laserActive); return; }
     if (ev.key === 's' || ev.key === 'S') { ev.preventDefault(); setSpotlightActive(!spotlightActive); return; }
   }
+
+  // Zoom and pan on the Now and Ink tabs (Issue #262) - zoomed in, the arrows
+  // move around the page rather than turning it.
+  if (zoomKey(ev)) { ev.preventDefault(); return; }
 
   // Paging, on the other hand, only means something on something with pages.
   if (!['pdf', 'slides', 'web', 'deck'].includes(workItem()?.type)) return;

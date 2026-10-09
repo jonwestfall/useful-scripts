@@ -255,7 +255,7 @@ ok(`Fit width: the page fills the screen edge to edge (${Math.round(filled.w)}×
   Math.abs(filled.w - filled.sw) < 2 && Math.abs(filled.h - filled.sh) < 2);
 ok(`with page, not black bars, at both edges (${filled.left.slice(0, 3)} / ${filled.right.slice(0, 3)})`, notBlack(filled.left) && notBlack(filled.right));
 const level = await pad.textContent('#pdf-zoom-level');
-ok(`the controller says how far in it is (${level})`, /^2\.\d×$/.test(level));
+ok(`the controller says how far in it is (${level})`, /^2\d\d%$/.test(level));
 await pad.click('#zoom-fit-page');
 await screen.waitForFunction(() => !document.querySelector('.layer[data-role="program"] .r-pdf-canvas.is-zoomed'), null, { timeout: 10000 })
   .then(() => ok('Fit page puts the whole page back', true))
@@ -316,7 +316,7 @@ await pad.click('.tab[data-tab="now"]');
 await pad.waitForSelector('#pdf-zoom:not([hidden])');
 await pad.click('#zoom-fit-width');
 await screen.waitForSelector('.layer[data-role="program"] img.is-zoomed', { timeout: 10000 });
-for (let i = 0; i < 2; i++) { await pad.click('#pdf-pan-down'); await pad.waitForTimeout(250); }
+for (let i = 0; i < 2; i++) { await pad.keyboard.press('ArrowDown'); await pad.waitForTimeout(250); }
 await screen.waitForTimeout(500);
 const zoomed = await inkAt(500 / 600, 450 / 900);
 const photoBox = await screen.$eval('.layer[data-role="program"] img', (n) => { const r = n.getBoundingClientRect(); return { w: r.width, left: r.left }; });
@@ -349,6 +349,150 @@ await screen.waitForTimeout(500);
 const back = await inkAt(0.15, 0.85);
 ok(`ink drawn zoomed in is in the right place on the whole photo (${back.px},${back.py})`, back.alpha > 0);
 ok('and the first stroke is back on the bright square', (await inkAt(500 / 600, 450 / 900)).alpha > 0);
+await ctx.close();
+}
+
+if (want('pinch, drag, double-tap and the wheel (#262)')) {
+console.log('\n-- pinch, drag, double-tap and the wheel (#262) --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, hasTouch: true });
+await ctx.addInitScript(([cfg, lib]) => {
+  localStorage.setItem('podium.config.v2', cfg);
+  localStorage.setItem('podium.library.v1', lib);
+}, [
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'pinch-room', passphrase: 'two fingers' }),
+  JSON.stringify([{ type: 'pdf', src: 'content/sample.pdf', page: 1, title: 'Letter handout' }]),
+]);
+const screen = await ctx.newPage();
+trap(screen, 'pinch display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'pinch control');
+await pad.setViewportSize({ width: 1024, height: 768 });
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+await pad.click('.tile:has(.tile-title:text-is("Letter handout"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-pdf-canvas')?.width > 300, null, { timeout: 15000 });
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForSelector('#pdf-zoom:not([hidden])');
+await pad.waitForTimeout(500);
+
+const cdp = await ctx.newCDPSession(pad);
+const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(([x, y], id) => ({ x, y, id })) });
+// Two fingers from `from` apart to `to` apart around (cx, cy), the pair moved by (mx, my).
+async function pinch(cx, cy, from, to, mx = 0, my = 0, steps = 8) {
+  await touch('touchStart', [[cx - from / 2, cy], [cx + from / 2, cy]]);
+  for (let i = 1; i <= steps; i++) {
+    const d = from + (to - from) * (i / steps);
+    const ox = mx * (i / steps);
+    const oy = my * (i / steps);
+    await touch('touchMove', [[cx - d / 2 + ox, cy + oy], [cx + d / 2 + ox, cy + oy]]);
+  }
+  await touch('touchEnd', []);
+}
+const box = async (sel) => pad.$eval(sel, (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, cx: r.x + r.width / 2, cy: r.y + r.height / 2 }; });
+const level = async () => Number((await pad.textContent('#pdf-zoom-level')).replace('%', ''));
+const canvasPixels = () => screen.evaluate(() => {
+  const c = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let sum = 0;
+  for (let i = 0; i < d.length; i += 4) sum = (sum + d[i] * (i % 1009 + 1)) % 1e9;
+  return `${c.width}x${c.height}:${sum}`;
+});
+
+let b = await box('#now-preview');
+// Around the page's heading (top left), the only words on it - so a drag after
+// has something to move.
+await pinch(b.x + b.w * 0.3, b.y + b.h * 0.12, 40, 160);
+await pad.waitForFunction(() => Number(document.querySelector('#pdf-zoom-level').textContent.replace('%', '')) > 300, null, { timeout: 5000 })
+  .then(async () => ok(`a pinch on the Now preview zooms the projector (${await level()}%)`, true))
+  .catch(async () => ok(`a pinch on the Now preview zooms the projector (${await level()}%)`, false));
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-pdf-canvas.is-zoomed'), null, { timeout: 8000 });
+await screen.waitForTimeout(600);
+// A pinch keeps what is under the fingers under them: the heading is still on
+// the projector, not zoomed off past an edge.
+const inked = await screen.evaluate(() => {
+  const c = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] < 100) n++;
+  return n;
+});
+ok(`the words under the fingers stay on the projector (${inked} dark pixels)`, inked > 500);
+const before = await canvasPixels();
+b = await box('#now-preview');
+await pinch(b.cx, b.cy, 120, 120, 0, -80);
+await screen.waitForFunction((was) => {
+  const c = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let sum = 0;
+  for (let i = 0; i < d.length; i += 4) sum = (sum + d[i] * (i % 1009 + 1)) % 1e9;
+  return `${c.width}x${c.height}:${sum}` !== was;
+}, before, { timeout: 8000 })
+  .then(() => ok('a two-finger drag moves around the zoomed page', true))
+  .catch(() => ok('a two-finger drag moves around the zoomed page', false));
+
+// Double tap: zoomed, it is fit page; at fit page, fit width.
+b = await box('#now-preview');
+for (let i = 0; i < 2; i++) { await touch('touchStart', [[b.cx, b.cy]]); await touch('touchEnd', []); await pad.waitForTimeout(80); }
+await pad.waitForFunction(() => document.querySelector('#pdf-zoom-level').textContent === '100%', null, { timeout: 5000 })
+  .then(() => ok('a double-tap when zoomed goes back to the whole page', true))
+  .catch(async () => ok(`a double-tap when zoomed goes back to the whole page (${await level()}%)`, false));
+await pad.waitForTimeout(500);
+b = await box('#now-preview');
+for (let i = 0; i < 2; i++) { await touch('touchStart', [[b.cx, b.cy]]); await touch('touchEnd', []); await pad.waitForTimeout(80); }
+await pad.waitForFunction(() => /^2\d\d%$/.test(document.querySelector('#pdf-zoom-level').textContent), null, { timeout: 5000 })
+  .then(async () => ok(`and at the whole page, a double-tap is fit width (${await level()}%)`, true))
+  .catch(async () => ok(`and at the whole page, a double-tap is fit width (${await level()}%)`, false));
+
+// The mouse wheel zooms around the pointer.
+const atWidth = await level();
+b = await box('#now-preview');
+await pad.mouse.move(b.cx, b.cy);
+await pad.mouse.wheel(0, -400);
+await pad.waitForFunction((was) => Number(document.querySelector('#pdf-zoom-level').textContent.replace('%', '')) > was, atWidth, { timeout: 5000 })
+  .then(async () => ok(`the mouse wheel zooms in (${atWidth}% → ${await level()}%)`, true))
+  .catch(() => ok('the mouse wheel zooms in', false));
+await pad.click('#zoom-fit-page');
+await pad.waitForFunction(() => document.querySelector('#pdf-zoom-level').textContent === '100%', null, { timeout: 5000 });
+
+// The Ink pad, linked: a finger goes down (a stroke begins), a second joins -
+// it was a pinch, so no mark is left and the projector zooms.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForTimeout(600);
+b = await box('#pad');
+await touch('touchStart', [[b.cx - 20, b.cy]]);
+await touch('touchMove', [[b.cx - 24, b.cy + 2]]);
+await touch('touchStart', [[b.cx - 24, b.cy + 2], [b.cx + 20, b.cy]]);
+for (let i = 1; i <= 8; i++) await touch('touchMove', [[b.cx - 24 - i * 12, b.cy + 2], [b.cx + 20 + i * 12, b.cy]]);
+await touch('touchEnd', []);
+await pad.waitForFunction(() => Number(document.querySelector('#ink-zoom-level').textContent.replace('%', '')) > 150, null, { timeout: 5000 })
+  .then(async () => ok(`a pinch on the pad zooms the projector for a PDF page (${await pad.textContent('#ink-zoom-level')})`, true))
+  .catch(async () => ok(`a pinch on the pad zooms the projector (${await pad.textContent('#ink-zoom-level')})`, false));
+await screen.waitForTimeout(700);
+ok('and the finger that started it left no mark', !(await screen.evaluate(() => document.querySelector('#ink').classList.contains('has-ink'))));
+const follow = await pad.$eval('#pad-frame', (n) => n.style.transform);
+ok(`the pad follows the room's view (${follow})`, /scale\((?!1\))/.test(follow));
+// One finger still draws.
+b = await box('#pad-viewport');
+await touch('touchStart', [[b.cx, b.cy]]);
+for (let i = 1; i <= 6; i++) await touch('touchMove', [[b.cx + i * 6, b.cy + i * 3]]);
+await touch('touchEnd', []);
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 })
+  .then(() => ok('one finger still draws', true))
+  .catch(() => ok('one finger still draws', false));
+
+// On a whiteboard, a pinch is the pad's own magnifier: the room is untouched.
+await pad.keyboard.press('w');
+await screen.waitForSelector('.layer[data-role="program"] .r-whiteboard', { timeout: 8000 });
+await pad.waitForTimeout(600);
+b = await box('#pad-viewport');
+await pinch(b.cx, b.cy, 60, 180);
+const magnified = await pad.$eval('#pad-frame', (n) => n.style.transform);
+ok(`on a whiteboard, a pinch zooms the pad (${magnified})`, /scale\((2|3)/.test(magnified));
+ok('and the zoom bar has no fit width or height to offer', await pad.isHidden('#ink-fit-width') && await pad.isHidden('#ink-fit-height'));
 await ctx.close();
 }
 
@@ -766,12 +910,13 @@ await screen.waitForFunction(() => document.querySelector('#ink').classList.cont
 await pad.keyboard.press('Control+z');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 
-await pad.click('#ink-zoom-in');
-await pad.click('#ink-zoom-in');
+// Issue #262: + on the keyboard zooms the pad's own magnifier on a deck.
+await pad.keyboard.press('+');
+await pad.keyboard.press('+');
 await pad.waitForTimeout(700);
 const zoomedTransform = await pad.$eval('#pad-frame', (n) => n.style.transform);
 ok(`zooming in actually scales the pad (${zoomedTransform})`, /scale\(([2-9]|\d\d)/.test(zoomedTransform) || /scale\(2\.\d/.test(zoomedTransform));
-ok('pan buttons become available once zoomed', await pad.$eval('#pan-left', (b) => !b.disabled));
+ok(`and the bar says how far (${await pad.textContent('#ink-zoom-level')})`, /^256%$/.test(await pad.textContent('#ink-zoom-level')));
 
 // The SAME center point, now dabbed on the zoomed (larger, post-transform)
 // pad box, must still land at the stage center - zoom changes what you see,
@@ -780,9 +925,9 @@ await dab(0.5, 0.5);
 await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 ok('the same relative point still lands in the same place once zoomed', await pixelAt(0.5, 0.5));
 
-await pad.click('#ink-zoom-reset');
+await pad.click('#ink-fit-page');
 await pad.waitForTimeout(700);
-ok('reset zoom returns to 1x and disables panning again', await pad.$eval('#pan-left', (b) => b.disabled));
+ok('Fit page returns the pad to 100%', (await pad.textContent('#ink-zoom-level')) === '100%' && /scale\(1\)/.test(await pad.$eval('#pad-frame', (n) => n.style.transform)));
 await ctx.close();
 }
 
