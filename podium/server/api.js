@@ -530,6 +530,21 @@ async function handleApi(req, res, url, ctx) {
         json(res, 200, { person, linked });
         return true;
       }
+      // Questions (phase 4): the parking lot dealt with, and the answers as a CSV.
+      if (rest[0] === 'sessions' && rest[2] === 'parking' && rest.length === 4 && req.method === 'PATCH') {
+        json(res, 200, attendance.answerParking(ctx.db, user, rest[1], rest[3], await readJson(req, 4 * 1024)));
+        return true;
+      }
+      if (rest[0] === 'sessions' && rest[2] === 'answers' && rest.length === 3 && req.method === 'GET') {
+        const csv = attendance.answersCsv(ctx.db, user, rest[1]);
+        res.writeHead(200, {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': `attachment; filename="attendance-${Number(rest[1])}-answers.csv"`,
+          'cache-control': 'no-store',
+        });
+        res.end(csv);
+        return true;
+      }
       if (rest[0] === 'sessions' && rest.length === 2 && req.method === 'DELETE') {
         const gone = attendance.deleteSession(ctx.db, user, rest[1]);
         auditLog(ctx, req, user, 'attendance_session_deleted', { courseCode: gone.course, sessionId: gone.id, marks: gone.marks });

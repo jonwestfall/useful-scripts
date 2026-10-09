@@ -618,6 +618,12 @@ async function handleAttend(req, res, url) {
   const ip = api.clientIp(req);
   if (action === 'code') { answer(() => attendance.redeemCode(db, { code: body.code, device: body.device, ip })); return; }
   if (action === 'people') { answer(() => attendance.searchPeople(db, { ticket: body.ticket, device: body.device, q: body.q })); return; }
+  if (action === 'answers') { answer(() => attendance.answer(db, { ticket: body.ticket, device: body.device, markKey: body.markKey, answers: body.answers })); return; }
+  if (action === 'status') { answer(() => attendance.status(db, { markKey: body.markKey })); return; }
+  if (action === 'parking') {
+    answer(() => attendance.park(db, { ticket: body.ticket, device: body.device, markKey: body.markKey, text: body.text, anonymous: !!body.anonymous }));
+    return;
+  }
   if (action === 'checkin') {
     answer(() => attendance.checkIn(db, {
       ticket: body.ticket, device: body.device, ip, rosterId: body.rosterId, guest: body.guest, how: body.how,

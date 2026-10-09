@@ -990,6 +990,9 @@
                 <input id="att-late-after" aria-label="Minutes from now until check-ins count as late" type="number" min="0" max="600" value="10" style="max-width: 80px" disabled>
                 <span class="hint">minutes from now</span>
               </div>
+              <label for="att-entry-questions" class="hint" style="margin: 0">Questions on check-in (optional): one per line, choices after a | — <i>Did you do the reading? | Yes | Some | No</i></label>
+              <textarea id="att-entry-questions" rows="2" placeholder="Leave empty to just take attendance"></textarea>
+              <label class="check" style="margin: 0"><input id="att-parking-start" type="checkbox"> Open the parking lot (students can leave a question)</label>
               <button id="att-open" type="button">Open check-in</button>
             </div>
             <div id="att-live" class="stack" hidden>
@@ -1004,6 +1007,20 @@
                   Now marking late
                 </label>
                 <span id="att-late-rule" class="hint"></span>
+              </div>
+              <div class="inline">
+                <button id="att-exit" type="button">Open exit ticket…</button>
+                <label class="check" style="margin: 0"><input id="att-parking" type="checkbox"> Parking lot open</label>
+              </div>
+              <div id="att-exit-form" class="stack" hidden>
+                <label for="att-exit-questions" class="hint" style="margin: 0">Exit questions: one per line, choices after a |. Phones that checked in answer without picking their name again.</label>
+                <textarea id="att-exit-questions" rows="2" placeholder="One thing you learned today"></textarea>
+                <button id="att-exit-go" type="button">Open the exit ticket and show it</button>
+              </div>
+              <div id="att-answers" class="stack" hidden></div>
+              <div id="att-parking-box" class="stack" hidden>
+                <h3 style="margin: 4px 0 0">Parking lot</h3>
+                <div id="att-parking-list" class="att-list" role="list"></div>
               </div>
               <input id="att-search" type="search" aria-label="Find someone to mark by hand" placeholder="Find someone to mark by hand">
               <div id="att-list" class="att-list" role="list"></div>

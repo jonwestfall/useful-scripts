@@ -142,6 +142,12 @@ export function createAttendanceReview({ api, dialog, courses, initial = '' }) {
       return select;
     };
 
+    // This person's answers to the entry and exit questions, in one line.
+    const prompts = { entry: s.questions?.entry || [], exit: s.questions?.exit || [] };
+    const answerLine = (mark) => ['entry', 'exit'].flatMap((phase) => prompts[phase]
+      .filter((q) => mark?.answers?.[phase]?.[q.id] !== undefined)
+      .map((q) => `${phase === 'exit' ? 'Exit' : 'Entry'} “${q.prompt}”: ${mark.answers[phase][q.id]}`)).join(' · ');
+
     const row = ({ name, meta, mark, onPick, derivedAbsent = false, extra = [] }) => {
       const flags = mark?.flags?.length ? flagText(mark.flags) : '';
       const bits = [meta,
@@ -153,7 +159,8 @@ export function createAttendanceReview({ api, dialog, courses, initial = '' }) {
           el('span', { class: 'att-name' }, name),
           el('span', { class: 'att-meta' }, bits),
           flags ? el('span', { class: `att-flag${mark.dismissed ? ' is-dismissed' : ''}` },
-            flags + (mark.dismissed ? ` — dismissed${mark.dismissed.by ? ` by ${mark.dismissed.by}` : ''}` : '')) : null),
+            flags + (mark.dismissed ? ` — dismissed${mark.dismissed.by ? ` by ${mark.dismissed.by}` : ''}` : '')) : null,
+          answerLine(mark) ? el('span', { class: 'att-meta attn-answer' }, answerLine(mark)) : null),
         el('span', { class: 'me-actions' },
           ...extra,
           isFlagged(mark) ? el('button', { type: 'button', class: 'admin-small', onclick: () => act(`/api/attendance/sessions/${id}/marks/${mark.id}/dismiss`, 'POST', `Flags on ${name} dismissed.`) }, 'Dismiss flag') : null,
@@ -193,6 +200,8 @@ export function createAttendanceReview({ api, dialog, courses, initial = '' }) {
       el('label', { class: 'me-check' }, el('input', { type: 'checkbox', id: 'attn-only-flagged', checked: !!onlyFlagged, onchange: () => loadReview(id) }), 'Only what is flagged'),
       el('div', { class: 'att-list', role: 'list', id: 'attn-review-list' }, ...(people.length || guests.length ? [...people, ...guests]
         : [el('p', { class: 'hint' }, onlyFlagged ? 'Nothing flagged in this session.' : 'Nobody on the roster, and nobody checked in.')])),
+      questionsBlock(data),
+      parkingBlock(data),
       el('details', { class: 'help attn-history' },
         el('summary', {}, `History (${data.history.length})`),
         data.history.length
@@ -200,6 +209,33 @@ export function createAttendanceReview({ api, dialog, courses, initial = '' }) {
             `${when(h.at)} — ${h.by || 'someone'} ${ACTIONS[h.action] || h.action} ${h.name}`
             + (h.action === 'changed' ? `: ${h.before} → ${h.after}` : h.action === 'marked' ? ` ${h.after}` : h.action === 'removed' ? ` (was ${h.before})` : ''))))
           : el('p', { class: 'hint' }, 'Nothing has been changed since check-in.')));
+  }
+
+  // The answers, question by question, and a CSV of every one.
+  function questionsBlock(data) {
+    const blocks = [];
+    for (const phase of ['entry', 'exit']) {
+      for (const q of data.summary?.[phase] || []) {
+        blocks.push(el('div', { class: 'att-question' },
+          el('div', { class: 'att-question-prompt' }, `${phase === 'exit' ? 'Exit ticket' : 'Entry ticket'}: ${q.prompt}`,
+            el('span', { class: 'hint' }, ` · ${q.answered} answered`)),
+          q.kind === 'choice'
+            ? el('ul', { class: 'att-answers' }, ...q.options.map((o, i) => el('li', {}, `${o} — ${q.counts[i]}`)))
+            : el('ul', { class: 'att-answers' }, ...q.answers.map((a) => el('li', {}, a)))));
+      }
+    }
+    if (!blocks.length && !data.parking?.length) return null;
+    return el('div', { class: 'stack attn-questions' },
+      el('p', { class: 'hint' }, el('a', { class: 'linkish', href: `/api/attendance/sessions/${data.session.id}/answers`, download: '' }, 'Download the answers and the parking lot (CSV)')),
+      ...blocks);
+  }
+
+  function parkingBlock(data) {
+    if (!data.parking?.length) return null;
+    return el('details', { class: 'help', open: true },
+      el('summary', {}, `Parking lot (${data.parking.length})`),
+      el('ul', { class: 'att-answers' }, ...data.parking.map((q) => el('li', { class: q.answeredAt ? 'is-answered' : '' },
+        `${q.text} — ${q.anonymous ? 'anonymous' : q.name}, ${timeOf(q.at)}${q.answeredAt ? ' (answered)' : ''}`))));
   }
 
   async function act(path, method, done, body) {

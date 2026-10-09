@@ -13,6 +13,23 @@ const COURSE_KEY = 'podium.attendance.course';
 const LIVE_MS = 3000;     // how often the list refreshes while the tab is open
 const STATUS_LABELS = { present: 'Present', late: 'Late', excused: 'Excused', absent: 'Absent' };
 
+/**
+ * Questions as a teacher types them, one per line: the question, then its
+ * choices after bars - `Which reading? | Ch 3 | Ch 4`. No choices (or only
+ * one) is a short answer. At most three; the server tidies the rest.
+ */
+export function parseQuestionLines(text) {
+  return String(text || '').split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 3).map((line) => {
+    const [prompt, ...options] = line.split('|').map((part) => part.trim());
+    return { prompt, options: options.filter(Boolean) };
+  });
+}
+
+/** The other way: questions back into lines, to edit. */
+export function questionLines(questions) {
+  return (questions || []).map((q) => [q.prompt, ...(q.options || [])].join(' | ')).join('\n');
+}
+
 async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(path, {
     method,
@@ -110,14 +127,63 @@ export function createAttendancePanel({ stage, lectureId }) {
     if (!session) { $('#att-list').replaceChildren(); return; }
     const c = session.counts;
     const here = c.present + c.late;
-    $('#att-summary').textContent = `${session.open ? 'Check-in is open' : 'Check-in is closed'} · ${here} checked in`
+    const what = session.phase === 'exit' ? 'The exit ticket' : 'Check-in';
+    $('#att-summary').textContent = `${what} is ${session.open ? 'open' : 'closed'} · ${here} checked in`
       + `${session.rosterSize ? ` of ${session.rosterSize}` : ''}${c.late ? ` · ${c.late} late` : ''}${c.excused ? ` · ${c.excused} excused` : ''}`;
-    $('#att-toggle-open').textContent = session.open ? 'Close check-in' : 'Reopen check-in';
+    $('#att-toggle-open').textContent = session.open ? `Close ${session.phase === 'exit' ? 'the exit ticket' : 'check-in'}` : 'Reopen check-in';
+    $('#att-exit').hidden = session.open && session.phase === 'exit';
+    if (!$('#att-exit-form').hidden && document.activeElement !== $('#att-exit-questions')) {
+      $('#att-exit-questions').value ||= questionLines(session.questions.exit);
+    }
+    $('#att-parking').checked = session.parking;
+    renderAnswers();
+    renderParking();
     $('#att-late-now').checked = session.lateNow;
     $('#att-late-rule').textContent = session.lateRule.after != null
       ? `Late after ${new Date(session.lateRule.from + session.lateRule.after * 60000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${session.lateApplies && !session.lateNow ? ' — now marking late' : ''}`
       : '';
     renderList();
+  }
+
+  // What the room answered, question by question.
+  function renderAnswers() {
+    const blocks = [];
+    for (const phase of ['entry', 'exit']) {
+      for (const q of detail?.summary?.[phase] || []) {
+        const body = q.kind === 'choice'
+          ? el('div', { class: 'att-bars' }, ...q.options.map((option, i) => {
+            const n = q.counts[i] || 0;
+            const fill = el('span', { class: 'att-bar-fill' });
+            fill.style.width = `${q.answered ? Math.round((n / q.answered) * 100) : 0}%`;
+            return el('div', { class: 'att-bar' }, el('span', { class: 'att-bar-label' }, `${option} — ${n}`), el('span', { class: 'att-bar-track' }, fill));
+          }))
+          : el('ul', { class: 'att-answers' }, ...q.answers.slice(-30).reverse().map((a) => el('li', {}, a)));
+        blocks.push(el('div', { class: 'att-question' },
+          el('div', { class: 'att-question-prompt' }, `${phase === 'exit' ? 'Exit' : 'Entry'}: ${q.prompt}`, el('span', { class: 'hint' }, ` · ${q.answered} answered`)),
+          body));
+      }
+    }
+    $('#att-answers').hidden = !blocks.length;
+    $('#att-answers').replaceChildren(...blocks);
+  }
+
+  // The parking lot: newest first, unanswered ones on top.
+  function renderParking() {
+    const list = [...(detail?.parking || [])].sort((a, b) => (!!a.answeredAt - !!b.answeredAt) || b.at - a.at);
+    $('#att-parking-box').hidden = !session?.parking && !list.length;
+    $('#att-parking-list').replaceChildren(...(list.length ? list.map((q) => el('div', { class: `att-row att-parked${q.answeredAt ? ' is-answered' : ''}`, role: 'listitem' },
+      el('span', { class: 'att-who' },
+        el('span', { class: 'att-name' }, q.text),
+        el('span', { class: 'att-meta' }, `${q.anonymous ? 'anonymous' : q.name} · ${new Date(q.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}${q.answeredAt ? ' · answered' : ''}`)),
+      el('span', { class: 'att-actions' },
+        el('button', { type: 'button', class: 'btn-small', onclick: () => stage({ type: 'text', title: 'Parking lot', body: q.text, caption: q.anonymous ? '' : `— ${q.name}`, size: 'l' }) }, 'Show on screen'),
+        el('button', { type: 'button', class: 'btn-small', onclick: () => answerParked(q, !q.answeredAt) }, q.answeredAt ? 'Not answered' : 'Answered'))))
+      : [el('p', { class: 'hint' }, 'No questions yet. Phones that check in can ask one, named or anonymously.')]));
+  }
+
+  async function answerParked(q, answered) {
+    try { await api(`/api/attendance/sessions/${session.id}/parking/${q.id}`, { method: 'PATCH', body: { answered } }); } catch (err) { say(err.message, true); }
+    await refresh();
   }
 
   function flagText(flags) {
@@ -193,7 +259,10 @@ export function createAttendancePanel({ stage, lectureId }) {
     try {
       const got = await api('/api/attendance/sessions', {
         method: 'POST',
-        body: { course, lectureId: lectureId() || null, lateRule: { after, from: Date.now() } },
+        body: {
+          course, lectureId: lectureId() || null, lateRule: { after, from: Date.now() }, phase: 'entry',
+          questions: { entry: parseQuestionLines($('#att-entry-questions').value) }, parking: $('#att-parking-start').checked,
+        },
       });
       session = got.session;
       say(got.reopened ? 'Check-in is open again for this lecture.' : 'Check-in is open.');
@@ -214,7 +283,7 @@ export function createAttendancePanel({ stage, lectureId }) {
     if (!session) return;
     stage({
       type: 'attendance',
-      title: `Check in · ${String(session.course).toUpperCase()}`,
+      title: `${session.phase === 'exit' ? 'Exit ticket' : 'Check in'} · ${String(session.course).toUpperCase()}`,
       sessionId: session.id,
       screenKey: session.screenKey,
       course: String(session.course).toUpperCase(),
@@ -234,8 +303,50 @@ export function createAttendancePanel({ stage, lectureId }) {
     ev.target.checked ? 'Check-ins from now on count as late.' : 'Check-ins count as present again.'));
   $('#att-late-after-on').addEventListener('change', (ev) => { $('#att-late-after').disabled = !ev.target.checked; });
   $('#att-search').addEventListener('input', renderList);
+  $('#att-parking').addEventListener('change', (ev) => change({ parking: ev.target.checked },
+    ev.target.checked ? 'The parking lot is open: phones that checked in can ask a question.' : 'The parking lot is closed.'));
+  $('#att-exit').addEventListener('click', () => {
+    $('#att-exit-form').hidden = !$('#att-exit-form').hidden;
+    if (!$('#att-exit-form').hidden) {
+      $('#att-exit-questions').value = questionLines(session.questions.exit);
+      $('#att-exit-questions').focus();
+    }
+  });
+  $('#att-exit-go').addEventListener('click', () => openExit(parseQuestionLines($('#att-exit-questions').value)));
+
+  // The exit ticket: the same session opened again at the end, asking its
+  // own questions. A phone that checked in earlier answers without picking
+  // its name again.
+  async function openExit(questions) {
+    await change({ open: true, phase: 'exit', questions: { exit: questions } }, 'The exit ticket is open.');
+    $('#att-exit-form').hidden = true;
+    show();
+  }
 
   return {
+    /**
+     * A planned Attendance item (Issue #256): open check-in - or the exit
+     * ticket - with what the plan says, and put it on screen.
+     */
+    async fromPlan(item) {
+      visible = true;
+      await loadCourses();
+      if (item.course && courses.some((c) => c.code === String(item.course).toLowerCase())) $('#att-course').value = String(item.course).toLowerCase();
+      await loadCurrent();
+      const questions = parseQuestionLines(item.questions);
+      if (item.phase === 'exit' && session) {
+        if (item.parking) await change({ parking: true });
+        await openExit(questions);
+        return;
+      }
+      $('#att-late-after-on').checked = !!item.lateOn;
+      $('#att-late-after').disabled = !item.lateOn;
+      if (item.lateOn) $('#att-late-after').value = String(Number(item.lateAfter) || 0);
+      $('#att-entry-questions').value = questionLines(questions);
+      $('#att-parking-start').checked = !!item.parking;
+      if (session?.open) { show(); return; }
+      await open();
+    },
     /** The tab was opened: catch up. */
     async opened() {
       visible = true;
