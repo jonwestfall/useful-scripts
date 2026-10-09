@@ -39,7 +39,7 @@ Podium supports three interchangeable relay backends. All messages travel as lig
 
 ### 2. Self-Hosted Relay (`podium/server/`)
 - A small Node.js server (`server/podium-server.js`) with two runtime dependencies (`ws` for WebSockets, `yauzl` for ZIP imports) and built-in `node:sqlite` storage.
-- Handles WebSocket room routing and HTTP audience polling endpoints. With a `DATA_DIR`, it adds accounts, courses, a file library, stored plans, session records, Guest View codes and kiosk profiles (see [vps.md](vps.md)).
+- Handles WebSocket room routing and HTTP audience polling endpoints. With a `DATA_DIR`, it adds accounts, courses, a file library, stored plans, session records with replay and full-text search, rosters and attendance, Guest View codes and kiosk profiles (see [vps.md](vps.md)).
 - Can run behind reverse proxies like Caddy or Nginx with TLS termination.
 
 ### 3. Public MQTT
@@ -76,6 +76,16 @@ Podium is built on a **Zero-Trust Relay** model. Because classroom computers and
 ### 5. Live Streams Load Twitch's Own Player
 - A Twitch stream (Issue #175) is played through Twitch's embed script, fetched from `player.twitch.tv` by whichever screen shows the stream (the display, or a Guest View viewer), and only then. It is the only way to control a Twitch player's play, pause and volume. Nothing about the room travels to Twitch beyond what any embedded player sees: the page's address (Twitch requires it) and the viewer's own connection. YouTube Live uses the same `youtube.com` embed as ordinary YouTube items.
 
+### 6. Session Records and Recordings Live on Your Server
+- With accounts, the **display** (the one device holding the decrypted state) writes a lecture's record to your own server over HTTPS: the timeline, caption text, poll results, and, if chosen, photos, controller mic audio (Issue #147) and screen video (Issue #132, off unless an administrator turns it on). The relay still only ever sees ciphertext; these records are stored readable on the server so they can be replayed and searched (Issue #159), and only accounts that may open that lecture can reach them.
+- Each recording is said on screen: the Go live screen lists what is kept, and a badge stays on the projector while the screen is being recorded.
+
+### 7. Attendance: Location and Email
+- Attendance (Issue #256) runs only on your own server. Students' phones talk to it directly at `attend.html`, outside the room's encryption, the same way poll answers do.
+- **Location**, when an instructor requires phones to be in the room: the phone sends its position once; the server works out the distance and keeps only that number, never the coordinates.
+- **Receipts by email** go through the SMTP server an administrator configures (`SMTP_URL`), so that mail provider sees each receipt's address and contents. Off unless both the server and the course turn it on.
+- The browser token and network address behind a shared-phone flag are kept only as keyed hashes, and only for the retention period set on the admin page.
+
 ## State Machine Protocol (`protocol.js`)
 
 All application state is governed by a pure, deterministic state machine in [`podium/assets/js/protocol.js`](../assets/js/protocol.js):
@@ -105,7 +115,12 @@ podium/
 ├── guest.html            # Simple Mode: a substitute's clicker (Issue #77)
 ├── view.html             # Guest View: watch-only viewer (Issue #150)
 ├── plan.html             # Office lecture planner
+├── deck.html             # Deck editor: Marp decks and markdown documents (Issues #226, #240)
+├── quicklook.html        # Quick Look: a file, privately, in its own tab (Issue #242)
 ├── join.html             # Audience poll page for student phones (self-contained)
+├── attend.html           # Attendance check-in for student phones (self-contained, Issue #256)
+├── me.html               # My Files: everything that is yours on a server (Issue #243)
+├── replay.html           # Replay a recorded lecture (Issue #132)
 ├── admin.html            # Self-hosted admin page (people, courses, library, sessions, kiosks)
 ├── login.html            # Sign-in page for self-hosted instances (self-contained)
 ├── sw.js                 # Network-first offline service worker
@@ -114,7 +129,7 @@ podium/
 ├── marp-themes/          # Marp CSS themes + themes.json
 ├── assets/
 │   ├── css/podium.css    # One shared stylesheet (palette tokens, dark/light)
-│   ├── vendor/           # Marp, PDF.js, QR code - vendored copies
+│   ├── vendor/           # Marp, PDF.js, QR code, CodeMirror, Mermaid, mammoth - vendored copies
 │   └── js/
 │       ├── protocol.js   # Deterministic state machine & command reducer, ink math
 │       ├── control.js    # Controller UI
@@ -126,12 +141,20 @@ podium/
 │       ├── transport/    # mqtt.js, supabase.js, ws.js
 │       ├── rtc.js        # WebRTC camera & microphone
 │       ├── pdf-writer.js # Client-side PDF export;  recap.js - lecture recaps
+│       ├── deck-editor.js, deck-source.js, deck-mermaid.js  # The deck editor and its checks
+│       ├── doc.js, doc-reader.js     # Markdown documents, and a viewer's own-pace reader
+│       ├── zoom.js, gestures.js      # Zoom that fills the screen; pinch, drag, wheel
+│       ├── quicklook.js, me.js, attendance-panel.js, attendance-review.js
+│       ├── session-search.js         # Searching past sessions (Issue #159)
+│       ├── replay.js, replay-model.js  # The lecture replay; screen-record.js records the display
 │       ├── admin.js, guest.js, join.js, ...
 │       └── ...
 ├── server/               # Self-hosted relay & storage server
 │   ├── podium-server.js  # HTTP + WebSocket relay, auth gate, static files
 │   ├── api.js            # REST API;  store.js - SQLite schema & persistence
 │   ├── accounts.js, courses.js, library.js, plans.js, lectures.js, kiosks.js, ...
+│   ├── roster.js, attendance.js  # Course rosters and attendance (Issue #256)
+│   ├── mail.js           # A small SMTP client for attendance receipts
 │   ├── podium-admin.js   # CLI: users, courses, backups, pruning, doctor
 │   └── doctor.js         # Self-diagnostics
 ├── deploy/               # install/update/backup/restore scripts, systemd & nginx templates

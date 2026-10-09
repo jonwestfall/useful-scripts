@@ -75,10 +75,11 @@ The PC opens one fullscreen browser tab and is never touched again; everything o
 projector is chosen from a tablet or phone, from anywhere in the room.
 
 - **Freeze** holds the projector while you line up the next thing in the cue, then **TAKE** cuts to it
-- Marp decks in Markdown, PDFs, video, YouTube, music, timers, QR codes, and your phone as a document camera
-- Live ink with an Apple Pencil, a laser and spotlight, split screen and picture-in-picture
-- Audience polls, quizzes and Q&A from students' phones, live captions, and a watch-only Guest View
-- A planning page for your office, a Simple Mode for substitutes, and an optional server with accounts, courses, session history and kiosk signage
+- Marp decks and markdown documents (with Mermaid diagrams), PDFs, Word files, video, YouTube, music, timers, QR codes, and your phone as a document camera
+- Live ink with an Apple Pencil, a laser and spotlight, pinch-to-zoom that fills the screen, split screen and picture-in-picture
+- Audience polls, quizzes and Q&A from students' phones, attendance from a code on the screen, live captions, and a watch-only Guest View
+- A planning page and deck editor for your office, a Simple Mode for substitutes, and an optional server with accounts, courses, My Files, kiosk signage, and lecture replay and search
+- New in 1.3: see [What's new in Podium 1.3](podium/docs/whats-new-1.3.md)
 - Plain static pages: runs on GitHub Pages, a VPS, or a folder on disk, with every message encrypted in the browser
 
 Designed and built by Jon Westfall, drawing on more than twenty years of classroom teaching.

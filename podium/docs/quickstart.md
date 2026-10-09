@@ -325,3 +325,8 @@ The broker is offered as a courtesy with no guarantees — fine for teaching. If
 department wants something it controls, Podium also runs over your own server with one
 setting changed (`server/` in this folder is a small relay you can put on any VPS), or
 over a free Supabase project.
+
+Your own server also adds what a free setup can't: audience polls, accounts and
+courses, a shared library, attendance taken from students' phones, and a record of
+every lecture that you can search and replay with its sound. See
+[What's new in 1.3](whats-new-1.3.md) and the [deploy guide](../deploy/README.md).

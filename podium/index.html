@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
-<meta name="description" content="Podium turns the classroom PC into a presentation display you drive from your iPad or phone — slides, ink, polls, media and music, controlled from anywhere in the room.">
+<meta name="description" content="Podium turns the classroom PC into a presentation display you drive from your iPad or phone — slides, documents, ink, polls, attendance, media and music, controlled from anywhere in the room, with every lecture searchable and replayable afterwards.">
 <title>Podium</title>
 <link rel="stylesheet" href="assets/css/podium.css">
 <script src="assets/js/theme-boot.js"></script>
@@ -34,9 +34,9 @@
     <h1>Drive the projector from your iPad.<br>Never touch the classroom PC again.</h1>
     <p class="landing-lede">
       Open one browser tab on the machine plugged into the projector and walk away.
-      Slides, PDFs, video, YouTube, background music, handwriting, QR codes, timers
-      and your phone's camera — all of it controlled from a tablet or phone in your
-      hand, from anywhere in the room.
+      Slides, PDFs, documents, video, YouTube, background music, handwriting, QR codes,
+      timers, polls, attendance and your phone's camera — all of it controlled from a
+      tablet or phone in your hand, from anywhere in the room.
     </p>
     <div class="row landing-cta-row" id="hero-cta"></div>
 
@@ -66,6 +66,18 @@
     </div>
   </section>
 
+  <section class="landing-section" id="new">
+    <h2>New in Podium 1.3</h2>
+    <div class="landing-grid landing-features">
+      <div class="landing-feature"><span class="lf-icon">✅</span><div><b>Attendance</b><p>Students check in from a code on the screen that changes every few seconds, against your roster — with entry and exit tickets, a parking lot for questions and a Canvas gradebook export.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">⏯️</span><div><b>Replay any lecture</b><p>Your mic, what was on screen, the captions and polls, all in time, with a transcript you tap to jump — and optionally the screen as video.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">🔎</span><div><b>Search every lecture</b><p>Find what you said or showed across the whole term, then play from that exact moment.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">📖</span><div><b>Markdown &amp; Word documents</b><p>A plain .md, Word or RTF file as one readable page you scroll for the room, with ink that stays on the words.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">🤏</span><div><b>Pinch to zoom</b><p>PDFs and photos fill the screen when zoomed; pinch and drag on your iPad, and portrait pages keep their shape.</p></div></div>
+      <div class="landing-feature"><span class="lf-icon">✍️</span><div><b>A real deck editor</b><p>Write slides beside the projector's own preview, with pictures, video slides, Mermaid diagrams, templates and PDF export.</p></div></div>
+    </div>
+    <p class="hint landing-tiers-note"><a href="docs/whats-new-1.3.md">Everything new in 1.3 →</a> Attendance, replay, search and My Files need Podium's own server.</p>
+  </section>
   <section class="landing-section">
     <h2>Built for the room you're actually teaching in</h2>
     <div class="landing-grid landing-scenarios">
@@ -90,8 +102,9 @@
       <article class="landing-card">
         <h3>🖥️ Running your own server</h3>
         <p>Self-host the relay and Podium gains accounts, a shared slide library,
-          durable session history with every stroke of ink, and course-level
-          access control — while every page keeps working with no server at all.</p>
+          attendance, and a history of every lecture you can search and replay
+          with its sound, plus course-level access control — while every page
+          keeps working with no server at all.</p>
       </article>
     </div>
   </section>
@@ -133,8 +146,8 @@
         <p class="landing-tier-price">Low cost</p>
         <h3>Self-hosted VPS</h3>
         <p>Run <code>server/podium-server.js</code> on a small box you already
-          pay for and gain accounts, a shared library, session recording and
-          audience polls at real classroom scale.</p>
+          pay for and gain accounts, a shared library, attendance, audience
+          polls, and lecture recording, replay and search at real classroom scale.</p>
       </article>
     </div>
     <p class="hint landing-tiers-note">
@@ -149,10 +162,12 @@
 <footer class="landing-footer">
   <div class="landing-footer-links">
     <a href="guide.html">Guide</a>
+    <a href="docs/whats-new-1.3.md">What's new</a>
     <a href="docs/quickstart.md">Quickstart</a>
     <a href="docs/features.md">Features</a>
     <a href="docs/architecture.md">Architecture</a>
     <a href="docs/vps.md">Self-hosting</a>
+    <a href="docs/streaming.md">Streaming</a>
     <a href="https://github.com/jonwestfall/useful-scripts/tree/main/podium">Source on GitHub</a>
   </div>
   <p id="landing-version-stamp" class="version-stamp"></p>

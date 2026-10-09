@@ -8,17 +8,17 @@ Podium is built for real classroom lectures. It gives you complete control of th
 
 ## Contents
 
-1. **[Presenting](#part-1--presenting)**: Freeze is a cue · The library · Marp decks · The deck editor · Quick Look · Now/Next/Notes · PDFs · Layouts & PiP
+1. **[Presenting](#part-1--presenting)**: Freeze is a cue · The library · Marp decks · Markdown documents · The deck editor · Quick Look · Now/Next/Notes · PDFs & photos: zoom · Layouts & PiP
 2. **[Drawing & Pointing](#part-2--drawing--pointing)**: Live ink · Whiteboards · Laser · Spotlight
 3. **[Media & Sound](#part-3--media--sound)**: Transport · Background music · Mixer · Controller microphone
 4. **[On-Screen Tools](#part-4--on-screen-tools)**: Timers · Messages · QR codes · Watermarks · Automated sets
-5. **[Engaging the Room](#part-5--engaging-the-room)**: Polls, quizzes & Q&A 🖥️ · Document camera · Guest View
+5. **[Engaging the Room](#part-5--engaging-the-room)**: Polls, quizzes & Q&A 🖥️ · Taking attendance 🖥️ · Document camera · Guest View
 6. **[Accessibility](#part-6--accessibility)**: Live captions · Pre-scripted captions · Screen readers & themes
 7. **[Sharing the Lectern](#part-7--sharing-the-lectern)**: Pairing · Several controllers · Simple Mode
-8. **[Planning Lectures](#part-8--planning-lectures)**: `plan.html` · ZIP import 🖥️ · PowerPoint 🖥️
+8. **[Planning Lectures](#part-8--planning-lectures)**: `plan.html` · Choosing files from the server 🖥️ · Archive · ZIP import 🖥️ · PowerPoint, Word & RTF
 9. **[Making the Controller Yours](#part-9--making-the-controller-yours)**: Tabs, dock & clickers · Comfort settings · Pacing clock · Keyboard shortcuts
-10. **[After Class](#part-10--after-class)**: Session export · Lecture recaps 🖥️ · Session history 🖥️
-11. **[Your Own Server](#part-11--your-own-server)** 🖥️: Accounts & courses · Kiosks · Operations
+10. **[After Class](#part-10--after-class)**: Session export · Lecture recaps 🖥️ · Session history 🖥️ · Replaying a lecture 🖥️ · Searching past sessions 🖥️ · Streaming
+11. **[Your Own Server](#part-11--your-own-server)** 🖥️: Accounts, courses & My Files · Kiosks · Operations
 
 ---
 
@@ -423,6 +423,64 @@ Engage your class without third-party software or student logins. Polls need Pod
 - On a server that records sessions, each poll's final result is kept with the lecture and appears in its [recap](#lecture-recaps).
 - If the relay restarts mid-poll and votes are lost, the controller warns you rather than silently showing a smaller count.
 
+### Taking Attendance
+
+🖥️ Students check in from their own phones (Issue #256), and the controller's **Attendance** tab (in the *Room* group, only on a server with accounts) runs it.
+
+Rosters are kept per course on **My Files → Rosters** (see [My Files](#accounts-courses--the-admin-page)).
+
+- **Open check-in** for a course (it defaults to the live lecture's course), optionally with **Count as late after** *n* minutes. **Show on screen** puts up a QR code and a six-digit code that change every 15 seconds, the address to type it at (`<server>/attend`), a draining bar for the time left on the code, and a live count. A code is still accepted for one change after it leaves the screen; a code from two changes ago is not, so a photo texted to someone outside goes stale almost at once.
+- **On the phone** (`attend.html`, no app and no sign-in): scan or type the code, find your name on the course roster (names and the last three characters of an ID are shown, never emails), confirm, and get a receipt: name, time, *present* or *late*. Reopening the page that day shows the receipt again. Someone not on the list (or any course with no roster) signs in as a **guest** with a name, an optional ID and an email; a guest who gives the ID or email of someone on the roster is marked as them. **Check in someone else on this phone** lets a phone be lent.
+- **One phone, two people:** both check-ins count, and both are flagged *⚑ same phone as …* in the list. A weaker *⚐ same network as …* hint marks two to four check-ins from one network address within two minutes, but only when that address is not most of the room (a campus's Wi-Fi says nothing).
+- **The live list:** everyone on the roster with their status, then guests. Any row's status can be set by hand (*present, late, excused, absent* or *not marked*); a hand mark is never flagged. **Now marking late** marks every check-in after it as late. **Close check-in** takes the code off the screen (a phone already past the code has two minutes to finish); opening it again in the same lecture continues the same record.
+- **Kept:** marks stay for good. The browser token and network address behind a flag are kept only as keyed hashes, and only for the period an administrator sets on Admin → Server → **Attendance** (30 days by default). Wrong codes are throttled per phone (5 a minute) and per network address.
+- A Guest View viewer sees "Check-in is on the screen in the room", never the code.
+- **After class, on My Files → Attendance** (Issue #256, phase 3): pick a course; Admin's course list links here too.
+  - **Sessions:** every check-in, newest first, with its counts and how many flags still need looking at. Owners and admins can **Delete** one opened by mistake.
+  - **Review:** everyone on the roster and every guest, with how each check-in was made (scanning or typing the code, or by hand) and when. Once check-in is closed, anyone on the roster who never checked in shows as **absent (not checked in)**, but only if they were on the roster when the session began. Change any status; **Dismiss flag** marks a flag as looked at (it stays on record, with who dismissed it); **Add to roster** (owners and admins) puts a guest on the course roster, and every check-in they made as a guest in that course becomes theirs. **Only what is flagged** narrows the list, and **History** shows every change made after check-in: who, when, and from what to what.
+  - **Term grid:** students × sessions, with **P**/**L**/**A**/**E** and totals per student, plus a rate of (present + late) ÷ (present + late + absent). Excused classes count for nothing either way. Filter by a date range; a date heading opens that session's review.
+  - **Exports**, for the same date range:
+    - **CSV**: one row per person per session, with status, how, time and flags.
+    - **The grid as CSV.**
+    - **Canvas gradebook…**: Canvas's import layout, with one column per session and a *Points Possible* row. Rows are matched by SIS User ID, which is the roster's student ID. You choose the points for present, late, excused and absent; the defaults are 1, 0.5, EX (Canvas's "excused") and 0.
+  - A recorded lecture's timeline, and so its recap, says when attendance opened and closed and how many checked in.
+- **Questions with check-in** (Issue #256, phase 4). Questions are typed one per line, with choices after a bar: `Did you do the reading? | Yes | Some | No`. A line with no choices is a short answer.
+  - **Entry ticket:** up to three questions asked right after a student checks in. They can answer, or skip.
+  - **Exit ticket:** **Open exit ticket…** opens the same session again at the end, with its own questions, and the screen says *Exit ticket*.
+    - A phone that checked in earlier answers without picking a name again: it kept a key for its own check-in.
+    - Anyone who didn't check in earlier checks in as usual first.
+  - The answers come in live on the Attendance tab, as counts per choice or a list of short answers. My Files' review shows them per question and per person, with a CSV.
+- **The parking lot:** a box under the receipt where a student leaves a question for the instructor, in their name or anonymously.
+  - An anonymous question keeps nothing that ties it to whoever asked.
+  - Turn it on before opening, or with **Parking lot open** at any time.
+  - The controller lists the questions, unanswered first. **Show on screen** puts one on the projector as a text sign, and **Answered** marks it dealt with.
+- **Planned:** the planner has an **Attendance** item. It holds:
+  - which ticket it is (check-in, or exit ticket);
+  - the questions;
+  - an optional "late after *n* minutes" rule;
+  - whether the parking lot opens.
+
+  Taking it from the Library in class opens it for the plan's course and puts the code on screen. A lecture plans both by adding two items, one at the start and one at the end.
+- **Only from phones in the room** (Issue #256, phase 5):
+  - Tick it when opening check-in, and pick how near: 50 to 500 m, defaulting to Admin's setting. The controller's own location is taken as the room.
+  - Before asking for a phone's location, the phone says why. It sends its position once; the server works out the distance and keeps only that.
+  - A phone that is too far, or won't share its location, is refused with the reason and told to ask to be marked by hand.
+  - Distances show in the controller's list and in the review, until the retention period ends.
+  - A phone's own stated accuracy is allowed for, up to the radius, because indoor locations are rough.
+  - The planner's Attendance item can ask for this too.
+- **Receipts by email:**
+  - Once the server has mail set up (`SMTP_URL` and `MAIL_FROM`, see [deploy/README.md](../deploy/README.md)), a course's owners can turn on **Email each student a receipt when they check in** on My Files → Attendance.
+  - The receipt goes to the roster's address, or the one a guest gave.
+  - It also tells a student if someone checked in under their name.
+  - Without mail, the switch is shown off, with the reason.
+- **Admin → Server → Attendance**:
+  - how long device details are kept;
+  - how often the code changes (10, 15 or 30 seconds);
+  - the default "in the room" radius;
+  - whether mail is set up, and **Send a test email**.
+
+  `podium-admin doctor` reports the mail settings too.
+
 ### Document Camera & Photo Capture
 
 - **Phone camera as document camera**: open the controller on your phone, go to the **Camera** tab and **Start camera**. The phone streams video straight to the classroom projector over a direct WebRTC connection. **Flip** switches between front and back cameras.
@@ -703,7 +761,11 @@ On a server with accounts, the display writes down what it showed as it goes: a 
 - download a session's ZIP or PDF again, or its [recap](#lecture-recaps);
 - **Download all sessions**, or **Delete sessions older than** a number of days.
 
-**Replaying a lecture** (Issue #132): **▶ Replay** on My Files › Recorded lectures (or a session on the admin page's **Sessions** tab) plays the lecture back on its own clock, in a tab of its own.
+A lecture nobody has heard from in 15 minutes closes itself. Retention is configurable; see [deploy/README.md](../deploy/README.md#session-records-and-how-long-they-are-kept).
+
+### Replaying a Lecture
+
+🖥️ **▶ Replay** (Issue #132) on My Files › Recorded lectures (or a session on the admin page's **Sessions** tab) plays the lecture back on its own clock, in a tab of its own.
 - **The stage:** what was on the projector at each moment, shown as the annotated slide or the marked-up screen where one was kept, otherwise the item's title.
 - **Captions and transcript:** the caption being said appears under the stage. The transcript beside it scrolls along with playback; tap any line to jump there.
 - **Sound:** the controller mic audio plays wherever it was recorded. Several mics play together, and stretches with no recording run silently. A lecture with no mic at all still replays its screens and captions in time.
@@ -719,7 +781,9 @@ On a server with accounts, the display writes down what it showed as it goes: a 
   - Kiosks and Guest View never record. A lecture that kept a recording (screen or mic) is never thrown away as empty when it ends.
 - **Play from here:** every search result has a **▶**, and every moment of an opened timeline (in search results and on the admin page's Sessions tab) has a **▶** time. Each opens the replay a few seconds before that moment, so the sentence is heard from its start.
 
-**Searching past sessions** (Issue #159): the server keeps a full-text index of every session's caption lines, what was on screen, timeline notes and poll questions, plus what attendance asked: each check-in's entry and exit questions and its parking-lot questions. It is kept up to date as the display records, and history from before the index existed is added the first time the server starts.
+### Searching Past Sessions
+
+🖥️ The server (Issue #159) keeps a full-text index of every session's caption lines, what was on screen, timeline notes and poll questions, plus what attendance asked: each check-in's entry and exit questions and its parking-lot questions. It is kept up to date as the display records, and history from before the index existed is added the first time the server starts.
 - `GET /api/lectures/search?q=…` searches every session you could already open (your own, and your courses'), best match first. `&course=psy415` narrows it to one course.
 - Matching is by word, ignoring case and accents, with word endings folded ("remember" finds "remembering"). `"a phrase"` must appear in order, `memor*` matches a prefix, and `-word` leaves a word out.
 - Each hit says which session and which moment of its timeline it came from, with the matched words marked.
@@ -733,7 +797,11 @@ On a server with accounts, the display writes down what it showed as it goes: a 
   - With lectures in more than one course, a course menu narrows the search.
   - Tap a match to open that session's whole timeline right there, scrolled to that moment and highlighted, with what came before and after for context. Other matches in the same session are tinted; **‹ Previous** and **Next ›** step between them.
 
-A lecture nobody has heard from in 15 minutes closes itself. Retention is configurable; see [deploy/README.md](../deploy/README.md#session-records-and-how-long-they-are-kept).
+
+
+### Streaming a Lecture
+
+To stream a class live to YouTube or Twitch, and keep the stream as the recording, use [OBS Studio](https://obsproject.com/) with the display window, or with a Guest View link from any computer. Step-by-step setup, sound, privacy and how it compares with the replay are in **[streaming.md](streaming.md)**.
 
 ---
 
@@ -762,58 +830,7 @@ Running Podium's own server (`server/podium-server.js` with a `DATA_DIR`) adds a
     - **Removing someone is soft:** past attendance keeps them, and **Show removed** lets you put them back.
     - **Export CSV** gives the roster back in the same three columns.
     - **Who may do what:** a course's owners and administrators change its roster. Its other members (TAs) can read and export it. Admin's course list links to each roster.
-- **Attendance** (Issue #256): students check in from their own phones, and the controller's **Attendance** tab (in the *Room* group, only on a server with accounts) runs it.
-  - **Open check-in** for a course (it defaults to the live lecture's course), optionally with **Count as late after** *n* minutes. **Show on screen** puts up a QR code and a six-digit code that change every 15 seconds, the address to type it at (`<server>/attend`), a draining bar for the time left on the code, and a live count. A code is still accepted for one change after it leaves the screen; a code from two changes ago is not, so a photo texted to someone outside goes stale almost at once.
-  - **On the phone** (`attend.html`, no app and no sign-in): scan or type the code, find your name on the course roster (names and the last three characters of an ID are shown, never emails), confirm, and get a receipt: name, time, *present* or *late*. Reopening the page that day shows the receipt again. Someone not on the list (or any course with no roster) signs in as a **guest** with a name, an optional ID and an email; a guest who gives the ID or email of someone on the roster is marked as them. **Check in someone else on this phone** lets a phone be lent.
-  - **One phone, two people:** both check-ins count, and both are flagged *⚑ same phone as …* in the list. A weaker *⚐ same network as …* hint marks two to four check-ins from one network address within two minutes, but only when that address is not most of the room (a campus's Wi-Fi says nothing).
-  - **The live list:** everyone on the roster with their status, then guests. Any row's status can be set by hand (*present, late, excused, absent* or *not marked*); a hand mark is never flagged. **Now marking late** marks every check-in after it as late. **Close check-in** takes the code off the screen (a phone already past the code has two minutes to finish); opening it again in the same lecture continues the same record.
-  - **Kept:** marks stay for good. The browser token and network address behind a flag are kept only as keyed hashes, and only for the period an administrator sets on Admin → Server → **Attendance** (30 days by default). Wrong codes are throttled per phone (5 a minute) and per network address.
-  - A Guest View viewer sees "Check-in is on the screen in the room", never the code.
-  - **After class, on My Files → Attendance** (Issue #256, phase 3): pick a course; Admin's course list links here too.
-    - **Sessions:** every check-in, newest first, with its counts and how many flags still need looking at. Owners and admins can **Delete** one opened by mistake.
-    - **Review:** everyone on the roster and every guest, with how each check-in was made (scanning or typing the code, or by hand) and when. Once check-in is closed, anyone on the roster who never checked in shows as **absent (not checked in)**, but only if they were on the roster when the session began. Change any status; **Dismiss flag** marks a flag as looked at (it stays on record, with who dismissed it); **Add to roster** (owners and admins) puts a guest on the course roster, and every check-in they made as a guest in that course becomes theirs. **Only what is flagged** narrows the list, and **History** shows every change made after check-in: who, when, and from what to what.
-    - **Term grid:** students × sessions, with **P**/**L**/**A**/**E** and totals per student, plus a rate of (present + late) ÷ (present + late + absent). Excused classes count for nothing either way. Filter by a date range; a date heading opens that session's review.
-    - **Exports**, for the same date range:
-      - **CSV**: one row per person per session, with status, how, time and flags.
-      - **The grid as CSV.**
-      - **Canvas gradebook…**: Canvas's import layout, with one column per session and a *Points Possible* row. Rows are matched by SIS User ID, which is the roster's student ID. You choose the points for present, late, excused and absent; the defaults are 1, 0.5, EX (Canvas's "excused") and 0.
-    - A recorded lecture's timeline, and so its recap, says when attendance opened and closed and how many checked in.
-  - **Questions with check-in** (Issue #256, phase 4). Questions are typed one per line, with choices after a bar: `Did you do the reading? | Yes | Some | No`. A line with no choices is a short answer.
-    - **Entry ticket:** up to three questions asked right after a student checks in. They can answer, or skip.
-    - **Exit ticket:** **Open exit ticket…** opens the same session again at the end, with its own questions, and the screen says *Exit ticket*.
-      - A phone that checked in earlier answers without picking a name again: it kept a key for its own check-in.
-      - Anyone who didn't check in earlier checks in as usual first.
-    - The answers come in live on the Attendance tab, as counts per choice or a list of short answers. My Files' review shows them per question and per person, with a CSV.
-  - **The parking lot:** a box under the receipt where a student leaves a question for the instructor, in their name or anonymously.
-    - An anonymous question keeps nothing that ties it to whoever asked.
-    - Turn it on before opening, or with **Parking lot open** at any time.
-    - The controller lists the questions, unanswered first. **Show on screen** puts one on the projector as a text sign, and **Answered** marks it dealt with.
-  - **Planned:** the planner has an **Attendance** item. It holds:
-    - which ticket it is (check-in, or exit ticket);
-    - the questions;
-    - an optional "late after *n* minutes" rule;
-    - whether the parking lot opens.
-
-    Taking it from the Library in class opens it for the plan's course and puts the code on screen. A lecture plans both by adding two items, one at the start and one at the end.
-  - **Only from phones in the room** (Issue #256, phase 5):
-    - Tick it when opening check-in, and pick how near: 50 to 500 m, defaulting to Admin's setting. The controller's own location is taken as the room.
-    - Before asking for a phone's location, the phone says why. It sends its position once; the server works out the distance and keeps only that.
-    - A phone that is too far, or won't share its location, is refused with the reason and told to ask to be marked by hand.
-    - Distances show in the controller's list and in the review, until the retention period ends.
-    - A phone's own stated accuracy is allowed for, up to the radius, because indoor locations are rough.
-    - The planner's Attendance item can ask for this too.
-  - **Receipts by email:**
-    - Once the server has mail set up (`SMTP_URL` and `MAIL_FROM`, see [deploy/README.md](../deploy/README.md)), a course's owners can turn on **Email each student a receipt when they check in** on My Files → Attendance.
-    - The receipt goes to the roster's address, or the one a guest gave.
-    - It also tells a student if someone checked in under their name.
-    - Without mail, the switch is shown off, with the reason.
-  - **Admin → Server → Attendance**:
-    - how long device details are kept;
-    - how often the code changes (10, 15 or 30 seconds);
-    - the default "in the room" radius;
-    - whether mail is set up, and **Send a test email**.
-
-    `podium-admin doctor` reports the mail settings too.
+- **Attendance** 🖥️: rosters, check-in from students' phones, entry and exit tickets, the parking lot and the term grid. See [Taking Attendance](#taking-attendance).
 - **Plans on the server**: a lecture saves itself to the server from the planner and is on the iPad in class without a file to carry. A plan file you exported stays untouched either way. Two edits to the same plan are caught rather than silently overwriting each other.
 
 ### Kiosks & Unattended Signage
@@ -831,6 +848,6 @@ A **kiosk** is a display nobody is running: a lobby screen, a hallway sign, a la
 
 - **Install and update** with `deploy/install.sh` and `deploy/update.sh`. Updates run the unit tests first, flip to the new release, check `/healthz`, and roll back automatically if it doesn't come up.
 - **Backups**: a nightly systemd timer, `podium-admin backup` for a database snapshot, and `restore.sh`.
-- **`podium-admin doctor`** works through what actually goes wrong on a box: a full disk, an unsound database, a deploy that never reached the running process, an expiring certificate, no backups, no administrator left, and a relay that answers HTTP but doesn't actually relay. It's safe to run from cron.
+- **`podium-admin doctor`** works through what actually goes wrong on a box: a full disk, an unsound database, a deploy that never reached the running process, an expiring certificate, no backups, no administrator left, a relay that answers HTTP but doesn't actually relay, and outgoing mail for attendance receipts. It's safe to run from cron.
 - **Audit log** of logins and administrative actions, downloadable as CSV and automatically pruned.
 - **Relay limits**: caps on rooms, devices per room (12) and viewers per room (300), plus per-IP connection throttling.

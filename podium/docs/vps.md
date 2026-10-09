@@ -40,7 +40,7 @@ there is a real server sitting there with a disk.
 | Uploads | **~50 MB**, single request. Decks, PDFs, images, modest audio. Lecture video still arrives by `rsync` |
 | Where management lives | **A new `admin.html`** — library, accounts, courses, server settings |
 | What a TA may do | Drive the projector · upload to the library · read poll results and history. **Not** delete other people's library items (they can remove what they added themselves — see below) |
-| What a session keeps | Timeline of what was on screen · polls and results · ink · document-camera photos |
+| What a session keeps | Timeline of what was on screen · polls and results · ink · document-camera photos · caption lines · controller mic audio · optionally screen video (Podium 1.3) |
 | Installation | **Installer plus update script**, generalised from the deploy script this instance already runs, health check and rollback included |
 | The room passphrase | **Stored on the server.** See *What the server can see*, below — this is a real trade and it is being made deliberately |
 
@@ -709,6 +709,35 @@ Built on everything above, and described for teachers in
   lecture from it.
 - **Controller mic recording** (Issue #147). Recorded in short, independently
   playable segments uploaded as the lecture goes.
+
+### Phase 8 — search, replay and screen video (Podium 1.3) ✅
+
+- **Search** (Issue #159). `lecture_search` is a SQLite **FTS5** table in the
+  same database: caption lines, what was on screen, notes, poll questions, and
+  attendance's entry and exit questions and parking lot. It is kept by
+  triggers on the tables it indexes, and an existing database is backfilled
+  by the migration that creates it, so a term already under way is
+  searchable at once. The rowid encodes what each row came from, so a
+  deletion that cascades through thousands of events stays cheap.
+  `GET /api/lectures/search` applies the same visibility rule as the lecture
+  list (and, for attendance, the attendance rule as well), so a hit can only
+  come from something the account could already open. Stemming, accent
+  folding and bm25 ranking are FTS5's own; nothing is sent anywhere else.
+- **Replay** (Issue #132). `replay.html` reads the lecture as
+  `GET /api/lectures/:id` already returns it. A mic segment's name now carries
+  its own start time and length (`-t<start>-d<ms>`), so the page can line
+  the audio up with the timeline. Older names are placed from their
+  recording's start and sequence number.
+- **Screen video** (Issue #132, phase 3), off unless an administrator turns it
+  on. The display records its own tab in 30-second WebM segments named the
+  same way, uploaded as kind `video` and served as `video/webm`. It has its
+  own per-lecture budget (system settings `screen_video` and
+  `screen_video_mb`, default 1000 MB), kept apart from the 400 MB a session
+  may use for everything else so a long video can never crowd out the photos
+  and audio. A lecture that kept any recording is no longer discarded as
+  "empty" when it ends.
+- **Streaming** is not something the server does: [streaming.md](streaming.md)
+  covers OBS with YouTube or Twitch.
 
 ## Installation
 
