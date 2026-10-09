@@ -2271,6 +2271,143 @@ ok('a TA sees the sessions, with no Delete', !(await taPage.$('#attn-sessions bu
 await ta.close();
 }
 
+if (want('attendance questions: entry and exit tickets, the parking lot, planned (#256)')) {
+console.log('\n-- attendance questions: entry and exit tickets, the parking lot, planned (#256) --');
+const rootCtx = await signedIn('root');
+const rootPage = await rootCtx.newPage();
+await rootPage.goto(`${base}/me.html`);
+await rootPage.evaluate(async () => {
+  const send = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await send('/api/courses', { code: 'att103', title: 'Attendance 103' });
+  await send('/api/courses/att103/members', { username: 'owen', role: 'owner' });
+  await fetch('/api/courses/att103/roster/import?apply=1', { method: 'POST', body: 'name,student id\nJane Doe,C100\nSam Lee,C200\n' });
+});
+await rootCtx.close();
+
+// The planner offers it.
+const owner = await signedIn('owen');
+const desk = await owner.newPage();
+trap(desk, 'attendance planner');
+await desk.goto(`${base}/plan.html`);
+await desk.waitForSelector('#type-picker .type-btn');
+await desk.click('#type-picker .type-btn:has-text("Attendance")');
+await desk.waitForSelector('#editor textarea, #editor select', { timeout: 5000 }).catch(() => {});
+const editorText = await desk.textContent('body');
+ok('the planner has an Attendance item: which ticket, questions, late, parking lot',
+  /Exit ticket \(end of class\)/.test(editorText) && /Up to three, one per line/.test(editorText) && /Open the parking lot/.test(editorText));
+await desk.close();
+
+// In class, from a plan with a check-in and an exit ticket.
+const planFile = path.join(ROOT, 'test', 'fixtures', 'attendance-plan.json');
+fs.writeFileSync(planFile, JSON.stringify({
+  podium: 'plan', v: 1, title: 'Attendance day', course: 'att103', items: [
+    { id: 'a1', type: 'attendance', title: '', phase: 'entry', questions: 'Did you do the reading? | Yes | Some | No', lateOn: false, lateAfter: 10, parking: true },
+    { id: 'a2', type: 'attendance', title: '', phase: 'exit', questions: 'One thing you learned', lateOn: false, lateAfter: 10, parking: false },
+  ],
+}));
+const screen = await owner.newPage();
+trap(screen, 'attendance questions display');
+await screen.goto(`${base}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await owner.newPage();
+trap(pad, 'attendance questions controller');
+await pad.goto(`${base}/control.html`);
+await pad.waitForSelector('.tab[data-tab="attendance"]:not([hidden])', { timeout: 10000 });
+await pad.setInputFiles('#plan-file', planFile);
+await pad.waitForSelector('#library .tile:has(.tile-title:text-is("Check-in"))', { timeout: 20000 });
+await pad.click('#library .tile:has(.tile-title:text-is("Check-in"))');
+await pad.waitForSelector('#att-live:not([hidden])', { timeout: 10000 });
+ok(`taking the planned item opens check-in for the plan's course (${await pad.textContent('#att-summary')})`,
+  /Check-in is open/.test(await pad.textContent('#att-summary')) && await pad.inputValue('#att-course') === 'att103' && await pad.isChecked('#att-parking'));
+const codeOnScreen = async () => {
+  await screen.waitForFunction(() => /^\d{3} \d{3}$/.test(document.querySelector('.layer[data-role="program"] .r-att-code')?.textContent || ''), null, { timeout: 15000 });
+  return (await screen.textContent('.layer[data-role="program"] .r-att-code')).replace(/\D/g, '');
+};
+ok('and puts the code on screen', /^\d{6}$/.test(await codeOnScreen().catch(() => '')));
+
+const phone = async (tag) => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage();
+  trap(page, tag);
+  return { ctx, page };
+};
+const jane = await phone('phone (Jane, questions)');
+await jane.page.goto(`${base}/attend.html?c=${await codeOnScreen()}`);
+await jane.page.waitForSelector('#who:not([hidden])', { timeout: 10000 });
+await jane.page.fill('#search', 'jane');
+await jane.page.click('#matches .person:has-text("Jane Doe")');
+await jane.page.click('#confirm-go');
+await jane.page.waitForSelector('#ask:not([hidden])', { timeout: 10000 })
+  .then(() => ok('after checking in, the entry question is asked', true))
+  .catch(() => ok('after checking in, the entry question is asked', false));
+await jane.page.click('#ask .choice:has-text("Some")');
+await jane.page.click('#ask button[type=submit]');
+await jane.page.waitForSelector('#receipt:not([hidden])', { timeout: 10000 });
+ok('then the receipt, with the parking lot under it', /Jane Doe/.test(await jane.page.textContent('#r-name')) && await jane.page.isVisible('#parking'));
+await jane.page.fill('#parking-text', 'Is the exam cumulative?');
+await jane.page.click('#parking button[type=submit]');
+await jane.page.waitForFunction(() => /Sent, with your name/.test(document.querySelector('#parking-note').textContent), null, { timeout: 5000 });
+await jane.page.fill('#parking-text', 'Can we get the slides?');
+await jane.page.check('#parking-anon');
+await jane.page.click('#parking button[type=submit]');
+await jane.page.waitForFunction(() => /anonymously/.test(document.querySelector('#parking-note').textContent), null, { timeout: 5000 })
+  .then(() => ok('a question goes to the parking lot, named or anonymously', true))
+  .catch(() => ok('a question goes to the parking lot, named or anonymously', false));
+
+await pad.waitForFunction(() => document.querySelectorAll('#att-parking-list .att-parked').length === 2, null, { timeout: 10000 });
+const parked = (await pad.textContent('#att-parking-list')).replace(/\s+/g, ' ');
+ok(`the controller's parking lot shows both, one named, one not (${parked.slice(0, 120)}…)`, /Is the exam cumulative\? ?Jane Doe/.test(parked) && /Can we get the slides\? ?anonymous/.test(parked));
+await pad.waitForFunction(() => /Some — 1/.test(document.querySelector('#att-answers')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('and the entry answers as they come in', true))
+  .catch(async () => ok(`and the entry answers as they come in ("${await pad.textContent('#att-answers')}")`, false));
+await pad.click('#att-parking-list .att-parked:has-text("Can we get the slides?") button:has-text("Show on screen")');
+await screen.waitForFunction(() => /Can we get the slides\?/.test(document.querySelector('.layer[data-role="program"]')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('Show on screen puts a parked question on the projector', true))
+  .catch(() => ok('Show on screen puts a parked question on the projector', false));
+await pad.click('#att-parking-list .att-parked:has-text("Is the exam cumulative?") button:has-text("Answered")');
+await pad.waitForSelector('#att-parking-list .att-parked.is-answered', { timeout: 5000 })
+  .then(() => ok('and Answered marks one dealt with', true))
+  .catch(() => ok('and Answered marks one dealt with', false));
+
+// The exit ticket, from the plan; Jane's phone needs no name.
+await pad.click('.tab[data-tab="library"]');
+await pad.click('#library .tile:has(.tile-title:text-is("Exit ticket"))');
+await pad.waitForFunction(() => /The exit ticket is open/.test(document.querySelector('#att-summary').textContent), null, { timeout: 10000 });
+await screen.waitForFunction(() => /^Exit ticket/.test(document.querySelector('.layer[data-role="program"] .r-att-heading')?.textContent || ''), null, { timeout: 15000 })
+  .then(() => ok('the planned exit ticket opens and the screen says so', true))
+  .catch(() => ok('the planned exit ticket opens and the screen says so', false));
+await jane.page.goto(`${base}/attend.html?c=${await codeOnScreen()}`);
+await jane.page.waitForSelector('#ask:not([hidden])', { timeout: 10000 })
+  .then(() => ok('Jane\'s phone goes straight to the exit question, no name to pick', true))
+  .catch(() => ok('Jane\'s phone goes straight to the exit question, no name to pick', false));
+await jane.page.fill('#ask textarea', 'Working memory has limits');
+await jane.page.click('#ask button[type=submit]');
+await jane.page.waitForSelector('#receipt:not([hidden])', { timeout: 10000 });
+await pad.waitForFunction(() => /Working memory has limits/.test(document.querySelector('#att-answers')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('and her exit answer reaches the controller', true))
+  .catch(() => ok('and her exit answer reaches the controller', false));
+await jane.ctx.close();
+await screen.close();
+await pad.close();
+
+// After class, on My Files.
+const review = await owner.newPage();
+trap(review, 'attendance questions review');
+await review.goto(`${base}/me.html#attendance:att103`);
+await review.waitForSelector('#attn-sessions .attn-session', { timeout: 10000 });
+await review.click('#attn-sessions .attn-session button:has-text("Review")');
+await review.waitForSelector('#attn-review .attn-questions', { timeout: 5000 });
+const reviewed = (await review.textContent('#attn-review')).replace(/\s+/g, ' ');
+ok('the review has each person\'s answers, the summary and the parking lot',
+  /Entry “Did you do the reading\?”: Some/.test(reviewed) && /Exit “One thing you learned”: Working memory has limits/.test(reviewed)
+  && /Parking lot \(2\)/.test(reviewed));
+const answersCsv = await review.evaluate(() => fetch(document.querySelector('.attn-questions a').href).then((r) => r.text()));
+ok(`and a CSV of them (${answersCsv.split('\r\n').length - 2} rows)`, /entry,Did you do the reading\?,Jane Doe,C100,Some/.test(answersCsv) && /parking lot,,\(anonymous\)/.test(answersCsv));
+await owner.close();
+fs.rmSync(planFile, { force: true });
+}
+
 if (want('My Files: everything I have, and what I may do with it (#243)')) {
 console.log('\n-- My Files: everything I have, and what I may do with it (#243) --');
 // A TA of their own, so changing a password here leaves everyone else's alone.

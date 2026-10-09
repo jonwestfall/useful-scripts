@@ -43,6 +43,14 @@ const SEARCH_LIMIT = 8;
 const DEFAULT_RETENTION_DAYS = 30;
 const MAX_RETENTION_DAYS = 3650;
 const STATUSES = ['present', 'late', 'absent', 'excused'];
+const PHASES = ['entry', 'exit'];
+const MAX_QUESTIONS = 3;
+const MAX_PROMPT = 300;
+const MAX_OPTIONS = 8;
+const MAX_OPTION = 120;
+const MAX_ANSWER = 500;
+const MAX_PARKING_TEXT = 500;
+const MAX_PARKING = 500;            // per session
 const MAX_NAME = 120;
 const MAX_STUDENT_ID = 64;
 const MAX_EMAIL = 200;
@@ -218,7 +226,62 @@ function receiptOf(db, session, mark, already = false) {
     title: session.title || course.title || '',
     sessionId: session.id,
     already,
+    // What this phone keeps to be recognised later in this session: for the
+    // exit ticket, and to ask the parking lot a question in its own name.
+    markKey: markKey(db, mark.id),
+    ...askedOf(db, session, mark.id),
   };
+}
+
+// --- questions, and the key a phone keeps for its own check-in ---------------
+
+/** A key for one mark: only the server can make it, so holding it means "I made this check-in". */
+function markKey(db, markId) {
+  return `${markId}.${hmac(serverKey(db), `mark:${markId}`).toString('base64url').slice(0, 22)}`;
+}
+
+/** The mark a key is for, in the given session - or an error. */
+function markForKey(db, key, sessionId = null) {
+  const [id, sig] = String(key || '').split('.');
+  const want = hmac(serverKey(db), `mark:${Number(id)}`).toString('base64url').slice(0, 22);
+  if (!sig || !sameText(sig, want)) throw fail('this phone’s check-in is not recognised - check in again', 401);
+  const mark = db.prepare('SELECT * FROM attendance_marks WHERE id = ?').get(Number(id));
+  if (!mark || (sessionId != null && mark.session_id !== sessionId)) throw fail('that check-in is not part of this session', 404);
+  return mark;
+}
+
+const parseQuestions = (text) => {
+  try {
+    const v = JSON.parse(text || '{}');
+    return { entry: Array.isArray(v?.entry) ? v.entry : [], exit: Array.isArray(v?.exit) ? v.exit : [] };
+  } catch {
+    return { entry: [], exit: [] };
+  }
+};
+
+/**
+ * Tidy a list of questions: at most three, each a prompt and (for a choice)
+ * two to eight options. A question with fewer than two options is a short
+ * answer. Ids are stable by position, q1-q3.
+ */
+function cleanQuestions(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.slice(0, 50).map((q) => {
+    const prompt = String(q?.prompt ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_PROMPT);
+    const options = (Array.isArray(q?.options) ? q.options : [])
+      .map((o) => String(o ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_OPTION)).filter(Boolean).slice(0, MAX_OPTIONS);
+    return prompt ? { prompt, kind: options.length >= 2 ? 'choice' : 'text', options: options.length >= 2 ? options : [] } : null;
+  }).filter(Boolean).slice(0, MAX_QUESTIONS).map((q, i) => ({ ...q, id: `q${i + 1}` }));
+}
+
+/** What a phone is asked now, and whether this mark has answered it. */
+function askedOf(db, session, markId) {
+  const phase = PHASES.includes(session.phase) ? session.phase : 'entry';
+  const questions = parseQuestions(session.questions)[phase];
+  const answered = markId
+    ? !!db.prepare('SELECT 1 FROM attendance_answers WHERE mark_id = ? AND phase = ? LIMIT 1').get(markId, phase)
+    : false;
+  return { phase, questions, answered, parking: !!session.parking };
 }
 
 // --- the student's side -------------------------------------------------------
@@ -255,6 +318,7 @@ function redeemCode(db, { code, device, ip, now = Date.now() } = {}) {
       title: session.title || '',
       roster: hasRoster(db, session.course_id),
       late: lateAt(session, now),
+      ...askedOf(db, session, null),
     },
   };
 }
@@ -364,6 +428,76 @@ function checkIn(db, { ticket, device, ip, rosterId, guest, how = 'code', now = 
   return receiptOf(db, session, mark);
 }
 
+/**
+ * A phone's answers to the questions open now (the entry or the exit ticket).
+ * It needs a ticket - a code from the screen, so the student is in the room -
+ * and the key of its own check-in. Answering again replaces the answers.
+ */
+function answer(db, { ticket, device, markKey: key, answers = {}, now = Date.now() } = {}) {
+  const deviceHash = keyed(db, 'd', cleanDevice(device));
+  const session = redeemTicket(db, ticket, deviceHash, now);
+  const mark = markForKey(db, key, session.id);
+  const { phase, questions } = askedOf(db, session, mark.id);
+  if (!questions.length) throw fail('there are no questions to answer right now', 409);
+  const put = db.prepare(`INSERT INTO attendance_answers (mark_id, phase, question_id, answer, at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(mark_id, phase, question_id) DO UPDATE SET answer = excluded.answer, at = excluded.at`);
+  let saved = 0;
+  for (const q of questions) {
+    let value = answers && typeof answers === 'object' ? answers[q.id] : undefined;
+    if (value === undefined || value === null || value === '') continue;
+    if (q.kind === 'choice') {
+      const i = Number(value);
+      if (!Number.isInteger(i) || i < 0 || i >= q.options.length) throw fail(`pick one of the choices for “${q.prompt}”`);
+      value = q.options[i];
+    } else {
+      value = String(value).trim().slice(0, MAX_ANSWER);
+      if (!value) continue;
+    }
+    put.run(mark.id, phase, q.id, value, now);
+    saved += 1;
+  }
+  return { ...receiptOf(db, session, mark, true), saved };
+}
+
+/**
+ * Whether a phone that checked in earlier is asked anything now: reopening
+ * the page, or the exit ticket opening. Only its own key is needed.
+ */
+function status(db, { markKey: key, now = Date.now() } = {}) {
+  const mark = markForKey(db, key);
+  const session = db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(mark.session_id);
+  return { ...askedOf(db, session, mark.id), open: isOpen(session, now), sessionId: session.id };
+}
+
+/**
+ * A question for the parking lot. In the asker's name if they checked in and
+ * want it so; anonymous otherwise, with nothing kept that ties it to them.
+ * Either way the phone has to have been in the room: a check-in's key, or a
+ * fresh code.
+ */
+function park(db, { ticket, device, markKey: key, text, anonymous = false, now = Date.now() } = {}) {
+  const deviceHash = keyed(db, 'd', cleanDevice(device));
+  let session;
+  let mark = null;
+  if (key) {
+    mark = markForKey(db, key);
+    session = db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(mark.session_id);
+    if (!session || now - session.created_at > MAX_OPEN_MS) throw fail('this class’s parking lot has closed', 410);
+  } else {
+    session = redeemTicket(db, ticket, deviceHash, now);
+  }
+  if (!session.parking) throw fail('the parking lot is not open for this class', 409);
+  const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PARKING_TEXT);
+  if (!clean) throw fail('write your question first');
+  if (!allow(`park:${deviceHash || key || ticket}`, 5, 10 * 60 * 1000, now)) throw fail('that is a lot of questions - wait a few minutes', 429, { retryAfterSeconds: 120 });
+  const count = db.prepare('SELECT COUNT(*) AS n FROM attendance_parking WHERE session_id = ?').get(session.id).n;
+  if (count >= MAX_PARKING) throw fail('the parking lot is full', 429);
+  const named = mark && !anonymous;
+  const { lastInsertRowid } = db.prepare('INSERT INTO attendance_parking (session_id, mark_id, name, text, at) VALUES (?, ?, ?, ?, ?)')
+    .run(session.id, named ? mark.id : null, named ? markName(db, mark) : '', clean, now);
+  return { id: Number(lastInsertRowid), anonymous: !named };
+}
+
 /** What a display showing check-in asks for every few seconds. */
 function screen(db, { sessionId, key, now = Date.now() } = {}) {
   const session = db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(Number(sessionId));
@@ -378,6 +512,7 @@ function screen(db, { sessionId, key, now = Date.now() } = {}) {
     rotate: session.rotate_s,
     count: countMarks(db, session.id),
     late: open && lateAt(session, now),
+    phase: session.phase === 'exit' ? 'exit' : 'entry',
     course: course.code.toUpperCase(),
     title: session.title || course.title || '',
   };
@@ -433,9 +568,30 @@ function sessionView(db, session, now = Date.now()) {
     lateApplies: lateAt(session, now),
     rotate: session.rotate_s,
     screenKey: session.screen_key,
+    phase: session.phase === 'exit' ? 'exit' : 'entry',
+    questions: parseQuestions(session.questions),
+    parking: !!session.parking,
     counts,
     rosterSize: db.prepare('SELECT COUNT(*) AS n FROM course_roster WHERE course_id = ? AND removed_at IS NULL').get(session.course_id).n,
   };
+}
+
+/**
+ * Set what a session asks: its phase (entry or exit ticket), the questions
+ * for either or both phases ({entry: [...], exit: [...]}, each cleaned), and
+ * whether its parking lot is open. Anything not given is left as it was.
+ */
+function applyAsks(db, session, { questions, parking, phase } = {}) {
+  if (phase !== undefined) {
+    if (!PHASES.includes(phase)) throw fail('a check-in is either the entry or the exit ticket');
+    db.prepare('UPDATE attendance_sessions SET phase = ? WHERE id = ?').run(phase, session.id);
+  }
+  if (questions && typeof questions === 'object') {
+    const current = parseQuestions(db.prepare('SELECT questions FROM attendance_sessions WHERE id = ?').get(session.id).questions);
+    for (const p of PHASES) if (questions[p] !== undefined) current[p] = cleanQuestions(questions[p]);
+    db.prepare('UPDATE attendance_sessions SET questions = ? WHERE id = ?').run(JSON.stringify(current), session.id);
+  }
+  if (parking !== undefined) db.prepare('UPDATE attendance_sessions SET parking = ? WHERE id = ?').run(parking ? 1 : 0, session.id);
 }
 
 /**
@@ -443,7 +599,7 @@ function sessionView(db, session, now = Date.now()) {
  * lecture is opened again rather than a second one started - closing and
  * reopening is one window that happened twice, not two classes.
  */
-function openSession(db, user, { course: code, lectureId = null, title = '', lateRule: rule = null, rotate = DEFAULT_ROTATE, now = Date.now() } = {}) {
+function openSession(db, user, { course: code, lectureId = null, title = '', lateRule: rule = null, rotate = DEFAULT_ROTATE, questions, parking, phase, now = Date.now() } = {}) {
   const course = courseFor(db, user, code);
   const lecture = lectureId
     ? db.prepare('SELECT id, title FROM lectures WHERE id = ?').get(Number(lectureId))
@@ -455,6 +611,7 @@ function openSession(db, user, { course: code, lectureId = null, title = '', lat
     const next = cleanRule(rule, now);
     db.prepare(`UPDATE attendance_sessions SET opened_at = ?, closed_at = NULL${next ? ', late_rule = ?' : ''} WHERE id = ?`)
       .run(...[now, ...(next ? [JSON.stringify(next)] : []), existing.id]);
+    applyAsks(db, existing, { questions, parking, phase });
     return { session: sessionView(db, db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(existing.id), now), reopened: true };
   }
   const seconds = ROTATIONS.includes(Number(rotate)) ? Number(rotate) : DEFAULT_ROTATE;
@@ -465,6 +622,7 @@ function openSession(db, user, { course: code, lectureId = null, title = '', lat
     .run(course.id, lecture ? lecture.id : null, cleanTitle, now, user.id, now,
       JSON.stringify(cleanRule(rule, now) || { after: null, from: now }), seconds,
       crypto.randomBytes(32).toString('hex'), crypto.randomBytes(18).toString('base64url'));
+  applyAsks(db, db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(lastInsertRowid), { questions, parking, phase });
   return { session: sessionView(db, db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(lastInsertRowid), now), reopened: false };
 }
 
@@ -496,6 +654,7 @@ function changeSession(db, user, id, body = {}, { now = Date.now() } = {}) {
     const rule = cleanRule(body.lateRule || { after: null }, now);
     db.prepare('UPDATE attendance_sessions SET late_rule = ? WHERE id = ?').run(JSON.stringify(rule), session.id);
   }
+  applyAsks(db, session, body);
   if (body.title !== undefined) {
     db.prepare('UPDATE attendance_sessions SET title = ? WHERE id = ?').run(String(body.title || '').replace(/\s+/g, ' ').trim().slice(0, 200), session.id);
   }
@@ -548,8 +707,15 @@ function getSession(db, user, id, { now = Date.now() } = {}) {
   const flags = flagsFor(db, marks);
   const userName = (uid) => (uid ? db.prepare('SELECT display_name, username FROM users WHERE id = ?').get(uid) : null);
   const who = (uid) => { const u = userName(uid); return u ? u.display_name || u.username : ''; };
+  // Each mark's answers, by phase then question.
+  const answers = new Map();
+  for (const a of db.prepare(`SELECT a.* FROM attendance_answers a JOIN attendance_marks m ON m.id = a.mark_id WHERE m.session_id = ?`).all(session.id)) {
+    if (!answers.has(a.mark_id)) answers.set(a.mark_id, { entry: {}, exit: {} });
+    (answers.get(a.mark_id)[a.phase] ||= {})[a.question_id] = a.answer;
+  }
   const markView = (m) => ({
     id: m.id, status: m.status, how: m.how, at: m.at, flags: flags.get(m.id) || [], edited: !!m.edited_at,
+    answers: answers.get(m.id) || null,
     editedBy: m.edited_at ? who(m.edited_by) : '',
     // Flags looked at and let go: still listed, no longer asking for attention.
     dismissed: m.flags_dismissed_at ? { at: m.flags_dismissed_at, by: who(m.flags_dismissed_by) } : null,
@@ -576,7 +742,29 @@ function getSession(db, user, id, { now = Date.now() } = {}) {
       name: m.guest_name, studentId: m.guest_student_id, email: m.guest_email, mark: markView(m),
     })),
     history,
+    summary: summarize(parseQuestions(session.questions), [...answers.values()]),
+    parking: db.prepare(`SELECT p.*, u.display_name, u.username FROM attendance_parking p LEFT JOIN users u ON u.id = p.answered_by
+        WHERE p.session_id = ? ORDER BY p.at DESC, p.id DESC`).all(session.id)
+      .map((q) => ({ id: q.id, name: q.name, anonymous: !q.mark_id && !q.name, text: q.text, at: q.at,
+        answeredAt: q.answered_at, answeredBy: q.display_name || q.username || '' })),
   };
+}
+
+/**
+ * What the room answered, question by question: how many chose each option,
+ * or every short answer.
+ */
+function summarize(questions, answerSets) {
+  const out = {};
+  for (const phase of PHASES) {
+    out[phase] = questions[phase].map((q) => {
+      const given = answerSets.map((a) => a[phase]?.[q.id]).filter((v) => v !== undefined);
+      return q.kind === 'choice'
+        ? { ...q, answered: given.length, counts: q.options.map((o) => given.filter((g) => g === o).length) }
+        : { ...q, answered: given.length, answers: given };
+    });
+  }
+  return out;
 }
 
 /**
@@ -706,6 +894,38 @@ function deleteSession(db, user, id) {
   const marks = db.prepare('SELECT COUNT(*) AS n FROM attendance_marks WHERE session_id = ?').get(session.id).n;
   db.prepare('DELETE FROM attendance_sessions WHERE id = ?').run(session.id);
   return { id: session.id, course: course.code, marks };
+}
+
+/** Mark a parking-lot question answered (or not). */
+function answerParking(db, user, id, parkingId, { answered = true } = {}, { now = Date.now() } = {}) {
+  const session = sessionFor(db, user, id);
+  const row = db.prepare('SELECT * FROM attendance_parking WHERE id = ? AND session_id = ?').get(Number(parkingId), session.id);
+  if (!row) throw fail('no such question in this parking lot', 404);
+  db.prepare('UPDATE attendance_parking SET answered_at = ?, answered_by = ? WHERE id = ?')
+    .run(answered ? now : null, answered ? user.id : null, row.id);
+  return { id: row.id, answered: !!answered };
+}
+
+/** A session's answers and parking lot as a CSV: one row per answer or question. */
+function answersCsv(db, user, id) {
+  const data = getSession(db, user, id);
+  const lines = [csvLine(['phase', 'question', 'name', 'student id', 'answer', 'at'])];
+  const prompts = Object.fromEntries(PHASES.map((p) => [p, Object.fromEntries(data.session.questions[p].map((q) => [q.id, q.prompt]))]));
+  const rows = [
+    ...data.people.filter((p) => p.mark).map((p) => ({ name: p.name, studentId: p.studentId, mark: p.mark })),
+    ...data.guests.map((g) => ({ name: g.name, studentId: g.studentId, mark: g.mark })),
+  ];
+  for (const phase of PHASES) {
+    for (const r of rows) {
+      for (const [qid, value] of Object.entries(r.mark.answers?.[phase] || {})) {
+        lines.push(csvLine([phase, prompts[phase][qid] || qid, r.name, r.studentId, value, '']));
+      }
+    }
+  }
+  for (const q of [...data.parking].reverse()) {
+    lines.push(csvLine(['parking lot', '', q.anonymous ? '(anonymous)' : q.name, '', q.text, new Date(q.at).toISOString()]));
+  }
+  return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
 // --- after class: the course's sessions, the term grid, exports ---------------
@@ -901,11 +1121,12 @@ function prune(db, { days = retentionDays(db), now = Date.now() } = {}) {
 
 module.exports = {
   // the student's side
-  redeemCode, searchPeople, checkIn, screen,
+  redeemCode, searchPeople, checkIn, screen, answer, status, park,
   // the instructor's side
   mayTake, openSession, currentSession, changeSession, getSession, markByHand, changeMark, removeMark,
   // after class
   dismissFlags, addGuestToRoster, deleteSession, listSessions, grid, exportCsv,
+  answerParking, answersCsv, cleanQuestions,
   // retention
   retentionDays, setRetentionDays, prune,
   // for tests

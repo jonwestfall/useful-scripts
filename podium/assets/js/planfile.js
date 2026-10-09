@@ -216,6 +216,23 @@ export const PLAN_TYPES = {
       { key: 'correct', kind: 'number', def: -1, hidden: true },
     ],
   },
+  // Issue #256: attendance, planned. Taking it in class opens check-in (or
+  // the exit ticket) with these settings and puts the code on screen. Only
+  // on a server with accounts.
+  attendance: {
+    label: 'Attendance', icon: '✅',
+    blurb: 'Check-in from the students\u2019 own phones (a server with accounts). Taking it in class opens check-in - or the exit ticket - and puts the code on screen.',
+    fields: [
+      { key: 'phase', label: 'Which', kind: 'select', def: 'entry',
+        options: [['entry', 'Check-in (start of class)'], ['exit', 'Exit ticket (end of class)']] },
+      { key: 'questions', label: 'Questions', kind: 'textarea', max: 2000,
+        placeholder: 'Did you do the reading? | Yes | Some | No\nOne thing you want to know today',
+        hint: 'Up to three, one per line; choices after a | (none for a short answer). Leave empty to just take attendance.' },
+      { key: 'lateOn', label: 'Count check-ins after a while as late', kind: 'check', def: false },
+      { key: 'lateAfter', label: 'Late after (minutes from opening)', kind: 'number', def: 10, min: 0, max: 600 },
+      { key: 'parking', label: 'Open the parking lot (students leave questions)', kind: 'check', def: false },
+    ],
+  },
 };
 
 export const PLANNABLE = Object.keys(PLAN_TYPES);
@@ -324,6 +341,7 @@ export function itemLabel(item, plan = null) {
   }
   if (item.type === 'qr' && item.caption) return item.caption;
   if (item.type === 'poll' && item.question) return item.question.split('\n')[0].slice(0, 60);
+  if (item.type === 'attendance') return item.phase === 'exit' ? 'Exit ticket' : 'Check-in';
   if (item.type === 'image' && item.path && !item.src) return item.path.split('/').pop();
   if (item.type === 'imagedeck') {
     const count = String(item.images || '').split('\n').filter((l) => l.trim()).length;

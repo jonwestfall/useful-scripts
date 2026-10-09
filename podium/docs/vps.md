@@ -190,6 +190,17 @@ unmarked person counts as absent from a closed session only if they were on
 the roster when it began. The lecture timeline gains `attendance` entries,
 which the server writes itself while the lecture is running.
 
+Phase 4 gives a session a `phase` (`entry` or `exit`), its `questions` for each phase (JSON, at
+most three apiece) and a `parking` switch. `attendance_answers` keeps one row
+per mark, phase and question. `attendance_parking` keeps the room's questions;
+a named one points at its mark, while an anonymous one keeps no mark and no
+name, so nothing ties it to whoever asked. A phone is told a key for its own
+check-in (an HMAC of the mark id with the server's attendance key). That key
+is what lets it answer the exit ticket, or ask the parking lot in its own
+name, without picking a name again; answering still needs a fresh code from
+the screen. The new public routes are `POST /attend/answers`,
+`POST /attend/status` and `POST /attend/parking`.
+
 Passwords are `scrypt` with a per-user random salt, stored as
 `scrypt$N$r$p$salt$hash` so the parameters travel with the hash and can be
 raised later without invalidating anyone. Session tokens are 32 random bytes;

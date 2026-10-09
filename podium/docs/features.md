@@ -728,6 +728,23 @@ Running Podium's own server (`server/podium-server.js` with a `DATA_DIR`) adds a
       - **The grid as CSV.**
       - **Canvas gradebook…**: Canvas's import layout, with one column per session and a *Points Possible* row. Rows are matched by SIS User ID, which is the roster's student ID. You choose the points for present, late, excused and absent; the defaults are 1, 0.5, EX (Canvas's "excused") and 0.
     - A recorded lecture's timeline, and so its recap, says when attendance opened and closed and how many checked in.
+  - **Questions with check-in** (Issue #256, phase 4). Questions are typed one per line, with choices after a bar: `Did you do the reading? | Yes | Some | No`. A line with no choices is a short answer.
+    - **Entry ticket:** up to three questions asked right after a student checks in. They can answer, or skip.
+    - **Exit ticket:** **Open exit ticket…** opens the same session again at the end, with its own questions, and the screen says *Exit ticket*.
+      - A phone that checked in earlier answers without picking a name again: it kept a key for its own check-in.
+      - Anyone who didn't check in earlier checks in as usual first.
+    - The answers come in live on the Attendance tab, as counts per choice or a list of short answers. My Files' review shows them per question and per person, with a CSV.
+  - **The parking lot:** a box under the receipt where a student leaves a question for the instructor, in their name or anonymously.
+    - An anonymous question keeps nothing that ties it to whoever asked.
+    - Turn it on before opening, or with **Parking lot open** at any time.
+    - The controller lists the questions, unanswered first. **Show on screen** puts one on the projector as a text sign, and **Answered** marks it dealt with.
+  - **Planned:** the planner has an **Attendance** item. It holds:
+    - which ticket it is (check-in, or exit ticket);
+    - the questions;
+    - an optional "late after *n* minutes" rule;
+    - whether the parking lot opens.
+
+    Taking it from the Library in class opens it for the plan's course and puts the code on screen. A lecture plans both by adding two items, one at the start and one at the end.
 - **Plans on the server**: a lecture saves itself to the server from the planner and is on the iPad in class without a file to carry. A plan file you exported stays untouched either way. Two edits to the same plan are caught rather than silently overwriting each other.
 
 ### Kiosks & Unattended Signage

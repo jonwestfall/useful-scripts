@@ -2800,3 +2800,15 @@ body:not(.is-doc) .doc-only { display: none !important; }
 .attn-cell.is-excused { color: var(--dim); }
 :root[data-theme="light"] .attn-cell.is-absent, body[data-theme="light"] .attn-cell.is-absent { color: #b42318; }
 .attn-total { color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* Questions with check-in and the parking lot (Issue #256, phase 4). */
+.att-question { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.att-question-prompt { font-weight: 600; margin-bottom: 6px; }
+.att-bars { display: flex; flex-direction: column; gap: 4px; }
+.att-bar { display: grid; grid-template-columns: minmax(0, 1fr) 40%; gap: 8px; align-items: center; font-size: 13px; }
+.att-bar-track { height: 8px; background: var(--line); border-radius: 999px; overflow: hidden; }
+.att-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.att-answers { margin: 0; padding-left: 18px; font-size: 13px; max-height: 180px; overflow: auto; }
+.att-actions { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+.att-parked.is-answered { opacity: .6; }
+.r-att.is-exit .r-att-heading { color: #1f5fcc; }

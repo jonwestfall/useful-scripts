@@ -661,6 +661,38 @@ const MIGRATIONS = [
       ALTER TABLE attendance_marks ADD COLUMN flags_dismissed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
     `);
   },
+  (db) => {
+    db.exec(`
+      -- Questions with check-in (Issue #256, phase 4). A session asks up to
+      -- three questions when it opens (the entry ticket) and up to three more
+      -- when it is opened again at the end (the exit ticket); which one is
+      -- open now is its phase. The parking lot is a session's place for
+      -- questions from the room, named or anonymous.
+      ALTER TABLE attendance_sessions ADD COLUMN phase TEXT NOT NULL DEFAULT 'entry';   -- entry | exit
+      ALTER TABLE attendance_sessions ADD COLUMN questions TEXT NOT NULL DEFAULT '{}';  -- {entry: [...], exit: [...]}
+      ALTER TABLE attendance_sessions ADD COLUMN parking INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE attendance_answers (
+        mark_id     INTEGER NOT NULL REFERENCES attendance_marks(id) ON DELETE CASCADE,
+        phase       TEXT    NOT NULL,
+        question_id TEXT    NOT NULL,
+        answer      TEXT    NOT NULL,
+        at          INTEGER NOT NULL,
+        PRIMARY KEY (mark_id, phase, question_id)
+      );
+      -- An anonymous question keeps no mark: nothing ties it to whoever asked.
+      CREATE TABLE attendance_parking (
+        id          INTEGER PRIMARY KEY,
+        session_id  INTEGER NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+        mark_id     INTEGER REFERENCES attendance_marks(id) ON DELETE SET NULL,
+        name        TEXT    NOT NULL DEFAULT '',
+        text        TEXT    NOT NULL,
+        at          INTEGER NOT NULL,
+        answered_at INTEGER,
+        answered_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX attendance_parking_by_session ON attendance_parking(session_id, at);
+    `);
+  },
 ];
 
 function migrate(db) {

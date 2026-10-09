@@ -36,6 +36,7 @@ podium/test/
 ├── roster.test.mjs     # A course's roster: who may change it, people by hand, CSV import (preview, apply, replace) and export (Issue #256)
 ├── attendance.test.mjs # Check-in: rotating codes, roster and guest check-ins, late, shared phones flagged, by hand, throttling, retention (Issue #256)
 ├── attendance-review.test.mjs # After class: review, history, flags dismissed, guests to the roster, the term grid, CSV and Canvas exports (Issue #256)
+├── attendance-questions.test.mjs # Entry and exit tickets, the parking lot (named or anonymous), and the answers' summary and CSV (Issue #256)
 ├── documents.test.mjs  # Markdown documents: deck or document, switching, a document in the room, the page's safety, outline and notes (Issue #240)
 ├── plan-archive.test.mjs # Archiving lectures from one's own planner list: personal, bulk, what may be archived (Issue #239)
 ├── deck-templates.test.mjs # Deck templates: built-in, course and personal, and who may change which (Issue #226)
@@ -56,7 +57,7 @@ podium/test/
     ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen
     ├── media.mjs         # Camera, music, audio, clocks, captions, PDFs
     ├── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
-    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242) and its outline (Issue #253); Word and RTF files (Issue #258); rosters, attendance check-in and its review (Issue #256); choosing files from the server (Issue #241); My Files (Issue #243); markdown documents (Issue #240)
+    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242) and its outline (Issue #253); Word and RTF files (Issue #258); rosters, attendance check-in, its review and its questions (Issue #256); choosing files from the server (Issue #241); My Files (Issue #243); markdown documents (Issue #240)
 ```
 
 ---
@@ -117,6 +118,16 @@ node podium/test/protocol.test.mjs
 - **`quicklook-open.test.mjs`**: how a page hands something to a Quick Look tab on the same device (Issue #242), against Node's own BroadcastChannel: which item types can be looked at, a library file opening by its id, a one-use token (asked twice, or a token nobody handed over, gets nothing), a tab that opens before its item is ready, an item that could not be gathered saying why, and the deck editor's rehearsal handover answering reloads and sending each new version until it is closed.
 - **`roster.test.mjs`**: a course's roster (Issue #256), against a real SQLite file: owners and admins change it, TAs read it, outsiders get a 404; people added (tidied, a name required, a real email, no shared student ID), edited, removed softly and put back; CSV reading (quotes, BOM, semicolons, Canvas's "Last, First" and SIS ID, first + last name columns, no header, an unrecognised header, a bad line reported by number); an import previewed (new, updated, unchanged, and with *replace* who comes off) then applied the same way; matching by ID before name; export reading back.
 - **`attendance.test.mjs`**: taking attendance (Issue #256), against a real SQLite file: who may open and read a session (any member, never an outsider); the six-digit code (from the screen key only, changing with the clock, accepted for one change of grace and refused two changes on); a code for a ticket that only that browser can use and only for ten minutes; the name search (start of a name or a whole ID, never an email, an ID shown only by its end); a check-in's receipt and a second one changing nothing; late by the manual toggle and by "after n minutes"; a lent phone recording both people and flagging both; guests (an email required, the same guest once, a "guest" giving a roster ID marked as that person); hand marks (a TA too, never flagged) and taking a mark off clearing its partner's flag; closing (no code on screen, two minutes' grace for a phone already past it) and reopening the same session, one session per lecture; the weak same-network hint (two phones on an address nobody else uses, never a whole room on one); wrong codes throttled per phone, not per network; and retention forgetting the hashes but not the marks, and closing a session left open overnight.
+- **`attendance-questions.test.mjs`**: questions with check-in (Issue #256, phase 4), against a real SQLite file:
+  - **Questions:** tidied (at most three, blanks dropped, a choice needs two options).
+  - **Entry ticket:** a phone is told the questions before picking a name. Checking in gives it a key for its own check-in. A wrong choice and a forged key are refused, and another browser can't use the key. Answering again replaces the answer, and the summary counts each choice.
+  - **Parking lot:**
+    - A named question carries the asker's name; an anonymous one keeps nothing that ties it to them.
+    - A phone that never checked in can ask anonymously with a fresh code.
+    - Empty questions are refused, and the instructor can mark one answered.
+    - A burst of questions is slowed down, and nothing is taken once the parking lot closes.
+  - **Exit ticket:** a phone learns from its key alone that the exit ticket is open. It answers without picking a name again, beside its entry answer, and the screen says *Exit ticket*.
+  - **CSV:** the answers and the parking lot as a CSV.
 - **`attendance-review.test.mjs`**: attendance after class (Issue #256, phase 3), against a real SQLite file:
   - **Review and history:** someone not checked in is absent only once check-in closes. Every change after the fact goes into the session's history: who made it and what it changed from and to. An edit says by whom, and re-setting a status to what it already is records nothing.
   - **Flags:** a dismissed flag stays on record, marked looked at and by whom.

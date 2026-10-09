@@ -1183,6 +1183,15 @@ async function pick(item, where = 'auto') {
   // tab's composer does. Tapping it in the Library loads that composer rather
   // than trying to stage an item protocol.js would reject for missing fields.
   if (item.type === 'poll') { openPollDraftFromPlan(item); return; }
+  // A planned Attendance item (Issue #256): open check-in with its settings
+  // and put the code up - only where there is a server to take it.
+  if (item.type === 'attendance') {
+    if (!attendancePanel) { flashSetNote('Attendance needs a Podium server with accounts, and someone signed in.'); return; }
+    tab('attendance');
+    // The plan's own course, when it names one, is the course to take it for.
+    await attendancePanel.fromPlan({ ...item, course: item.course || currentPlan?.course || '' });
+    return;
+  }
   if (item.type === 'document' && !(item.deckId && item.height)) { await pickDocument(item, where); return; }
   if (item.type !== 'deck' || item.slideCount) { stage(item, where); followToTab(item, where); return; }
   // A click handler can't be awaited by whatever dispatched it, so the
@@ -5076,6 +5085,10 @@ function addToDraftSet(item) {
   // question the room is still answering.
   if (item.type === 'poll') {
     flashSetNote('A poll isn’t automated this way — start it from the Polls tab.');
+    return true;
+  }
+  if (item.type === 'attendance') {
+    flashSetNote('Attendance isn’t automated this way — take it from the Library or the Attendance tab.');
     return true;
   }
   // A Library deck tile (as opposed to one specific slide pulled from Recent,

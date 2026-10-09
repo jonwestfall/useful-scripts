@@ -1111,7 +1111,9 @@ function renderAttendance(item, opts) {
   const base = () => opts.getServerBase?.() || '';
   const draw = (screen) => {
     const title = [screen?.course || current.course, screen?.title].filter(Boolean).join(' · ');
-    heading.textContent = title ? `Check in — ${title}` : 'Check in';
+    const word = screen?.phase === 'exit' ? 'Exit ticket' : 'Check in';
+    node.classList.toggle('is-exit', screen?.phase === 'exit');
+    heading.textContent = title ? `${word} — ${title}` : word;
     if (!current.screenKey) {
       node.classList.add('is-elsewhere');
       qrHolder.replaceChildren();

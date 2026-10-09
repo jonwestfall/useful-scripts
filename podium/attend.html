@@ -75,6 +75,14 @@
   .receipt.is-late { border-color: var(--late); }
   .receipt.is-late .status, .receipt.is-late .tick { color: var(--late); }
   .receipt .small { font-size: 13px; color: var(--dim); margin-top: 10px; }
+  .question { margin: 14px 0 0; }
+  .question:first-of-type { margin-top: 0; }
+  .question .prompt { font-weight: 600; margin-bottom: 8px; }
+  .choice { text-align: left; background: var(--field); border-color: var(--line); color: var(--ink); font-weight: 500; min-height: 50px; margin-top: 8px; }
+  .choice[aria-pressed="true"] { border-color: var(--live); background: var(--picked); }
+  textarea { font: inherit; color: var(--ink); background: var(--field); border: 1px solid var(--line); border-radius: 10px; padding: 12px; width: 100%; resize: vertical; }
+  .check { display: flex; gap: 8px; align-items: center; font-size: 15px; color: var(--ink); margin: 10px 0 0; }
+  .check input { width: auto; }
   [hidden] { display: none !important; }
 </style>
 <script>
@@ -148,6 +156,26 @@
   <button id="r-another" class="link" type="button" hidden>Check in someone else on this phone</button>
 </div>
 
+<!-- 4. Questions with check-in (the entry or exit ticket): up to three. -->
+<form id="ask" class="card" hidden>
+  <h2 id="ask-title">A question before class</h2>
+  <div id="ask-list"></div>
+  <div class="row">
+    <button type="submit">Send</button>
+    <button id="ask-skip" class="plain" type="button">Skip</button>
+  </div>
+  <p class="note" id="ask-note" role="status"></p>
+</form>
+
+<!-- 5. The parking lot: a question for the instructor, any time in class. -->
+<form id="parking" class="card" hidden>
+  <label for="parking-text">A question for your instructor</label>
+  <textarea id="parking-text" rows="3" maxlength="500" placeholder="Anything you'd like answered"></textarea>
+  <label class="check" id="parking-anon-row"><input type="checkbox" id="parking-anon"> Ask anonymously</label>
+  <div class="row"><button type="submit">Send</button></div>
+  <p class="note" id="parking-note" role="status"></p>
+</form>
+
 <script>
 (function () {
   'use strict';
@@ -209,7 +237,8 @@
   function show(step) {
     $('enter').hidden = step !== 'enter';
     $('who').hidden = step !== 'who';
-    if (step !== 'receipt') $('receipt').hidden = true;
+    $('ask').hidden = step !== 'ask';
+    if (step !== 'receipt') { $('receipt').hidden = true; $('parking').hidden = true; }
   }
 
   function showReceipt(r) {
@@ -223,7 +252,98 @@
     $('receipt').classList.toggle('is-late', r.status === 'late');
     show('receipt');
     $('receipt').hidden = false;
+    current = r;
+    $('parking').hidden = !r.parking;
+    $('parking-anon-row').hidden = !r.markKey;
   }
+
+  // --- questions: the entry or exit ticket ----------------------------------------
+
+  var current = null;      // the receipt on show
+  var picks = {};
+
+  // Questions to answer before the receipt, if there are any not yet answered.
+  function afterCheckIn(r) {
+    if (r.questions && r.questions.length && !r.answered) { askStep(r); return; }
+    showReceipt(r);
+  }
+
+  function askStep(r) {
+    current = r;
+    picks = {};
+    $('ask-title').textContent = r.phase === 'exit' ? 'Before you go' : (r.questions.length === 1 ? 'A question' : 'A few questions');
+    $('ask-list').replaceChildren.apply($('ask-list'), r.questions.map(function (q) {
+      var box = document.createElement('div');
+      box.className = 'question';
+      var prompt = document.createElement('div');
+      prompt.className = 'prompt';
+      prompt.textContent = q.prompt;
+      box.append(prompt);
+      if (q.kind === 'choice') {
+        q.options.forEach(function (option, i) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'choice';
+          b.textContent = option;
+          b.setAttribute('aria-pressed', 'false');
+          b.addEventListener('click', function () {
+            picks[q.id] = i;
+            box.querySelectorAll('.choice').forEach(function (other) { other.setAttribute('aria-pressed', String(other === b)); });
+          });
+          box.append(b);
+        });
+      } else {
+        var t = document.createElement('textarea');
+        t.rows = 2;
+        t.maxLength = 500;
+        t.setAttribute('aria-label', q.prompt);
+        t.dataset.q = q.id;
+        box.append(t);
+      }
+      return box;
+    }));
+    say('ask-note', '');
+    show('ask');
+  }
+
+  $('ask').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    var answers = Object.assign({}, picks);
+    $('ask-list').querySelectorAll('textarea[data-q]').forEach(function (t) { if (t.value.trim()) answers[t.dataset.q] = t.value; });
+    var button = ev.currentTarget.querySelector('button[type=submit]');
+    button.disabled = true;
+    say('ask-note', 'Sending…');
+    try {
+      var r = await post('answers', { ticket: ticket, markKey: current.markKey, answers: answers });
+      keepReceipt(Object.assign({}, current, r, { already: false }));
+      showReceipt(Object.assign({}, current, r));
+    } catch (err) {
+      if (err.status === 401 || err.status === 410) { failed(err); } else { say('ask-note', err.message, true); }
+    } finally {
+      button.disabled = false;
+    }
+  });
+  $('ask-skip').addEventListener('click', function () { showReceipt(current); });
+
+  // --- the parking lot --------------------------------------------------------------
+
+  $('parking').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    var text = $('parking-text').value.trim();
+    if (!text) { say('parking-note', 'Write your question first.', true); return; }
+    var button = ev.currentTarget.querySelector('button[type=submit]');
+    button.disabled = true;
+    try {
+      var anonymous = !current.markKey || $('parking-anon').checked;
+      var sent = await post('parking', { markKey: current.markKey || '', ticket: ticket, text: text, anonymous: anonymous });
+      $('parking-text').value = '';
+      say('parking-note', sent.anonymous ? 'Sent, anonymously.' : 'Sent, with your name.');
+    } catch (err) {
+      say('parking-note', err.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   // --- 1. the code ------------------------------------------------------------
 
@@ -241,7 +361,16 @@
     }
     say('enter-note', '');
     var mine = receipts()[session.id];
-    if (mine) { showReceipt(Object.assign({}, mine, { already: true })); return; }
+    if (mine) {
+      // This phone checked in already: the exit ticket (or an entry ticket
+      // skipped earlier) is answered without picking a name again.
+      var known = Object.assign({}, mine, { already: true });
+      if (mine.markKey) {
+        try { Object.assign(known, await post('status', { markKey: mine.markKey })); } catch (_e) { /* the receipt alone, then */ }
+      }
+      afterCheckIn(known);
+      return;
+    }
     $('who-course').textContent = [session.course, session.title || session.courseTitle].filter(Boolean).join(' · ')
       + (session.late ? ' · check-ins now count as late' : '');
     show('who');
@@ -337,7 +466,7 @@
     try {
       var r = await post('checkin', Object.assign({ ticket: ticket, how: how }, body));
       keepReceipt(Object.assign({}, r, { already: false }));
-      showReceipt(r);
+      afterCheckIn(r);
     } catch (err) {
       failed(err);
     } finally {
@@ -384,6 +513,16 @@
     if (last && new Date(last.at).toDateString() === new Date().toDateString()) {
       showReceipt(Object.assign({}, last, { already: false }));
       $('enter').hidden = false;
+      // Whether the parking lot is open now, and whether the exit ticket is.
+      if (last.markKey) {
+        post('status', { markKey: last.markKey }).then(function (now) {
+          showReceipt(Object.assign({}, last, now, { already: false }));
+          $('enter').hidden = false;
+          if (now.open && now.phase === 'exit' && now.questions.length && !now.answered) {
+            say('enter-note', 'The exit ticket is open: type the code on the screen to answer it.');
+          }
+        }).catch(function () { /* the receipt as it was */ });
+      }
     }
     $('code').focus();
   }
