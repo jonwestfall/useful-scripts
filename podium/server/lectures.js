@@ -820,8 +820,121 @@ function noteAttendance(db, lectureId, { at = Date.now(), title, detail = {} } =
   return true;
 }
 
+// --- search (Issue #159) -----------------------------------------------------
+//
+// Across every session this account can see - the same VISIBLE rule as the
+// list, so a hit can only ever come from a lecture that could already be
+// opened. The index itself is lecture_search, kept by triggers (see store.js):
+// caption lines, what was on screen, notes, and poll questions.
+
+const MAX_QUERY = 200;
+const HITS_PER_LECTURE = 25;
+const MAX_RESULTS = 50;
+// Marks around the matched words in a snippet. Control characters nobody types
+// into a caption, and split out on the way back so the pages never have to
+// render a string as HTML to highlight it.
+const MARK_ON = '\u0002';
+const MARK_OFF = '\u0003';
+
+/**
+ * What someone typed, as an FTS5 query that cannot fail to parse.
+ *
+ * Every word is quoted, so FTS's own syntax (AND, NEAR, column filters,
+ * stray brackets) is only ever text. What IS understood: "a phrase in
+ * quotes", a trailing * for a prefix (memor*), and a leading - to leave a
+ * word out, as long as something is left to look for. All the words must
+ * match. Returns null when nothing searchable is left.
+ */
+function ftsQuery(raw) {
+  const text = String(raw || '').slice(0, MAX_QUERY);
+  const want = [];
+  const without = [];
+  const words = (s) => s.normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  for (const m of text.matchAll(/(-?)"([^"]*)"?|(\S+)/g)) {
+    if (m[2] !== undefined) {
+      const phrase = words(m[2]);
+      if (phrase) (m[1] ? without : want).push(`"${phrase}"`);
+      continue;
+    }
+    let token = m[3];
+    const not = token.startsWith('-') && token.length > 1;
+    if (not) token = token.slice(1);
+    const prefix = /\*$/.test(token);
+    const word = words(token);
+    if (!word) continue;
+    (not ? without : want).push(`"${word}"${prefix ? '*' : ''}`);
+  }
+  if (!want.length) return null;
+  return want.join(' ') + without.map((w) => ` NOT ${w}`).join('');
+}
+
+/** A snippet with its marks, as parts: [{ text, hit }]. */
+function snippetParts(snip) {
+  const parts = [];
+  let hit = false;
+  for (const piece of String(snip || '').split(new RegExp(`(${MARK_ON}|${MARK_OFF})`))) {
+    if (piece === MARK_ON) { hit = true; continue; }
+    if (piece === MARK_OFF) { hit = false; continue; }
+    if (piece) parts.push({ text: piece, hit });
+  }
+  return parts;
+}
+
+/**
+ * Search the account's sessions. Sessions come back best match first, each
+ * with its own hits in the order they happened - every one says when it was
+ * and which timeline event (or poll) it is, so a page can land on that moment.
+ *
+ *   { query, results: [{ lecture, hits: [{ kind, at, eventId?, pollId?, snippet }], more }] }
+ */
+function searchLectures(db, user, raw, { course = null, limit = MAX_RESULTS } = {}) {
+  const match = ftsQuery(raw);
+  if (!match) throw Object.assign(new Error('type something to search for'), { status: 400 });
+  const code = course ? String(course).trim().toLowerCase() : null;
+  const rows = db.prepare(`
+    SELECT s.rowid AS rid, s.lecture_id, s.kind, s.ref, s.at, s.body,
+           snippet(lecture_search, 0, '${MARK_ON}', '${MARK_OFF}', '…', 16) AS snip
+      FROM lecture_search s
+      JOIN lectures l ON l.id = s.lecture_id
+      LEFT JOIN courses c ON c.id = l.course_id
+     WHERE lecture_search MATCH ?3 AND ${VISIBLE}
+       AND (?4 IS NULL OR c.code = ?4)
+     ORDER BY bm25(lecture_search)
+     LIMIT 1000`).all(user.id, user.isAdmin ? 1 : 0, match, code);
+
+  const max = Math.min(Math.max(Number(limit) || MAX_RESULTS, 1), MAX_RESULTS);
+  const byLecture = new Map();
+  for (const row of rows) {
+    let group = byLecture.get(row.lecture_id);
+    if (!group) {
+      if (byLecture.size >= max) continue;
+      group = { id: row.lecture_id, hits: [], seen: new Set(), more: 0 };
+      byLecture.set(row.lecture_id, group);
+    }
+    // A poll is in the timeline as it runs AND filed with its tally: one hit.
+    const same = `${row.kind === 'poll' ? 'poll' : row.ref}:${row.body.trim().toLowerCase()}`;
+    if (group.seen.has(same)) continue;
+    group.seen.add(same);
+    if (group.hits.length >= HITS_PER_LECTURE) { group.more++; continue; }
+    group.hits.push({
+      kind: row.kind,
+      at: row.at,
+      ...(Number(row.rid) % 4 === 1 ? { pollId: Number(row.ref) } : { eventId: Number(row.ref) }),
+      snippet: snippetParts(row.snip),
+    });
+  }
+  const results = [];
+  for (const group of byLecture.values()) {
+    const found = findLecture(db, user, group.id);
+    if (!found) continue;
+    group.hits.sort((a, b) => a.at - b.at);
+    results.push({ lecture: lectureRow(found), hits: group.hits, more: group.more });
+  }
+  return { query: String(raw || '').slice(0, MAX_QUERY), results };
+}
+
 module.exports = {
-  noteAttendance,
+  noteAttendance, searchLectures, ftsQuery,
   listLectures, getLecture, startLecture, endLecture, appendEvents, recordPoll, keepAlive, closeIdleLectures, IDLE_MS, HEARTBEAT_MS,
   renameLecture, deleteLecture, mayDelete, courseIdForRoom,
   addFile, removeFile, listFiles, pruneFiles, usage, keepableType, cleanName, visibleLecture,

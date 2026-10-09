@@ -957,6 +957,17 @@ async function handleApi(req, res, url, ctx) {
       return true;
     }
 
+    // Search every session this caller can see (Issue #159): what was said,
+    // what was on screen, notes and polls. Before the /:id route below, which
+    // would otherwise take "search" for a lecture id.
+    if (head === 'lectures' && rest.length === 1 && rest[0] === 'search' && req.method === 'GET') {
+      json(res, 200, lectures.searchLectures(ctx.db, user, url.searchParams.get('q'), {
+        course: url.searchParams.get('course') || null,
+        limit: url.searchParams.get('limit'),
+      }));
+      return true;
+    }
+
     if (head === 'lectures' && rest.length === 1 && req.method === 'GET') {
       const lecture = lectures.getLecture(ctx.db, user, rest[0]);
       if (!lecture) { json(res, 404, { error: 'no such lecture' }); return true; }

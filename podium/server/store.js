@@ -705,6 +705,74 @@ const MIGRATIONS = [
       ALTER TABLE courses ADD COLUMN attendance_receipts INTEGER NOT NULL DEFAULT 0;
     `);
   },
+  (db) => {
+    db.exec(`
+      -- Searching what was said and shown, across every session (Issue #159).
+      -- SQLite's own full-text index, so there is no search service to run:
+      -- words rather than substrings, case and accents folded, English stems
+      -- ("remember" finds "remembering"), and bm25 ranking.
+      --
+      -- One row per thing worth finding. The rowid says what it is, so a
+      -- delete is a rowid lookup rather than a scan of the whole index -
+      -- removing a lecture cascades through thousands of events, and each
+      -- one's trigger has to find its row fast:
+      --
+      --   rowid = id * 4 + 0   a timeline event (lecture_events.id)
+      --   rowid = id * 4 + 1   a poll's question (lecture_polls.id)
+      --   rowid = id * 4 + 2/3 reserved for attendance (phase 3)
+      --
+      -- Everything after body is carried, not searched: where the hit lives
+      -- and what it is, so a result can land on the moment it came from.
+      CREATE VIRTUAL TABLE lecture_search USING fts5(
+        body,
+        lecture_id UNINDEXED, kind UNINDEXED, ref UNINDEXED, at UNINDEXED,
+        tokenize = 'porter unicode61 remove_diacritics 2'
+      );
+
+      -- A caption's full line is in detail.text (its title is cut at 200
+      -- characters); everything else is found by its title.
+      CREATE TRIGGER lecture_search_event_in AFTER INSERT ON lecture_events BEGIN
+        INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+        SELECT NEW.id * 4, b, NEW.lecture_id, NEW.kind, NEW.id, NEW.at
+          FROM (SELECT CASE WHEN NEW.kind = 'caption' AND json_valid(NEW.detail)
+                            THEN COALESCE(json_extract(NEW.detail, '$.text'), NEW.title)
+                            ELSE NEW.title END AS b)
+         WHERE TRIM(COALESCE(b, '')) <> '';
+      END;
+      CREATE TRIGGER lecture_search_event_out AFTER DELETE ON lecture_events BEGIN
+        DELETE FROM lecture_search WHERE rowid = OLD.id * 4;
+      END;
+
+      CREATE TRIGGER lecture_search_poll_in AFTER INSERT ON lecture_polls
+        WHEN TRIM(NEW.question) <> '' BEGIN
+        INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+        VALUES (NEW.id * 4 + 1, NEW.question, NEW.lecture_id, 'poll', NEW.id, NEW.ended_at);
+      END;
+      -- The same poll ended twice is an upsert (see recordPoll): replace it.
+      CREATE TRIGGER lecture_search_poll_change AFTER UPDATE ON lecture_polls BEGIN
+        DELETE FROM lecture_search WHERE rowid = OLD.id * 4 + 1;
+        INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+        SELECT NEW.id * 4 + 1, NEW.question, NEW.lecture_id, 'poll', NEW.id, NEW.ended_at
+         WHERE TRIM(NEW.question) <> '';
+      END;
+      CREATE TRIGGER lecture_search_poll_out AFTER DELETE ON lecture_polls BEGIN
+        DELETE FROM lecture_search WHERE rowid = OLD.id * 4 + 1;
+      END;
+
+      -- Everything recorded before this release, so a semester already under
+      -- way is searchable from the first day.
+      INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+      SELECT id * 4, b, lecture_id, kind, id, at
+        FROM (SELECT e.*, CASE WHEN e.kind = 'caption' AND json_valid(e.detail)
+                               THEN COALESCE(json_extract(e.detail, '$.text'), e.title)
+                               ELSE e.title END AS b
+                FROM lecture_events e)
+       WHERE TRIM(COALESCE(b, '')) <> '';
+      INSERT INTO lecture_search (rowid, body, lecture_id, kind, ref, at)
+      SELECT id * 4 + 1, question, lecture_id, 'poll', id, ended_at
+        FROM lecture_polls WHERE TRIM(question) <> '';
+    `);
+  },
 ];
 
 function migrate(db) {
