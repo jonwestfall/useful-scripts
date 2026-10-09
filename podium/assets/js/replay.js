@@ -13,7 +13,7 @@ import { $, el } from './util.js';
 import { mountSessionBadge } from './server.js';
 import { startPageTheme } from './theme.js';
 import { dayAndTime, spanOf } from './recap-pdf.js';
-import { buildReplay, segmentAt, indexAt, captionAt, clockOf } from './replay-model.js';
+import { buildReplay, segmentAt, indexAt, captionAt, heldAt, clockOf, POLL_HOLD_MS, PHOTO_HOLD_MS } from './replay-model.js';
 
 startPageTheme();
 
@@ -33,6 +33,8 @@ let lastTick = 0;
 let frame = 0;
 let shownScene = -2;
 let shownLine = -2;
+let shownPoll = null;
+let shownPhoto = null;
 let dragging = false;
 const players = [];        // one per mic track: { track, audio, url }
 
@@ -67,6 +69,23 @@ async function load() {
     audio.addEventListener('loadedmetadata', () => sync(true));
     document.body.append(audio);
     players.push({ track, audio, url: '' });
+  }
+  // With more than one mic, each can be muted on its own - a co-presenter's
+  // or a student's answer, say, without the instructor's.
+  if (players.length > 1) {
+    $('#rp-mics').replaceChildren(...players.map((p) => {
+      const button = el('button', {
+        type: 'button', class: 'rp-mic', 'aria-pressed': 'true', title: `Mute ${p.track.label}`,
+        onclick: () => {
+          p.audio.muted = !p.audio.muted;
+          button.setAttribute('aria-pressed', String(!p.audio.muted));
+          button.title = `${p.audio.muted ? 'Unmute' : 'Mute'} ${p.track.label}`;
+          button.textContent = `${p.audio.muted ? '🔇' : '🎙'} ${p.track.label}`;
+        },
+      }, `🎙 ${p.track.label}`);
+      return button;
+    }));
+    $('#rp-mics').hidden = false;
   }
   $('#rp-audio-note').textContent = model.hasAudio
     ? `${model.tracks.length === 1 ? 'The controller mic' : `${model.tracks.length} controller mics`} recorded into this lecture. Where nothing was recorded, the replay carries on silently.`
@@ -198,6 +217,21 @@ function draw() {
     $('#rp-scene-title').textContent = scene ? scene.title : 'Before anything went on screen';
     $('#rp-scene-note').textContent = scene?.note || '';
   }
+  // A poll's result over the stage as it closed, and a photo as it was taken.
+  const poll = heldAt(model.polls, t, POLL_HOLD_MS);
+  if (poll !== shownPoll) {
+    shownPoll = poll;
+    $('#rp-poll').hidden = !poll;
+    if (poll) $('#rp-poll').replaceChildren(...pollCard(poll));
+  }
+  const photo = heldAt(model.photos, t, PHOTO_HOLD_MS);
+  if (photo !== shownPhoto) {
+    shownPhoto = photo;
+    const box = $('#rp-photo');
+    box.hidden = !photo;
+    if (photo) box.replaceChildren(el('img', { src: photo.url, alt: photo.title }), el('span', {}, `Photo · ${photo.title}`));
+  }
+
   const line = captionAt(model.captions, t, CAPTION_HOLD_MS);
   $('#rp-caption').textContent = line ? line.text : '';
   $('#rp-caption').classList.toggle('is-empty', !line);
@@ -217,16 +251,38 @@ function draw() {
   }
 }
 
+function pollCard(poll) {
+  const head = [el('span', { class: 'rp-poll-tag' }, `Poll closed · ${poll.voters} voted`), el('strong', { class: 'rp-poll-q' }, poll.question)];
+  if (poll.kind === 'text') {
+    return [...head, el('ul', { class: 'rp-poll-answers' }, ...(poll.answers.length
+      ? poll.answers.slice(0, 8).map((a) => el('li', {}, a))
+      : [el('li', { class: 'hint' }, 'No answers were shown to the room.')]))];
+  }
+  return [...head, el('ul', { class: 'rp-poll-rows' }, ...poll.rows.map((r) => el('li', {},
+    el('span', { class: 'rp-poll-label' }, r.label),
+    el('span', { class: 'rp-poll-bar' }, el('span', { style: { width: `${Math.round(r.share * 100)}%` } })),
+    el('span', { class: 'rp-poll-count' }, `${r.count} · ${Math.round(r.share * 100)}%`))))];
+}
+
 function drawTranscript() {
   const list = $('#rp-transcript');
   const rows = [
     ...model.scenes.map((s) => ({ at: s.at, scene: s })),
+    ...model.polls.map((p) => ({ at: p.at, note: `Poll closed: ${p.question} (${p.voters} voted)` })),
+    ...model.photos.map((p) => ({ at: p.at, note: `Photo taken: ${p.title}` })),
     ...model.captions.map((c, i) => ({ at: c.at, caption: c, index: i })),
-  ].sort((a, b) => a.at - b.at || (a.scene ? -1 : 1));
+  ].sort((a, b) => a.at - b.at || (a.caption ? 1 : 0) - (b.caption ? 1 : 0));
   if (!model.captions.length) {
     list.append(el('li', { class: 'hint rp-none' }, 'No captions were saved in this lecture - turn on live captions in class and what you say is kept here.'));
   }
   for (const row of rows) {
+    if (row.note) {
+      list.append(el('li', { class: 'rp-line rp-line-scene rp-line-note' },
+        el('button', { type: 'button', onclick: () => seek(row.at) },
+          el('span', { class: 'rp-at' }, clockOf(row.at - model.start)),
+          el('span', {}, row.note))));
+      continue;
+    }
     if (row.scene) {
       list.append(el('li', { class: 'rp-line rp-line-scene' },
         el('button', { type: 'button', onclick: () => seek(row.at) },

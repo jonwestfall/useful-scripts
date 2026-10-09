@@ -2822,13 +2822,21 @@ const made = await page.evaluate(async () => {
   const blob = new Blob(parts, { type: 'audio/webm' });
   const name = `audio/ctl-e2e-${start}-0000-t${start}-d3000.webm`;
   await fetch(`/api/lectures/${lecture.id}/files?name=${encodeURIComponent(name)}&kind=audio`, { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: blob });
+  // A second controller's mic over the same three seconds (phase 2: each mutes on its own).
+  const second = `audio/ctl-two-${start}-0000-t${start}-d3000.webm`;
+  await fetch(`/api/lectures/${lecture.id}/files?name=${encodeURIComponent(second)}&kind=audio`, { method: 'POST', headers: { 'content-type': 'audio/webm' }, body: blob });
+  // And a photo taken in the room, filed as it was taken.
+  const canvas = Object.assign(document.createElement('canvas'), { width: 64, height: 48 });
+  canvas.getContext('2d').fillRect(0, 0, 64, 48);
+  const jpeg = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg'));
+  await fetch(`/api/lectures/${lecture.id}/files?name=${encodeURIComponent('photos/ph1-Lab-bench.jpg')}&kind=photo`, { method: 'POST', headers: { 'content-type': 'image/jpeg' }, body: jpeg });
   await post(`/api/lectures/${lecture.id}/events`, { events: [
     { id: 'r0', at: start + 10, kind: 'program', title: 'Introduction' },
     { id: 'r1', at: start + 200, kind: 'caption', title: 'Hello and welcome', detail: { text: 'Hello and welcome to the lecture' } },
     { id: 'r2', at: start + 1500, kind: 'program', title: 'Working memory' },
     { id: 'r3', at: start + 1600, kind: 'caption', title: 'The loop', detail: { text: 'The phonological loop holds sounds' } },
   ] });
-  await post(`/api/lectures/${lecture.id}/polls`, { poll: { pollId: 'rp1', kind: 'choice', question: 'Which store?', results: { counts: [1, 2] }, voters: 3, endedAt: start + 2500 } });
+  await post(`/api/lectures/${lecture.id}/polls`, { poll: { pollId: 'rp1', kind: 'choice', question: 'Which store?', options: ['Loop', 'Sketchpad'], counts: [1, 2], voters: 3, endedAt: start + 2500 } });
   await post(`/api/lectures/${lecture.id}/end`, {});
   // And one with no audio at all.
   const quiet = (await post('/api/lectures', { room: 'replay-quiet', fresh: true })).lecture;
@@ -2841,11 +2849,12 @@ await page.goto(`${base}/replay.html?lecture=${made.id}`);
 await page.waitForSelector('#rp-main:not([hidden])', { timeout: 10000 });
 const replay = () => page.evaluate(() => ({ t: window.__podiumReplay.t, playing: window.__podiumReplay.playing }));
 ok(`the replay opens the lecture (${await page.textContent('#rp-title')})`, (await page.textContent('#rp-title')) === 'replay-room');
-ok(`with its transcript: what went on screen and what was said (${await page.locator('#rp-transcript .rp-line').count()} lines)`,
-  await page.locator('#rp-transcript .rp-line').count() === 4 && /Hello and welcome/.test(await page.textContent('#rp-transcript')));
-ok('and the scrubber marked with each thing on screen and the poll', await page.locator('#rp-marks .rp-mark').count() === 3
-  && await page.locator('#rp-marks .rp-mark-poll').count() === 1);
-ok(`it says a mic was recorded (${await page.textContent('#rp-audio-note')})`, /controller mic recorded/.test(await page.textContent('#rp-audio-note')));
+ok(`with its transcript: what went on screen, what was said, the poll and the photo (${await page.locator('#rp-transcript .rp-line').count()} lines)`,
+  await page.locator('#rp-transcript .rp-line').count() === 6 && /Hello and welcome/.test(await page.textContent('#rp-transcript'))
+  && /Poll closed: Which store\? \(3 voted\)/.test(await page.textContent('#rp-transcript')) && /Photo taken: Lab bench/.test(await page.textContent('#rp-transcript')));
+ok('and the scrubber marked with each thing on screen, the poll and the photo', await page.locator('#rp-marks .rp-mark').count() === 4
+  && await page.locator('#rp-marks .rp-mark-poll').count() === 1 && await page.locator('#rp-marks .rp-mark-photo').count() === 1);
+ok(`it says two mics were recorded (${await page.textContent('#rp-audio-note')})`, /2 controller mics recorded/.test(await page.textContent('#rp-audio-note')));
 ok(`it starts at the very beginning (${await page.textContent('#rp-scene-title')})`, (await replay()).t === 0
   && /Before anything went on screen/.test(await page.textContent('#rp-scene-title')));
 
@@ -2877,6 +2886,20 @@ await page.keyboard.press('ArrowRight');
 const end = await page.evaluate(() => ({ t: window.__podiumReplay.t, end: window.__podiumReplay.model.end - window.__podiumReplay.model.start }));
 ok(`→ skips ahead, never past the end (${end.t} of ${end.end})`, end.t === end.end);
 
+// Phase 2: each mic mutes on its own; a poll's result and a photo come up
+// over the stage at their moments.
+ok(`each mic has its own button (${await page.locator('#rp-mics .rp-mic').allTextContents()})`, await page.locator('#rp-mics .rp-mic').count() === 2);
+await page.locator('#rp-mics .rp-mic').first().click();
+ok('and muting one mutes only that mic', await page.evaluate(() => [...document.querySelectorAll('audio')].map((a) => a.muted).join()) === 'true,false'
+  && await page.getAttribute('#rp-mics .rp-mic >> nth=0', 'aria-pressed') === 'false');
+await page.evaluate(() => window.__podiumReplay.seek(2600));
+ok(`a poll's result is over the stage as it closed (${await page.textContent('#rp-poll').catch(() => '')})`, await page.isVisible('#rp-poll')
+  && /Which store\?/.test(await page.textContent('#rp-poll')) && /2 · 67%/.test(await page.textContent('#rp-poll')));
+await page.evaluate(() => window.__podiumReplay.seek(window.__podiumReplay.model.end - window.__podiumReplay.model.start));
+ok(`and a photo as it was taken (${await page.textContent('#rp-photo').catch(() => '')})`, await page.isVisible('#rp-photo') && /Lab bench/.test(await page.textContent('#rp-photo')));
+await page.evaluate(() => window.__podiumReplay.seek(500));
+ok('neither is there before its moment', await page.isHidden('#rp-poll') && await page.isHidden('#rp-photo'));
+
 await page.goto(`${base}/replay.html?lecture=${made.id}&at=1600`);
 await page.waitForSelector('#rp-main:not([hidden])', { timeout: 10000 });
 ok('?at= opens it at that moment', (await replay()).t === 1600 && /Working memory/.test(await page.textContent('#rp-scene-title')));
@@ -2896,7 +2919,41 @@ trap(opened, 'replay from my files');
 await opened.waitForSelector('#rp-main:not([hidden])', { timeout: 10000 })
   .then(() => ok('Recorded lectures has a Replay button that opens it', true))
   .catch(() => ok('Recorded lectures has a Replay button that opens it', false));
+
+await opened.close();
+
+// "Play from here" from a search result.
+await page.goto(`${base}/me.html`);
+await page.click('.me-tabs .tab:has-text("Recorded lectures")');
+await page.fill('#recorded-search .ss-input', 'phonological');
+await page.waitForSelector('#recorded-search .ss-play', { timeout: 5000 });
+const [fromHit] = await Promise.all([owen.waitForEvent('page'), page.click('#recorded-search .ss-play')]);
+trap(fromHit, 'replay from a search hit');
+await fromHit.waitForSelector('#rp-main:not([hidden])', { timeout: 10000 });
+ok(`a search hit's ▶ plays the replay from just before that moment (${fromHit.url().replace(/^.*\//, '')})`,
+  new URL(fromHit.url()).searchParams.get('lecture') === String(made.id) && (await fromHit.evaluate(() => window.__podiumReplay.t)) === 0);
+await fromHit.close();
+await page.click('#recorded-search .ss-hit');
+await page.waitForSelector('#recorded-search .ss-play-here', { timeout: 5000 });
+ok('and the opened timeline offers Play from here, and a ▶ on every moment', await page.isVisible('#recorded-search .ss-play-here')
+  && await page.locator('#recorded-search .ss-timeline .timeline-play').count() === 5);
 await owen.close();
+
+// The admin page's Sessions tab: each moment's time plays from there.
+const rootCtx = await signedIn('root');
+const adminPage = await rootCtx.newPage();
+trap(adminPage, 'replay from admin');
+await adminPage.goto(`${base}/admin.html`);
+await adminPage.click('#tab-sessions');
+const sessionRow = adminPage.locator('#sessions .admin-row', { hasText: 'replay-room' }).first();
+await sessionRow.locator('button', { hasText: 'Open' }).click();
+await adminPage.waitForSelector('.session-body .timeline-play', { timeout: 5000 });
+const [fromAdmin] = await Promise.all([rootCtx.waitForEvent('page'), adminPage.locator('.session-body .timeline-play', { hasText: '▶' }).last().click()]);
+trap(fromAdmin, 'replay from an admin timeline row');
+await fromAdmin.waitForSelector('#rp-main:not([hidden])', { timeout: 10000 })
+  .then(() => ok('a session\'s timeline on the admin page plays the replay from any moment', true))
+  .catch(() => ok('a session\'s timeline on the admin page plays the replay from any moment', false));
+await rootCtx.close();
 
 // Somebody who may not open that lecture gets no replay of it.
 const tia = await signedIn('tia');

@@ -14,6 +14,11 @@
 import { el } from './util.js';
 import { describeEvent, captionText } from './recap.js';
 import { dayAndTime, spanOf } from './recap-pdf.js';
+import { replayUrl } from './replay-model.js';
+
+// "Play from here" (Issue #132): the replay, in a tab of its own, from just
+// before the moment.
+const playFrom = (lectureId, startedAt, at) => window.open(replayUrl(lectureId, startedAt, at), '_blank', 'noopener');
 
 const KIND_LABEL = {
   caption: 'Said', program: 'On screen', note: 'Note', poll: 'Poll', attendance: 'Attendance',
@@ -147,7 +152,7 @@ export function mountSessionSearch(host, { onActive = () => {}, label = 'Search 
         el('span', { class: 'fb-title' }, name),
         el('span', { class: 'fb-meta' }, [dayAndTime(lecture.startedAt), lecture.course && lecture.course.toUpperCase(), spanOf(lecture),
           lecture.owner && `by ${lecture.owner}`].filter(Boolean).join(' · '))),
-      el('ul', { class: 'ss-hits' }, ...hits.map((hit, i) => el('li', {},
+      el('ul', { class: 'ss-hits' }, ...hits.map((hit, i) => el('li', { class: 'ss-hit-row' },
         el('button', {
           type: 'button', class: 'ss-hit', dataset: { key: hitKey(hit) },
           onclick: () => open(lecture, hits, i, viewer),
@@ -155,7 +160,11 @@ export function mountSessionSearch(host, { onActive = () => {}, label = 'Search 
         el('span', { class: 'timeline-at' }, clock(hit.at)),
         el('span', { class: 'ss-kind' }, kindLabel(hit.kind)),
         el('span', { class: 'ss-snip' }, ...snippetNodes(hit.snippet),
-          askedBy(hit) ? el('span', { class: 'ss-who' }, ` — ${askedBy(hit)}`) : null))))),
+          askedBy(hit) ? el('span', { class: 'ss-who' }, ` — ${askedBy(hit)}`) : null)),
+        el('button', {
+          type: 'button', class: 'ss-play', title: 'Play from here', 'aria-label': `Play from ${clock(hit.at)}`,
+          onclick: () => playFrom(lecture.id, lecture.startedAt, hit.at),
+        }, '▶')))),
       more ? el('p', { class: 'hint' }, `…and ${more} more in this session - open it to see them all.`) : null,
       viewer);
     return section;
@@ -199,7 +208,10 @@ export function mountSessionSearch(host, { onActive = () => {}, label = 'Search 
         class: `timeline-row${row.kind === 'caption' ? ' timeline-caption' : ''}${match ? ' is-match' : ''}`,
         dataset: { key: row.key },
       },
-      el('span', { class: 'timeline-at' }, clock(row.at)),
+      el('button', {
+        type: 'button', class: 'timeline-at timeline-play', title: 'Play from here', 'aria-label': `Play from ${clock(row.at)}`,
+        onclick: () => playFrom(detail.id, detail.startedAt, row.at),
+      }, `▶ ${clock(row.at)}`),
       el('span', { class: 'timeline-what' }, ...(match ? marked(text, match) : [text])),
       row.asked ? (askedBy(row.asked) ? el('span', { class: 'timeline-note' }, askedBy(row.asked)) : null)
         : row.poll ? el('span', { class: 'timeline-note' }, `${row.poll.voters} voted`)
@@ -212,6 +224,7 @@ export function mountSessionSearch(host, { onActive = () => {}, label = 'Search 
     viewer.replaceChildren(
       el('div', { class: 'ss-nav' },
         el('span', { class: 'ss-where' }, `Match ${index + 1} of ${hits.length} · ${clock(hit.at)}, ${into(hit.at, detail.startedAt)}`),
+        el('button', { type: 'button', class: 'admin-small ss-play-here', onclick: () => playFrom(detail.id, detail.startedAt, hit.at) }, '▶ Play from here'),
         hits.length > 1 ? el('button', { type: 'button', class: 'admin-small', onclick: () => step(-1) }, '‹ Previous') : null,
         hits.length > 1 ? el('button', { type: 'button', class: 'admin-small', onclick: () => step(1) }, 'Next ›') : null,
         el('button', { type: 'button', class: 'admin-small', onclick: () => { viewer.hidden = true; viewer.replaceChildren(); } }, 'Close')),

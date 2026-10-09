@@ -18,6 +18,7 @@ import { MAX_ASSET_CHARS } from './planfile.js';
 import { startPageTheme } from './theme.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
 import { mountSessionSearch } from './session-search.js';
+import { replayUrl } from './replay-model.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -476,15 +477,20 @@ function renderSessionBody(detail) {
   // else to show either; either way, the summaries below still run.
   if (detail.timeline.length) {
     const list = el('div', { class: 'timeline' });
+    // Each moment's time plays the replay from there (Issue #132).
+    const at = (ms) => el('button', {
+      type: 'button', class: 'timeline-at timeline-play', title: 'Play from here', 'aria-label': `Play from ${clock(ms)}`,
+      onclick: () => window.open(replayUrl(detail.id, detail.startedAt, ms), '_blank', 'noopener'),
+    }, `▶ ${clock(ms)}`);
     for (const event of detail.timeline) {
       if (event.kind === 'caption') {
         list.append(el('div', { class: 'timeline-row timeline-caption' },
-          el('span', { class: 'timeline-at' }, clock(event.at)),
+          at(event.at),
           el('span', { class: 'timeline-what' }, `“${captionText(event)}”`)));
         continue;
       }
       list.append(el('div', { class: 'timeline-row' },
-        el('span', { class: 'timeline-at' }, clock(event.at)),
+        at(event.at),
         el('span', { class: 'timeline-what' }, event.title || '—'),
         el('span', { class: 'timeline-note' }, describe(event))));
     }
