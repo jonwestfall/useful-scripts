@@ -68,12 +68,21 @@ async function load() {
     const audio = el('audio', { preload: 'auto' });
     audio.addEventListener('loadedmetadata', () => sync(true));
     document.body.append(audio);
-    players.push({ track, audio, url: '' });
+    players.push({ track, audio, url: '', kind: 'mic' });
+  }
+  // The screen, where a display recorded it (phase 3): played on the stage,
+  // kept in step the same way as the mics.
+  for (const track of model.video) {
+    const video = el('video', { class: 'rp-video', preload: 'auto', playsinline: true, hidden: true });
+    video.addEventListener('loadedmetadata', () => sync(true));
+    $('#rp-stage').prepend(video);
+    players.push({ track, audio: video, url: '', kind: 'video' });
   }
   // With more than one mic, each can be muted on its own - a co-presenter's
   // or a student's answer, say, without the instructor's.
-  if (players.length > 1) {
-    $('#rp-mics').replaceChildren(...players.map((p) => {
+  const mics = players.filter((p) => p.kind === 'mic');
+  if (mics.length > 1) {
+    $('#rp-mics').replaceChildren(...mics.map((p) => {
       const button = el('button', {
         type: 'button', class: 'rp-mic', 'aria-pressed': 'true', title: `Mute ${p.track.label}`,
         onclick: () => {
@@ -87,9 +96,12 @@ async function load() {
     }));
     $('#rp-mics').hidden = false;
   }
-  $('#rp-audio-note').textContent = model.hasAudio
-    ? `${model.tracks.length === 1 ? 'The controller mic' : `${model.tracks.length} controller mics`} recorded into this lecture. Where nothing was recorded, the replay carries on silently.`
-    : 'No microphone was recorded in this lecture, so the replay plays what was on screen and what was said, in time, without sound.';
+  $('#rp-audio-note').textContent = [
+    model.hasAudio
+      ? `${model.tracks.length === 1 ? 'The controller mic' : `${model.tracks.length} controller mics`} recorded into this lecture. Where nothing was recorded, the replay carries on silently.`
+      : 'No microphone was recorded in this lecture, so the replay plays what was on screen and what was said, in time, without sound.',
+    model.hasVideo ? 'The screen was recorded as video: where it was, the replay plays it; elsewhere it shows the saved pictures.' : '',
+  ].filter(Boolean).join(' ');
 
   drawTranscript();
   drawMarks();
@@ -199,6 +211,17 @@ function draw() {
   $('#rp-time').textContent = `${clockOf(t - model.start)} / ${clockOf(span)}`;
   if (!dragging) $('#rp-seek').value = String(Math.round(((t - model.start) / span) * 1000));
   $('#rp-seek').setAttribute('aria-valuetext', clockOf(t - model.start));
+
+  // Screen video, where it covers this moment, takes the stage from the
+  // pictures.
+  let onVideo = false;
+  for (const p of players) {
+    if (p.kind !== 'video') continue;
+    const showing = !onVideo && !!segmentAt(p.track, t);
+    p.audio.hidden = !showing;
+    onVideo = onVideo || showing;
+  }
+  $('#rp-stage').classList.toggle('is-video', onVideo);
 
   const sceneIndex = indexAt(model.scenes, t);
   if (sceneIndex !== shownScene) {

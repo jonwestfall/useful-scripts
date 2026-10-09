@@ -7,6 +7,7 @@
 //
 //   tracks    each controller mic that recorded into it, as segments, and
 //             which segment (if any) was playing then
+//   video     the screen, where a display recorded it (phase 3), the same way
 //   scenes    what was on the projector, and the picture of it that was kept
 //             - an annotated slide from the export, or a marked-up screen
 //   captions  what was being said, as the caption bar showed it
@@ -41,10 +42,11 @@ const SLIDE_FILE_RE = /^slides\/([^/]+)\/slide-(\d+)\.png$/i;
  * Returns null for anything else.
  */
 export function parseSegmentName(name) {
-  const m = /^audio\/(.+)-(\d{10,})-(\d{1,6})(?:-t(\d{10,})-d(\d{1,9}))?\.(webm|ogg)$/i.exec(String(name || ''));
+  const m = /^(audio|video)\/(.+)-(\d{10,})-(\d{1,6})(?:-t(\d{10,})-d(\d{1,9}))?\.(webm|ogg)$/i.exec(String(name || ''));
   if (!m) return null;
-  const [, device, recording, seq, start, length, ext] = m;
+  const [, folder, device, recording, seq, start, length, ext] = m;
   return {
+    media: folder.toLowerCase(),
     device,
     recording: Number(recording),
     seq: Number(seq),
@@ -60,12 +62,12 @@ export function parseSegmentName(name) {
  * times is placed exactly; an older one at its recording's start plus
  * SEGMENT_MS per segment before it, ending where the next one begins.
  */
-export function buildTracks(files, { segmentMs = SEGMENT_MS } = {}) {
+export function buildTracks(files, { segmentMs = SEGMENT_MS, media = 'audio' } = {}) {
   const byDevice = new Map();
   for (const file of files || []) {
-    if (file.kind !== 'audio') continue;
+    if (file.kind !== media) continue;
     const info = parseSegmentName(file.name);
-    if (!info) continue;
+    if (!info || info.media !== media) continue;
     const exact = info.start != null;
     const start = exact ? info.start : info.recording + info.seq * segmentMs;
     const segment = { url: file.url, name: file.name, start, end: exact ? start + info.length : start + segmentMs, exact };
@@ -82,7 +84,8 @@ export function buildTracks(files, { segmentMs = SEGMENT_MS } = {}) {
     tracks.push({ device, segments: segments.filter((s) => s.end > s.start) });
   }
   tracks.sort((a, b) => (a.segments[0]?.start ?? 0) - (b.segments[0]?.start ?? 0));
-  return tracks.map((t, i) => ({ ...t, label: tracks.length > 1 ? `Mic ${i + 1}` : 'Mic' }));
+  const noun = media === 'video' ? 'Screen' : 'Mic';
+  return tracks.map((t, i) => ({ ...t, label: tracks.length > 1 ? `${noun} ${i + 1}` : noun }));
 }
 
 /** The segment of `track` playing at `t`, or null. */
@@ -203,6 +206,9 @@ export function captionAt(captions, t, hold = CAPTION_HOLD_MS) {
 export function buildReplay(detail, opts = {}) {
   const timeline = [...(detail.timeline || [])].sort((a, b) => a.at - b.at);
   const tracks = buildTracks(detail.files, opts);
+  // Screen video (phase 3): recorded by a display, segment by segment like
+  // the mic. Where it covers a moment, the replay plays it on the stage.
+  const video = buildTracks(detail.files, { ...opts, media: 'video' });
   const scenes = buildScenes(timeline, detail.files);
   const captions = timeline
     .filter((e) => e.kind === 'caption')
@@ -221,9 +227,14 @@ export function buildReplay(detail, opts = {}) {
     Number(detail.endedAt) || 0,
     timeline.length ? timeline[timeline.length - 1].at : 0,
     ...tracks.flatMap((t) => t.segments.map((s) => s.end)),
+    ...video.flatMap((t) => t.segments.map((s) => s.end)),
     ...marks.map((m) => m.at),
   );
-  return { start, end: lastSeen, tracks, scenes, captions, marks, polls, photos, hasAudio: tracks.some((t) => t.segments.length) };
+  return {
+    start, end: lastSeen, tracks, video, scenes, captions, marks, polls, photos,
+    hasAudio: tracks.some((t) => t.segments.length),
+    hasVideo: video.some((t) => t.segments.length),
+  };
 }
 
 /** "m:ss", or "h:mm:ss" from an hour, for `ms` into the lecture. */

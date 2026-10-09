@@ -2904,6 +2904,10 @@ body.replay { display: flex; flex-direction: column; min-height: 100vh; backgrou
   background: #000; border-radius: var(--radius); overflow: hidden;
 }
 .rp-stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+/* Screen video (phase 3): fills the stage, and the still pictures step aside. */
+.rp-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.rp-video[hidden] { display: none; }
+.rp-stage.is-video #rp-picture, .rp-stage.is-video .rp-card { visibility: hidden; }
 .rp-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; text-align: center; color: #e8ecf1; }
 .rp-card[hidden] { display: none; }
 .rp-scene-title { font-size: clamp(20px, 3vw, 34px); font-weight: 650; }
@@ -2975,3 +2979,15 @@ body.replay { display: flex; flex-direction: column; min-height: 100vh; backgrou
   .rp-poll { padding: 10px 12px; }
   .rp-poll-q { font-size: 15px; }
 }
+
+/* Recording the screen (Issue #132, phase 3): the choice on the Go live
+   screen, and the badge the room sees while it runs. */
+.arm-record-screen { display: block; margin: 10px auto 0; }
+.arm-record-screen[hidden] { display: none; }
+.screen-rec {
+  position: fixed; left: 12px; bottom: 12px; z-index: 60; max-width: min(520px, 80vw);
+  padding: 4px 10px; border-radius: 999px; font: 600 12px/1.4 system-ui, sans-serif;
+  background: rgba(0, 0, 0, .65); color: #e8ecf1; pointer-events: none;
+}
+.screen-rec.is-live { color: #ffb3b3; }
+.screen-rec[hidden] { display: none; }

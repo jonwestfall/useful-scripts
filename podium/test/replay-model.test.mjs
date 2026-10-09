@@ -95,6 +95,22 @@ ok(`both are marked on the scrubber (${withBoth.marks.map((m) => m.kind)})`, wit
 ok(`"Play from here" starts a few seconds before the moment (${replayUrl(7, T0, T0 + 65000)})`,
   replayUrl(7, T0, T0 + 65000) === 'replay.html?lecture=7&at=62000' && replayUrl(7, T0, T0 + 1000) === 'replay.html?lecture=7');
 
+console.log('\n-- screen video (phase 3) --');
+const vname = `video/screen-ab-${T0}-0000-t${T0 + 500}-d30000.webm`;
+ok(`a screen segment's name parses as video (${JSON.stringify(parseSegmentName(vname))})`, parseSegmentName(vname)?.media === 'video'
+  && parseSegmentName(vname).device === 'screen-ab' && parseSegmentName(vname).length === 30000);
+const vfiles = [
+  { kind: 'video', name: vname, url: '/v0' },
+  { kind: 'video', name: `video/screen-ab-${T0}-0001-t${T0 + 30600}-d29900.webm`, url: '/v1' },
+  { kind: 'audio', name: `audio/mic-${T0}-0000-t${T0}-d60000.webm`, url: '/a0' },
+];
+const vr = buildReplay({ startedAt: T0, endedAt: T0 + 40000, timeline: [], files: vfiles });
+ok(`video is its own track, apart from the mics (${vr.video.map((t) => `${t.label}:${t.segments.length}`)} / ${vr.tracks.map((t) => t.label)})`,
+  vr.hasVideo && vr.video.length === 1 && vr.video[0].label === 'Screen' && vr.video[0].segments.length === 2 && vr.tracks.length === 1 && vr.tracks[0].label === 'Mic');
+ok('the segment on screen at a moment', segmentAt(vr.video[0], T0 + 31000)?.url === '/v1' && segmentAt(vr.video[0], T0 + 30550) === null);
+ok(`and the replay runs to the end of whatever ends last (${(vr.end - T0) / 1000}s)`, vr.end === T0 + 60500);
+ok('no video, no video track', buildReplay({ startedAt: T0, timeline: [], files: [vfiles[2]] }).hasVideo === false);
+
 console.log('\n-- the clock --');
 ok(`m:ss, and h:mm:ss from an hour (${clockOf(75000)}, ${clockOf(3725000)})`, clockOf(75000) === '1:15' && clockOf(3725000) === '1:02:05' && clockOf(-5) === '0:00');
 
