@@ -1276,6 +1276,7 @@ function renderCourses() {
     // Its roster (Issue #256), kept on My Files - any member may read it.
     if (!course.archived) {
       row.append(el('a', { class: 'admin-small linkish', href: `me.html#roster:${encodeURIComponent(course.code)}`, title: 'The people attendance is taken for' }, 'Roster'));
+      row.append(el('a', { class: 'admin-small linkish', href: `me.html#attendance:${encodeURIComponent(course.code)}`, title: 'Check-in sessions, the term grid and exports' }, 'Attendance'));
     }
     if (me?.isAdmin) {
       row.append(el('button', {

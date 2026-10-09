@@ -2183,6 +2183,94 @@ await pad.close();
 await owner.close();
 }
 
+if (want('attendance after class: review, term grid and exports (#256)')) {
+console.log('\n-- attendance after class: review, term grid and exports (#256) --');
+const rootCtx = await signedIn('root');
+const rootPage = await rootCtx.newPage();
+await rootPage.goto(`${base}/me.html`);
+await rootPage.evaluate(async () => {
+  const send = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await send('/api/courses', { code: 'att102', title: 'Attendance 102' });
+  await send('/api/courses/att102/members', { username: 'owen', role: 'owner' });
+  await send('/api/courses/att102/members', { username: 'tia', role: 'member' });
+  await fetch('/api/courses/att102/roster/import?apply=1', { method: 'POST', body: 'name,student id\nJane Doe,B100\nSam Lee,B200\nBo Kim,B300\n' });
+});
+await rootCtx.close();
+
+const owner = await signedIn('owen');
+const page = await owner.newPage();
+trap(page, 'attendance review');
+await page.goto(`${base}/me.html`);
+// A class: Jane and Bo from one phone, a guest from another, Sam missing.
+await page.evaluate(async () => {
+  const post = (url, body, method = 'POST') => fetch(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+  const { session } = await post('/api/attendance/sessions', { course: 'att102' });
+  const people = (await fetch('/api/courses/att102/roster').then((r) => r.json())).people;
+  const id = (name) => people.find((p) => p.name === name).id;
+  const checkIn = async (device, who) => {
+    const { code } = await fetch(`/attend/screen/${session.id}?k=${session.screenKey}`).then((r) => r.json());
+    const { ticket } = await post('/attend/code', { code, device });
+    return post('/attend/checkin', { ticket, device, ...who });
+  };
+  await checkIn('reviewphoneAAAAAAAAAAAA', { rosterId: id('Jane Doe') });
+  await checkIn('reviewphoneAAAAAAAAAAAA', { rosterId: id('Bo Kim') });
+  await checkIn('reviewphoneBBBBBBBBBBBB', { guest: { name: 'Pat Visitor', email: 'pat@elsewhere.org' } });
+  await post(`/api/attendance/sessions/${session.id}`, { open: false }, 'PATCH');
+});
+
+// A fresh load: the same page with only a new #hash would not start again.
+await page.goto('about:blank');
+await page.goto(`${base}/me.html#attendance:att102`);
+await page.waitForSelector('#panel-attendance:not([hidden]) .attn-session', { timeout: 10000 });
+const sessionRow = (await page.textContent('#attn-sessions .attn-session')).replace(/\s+/g, ' ');
+ok(`#attendance:att102 lists the course's sessions with their counts (${sessionRow})`,
+  /3 present · 1 absent/.test(sessionRow) && /⚑ 2 to look at/.test(sessionRow));
+await page.click('#attn-sessions .attn-session button:has-text("Review")');
+await page.waitForSelector('#attn-review:not([hidden]) .att-row', { timeout: 5000 });
+const reviewRow = (name) => page.textContent(`#attn-review-list .att-row:has(.att-name:text-is("${name}"))`).then((t) => t.replace(/\s+/g, ' '));
+ok('Sam, who never checked in, is absent now check-in is closed',
+  await page.$eval('#attn-review-list .att-row:has(.att-name:text-is("Sam Lee")) select', (s) => s.selectedOptions[0].textContent) === 'Absent (not checked in)');
+ok(`each check-in says how it was made (${await reviewRow('Jane Doe')})`, /by typing the code/.test(await reviewRow('Jane Doe')) && /same phone as Bo Kim/.test(await reviewRow('Jane Doe')));
+
+await page.click('#attn-review-list .att-row:has(.att-name:text-is("Jane Doe")) button:has-text("Dismiss flag")');
+await page.waitForFunction(() => /dismissed by Owen Owner/.test(document.querySelector('#attn-review-list')?.textContent || ''), null, { timeout: 5000 })
+  .then(() => ok('Dismiss flag keeps it on record, marked looked at and by whom', true))
+  .catch(() => ok('Dismiss flag keeps it on record, marked looked at and by whom', false));
+await page.selectOption('#attn-review-list .att-row:has(.att-name:text-is("Bo Kim")) select', 'late');
+await page.waitForFunction(() => /changed Bo Kim: present → late/.test(document.querySelector('.attn-history')?.textContent || ''), null, { timeout: 5000 })
+  .then(() => ok('a status change is in the session\'s history, with who made it', true))
+  .catch(async () => ok(`a status change is in the session's history ("${await page.textContent('.attn-history')}")`, false));
+ok('and the row says it was changed', /changed by Owen Owner/.test(await reviewRow('Bo Kim')));
+await page.click('#attn-review-list .att-row:has(.att-name:text-is("Pat Visitor")) button:has-text("Add to roster")');
+await page.waitForFunction(() => /on the roster now/.test(document.querySelector('#attn-note').textContent), null, { timeout: 5000 });
+ok('Add to roster puts a guest on the roster in one click', !/guest/.test(await reviewRow('Pat Visitor')));
+
+await page.click('#attn-show-grid');
+await page.waitForSelector('#attn-grid:not([hidden]) table', { timeout: 5000 });
+const gridRow = async (name) => (await page.textContent(`.attn-grid tr:has(th:text-is("${name}"))`)).replace(/\s+/g, '');
+ok(`the term grid: a letter per session and the totals (Bo: ${await gridRow('Bo Kim')}; Sam: ${await gridRow('Sam Lee')})`,
+  /^BoKimL01001?00%$/.test(await gridRow('Bo Kim')) && /^SamLeeA0010/.test(await gridRow('Sam Lee')));
+
+const csv = await page.evaluate(() => fetch(document.querySelector('#attn-export-grid').href).then((r) => r.text()));
+ok(`the grid exports as a CSV (${JSON.stringify(csv.split('\r\n')[0])})`, /Bo Kim,B300,,,L,0,1,0,0,100%/.test(csv));
+await page.click('#attn-export-canvas');
+await page.fill('.me-dialog input[data-key="late"]', '0.75');
+const [download] = await Promise.all([page.waitForEvent('download'), page.click('.me-dialog button.primary')]);
+const canvas = fs.readFileSync(await download.path(), 'utf8');
+ok(`the Canvas export uses the points given (${canvas.split('\r\n').slice(0, 2).join(' | ')})`,
+  /^\uFEFF?Student,ID,SIS User ID,SIS Login ID,Section,Attendance \d{4}-\d\d-\d\d/.test(canvas) && /Bo Kim,,B300,,,0\.75/.test(canvas) && /Sam Lee,,B200,,,0/.test(canvas));
+await owner.close();
+
+// A TA reviews and exports, but neither deletes a session nor changes the roster.
+const ta = await signedIn('tia');
+const taPage = await ta.newPage();
+trap(taPage, 'attendance review (TA)');
+await taPage.goto(`${base}/me.html#attendance:att102`);
+await taPage.waitForSelector('#attn-sessions .attn-session', { timeout: 10000 });
+ok('a TA sees the sessions, with no Delete', !(await taPage.$('#attn-sessions button:has-text("Delete")')));
+await ta.close();
+}
+
 if (want('My Files: everything I have, and what I may do with it (#243)')) {
 console.log('\n-- My Files: everything I have, and what I may do with it (#243) --');
 // A TA of their own, so changing a password here leaves everyone else's alone.

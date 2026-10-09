@@ -638,6 +638,29 @@ const MIGRATIONS = [
       CREATE INDEX attendance_evidence_by_age ON attendance_evidence(created_at);
     `);
   },
+  (db) => {
+    db.exec(`
+      -- Reviewing attendance (Issue #256, phase 3). Every change to a mark
+      -- after the fact, and who made it: what it was and what it became. The
+      -- mark id is not a foreign key, so a mark taken off keeps its history.
+      CREATE TABLE attendance_audit (
+        id          INTEGER PRIMARY KEY,
+        session_id  INTEGER NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+        mark_id     INTEGER,
+        user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        at          INTEGER NOT NULL,
+        action      TEXT    NOT NULL,   -- marked | changed | removed | flags_dismissed | added_to_roster
+        name        TEXT    NOT NULL DEFAULT '',
+        before      TEXT,
+        after       TEXT
+      );
+      CREATE INDEX attendance_audit_by_session ON attendance_audit(session_id, at);
+      -- A flag looked at and dismissed: the mark keeps its flags (what was
+      -- seen), but they no longer ask for attention.
+      ALTER TABLE attendance_marks ADD COLUMN flags_dismissed_at INTEGER;
+      ALTER TABLE attendance_marks ADD COLUMN flags_dismissed_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+    `);
+  },
 ];
 
 function migrate(db) {

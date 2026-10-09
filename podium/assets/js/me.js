@@ -18,6 +18,7 @@ import { dayAndTime, spanOf, downloadSessionRecap } from './recap-pdf.js';
 import { startPageTheme, setThemeChoice, onThemeChange } from './theme.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
 import { createRosterPanel } from './roster-panel.js';
+import { createAttendanceReview } from './attendance-review.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -530,7 +531,19 @@ async function loadRoster() {
 // #roster:psy415 opens that course's roster (Admin links here).
 const rosterWanted = /^#roster:(.+)$/.exec(location.hash)?.[1] || '';
 
-const LOADERS = { 'panel-files': loadFiles, 'panel-lectures': loadLectures, 'panel-templates': loadTemplates, 'panel-recorded': loadRecorded, 'panel-roster': loadRoster };
+// Attendance after class (Issue #256): the same courses as Rosters.
+let attendanceReview = null;
+async function loadAttendance() {
+  let list = profileCourses.filter((c) => !c.archived);
+  if (me.isAdmin) {
+    try { list = (await api('/api/courses')).courses.filter((c) => !c.archived); } catch { /* their own, then */ }
+  }
+  attendanceReview ??= createAttendanceReview({ api, dialog, courses: () => list, initial: attendanceWanted });
+  await attendanceReview.open();
+}
+const attendanceWanted = /^#attendance:(.+)$/.exec(location.hash)?.[1] || '';
+
+const LOADERS = { 'panel-files': loadFiles, 'panel-lectures': loadLectures, 'panel-templates': loadTemplates, 'panel-recorded': loadRecorded, 'panel-roster': loadRoster, 'panel-attendance': loadAttendance };
 const loaded = new Set();
 
 function showTab(target) {
@@ -542,7 +555,7 @@ function showTab(target) {
   }
   if (!loaded.has(target)) { loaded.add(target); LOADERS[target](); }
   // The roster tab keeps its course in the address itself (roster-panel.js).
-  if (target !== 'panel-roster') history.replaceState(null, '', `#${target.replace('panel-', '')}`);
+  if (target !== 'panel-roster' && target !== 'panel-attendance') history.replaceState(null, '', `#${target.replace('panel-', '')}`);
 }
 
 async function start() {

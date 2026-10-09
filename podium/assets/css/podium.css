@@ -2777,3 +2777,26 @@ body:not(.is-doc) .doc-only { display: none !important; }
 .att-flag { font-size: 12px; color: var(--cue); font-weight: 600; }
 .att-status { flex: none; width: auto; min-width: 110px; }
 .att-row.is-unmarked .att-status { color: var(--dim); }
+
+/* Attendance after class, on My Files (Issue #256, phase 3). */
+.attn-views { display: inline-flex; gap: 4px; border: 0; margin: 0; padding: 0; }
+.attn-range { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.attn-range label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--dim); }
+.attn-flag { font-size: 12px; color: var(--cue); font-weight: 600; }
+.att-flag.is-dismissed { color: var(--dim); font-weight: 400; }
+.attn-review-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.attn-review-head h3 { margin: 0; font-size: 16px; }
+.attn-history ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--dim); }
+.attn-grid-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.attn-grid { border-collapse: collapse; font-size: 13px; width: max-content; min-width: 100%; }
+.attn-grid th, .attn-grid td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.attn-grid tbody th { text-align: left; font-weight: 600; position: sticky; left: 0; background: var(--panel); }
+.attn-grid thead th { font-weight: 600; color: var(--dim); }
+.attn-grid tr.is-guest th { font-weight: 400; font-style: italic; }
+.attn-cell { font-weight: 700; font-family: ui-monospace, Menlo, monospace; }
+.attn-cell.is-present { color: var(--ok); }
+.attn-cell.is-late { color: var(--cue); }
+.attn-cell.is-absent { color: #ff8a8a; }
+.attn-cell.is-excused { color: var(--dim); }
+:root[data-theme="light"] .attn-cell.is-absent, body[data-theme="light"] .attn-cell.is-absent { color: #b42318; }
+.attn-total { color: var(--dim); font-variant-numeric: tabular-nums; }

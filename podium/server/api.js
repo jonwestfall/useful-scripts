@@ -476,6 +476,11 @@ async function handleApi(req, res, url, ctx) {
         const body = await readJson(req, 8 * 1024);
         const { session, reopened } = attendance.openSession(ctx.db, user, body);
         auditLog(ctx, req, user, reopened ? 'attendance_reopened' : 'attendance_opened', { courseCode: courseCode(session), sessionId: session.id });
+        if (session.lectureId) {
+          lectures.noteAttendance(ctx.db, session.lectureId, {
+            title: reopened ? 'Attendance reopened' : 'Attendance opened', detail: { sessionId: session.id, open: true },
+          });
+        }
         json(res, 200, { session, reopened });
         return true;
       }
@@ -488,6 +493,13 @@ async function handleApi(req, res, url, ctx) {
         const session = attendance.changeSession(ctx.db, user, rest[1], body);
         if (body.open !== undefined) {
           auditLog(ctx, req, user, session.open ? 'attendance_reopened' : 'attendance_closed', { courseCode: courseCode(session), sessionId: session.id });
+          if (session.lectureId) {
+            const here = session.counts.present + session.counts.late;
+            lectures.noteAttendance(ctx.db, session.lectureId, session.open
+              ? { title: 'Attendance reopened', detail: { sessionId: session.id, open: true } }
+              : { title: `Attendance closed · ${here} checked in${session.rosterSize ? ` of ${session.rosterSize}` : ''}`,
+                detail: { sessionId: session.id, open: false, count: here, late: session.counts.late, roster: session.rosterSize } });
+          }
         }
         json(res, 200, { session });
         return true;
@@ -502,6 +514,53 @@ async function handleApi(req, res, url, ctx) {
         const changed = attendance.changeMark(ctx.db, user, rest[1], rest[3], await readJson(req, 8 * 1024));
         auditLog(ctx, req, user, 'attendance_marked', { sessionId: Number(rest[1]), ...changed });
         json(res, 200, changed);
+        return true;
+      }
+      // After class (phase 3): flags let go, a guest put on the roster, a
+      // session deleted, the course's sessions, the term grid and exports.
+      if (rest[0] === 'sessions' && rest[2] === 'marks' && rest[4] === 'dismiss' && rest.length === 5 && req.method === 'POST') {
+        const changed = attendance.dismissFlags(ctx.db, user, rest[1], rest[3]);
+        auditLog(ctx, req, user, 'attendance_flags_dismissed', { sessionId: Number(rest[1]), ...changed });
+        json(res, 200, changed);
+        return true;
+      }
+      if (rest[0] === 'sessions' && rest[2] === 'marks' && rest[4] === 'roster' && rest.length === 5 && req.method === 'POST') {
+        const { person, linked } = attendance.addGuestToRoster(ctx.db, user, rest[1], rest[3]);
+        auditLog(ctx, req, user, 'roster_added', { sessionId: Number(rest[1]), name: person.name, fromGuest: true, linked });
+        json(res, 200, { person, linked });
+        return true;
+      }
+      if (rest[0] === 'sessions' && rest.length === 2 && req.method === 'DELETE') {
+        const gone = attendance.deleteSession(ctx.db, user, rest[1]);
+        auditLog(ctx, req, user, 'attendance_session_deleted', { courseCode: gone.course, sessionId: gone.id, marks: gone.marks });
+        json(res, 200, gone);
+        return true;
+      }
+      const range = () => ({
+        from: Number(url.searchParams.get('from')) || 0,
+        to: Number(url.searchParams.get('to')) || 0,
+        tz: Number(url.searchParams.get('tz')) || 0,
+      });
+      if (rest[0] === 'courses' && rest.length === 3 && rest[2] === 'sessions' && req.method === 'GET') {
+        json(res, 200, attendance.listSessions(ctx.db, user, rest[1], range()));
+        return true;
+      }
+      if (rest[0] === 'courses' && rest.length === 3 && rest[2] === 'grid' && req.method === 'GET') {
+        json(res, 200, attendance.grid(ctx.db, user, rest[1], range()));
+        return true;
+      }
+      if (rest[0] === 'courses' && rest.length === 3 && rest[2] === 'export' && req.method === 'GET') {
+        const format = ['long', 'grid', 'canvas'].includes(url.searchParams.get('format')) ? url.searchParams.get('format') : 'long';
+        const points = Object.fromEntries(['present', 'late', 'excused', 'absent']
+          .map((k) => [k, url.searchParams.get(k) ?? undefined]));
+        const csv = attendance.exportCsv(ctx.db, user, rest[1], { ...range(), format, points });
+        const name = String(rest[1]).toLowerCase().replace(/[^a-z0-9._-]/g, '');
+        res.writeHead(200, {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': `attachment; filename="${name}-attendance${format === 'long' ? '' : `-${format}`}.csv"`,
+          'cache-control': 'no-store',
+        });
+        res.end(csv);
         return true;
       }
       if (rest[0] === 'sessions' && rest[2] === 'marks' && rest.length === 4 && req.method === 'DELETE') {
