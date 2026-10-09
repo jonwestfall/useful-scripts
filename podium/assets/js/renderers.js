@@ -138,8 +138,11 @@ function renderBlack() {
   return staticRenderer(el('div', { class: 'r-black' }));
 }
 
-function renderImage(item) {
+function renderImage(item, opts = {}) {
   const img = el('img', { class: 'r-image', src: item.src, alt: item.title || '', decoding: 'async' });
+  // Its shape is only known once it has loaded (Issue #262): ink laid over it
+  // before then was placed against the whole box, so it is placed again.
+  img.addEventListener('load', () => opts.onReady?.());
   const node = el('div', { class: 'r-fill' }, img);
   let fit = item.fit;
   const apply = (it) => { fit = it.fit; img.style.objectFit = it.fit === 'cover' ? 'cover' : 'contain'; };
@@ -167,8 +170,9 @@ function renderImage(item) {
 // as images" - shown one at a time. It is renderImage with a slide index, so
 // fit, ink letterboxing and photographing all behave exactly as for a photo;
 // the next slide is fetched ahead so advancing never waits on the network.
-function renderImageDeck(item) {
+function renderImageDeck(item, opts = {}) {
   const img = el('img', { class: 'r-image', alt: item.title || '', decoding: 'async' });
+  img.addEventListener('load', () => opts.onReady?.());
   const node = el('div', { class: 'r-fill' }, img);
   let current = item;
   let ahead = null;
@@ -379,6 +383,7 @@ function renderVideo(item, opts) {
     if (fit === 'cover') return null;
     return video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : null;
   };
+  video.addEventListener('loadedmetadata', () => opts.onReady?.());
   // The frame on screen this instant. A video served from another origin
   // without CORS headers taints the canvas instead, which surfaces as a clear
   // "the browser would not let Podium read those pixels" when it is encoded.
@@ -1394,11 +1399,19 @@ function renderCamera(item, opts) {
     else if (!frozen && video.paused) video.play().catch(() => {});
   };
   attach();
+  // A phone held upright sends a tall picture, letterboxed in its panel:
+  // ink is laid over the picture, not the bars beside it (Issue #262). The
+  // phone turning sideways mid-feed changes its size, and ink follows.
+  video.addEventListener('loadedmetadata', () => opts.onReady?.());
+  video.addEventListener('resize', () => opts.onReady?.());
   return {
     el: node,
     update() { attach(); syncFreeze(); },
     reconcile() { attach(); syncFreeze(); },
     telemetry: noTelemetry,
+    contentAspect() {
+      return video.srcObject && video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : null;
+    },
     // Same frame the room is looking at. Nothing to photograph before the
     // phone connects, which is a failure worth reporting rather than a black
     // rectangle labelled "camera".

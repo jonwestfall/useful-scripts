@@ -244,6 +244,11 @@ Annotate over any slide, PDF, image, or whiteboard with an Apple Pencil or stylu
 - **Snap lines and shapes on hold**: pause about half a second at the end of a stroke and it snaps into a clean straight line, arrow, rectangle or circle. Turn this on or off in **Settings → Presentation**.
 - **Apple Pencil only**: ignore finger touches on the pad so a resting palm never draws.
 - **Pad zoom**: zoom the drawing pad on your device (not the projector) and pan with the arrows for precise work.
+- **Portrait content** (Issue #262): the pad and the Now preview take the shape of what you're drawing on, so a portrait page, an upright phone photo, a video or the phone camera held upright is the same shape on the iPad as on the projector, and a stroke lands exactly where you drew it.
+  - Photos and picture-deck slides are measured on the controller itself; for anything else the display reports the shape its ink lands on, including a split-screen panel that isn't the screen's shape.
+  - Until a photo's shape is known, the pad waits rather than guessing.
+  - On the projector, ink on the camera is laid over the picture, not the bars beside it.
+  - Held upright, the iPad gives a portrait page a full-width, tall pad and a tall preview, with the controls underneath.
 - **Scroll border** and **tools above the slide** (Settings → Presentation): leave a 10% margin around the slide for finger scrolling, and move the tool row to the top of the screen.
 - **Markup** on the Slides tab jumps straight to the Ink tab, already lined up on the current slide.
 

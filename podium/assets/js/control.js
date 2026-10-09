@@ -6,7 +6,7 @@ import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, 
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, workingItem, PANEL_COUNT, panelOnScreen, deckStep,
-  inkDigest, inkDigestsAgree, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
+  inkDigest, inkDigestsAgree, inkSurfaceKey, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse, isPlayable, deckVideoHere } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
 import { createCameraSender, createMicSender } from './rtc.js';
@@ -2681,6 +2681,16 @@ function renderNowPreview() {
   if ($('[data-panel="now"]').hidden) return;
   nowTabMirror ||= createLiveMirror($('#now-preview'));
   const live = focusedItem(state);
+  // The preview is the shape of what is on screen (Issue #262): portrait for
+  // a portrait page or photo, within its height limit.
+  // Where its height limit binds, it narrows to the content's width and sits
+  // centred, rather than a full-width box with bars down both sides.
+  const preview = $('#now-preview');
+  const aspect = viewAspect(contentAspectFor(live));
+  const maxH = parseFloat(getComputedStyle(preview).maxHeight) || Infinity;
+  const room = preview.parentElement?.clientWidth || 0;
+  preview.style.aspectRatio = String(aspect);
+  preview.style.width = room && Number.isFinite(maxH) ? `${Math.min(room, maxH * aspect)}px` : '';
   nowTabMirror.update(live);
   const work = workItem();
   const note = $('#now-cued-note');
@@ -3773,7 +3783,73 @@ function contentAspectFor(item) {
     const aspect = pdfAspectFor(item.src);
     if (aspect) return aspect;
   }
+  // Issue #262: what the display says ink lands on for this surface - the
+  // real shape of a photo, a video, the camera (which never reaches this
+  // device), or a split panel that is not the stage's shape.
+  const reported = item ? state.inkAspects?.[inkSurfaceKey(item)] : null;
+  if (reported > 0) return reported;
+  // A photo or picture-deck slide not yet on screen (the cue), or before the
+  // display has said: measured here, from the same bytes.
+  const picture = pictureAspect(item);
+  if (picture) return picture;
   return state.stageAspect || 16 / 9;
+}
+
+// --- the shape of a picture, measured here (Issue #262) ---------------------
+//
+// A photo's shape is only in its pixels. The display reports it once the
+// photo is up, but the pad must be the right shape before then too - a stroke
+// measured against the wrong box is wrong forever - so the controller loads
+// the picture itself, once per address, and asks the pad and previews to
+// catch up when it knows.
+const pictureAspects = new Map();   // src -> aspect, 'loading', or 'failed'
+
+function pictureSrc(item) {
+  if (!item || item.fit === 'cover') return '';
+  if (item.type === 'image') return item.src || item.path || '';
+  if (item.type === 'imagedeck') return item.images?.[item.slide || 0] || '';
+  return '';
+}
+
+/** The picture's aspect, if known; starts measuring it if not. */
+function pictureAspect(item) {
+  const raw = pictureSrc(item);
+  if (!raw) return null;
+  const src = resolveAssets({ type: 'image', src: raw }).src;
+  // An asset this device does not hold yet (the resolver's 1x1 stand-in):
+  // asked again once it arrives.
+  if (!src || src === BLANK_PIXEL || src.startsWith('asset:')) return null;
+  const known = pictureAspects.get(src);
+  if (typeof known === 'number') return known;
+  if (known) return null;
+  pictureAspects.set(src, 'loading');
+  const img = new Image();
+  img.decoding = 'async';
+  img.onload = () => {
+    pictureAspects.set(src, img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 'failed');
+    shapeLearned();
+  };
+  img.onerror = () => { pictureAspects.set(src, 'failed'); shapeLearned(); };
+  img.src = src;
+  return null;
+}
+
+/** Whether a picture's shape is still being worked out (not failed, not known). */
+function pictureAspectPending(item) {
+  const raw = pictureSrc(item);
+  if (!raw) return false;
+  if (state.inkAspects?.[inkSurfaceKey(item)] > 0) return false;
+  const src = resolveAssets({ type: 'image', src: raw }).src;
+  if (!src || src === BLANK_PIXEL || src.startsWith('asset:')) return true;
+  pictureAspect(item);
+  return pictureAspects.get(src) === 'loading';
+}
+
+// A shape just became known: everything sized by contentAspectFor catches up.
+function shapeLearned() {
+  if (!$('[data-panel="ink"]').hidden && !ink.drawing && !ink.erasing) sizePad();
+  renderNowPreview();
+  renderSlides();
 }
 
 const computeContentAspect = () => contentAspectFor(workItem());
@@ -3822,12 +3898,27 @@ function deckAspectPending(panel, item) {
 }
 
 function fitFrame() {
-  const pending = deckAspectPending(state.focus, workItem());
+  // A photo whose shape is still loading is held the same way an unparsed
+  // deck is: no stroke is measured against a guess (Issue #262).
+  const pending = deckAspectPending(state.focus, workItem()) || pictureAspectPending(workItem());
   pad.classList.toggle('is-pending', pending);
   if (pending) return;
-  const { w, h } = fitBox(padViewport, padFrame, computeContentAspect());
+  const aspect = computeContentAspect();
+  // The window takes the content's own shape (Issue #262), so a portrait page
+  // on an upright iPad gets the full width and a tall pad rather than a strip
+  // in the middle of a 16:9 box. capPadHeight still keeps the controls in
+  // view; where that binds, the page is fit inside as before.
+  padViewport.style.aspectRatio = String(viewAspect(aspect));
+  const { w, h } = fitBox(padViewport, padFrame, aspect);
   frameW = w;
   frameH = h;
+}
+
+// The shape a viewing window takes for content of this aspect: the content's
+// own, within reason - a sliver of a panorama, or a phone screenshot taller
+// than any screen, is still given a usable window.
+function viewAspect(aspect) {
+  return Math.min(2.4, Math.max(0.5, Number(aspect) || 16 / 9));
 }
 
 // A live, read-only rendering of an item - the actual slide, whiteboard
@@ -7263,6 +7354,8 @@ document.addEventListener('keydown', (ev) => {
 });
 
 window.addEventListener('resize', () => { if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad(); });
+// The Now preview's width follows the window too (Issue #262: an iPad turned upright).
+window.addEventListener('resize', () => renderNowPreview());
 // The cue bar folding to a strip and back (Issue #186) resizes the panels
 // without resizing the window.
 if (typeof ResizeObserver === 'function') {

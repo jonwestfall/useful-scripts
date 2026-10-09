@@ -604,7 +604,32 @@ function redrawSplitInk() {
   inkCanvas.classList.toggle('has-ink', any);
 }
 
+// The ink rectangle's shape for every panel on screen, keyed by its surface.
+function inkAspects() {
+  const out = {};
+  for (const panel of activePanels()) {
+    if (!panel.item) continue;
+    const rect = inkRectFor(panel.slot, panel.renderer);
+    if (rect.w > 0 && rect.h > 0) out[inkSurfaceKey(panel.item)] = Math.round((rect.w / rect.h) * 10000) / 10000;
+  }
+  return out;
+}
+
+// Told to controllers as soon as it changes - a photo loading, a video's
+// size arriving, a layout change - not at the next two-second heartbeat, so
+// a pad waiting on the shape is ready almost at once.
+let sentInkAspects = '';
+function noteInkAspects() {
+  const now = JSON.stringify(inkAspects());
+  if (now === sentInkAspects) return;
+  sentInkAspects = now;
+  // Ink can be redrawn while this file is still starting up, before the
+  // throttled broadcaster below exists; the first heartbeat carries it then.
+  try { broadcastSoon(); } catch { /* not yet */ }
+}
+
 function redrawInk(force = false) {
+  noteInkAspects();
   // A canvas that had to be re-sized is a blank one: nothing to append to.
   if (ensureInkCanvas()) force = true;
   if (state.layout !== 'single') { redrawSplitInk(); return; }
@@ -1958,6 +1983,11 @@ function wireState() {
       surfaces: Object.keys(inkState.bySurface).filter((k) => !isHeldInkKey(k) && inkState.bySurface[k]?.strokes?.length > 0),
     },
     stageAspect: stage.clientWidth && stage.clientHeight ? stage.clientWidth / stage.clientHeight : 16 / 9,
+    // The shape ink lands on, per surface on screen (Issue #262): the
+    // content's own box inside its panel - a portrait photo's, a video's, a
+    // camera's - which a controller cannot always work out for itself (it
+    // never receives the camera, and a split panel is not the stage's shape).
+    inkAspects: inkAspects(),
     // Guest View (Issue #150), for the controllers only - viewerState leaves
     // all three out: how many are watching, and the link and code a
     // controller can put on the projector for the room to scan.

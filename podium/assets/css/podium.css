@@ -989,7 +989,13 @@ body.guest {
 }
 #deck-now-preview { border-color: var(--accent); }
 /* Issue #174: the Now tab's large live view of the focused pane. */
-.now-preview { margin: 10px 0 4px; border-color: var(--live); max-height: 52vh; }
+.now-preview { margin: 10px auto 4px; border-color: var(--live); max-height: 52vh; }
+/* Issue #262: held upright, the screen is tall - the preview may use more of
+   it, and a portrait page or photo is read at a useful size. */
+@media (orientation: portrait) {
+  .now-preview { max-height: 64vh; }
+  .ink-controls { gap: 10px; }
+}
 /* Issue #174: a held slide, read at a useful size. */
 .slide-popout-card { width: min(960px, 96vw); max-width: none; }
 .slide-popout-card .confidence-preview { margin: 8px 0 10px; }

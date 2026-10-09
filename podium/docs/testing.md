@@ -56,7 +56,7 @@ podium/test/
 └── e2e/
     ├── harness.mjs       # Shared setup: fixtures, relay, browser, ok()/trap()/--only
     ├── core.mjs          # Switching, connection, settings, offline, the display basics, light/dark on every page
-    ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen
+    ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen, portrait content (Issue #262)
     ├── media.mjs         # Camera, music, audio, clocks, captions, PDFs
     ├── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
     └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242) and its outline (Issue #253); Word and RTF files (Issue #258); rosters, attendance check-in, its review, its questions, location and receipts (Issue #256); choosing files from the server (Issue #241); My Files (Issue #243); markdown documents (Issue #240)

@@ -12,6 +12,7 @@ import {
   execFileSync,
   writeImageFixture,
   writeAlphaImageFixture,
+  writePortraitImageFixture,
   PORT,
   BASE,
   browser,
@@ -124,6 +125,90 @@ await pad.waitForTimeout(700);
 await pad.click('#ink-clear');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 ok('Clear wipes only the surface currently on screen', true);
+await ctx.close();
+}
+
+if (want('portrait content: the pad and the preview take its shape (#262)')) {
+console.log('\n-- portrait content: the pad and the preview take its shape (#262) --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'portrait-room', passphrase: 'stand up straight' }));
+const screen = await ctx.newPage();
+trap(screen, 'portrait display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'portrait control');
+await pad.setViewportSize({ width: 1024, height: 768 });
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.setInputFiles('#photo-upload', writePortraitImageFixture());
+await screen.waitForFunction(() => {
+  const img = document.querySelector('.layer[data-role="program"] img');
+  return img && img.complete && img.naturalWidth > 1;
+}, null, { timeout: 10000 });
+// Where the photo really is on the projector: 2:3, pillarboxed in 16:9.
+const photoOnScreen = await screen.evaluate(() => {
+  const stage = document.querySelector('#stage').getBoundingClientRect();
+  const img = document.querySelector('.layer[data-role="program"] img');
+  const aspect = img.naturalWidth / img.naturalHeight;
+  const w = stage.height * aspect;
+  return { x: (stage.width - w) / 2, y: 0, w, h: stage.height };
+});
+ok(`the upright photo is pillarboxed on the 16:9 projector (${Math.round(photoOnScreen.w)} px wide of 1280)`, photoOnScreen.w < 600);
+
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForFunction(() => {
+  const p = document.querySelector('#pad');
+  if (!p || p.classList.contains('is-pending')) return false;
+  const r = p.getBoundingClientRect();
+  return r.width > 0 && Math.abs(r.width / r.height - 600 / 900) < 0.02;
+}, null, { timeout: 10000 })
+  .then(() => ok('the Ink pad is the photo\'s shape, not the screen\'s', true))
+  .catch(async () => ok(`the Ink pad is the photo's shape (${await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return (r.width / r.height).toFixed(3); })})`, false));
+const reported = await pad.evaluate(() => {
+  const nums = [...document.querySelectorAll('#pad-mirror img')].map((img) => img.getBoundingClientRect());
+  const p = document.querySelector('#pad').getBoundingClientRect();
+  return nums[0] ? { fills: Math.abs(nums[0].width - p.width) < 3 && Math.abs(nums[0].height - p.height) < 3 } : { fills: false };
+});
+ok('and the photo under it fills the pad edge to edge, so what you see is where it lands', reported.fills);
+
+// Draw on the bright square: the middle of the photo's right-hand third.
+const padBox = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+const fx = 500 / 600;
+const fy = 450 / 900;
+await pad.mouse.move(padBox.x + padBox.w * (fx - 0.04), padBox.y + padBox.h * fy);
+await pad.mouse.down();
+await pad.mouse.move(padBox.x + padBox.w * (fx + 0.04), padBox.y + padBox.h * fy, { steps: 6 });
+await pad.mouse.up();
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+const landed = await screen.evaluate((photo) => {
+  const canvas = document.querySelector('#ink');
+  const ratio = canvas.width / canvas.getBoundingClientRect().width;
+  const ctx = canvas.getContext('2d');
+  const x = Math.round((photo.x + photo.w * (500 / 600)) * ratio);
+  const y = Math.round((photo.y + photo.h * 0.5) * ratio);
+  return ctx.getImageData(x, y, 1, 1).data[3];
+}, photoOnScreen);
+ok(`a stroke drawn over the bright square lands on it on the projector (alpha ${landed})`, landed > 0);
+
+// Held upright, the pad is bigger and portrait, the controls still in reach.
+const before = padBox.w * padBox.h;
+await pad.setViewportSize({ width: 820, height: 1180 });
+await pad.waitForTimeout(500);
+const upright = await pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { w: r.width, h: r.height }; });
+const penReachable = await pad.$eval('#ink-tool-pen', (n) => n.getBoundingClientRect().bottom <= window.innerHeight);
+ok(`on an upright iPad the pad is portrait and larger (${Math.round(upright.w)}×${Math.round(upright.h)}, was ${Math.round(padBox.w)}×${Math.round(padBox.h)})`,
+  upright.h > upright.w && upright.w * upright.h > before);
+ok('with the ink tools still on screen below it', penReachable);
+
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForTimeout(300);
+const now = await pad.$eval('#now-preview', (n) => { const r = n.getBoundingClientRect(); return r.width / r.height; });
+ok(`the Now preview is portrait too (${now.toFixed(2)})`, now < 1);
 await ctx.close();
 }
 
