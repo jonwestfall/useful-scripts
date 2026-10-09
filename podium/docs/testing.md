@@ -37,6 +37,8 @@ podium/test/
 ├── attendance.test.mjs # Check-in: rotating codes, roster and guest check-ins, late, shared phones flagged, by hand, throttling, retention (Issue #256)
 ├── attendance-review.test.mjs # After class: review, history, flags dismissed, guests to the roster, the term grid, CSV and Canvas exports (Issue #256)
 ├── attendance-questions.test.mjs # Entry and exit tickets, the parking lot (named or anonymous), and the answers' summary and CSV (Issue #256)
+├── attendance-location.test.mjs # In the room (distance only, pruned), the server's defaults, emailed receipts (Issue #256)
+├── mail.test.mjs       # Podium's own SMTP client against a fake mail server, and doctor's mail check (Issue #256)
 ├── documents.test.mjs  # Markdown documents: deck or document, switching, a document in the room, the page's safety, outline and notes (Issue #240)
 ├── plan-archive.test.mjs # Archiving lectures from one's own planner list: personal, bulk, what may be archived (Issue #239)
 ├── deck-templates.test.mjs # Deck templates: built-in, course and personal, and who may change which (Issue #226)
@@ -57,7 +59,7 @@ podium/test/
     ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen
     ├── media.mjs         # Camera, music, audio, clocks, captions, PDFs
     ├── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
-    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242) and its outline (Issue #253); Word and RTF files (Issue #258); rosters, attendance check-in, its review and its questions (Issue #256); choosing files from the server (Issue #241); My Files (Issue #243); markdown documents (Issue #240)
+    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242) and its outline (Issue #253); Word and RTF files (Issue #258); rosters, attendance check-in, its review, its questions, location and receipts (Issue #256); choosing files from the server (Issue #241); My Files (Issue #243); markdown documents (Issue #240)
 ```
 
 ---
@@ -128,6 +130,27 @@ node podium/test/protocol.test.mjs
     - A burst of questions is slowed down, and nothing is taken once the parking lot closes.
   - **Exit ticket:** a phone learns from its key alone that the exit ticket is open. It answers without picking a name again, beside its entry answer, and the screen says *Exit ticket*.
   - **CSV:** the answers and the parking lot as a CSV.
+- **`attendance-location.test.mjs`**: phase 5 of attendance (Issue #256):
+  - **Distance:** worked out correctly (haversine).
+  - **Defaults:** the server's rotation and radius, used for new sessions, with only the offered choices accepted.
+  - **In the room:**
+    - A room point that makes no sense is refused.
+    - A phone is told the radius, never the room's point.
+    - No location, or a phone too far away, is refused with the reason and the distance.
+    - A phone's own accuracy is allowed for, up to the radius.
+    - Distances show in the review, and no student coordinates are stored.
+    - A hand mark needs no location.
+    - Distances are pruned with the rest of the evidence, and the requirement can be taken off.
+  - **Receipts:** off until an owner turns them on, and never by a TA. The message itself, sent only to an address on file and only for a new check-in.
+- **`mail.test.mjs`**:
+  - **Settings:** reading `SMTP_URL` and `MAIL_FROM` (percent-decoded, `smtps://` on 465, the errors) without ever describing the password.
+  - **The message:** encoded headers and a base64 body.
+  - **The conversation**, against a fake mail server: EHLO, AUTH PLAIN, MAIL, RCPT, DATA, QUIT, in order, with the right addresses.
+  - **Refusals:**
+    - a refusal reported with what the server said;
+    - no password sent to a server elsewhere that offers no STARTTLS;
+    - nothing sent without mail set up, or to a bad address.
+  - **`podium-admin doctor`'s mail check.**
 - **`attendance-review.test.mjs`**: attendance after class (Issue #256, phase 3), against a real SQLite file:
   - **Review and history:** someone not checked in is absent only once check-in closes. Every change after the fact goes into the session's history: who made it and what it changed from and to. An edit says by whom, and re-setting a status to what it already is records nothing.
   - **Flags:** a dismissed flag stays on record, marked looked at and by whom.

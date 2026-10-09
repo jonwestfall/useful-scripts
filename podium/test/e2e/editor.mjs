@@ -14,6 +14,7 @@ import {
   reportErrors, teardown, exitWithResult, writeImageFixture,
 } from './harness.mjs';
 import { makeDocx, makeRtf } from '../word-fixtures.mjs';
+import net from 'node:net';
 
 const exampleDeck = fs.readFileSync(path.join(ROOT, 'content', 'decks', 'example-builds.md'), 'utf8');
 
@@ -33,9 +34,41 @@ admin('course', 'add', 'psy415', '--title', 'PSY 415');
 admin('member', 'add', 'psy415', 'owen', '--role', 'owner');
 admin('member', 'add', 'psy415', 'tia', '--role', 'member');
 
+// A mail server of our own (Issue #256, phase 5): receipts and the admin's
+// test email arrive here, so a test can read what was sent.
+const mailbox = [];
+const smtp = net.createServer((sock) => {
+  let inData = false;
+  let buf = '';
+  let message = { to: '', data: '' };
+  sock.write('220 fake.test ESMTP\r\n');
+  sock.on('data', (chunk) => {
+    buf += chunk.toString('utf8');
+    let i;
+    while ((i = buf.indexOf('\r\n')) >= 0) {
+      const line = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      if (inData) {
+        if (line === '.') { inData = false; mailbox.push(message); message = { to: '', data: '' }; sock.write('250 queued\r\n'); } else message.data += `${line}\r\n`;
+        continue;
+      }
+      if (/^EHLO/.test(line)) sock.write('250 fake.test\r\n');
+      else if (/^RCPT TO:<(.+)>/.test(line)) { message.to = line.match(/^RCPT TO:<(.+)>/)[1]; sock.write('250 ok\r\n'); }
+      else if (line === 'DATA') { inData = true; sock.write('354 go ahead\r\n'); }
+      else if (line === 'QUIT') { sock.write('221 bye\r\n'); sock.end(); }
+      else sock.write('250 ok\r\n');
+    }
+  });
+});
+await new Promise((resolve) => smtp.listen(0, '127.0.0.1', resolve));
+const mailBody = (m) => Buffer.from(m.data.split('\r\n\r\n').slice(1).join('').replace(/\r\n/g, ''), 'base64').toString('utf8');
+
 const server = spawn(process.execPath, ['podium-server.js'], {
   cwd: path.join(ROOT, 'server'),
-  env: { ...process.env, PORT: String(acctPort), STATIC: '../', DATA_DIR: data, CONTENT_DIR: content },
+  env: {
+    ...process.env, PORT: String(acctPort), STATIC: '../', DATA_DIR: data, CONTENT_DIR: content,
+    SMTP_URL: `smtp://127.0.0.1:${smtp.address().port}`, MAIL_FROM: 'Podium <podium@example.edu>',
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 server.stderr.on('data', (d) => process.stderr.write(`[editor-server] ${d}`));
@@ -2408,6 +2441,112 @@ await owner.close();
 fs.rmSync(planFile, { force: true });
 }
 
+if (want('attendance in the room, and receipts by email (#256)')) {
+console.log('\n-- attendance in the room, and receipts by email (#256) --');
+const ROOM = { latitude: 41.8781, longitude: -87.6298 };
+const north = (m) => ({ latitude: ROOM.latitude + m / 111195, longitude: ROOM.longitude, accuracy: 10 });
+const rootCtx = await signedIn('root');
+const rootPage = await rootCtx.newPage();
+trap(rootPage, 'attendance mail (admin)');
+await rootPage.goto(`${base}/me.html`);
+await rootPage.evaluate(async () => {
+  const send = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await send('/api/courses', { code: 'att104', title: 'Attendance 104' });
+  await send('/api/courses/att104/members', { username: 'owen', role: 'owner' });
+  await fetch('/api/courses/att104/roster/import?apply=1', { method: 'POST', body: 'name,student id,email\nJane Doe,D100,jane@school.edu\nSam Lee,D200,sam@school.edu\n' });
+});
+await rootPage.goto(`${base}/admin.html`);
+await rootPage.click('.admin-tabs .tab:has-text("Server")').catch(() => {});
+await rootPage.waitForFunction(() => /Mail is set up/.test(document.querySelector('#mail-status')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('Admin says mail is set up, and where it goes', true))
+  .catch(async () => ok(`Admin says mail is set up ("${await rootPage.textContent('#mail-status')}")`, false));
+await rootPage.fill('#mail-test-to', 'root@example.edu');
+await rootPage.click('#mail-test');
+await rootPage.waitForFunction(() => /^Sent to root@example\.edu/.test(document.querySelector('#mail-test-status').textContent), null, { timeout: 10000 });
+ok('Send a test email sends one', mailbox.some((m) => m.to === 'root@example.edu' && /Subject: Podium: a test message/.test(m.data)));
+await rootCtx.close();
+
+// The owner turns receipts on.
+const owner = await signedIn('owen');
+const files = await owner.newPage();
+trap(files, 'attendance receipts switch');
+await files.goto(`${base}/me.html#attendance:att104`);
+await files.waitForSelector('#attn-receipts-row:not([hidden])', { timeout: 10000 });
+ok('an owner is offered emailed receipts, and can turn them on', await files.isEnabled('#attn-receipts'));
+await files.check('#attn-receipts');
+await files.waitForFunction(() => /emailed a receipt/.test(document.querySelector('#attn-note').textContent), null, { timeout: 5000 });
+await files.close();
+
+// The room is where the controller is.
+await owner.grantPermissions(['geolocation'], { origin: base });
+await owner.setGeolocation(ROOM);
+const pad = await owner.newPage();
+trap(pad, 'attendance in the room (controller)');
+await pad.goto(`${base}/control.html`);
+await pad.waitForSelector('.tab[data-tab="attendance"]:not([hidden])', { timeout: 10000 });
+await pad.click('.tab[data-tab="attendance"]');
+await pad.waitForSelector('#att-course option[value="att104"]', { state: 'attached', timeout: 10000 });
+await pad.selectOption('#att-course', 'att104');
+await pad.check('#att-in-room');
+await pad.selectOption('#att-radius', '100');
+await pad.click('#att-open');
+await pad.waitForSelector('#att-live:not([hidden])', { timeout: 10000 });
+ok(`check-in opens for phones within 100 m (${await pad.textContent('#att-summary')})`, /phones within 100 m only/.test(await pad.textContent('#att-summary')));
+const session = await pad.evaluate(() => fetch('/api/attendance/current?course=att104').then((r) => r.json()).then((b) => b.session));
+const code = () => pad.evaluate((s) => fetch(`/attend/screen/${s.id}?k=${s.screenKey}`).then((r) => r.json()).then((b) => b.code), session);
+
+const phone = async (tag, where) => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, ...(where ? { geolocation: where, permissions: ['geolocation'] } : {}) });
+  const page = await ctx.newPage();
+  trap(page, tag);
+  return { ctx, page };
+};
+const checkIn = async (p, name) => {
+  await p.page.goto(`${base}/attend.html?c=${await code()}`);
+  await p.page.waitForSelector('#who:not([hidden])', { timeout: 10000 });
+  await p.page.fill('#search', name.split(' ')[0].toLowerCase());
+  await p.page.click(`#matches .person:has-text("${name}")`);
+  await p.page.click('#confirm-go');
+};
+
+const near = await phone('phone in the room', north(20));
+await near.page.goto(`${base}/attend.html?c=${await code()}`);
+await near.page.waitForSelector('#who:not([hidden])', { timeout: 10000 });
+ok('the phone says first why it will ask for location, and what is kept', /Only how far you are from the room \(it allows 100 m\) is kept/.test(await near.page.textContent('#where-note')));
+await near.page.fill('#search', 'jane');
+await near.page.click('#matches .person:has-text("Jane Doe")');
+await near.page.click('#confirm-go');
+await near.page.waitForSelector('#receipt:not([hidden])', { timeout: 10000 })
+  .then(() => ok('a phone in the room checks in', true))
+  .catch(async () => ok(`a phone in the room checks in ("${await near.page.textContent('#who-note')}")`, false));
+await until(() => mailbox.some((m) => m.to === 'jane@school.edu'), { timeout: 10000 })
+  .then(() => {
+    const m = mailbox.find((x) => x.to === 'jane@school.edu');
+    ok(`and Jane is emailed a receipt (${m.data.match(/^Subject: (.*)$/m)?.[1]})`, /Subject: Checked in: ATT104/.test(m.data) && /Checked in as: Jane Doe/.test(mailBody(m)));
+  })
+  .catch(() => ok('and Jane is emailed a receipt', false));
+
+const far = await phone('phone across town', north(2000));
+expecting.attendRefused = true;
+await checkIn(far, 'Sam Lee');
+await far.page.waitForFunction(() => /about 2000 m from the room/.test(document.querySelector('#who-note').textContent), null, { timeout: 10000 })
+  .then(() => ok('a phone 2 km away is refused, told how far and what to do', true))
+  .catch(async () => ok(`a phone 2 km away is refused ("${await far.page.textContent('#who-note')}")`, false));
+const refused = await phone('phone that will not say', null);
+await checkIn(refused, 'Sam Lee');
+await refused.page.waitForFunction(() => /needs your location/.test(document.querySelector('#who-note').textContent), null, { timeout: 20000 })
+  .then(() => ok('a phone that will not share its location is refused, and told why', true))
+  .catch(async () => ok(`a phone that will not share its location is refused ("${await refused.page.textContent('#who-note')}")`, false));
+expecting.attendRefused = false;
+
+await pad.waitForFunction(() => /20 m from the room/.test(document.querySelector('#att-list')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('the controller shows how far each check-in was, and nothing more', true))
+  .catch(async () => ok(`the controller shows how far each check-in was ("${await pad.textContent('#att-list')}")`, false));
+for (const p of [near, far, refused]) await p.ctx.close();
+await pad.close();
+await owner.close();
+}
+
 if (want('My Files: everything I have, and what I may do with it (#243)')) {
 console.log('\n-- My Files: everything I have, and what I may do with it (#243) --');
 // A TA of their own, so changing a password here leaves everyone else's alone.
@@ -2864,6 +3003,7 @@ await ctx.close();
 reportErrors();
 } finally {
   server.kill();
+  smtp.close();
   fs.rmSync(data, { recursive: true, force: true });
   fs.rmSync(content, { recursive: true, force: true });
   await teardown();

@@ -37,6 +37,7 @@ const kiosks = require('./kiosks.js');
 const pptxConvert = require('./pptx-convert.js');
 const roster = require('./roster.js');
 const attendance = require('./attendance.js');
+const mail = require('./mail.js');
 const zipImport = require('./zip-import.js');
 const zipStaging = require('./zip-staging.js');
 
@@ -466,6 +467,21 @@ async function handleApi(req, res, url, ctx) {
 
     if (head === 'attendance') {
       const courseCode = (session) => String(session.course || '').toLowerCase();
+      // What a controller needs to offer: the server's defaults, and whether
+      // mail is set up (so a receipt switch can say why it is off).
+      if (rest[0] === 'settings' && rest.length === 1 && req.method === 'GET') {
+        json(res, 200, { ...attendance.defaults(ctx.db), radii: attendance.RADII, mail: mail.describe(mail.mailConfig()) });
+        return true;
+      }
+      if (rest[0] === 'courses' && rest.length === 3 && rest[2] === 'receipts' && req.method === 'PUT') {
+        const body = await readJson(req, 1024);
+        const described = mail.describe(mail.mailConfig());
+        if (body.on && !described.configured) { json(res, 409, { error: `receipts need mail set up on this server: ${described.reason}` }); return true; }
+        const changed = attendance.setReceipts(ctx.db, user, rest[1], !!body.on);
+        auditLog(ctx, req, user, 'attendance_receipts_changed', { courseCode: changed.course, receipts: changed.receipts });
+        json(res, 200, changed);
+        return true;
+      }
       if (rest[0] === 'current' && rest.length === 1 && req.method === 'GET') {
         json(res, 200, attendance.currentSession(ctx.db, user, {
           course: url.searchParams.get('course'), lectureId: url.searchParams.get('lecture') || null,
@@ -1127,6 +1143,20 @@ async function handleApi(req, res, url, ctx) {
       }
     }
 
+    // A test message, to check the mail settings before a class relies on them.
+    if (head === 'system' && rest[0] === 'mail-test' && rest.length === 1 && req.method === 'POST') {
+      if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can send a test email' }); return true; }
+      const body = await readJson(req, 2 * 1024);
+      const sent = await mail.sendMail({
+        to: body.to,
+        subject: 'Podium: a test message',
+        text: `This is a test message from Podium, sent by ${user.username}.\n\nIf it arrived, attendance receipts can be sent from this server.`,
+      });
+      auditLog(ctx, req, user, 'mail_test_sent', { to: sent.to });
+      json(res, 200, sent);
+      return true;
+    }
+
     // --- system settings (Issue #72) --------------------------------------
     if (head === 'system' && rest[0] === 'settings') {
       const current = () => ({
@@ -1136,6 +1166,12 @@ async function handleApi(req, res, url, ctx) {
         // Issue #256: how long the device and network hashes behind an
         // attendance flag are kept. The marks themselves stay.
         attendanceRetentionDays: attendance.retentionDays(ctx.db),
+        // Issue #256, phase 5: how often the code changes and how near the
+        // room a phone must be, unless a session says otherwise; and whether
+        // mail is set up (never the password).
+        attendanceRotate: attendance.defaults(ctx.db).rotate,
+        attendanceRadius: attendance.defaults(ctx.db).radius,
+        mail: mail.describe(mail.mailConfig()),
       });
       if (rest.length === 1 && req.method === 'GET') {
         json(res, 200, current());
@@ -1153,6 +1189,11 @@ async function handleApi(req, res, url, ctx) {
           }
           store.setSystemSetting(ctx.db, 'max_zip_upload_mb', String(mb));
           changed.maxZipUploadMb = mb;
+        }
+        if (body.attendanceRotate !== undefined || body.attendanceRadius !== undefined) {
+          const set = attendance.setDefaults(ctx.db, { rotate: body.attendanceRotate, radius: body.attendanceRadius });
+          if (body.attendanceRotate !== undefined) changed.attendanceRotate = set.rotate;
+          if (body.attendanceRadius !== undefined) changed.attendanceRadius = set.radius;
         }
         if (body.attendanceRetentionDays !== undefined) {
           changed.attendanceRetentionDays = attendance.setRetentionDays(ctx.db, body.attendanceRetentionDays);

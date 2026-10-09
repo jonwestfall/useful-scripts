@@ -80,6 +80,12 @@ DATA_DIR=$DATA_DIR
 # hundred short rows, and they are what you want three years later when somebody
 # asks what the course covered.
 #LECTURE_RETENTION_DAYS=180
+
+# Outgoing mail, for attendance receipts (optional). smtp:// uses STARTTLS
+# and will not send a password without it; smtps:// is TLS from the start.
+# Percent-encode any special characters in the user or password.
+#SMTP_URL=smtp://user:password@mail.example.edu:587
+#MAIL_FROM="Podium <podium@example.edu>"
 EOF
   chmod 0640 "$CONFIG_DIR/podium.env"
   chgrp "$PODIUM_USER" "$CONFIG_DIR/podium.env"

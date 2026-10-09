@@ -889,6 +889,14 @@ async function refreshSystemSettings() {
     if (zipMb) zipMb.value = String(body.maxZipUploadMb ?? 200);
     const keep = $('#attendance-retention-days');
     if (keep) keep.value = String(body.attendanceRetentionDays ?? 30);
+    if ($('#attendance-rotate')) $('#attendance-rotate').value = String(body.attendanceRotate ?? 15);
+    if ($('#attendance-radius')) $('#attendance-radius').value = String(body.attendanceRadius ?? 100);
+    if ($('#mail-status')) {
+      $('#mail-status').textContent = body.mail?.configured
+        ? `Mail is set up: it goes through ${body.mail.server}, from ${body.mail.from}.`
+        : `Mail is not set up: ${body.mail?.reason || 'this server did not say'}. Attendance receipts are off.`;
+      $('#mail-test').disabled = !body.mail?.configured;
+    }
   } catch { /* ignore */ }
 }
 
@@ -937,6 +945,48 @@ async function updateAttendanceRetention(ev) {
     setTimeout(() => { if (status.textContent.startsWith('Saved')) status.textContent = ''; }, 4000);
   } catch {
     status.textContent = 'Could not reach server.';
+  }
+}
+
+// Issue #256, phase 5: the code's rotation and the default "in the room" radius.
+async function updateAttendanceDefaults(key, value) {
+  const status = $('#attendance-settings-status');
+  status.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/system/settings', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ [key]: Number(value) }),
+    });
+    const body = await res.json().catch(() => ({}));
+    status.textContent = res.ok ? 'Saved.' : (body.error || 'Could not save setting.');
+    if (!res.ok) await refreshSystemSettings();
+    else setTimeout(() => { if (status.textContent === 'Saved.') status.textContent = ''; }, 4000);
+  } catch {
+    status.textContent = 'Could not reach server.';
+  }
+}
+
+async function sendTestEmail() {
+  const status = $('#mail-test-status');
+  const to = $('#mail-test-to').value.trim();
+  if (!to) { status.textContent = 'Give an address to send it to.'; return; }
+  status.textContent = 'Sending…';
+  $('#mail-test').disabled = true;
+  try {
+    const res = await fetch('/api/system/mail-test', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ to }),
+    });
+    const body = await res.json().catch(() => ({}));
+    status.textContent = res.ok ? `Sent to ${body.to}. If it does not arrive, check its spam folder, then the server's log.` : `Not sent: ${body.error || 'the server did not say why'}.`;
+  } catch {
+    status.textContent = 'Could not reach server.';
+  } finally {
+    $('#mail-test').disabled = false;
   }
 }
 
@@ -2760,6 +2810,9 @@ if (!info.features.includes('library')) {
       $('#allow-poll-names-check')?.addEventListener('change', updateAllowPollNames);
       $('#max-zip-upload-mb')?.addEventListener('change', updateMaxZipUpload);
       $('#attendance-retention-days')?.addEventListener('change', updateAttendanceRetention);
+      $('#attendance-rotate')?.addEventListener('change', (ev) => updateAttendanceDefaults('attendanceRotate', ev.target.value));
+      $('#attendance-radius')?.addEventListener('change', (ev) => updateAttendanceDefaults('attendanceRadius', ev.target.value));
+      $('#mail-test')?.addEventListener('click', sendTestEmail);
       await Promise.all([refreshPeople(), refreshStorage(), refreshSystemSettings()]);
     }
     await refreshCourses();

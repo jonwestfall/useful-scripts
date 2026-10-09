@@ -60,7 +60,35 @@ export function createAttendancePanel({ stage, lectureId }) {
     $('#att-note').classList.toggle('is-bad', !!bad);
   };
 
+  // The server's defaults (radius choices), once.
+  let settings = null;
+  async function loadSettings() {
+    if (settings) return;
+    try { settings = await api('/api/attendance/settings'); } catch { settings = { radius: 100, radii: [50, 100, 200, 500] }; }
+    $('#att-radius').replaceChildren(...settings.radii.map((m) => el('option', { value: String(m) }, `${m} m`)));
+    $('#att-radius').value = String(settings.radius);
+  }
+
+  // This device's position, as the room's. Remembered per course, so a
+  // device that cannot say where it is right now can use where it last was.
+  const ROOM_KEY = (course) => `podium.attendance.room.${course}`;
+  function roomHere(course) {
+    return new Promise((resolve, reject) => {
+      const remembered = () => { try { return JSON.parse(localStorage.getItem(ROOM_KEY(course)) || 'null'); } catch { return null; } };
+      if (!navigator.geolocation) { const r = remembered(); if (r) resolve(r); else reject(new Error('this device cannot say where it is')); return; }
+      navigator.geolocation.getCurrentPosition((pos) => {
+        const room = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        safeStorageSet(localStorage, ROOM_KEY(course), JSON.stringify(room));
+        resolve(room);
+      }, () => {
+        const r = remembered();
+        if (r) resolve(r); else reject(new Error('this device did not give its location - allow it in the browser, or turn “Only from phones in the room” off'));
+      }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+    });
+  }
+
   async function loadCourses() {
+    await loadSettings();
     if (courses) return;
     try {
       courses = ((await api('/api/courses')).courses || []).filter((c) => !c.archived);
@@ -129,7 +157,8 @@ export function createAttendancePanel({ stage, lectureId }) {
     const here = c.present + c.late;
     const what = session.phase === 'exit' ? 'The exit ticket' : 'Check-in';
     $('#att-summary').textContent = `${what} is ${session.open ? 'open' : 'closed'} · ${here} checked in`
-      + `${session.rosterSize ? ` of ${session.rosterSize}` : ''}${c.late ? ` · ${c.late} late` : ''}${c.excused ? ` · ${c.excused} excused` : ''}`;
+      + `${session.rosterSize ? ` of ${session.rosterSize}` : ''}${c.late ? ` · ${c.late} late` : ''}${c.excused ? ` · ${c.excused} excused` : ''}`
+      + `${session.geofence ? ` · phones within ${session.geofence.radius} m only` : ''}`;
     $('#att-toggle-open').textContent = session.open ? `Close ${session.phase === 'exit' ? 'the exit ticket' : 'check-in'}` : 'Reopen check-in';
     $('#att-exit').hidden = session.open && session.phase === 'exit';
     if (!$('#att-exit-form').hidden && document.activeElement !== $('#att-exit-questions')) {
@@ -227,7 +256,8 @@ export function createAttendancePanel({ stage, lectureId }) {
     return el('div', { class: `att-row${flags ? ' is-flagged' : ''}${mark ? '' : ' is-unmarked'}`, role: 'listitem' },
       el('span', { class: 'att-who' },
         el('span', { class: 'att-name' }, name),
-        el('span', { class: 'att-meta' }, [meta, when && `checked in ${when}`, mark?.how === 'hand' && 'by hand', extra].filter(Boolean).join(' · ')),
+        el('span', { class: 'att-meta' }, [meta, when && `checked in ${when}`, mark?.distance != null && `${mark.distance} m from the room`,
+          mark?.how === 'hand' && 'by hand', extra].filter(Boolean).join(' · ')),
         flags ? el('span', { class: 'att-flag' }, flags) : null),
       statusPicker(mark?.status || '', onPick, `Attendance for ${name}`));
   }
@@ -256,12 +286,19 @@ export function createAttendancePanel({ stage, lectureId }) {
   async function open() {
     const course = $('#att-course').value;
     const after = $('#att-late-after-on').checked ? Number($('#att-late-after').value) : null;
+    let geofence = null;
+    if ($('#att-in-room').checked) {
+      say('Finding where this device is…');
+      try {
+        geofence = { ...(await roomHere(course)), radius: Number($('#att-radius').value) };
+      } catch (err) { say(`Check-in was not opened: ${err.message}.`, true); return; }
+    }
     try {
       const got = await api('/api/attendance/sessions', {
         method: 'POST',
         body: {
           course, lectureId: lectureId() || null, lateRule: { after, from: Date.now() }, phase: 'entry',
-          questions: { entry: parseQuestionLines($('#att-entry-questions').value) }, parking: $('#att-parking-start').checked,
+          questions: { entry: parseQuestionLines($('#att-entry-questions').value) }, parking: $('#att-parking-start').checked, geofence,
         },
       });
       session = got.session;
@@ -302,6 +339,7 @@ export function createAttendancePanel({ stage, lectureId }) {
   $('#att-late-now').addEventListener('change', (ev) => change({ lateNow: ev.target.checked },
     ev.target.checked ? 'Check-ins from now on count as late.' : 'Check-ins count as present again.'));
   $('#att-late-after-on').addEventListener('change', (ev) => { $('#att-late-after').disabled = !ev.target.checked; });
+  $('#att-in-room').addEventListener('change', (ev) => { $('#att-room-row').hidden = !ev.target.checked; });
   $('#att-search').addEventListener('input', renderList);
   $('#att-parking').addEventListener('change', (ev) => change({ parking: ev.target.checked },
     ev.target.checked ? 'The parking lot is open: phones that checked in can ask a question.' : 'The parking lot is closed.'));
@@ -344,6 +382,9 @@ export function createAttendancePanel({ stage, lectureId }) {
       if (item.lateOn) $('#att-late-after').value = String(Number(item.lateAfter) || 0);
       $('#att-entry-questions').value = questionLines(questions);
       $('#att-parking-start').checked = !!item.parking;
+      $('#att-in-room').checked = !!item.inRoom;
+      $('#att-room-row').hidden = !item.inRoom;
+      if (item.inRoom && [...$('#att-radius').options].some((o) => o.value === String(item.radius))) $('#att-radius').value = String(item.radius);
       if (session?.open) { show(); return; }
       await open();
     },

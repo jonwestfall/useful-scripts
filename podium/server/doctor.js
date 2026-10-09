@@ -29,6 +29,7 @@ const store = require('./store.js');
 const accounts = require('./accounts.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
+const mail = require('./mail.js');
 
 const DAY = 24 * 60 * 60 * 1000;
 const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -254,6 +255,20 @@ function checkStorage(db, env) {
 }
 
 /**
+ * Outgoing mail, for attendance receipts (Issue #256). Not having it is a
+ * choice, not a fault; having it set up wrong is worth knowing before a
+ * course turns receipts on. Checked from the settings alone - the admin
+ * page's "Send a test email" is what proves a message gets through.
+ */
+function checkMail(env) {
+  const described = mail.describe(mail.mailConfig(env));
+  if (described.configured) return say('ok', 'mail', `sends through ${described.server} as ${described.from}`);
+  if (!env.SMTP_URL) return say('ok', 'mail', 'not set up; attendance receipts are off');
+  return say('warn', 'mail', `SMTP_URL is set but ${described.reason}`,
+    'See SMTP_URL and MAIL_FROM in deploy/README.md, then send a test from Admin -> Server -> Attendance.');
+}
+
+/**
  * Did the deploy actually reach the running process?
  *
  * This is the failure this whole command exists for. `current` is a symlink and
@@ -471,6 +486,7 @@ async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, en
   await attempt(() => checkPermissions(dataDir));
   await attempt(() => checkDisk(dataDir));
   await attempt(() => checkBackup(env));
+  await attempt(() => checkMail(env));
   await attempt(() => checkBuild(releaseDir, healthUrl));
   await attempt(() => checkCertificate(certPath));
   await attempt(() => checkService(healthUrl));
@@ -498,6 +514,7 @@ function report(found, write = (line) => process.stdout.write(`${line}\n`)) {
 module.exports = {
   run,
   report,
+  checkMail,
   checkNode,
   checkSchema,
   checkIntegrity,

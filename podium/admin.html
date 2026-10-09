@@ -142,7 +142,31 @@
       <label for="attendance-retention-days">Keep check-in device details for (days)</label>
       <input id="attendance-retention-days" type="number" min="1" max="3650" step="1" inputmode="numeric" style="width: 120px;">
       <span class="hint">Default 30. A check-in keeps keyed hashes of the phone's browser token and network address, so a phone that checked in several people can be flagged. After this many days they are deleted; the attendance marks themselves, and any flag already raised, stay.</span>
+      <label for="attendance-rotate">The check-in code changes every</label>
+      <select id="attendance-rotate" style="width: 160px;">
+        <option value="10">10 seconds</option>
+        <option value="15">15 seconds</option>
+        <option value="30">30 seconds</option>
+      </select>
+      <label for="attendance-radius">“Only from phones in the room” allows, unless the instructor picks otherwise</label>
+      <select id="attendance-radius" style="width: 160px;">
+        <option value="25">25 m</option>
+        <option value="50">50 m</option>
+        <option value="100">100 m</option>
+        <option value="200">200 m</option>
+        <option value="500">500 m</option>
+        <option value="1000">1000 m</option>
+      </select>
+      <span class="hint">Indoors a phone's location is often 50 m or more out; 100 m or more avoids turning away students who are in the room.</span>
       <span class="hint" id="attendance-settings-status" role="status"></span>
+      <h3 style="margin: 12px 0 0;">Outgoing mail</h3>
+      <span class="hint" id="mail-status">Looking…</span>
+      <span class="hint">Set with <code>SMTP_URL</code> and <code>MAIL_FROM</code> in the server's environment (see deploy/README.md). Courses can then email each student a receipt when they check in.</span>
+      <div class="admin-actions" style="gap: 8px;">
+        <input id="mail-test-to" type="email" placeholder="you@example.edu" aria-label="Send a test email to" style="width: 240px;">
+        <button type="button" id="mail-test">Send a test email</button>
+      </div>
+      <span class="hint" id="mail-test-status" role="status"></span>
     </div>
   </section>
   </div>
