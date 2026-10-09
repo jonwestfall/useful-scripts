@@ -17,6 +17,7 @@ import { downscaleImage } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
 import { startPageTheme } from './theme.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
+import { mountSessionSearch } from './session-search.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -624,12 +625,21 @@ function renderSessions() {
   }
 }
 
+// Searching what was said and shown (Issue #159). The name filter above
+// narrows the list; this looks inside every session, and while it shows
+// results the list steps aside for them.
+const sessionSearch = mountSessionSearch($('#sess-find'), {
+  label: 'Search what was said and shown in past sessions',
+  onActive: (on) => { $('#sessions').hidden = on; },
+});
+
 async function refreshSessions() {
   const res = await fetch('/api/lectures', { credentials: 'same-origin' });
   if (!res.ok) return;
   const data = await res.json();
   lectures = data.lectures || [];
   sessionUsage = data.usage || null;
+  sessionSearch.setCourses(lectures.map((l) => l.course));
   renderSessions();
 }
 

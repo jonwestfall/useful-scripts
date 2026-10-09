@@ -61,7 +61,7 @@ podium/test/
     ├── ink-layout.mjs    # Ink, split layouts, picture-in-picture, keeping what was on screen, portrait content and zoom gestures - real touch pinches (Issue #262)
     ├── media.mjs         # Camera, music, audio, clocks, captions, PDFs
     ├── polls-server.mjs  # Polls, plans, accounts, multi-device rooms
-    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242) and its outline (Issue #253); Word and RTF files (Issue #258); rosters, attendance check-in, its review, its questions, location and receipts (Issue #256); choosing files from the server (Issue #241); My Files (Issue #243); markdown documents (Issue #240)
+    └── editor.mjs        # The deck editor: library, planner, content/decks, drafts (Issue #226), diagrams (Issue #235); the planner's archive (Issue #239); Quick Look (Issue #242) and its outline (Issue #253); Word and RTF files (Issue #258); rosters, attendance check-in, its review, its questions, location and receipts (Issue #256); choosing files from the server (Issue #241); My Files (Issue #243); searching past sessions on My Files and Admin › Sessions (Issue #159); markdown documents (Issue #240)
 ```
 
 ---
