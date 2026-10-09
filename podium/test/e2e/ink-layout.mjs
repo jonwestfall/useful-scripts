@@ -212,6 +212,146 @@ ok(`the Now preview is portrait too (${now.toFixed(2)})`, now < 1);
 await ctx.close();
 }
 
+if (want('zooming fills the screen, and ink stays on the content (#262)')) {
+console.log('\n-- zooming fills the screen, and ink stays on the content (#262) --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+await ctx.addInitScript(([cfg, lib]) => {
+  localStorage.setItem('podium.config.v2', cfg);
+  localStorage.setItem('podium.library.v1', lib);
+}, [
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'zoom-room', passphrase: 'fill the screen' }),
+  JSON.stringify([{ type: 'pdf', src: 'content/sample.pdf', page: 1, title: 'Letter handout' }]),
+]);
+const screen = await ctx.newPage();
+trap(screen, 'zoom display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'zoom control');
+await pad.setViewportSize({ width: 1024, height: 768 });
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+// A portrait letter page: Fit width fills the 16:9 screen, no bars.
+await pad.click('.tile:has(.tile-title:text-is("Letter handout"))');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-pdf-canvas')?.width > 300, null, { timeout: 15000 });
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForSelector('#pdf-zoom:not([hidden])');
+await pad.click('#zoom-fit-width');
+await screen.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-pdf-canvas.is-zoomed'), null, { timeout: 10000 });
+await screen.waitForTimeout(800);
+const filled = await screen.evaluate(() => {
+  const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  const box = canvas.getBoundingClientRect();
+  const stage = document.querySelector('#stage').getBoundingClientRect();
+  const ctx = canvas.getContext('2d');
+  const at = (fx, fy) => [...ctx.getImageData(Math.round(canvas.width * fx), Math.round(canvas.height * fy), 1, 1).data];
+  return { w: box.width, h: box.height, sw: stage.width, sh: stage.height, left: at(0.01, 0.5), right: at(0.99, 0.5) };
+});
+const notBlack = (px) => px[3] > 0 && px[0] + px[1] + px[2] > 60;
+ok(`Fit width: the page fills the screen edge to edge (${Math.round(filled.w)}×${Math.round(filled.h)} on ${filled.sw}×${filled.sh})`,
+  Math.abs(filled.w - filled.sw) < 2 && Math.abs(filled.h - filled.sh) < 2);
+ok(`with page, not black bars, at both edges (${filled.left.slice(0, 3)} / ${filled.right.slice(0, 3)})`, notBlack(filled.left) && notBlack(filled.right));
+const level = await pad.textContent('#pdf-zoom-level');
+ok(`the controller says how far in it is (${level})`, /^2\.\d×$/.test(level));
+await pad.click('#zoom-fit-page');
+await screen.waitForFunction(() => !document.querySelector('.layer[data-role="program"] .r-pdf-canvas.is-zoomed'), null, { timeout: 10000 })
+  .then(() => ok('Fit page puts the whole page back', true))
+  .catch(() => ok('Fit page puts the whole page back', false));
+
+// A portrait photo: ink drawn whole stays on its spot when zoomed, and ink
+// drawn zoomed is on the right spot when the photo is whole again.
+await pad.click('.tab[data-tab="library"]');
+await pad.setInputFiles('#photo-upload', writePortraitImageFixture());
+await screen.waitForFunction(() => {
+  const img = document.querySelector('.layer[data-role="program"] img');
+  return img && img.complete && img.naturalWidth === 600;
+}, null, { timeout: 10000 });
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForFunction(() => {
+  const p = document.querySelector('#pad');
+  const r = p.getBoundingClientRect();
+  return !p.classList.contains('is-pending') && Math.abs(r.width / r.height - 600 / 900) < 0.02;
+}, null, { timeout: 10000 });
+const padBox = async () => pad.$eval('#pad', (n) => { const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+const dot = async (fx, fy) => {
+  const b = await padBox();
+  await pad.mouse.move(b.x + b.w * (fx - 0.02), b.y + b.h * fy);
+  await pad.mouse.down();
+  await pad.mouse.move(b.x + b.w * (fx + 0.02), b.y + b.h * fy, { steps: 4 });
+  await pad.mouse.up();
+};
+// Ink at a content point: where it is on the projector right now, and whether there is ink there.
+const inkAt = (fx, fy) => screen.evaluate(([x, y]) => {
+  const img = document.querySelector('.layer[data-role="program"] img');
+  const stage = document.querySelector('#stage').getBoundingClientRect();
+  const slot = img.parentElement.getBoundingClientRect();
+  let rect;
+  if (img.classList.contains('is-zoomed')) {
+    const r = img.getBoundingClientRect();
+    rect = { x: r.left - stage.left, y: r.top - stage.top, w: r.width, h: r.height };
+  } else {
+    const aspect = img.naturalWidth / img.naturalHeight;
+    const w = slot.height * aspect;
+    rect = { x: slot.left - stage.left + (slot.width - w) / 2, y: slot.top - stage.top, w, h: slot.height };
+  }
+  const px = rect.x + rect.w * x;
+  const py = rect.y + rect.h * y;
+  const canvas = document.querySelector('#ink');
+  const ratio = canvas.width / canvas.getBoundingClientRect().width;
+  const onScreen = px >= 0 && py >= 0 && px < stage.width && py < stage.height;
+  const alpha = onScreen ? canvas.getContext('2d').getImageData(Math.round(px * ratio), Math.round(py * ratio), 1, 1).data[3] : -1;
+  return { px: Math.round(px), py: Math.round(py), onScreen, alpha };
+}, [fx, fy]);
+
+await dot(500 / 600, 450 / 900);
+await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
+const whole = await inkAt(500 / 600, 450 / 900);
+ok(`ink drawn on the whole photo is on the bright square (${whole.px},${whole.py})`, whole.alpha > 0);
+const oldSpot = { x: whole.px, y: whole.py };
+
+await pad.click('.tab[data-tab="now"]');
+await pad.waitForSelector('#pdf-zoom:not([hidden])');
+await pad.click('#zoom-fit-width');
+await screen.waitForSelector('.layer[data-role="program"] img.is-zoomed', { timeout: 10000 });
+for (let i = 0; i < 2; i++) { await pad.click('#pdf-pan-down'); await pad.waitForTimeout(250); }
+await screen.waitForTimeout(500);
+const zoomed = await inkAt(500 / 600, 450 / 900);
+const photoBox = await screen.$eval('.layer[data-role="program"] img', (n) => { const r = n.getBoundingClientRect(); return { w: r.width, left: r.left }; });
+ok(`zoomed to fit width, the photo fills the screen's width (${Math.round(photoBox.w)} px)`, Math.abs(photoBox.w - 1280) < 2 && Math.abs(photoBox.left) < 1);
+ok(`and the ink went with the bright square, from (${oldSpot.x},${oldSpot.y}) to (${zoomed.px},${zoomed.py})`,
+  zoomed.onScreen && zoomed.alpha > 0 && (Math.abs(zoomed.px - oldSpot.x) > 50 || Math.abs(zoomed.py - oldSpot.y) > 50));
+const leftBehind = await screen.evaluate(([x, y]) => {
+  const canvas = document.querySelector('#ink');
+  const ratio = canvas.width / canvas.getBoundingClientRect().width;
+  return canvas.getContext('2d').getImageData(Math.round(x * ratio), Math.round(y * ratio), 1, 1).data[3];
+}, [oldSpot.x, oldSpot.y]);
+ok('nothing is left where it used to be on the screen', leftBehind === 0);
+
+// The pad is still the whole photo, with the room's window outlined.
+await pad.click('.tab[data-tab="ink"]');
+await pad.waitForSelector('#pad-room-window:not([hidden])', { timeout: 5000 });
+const win = await pad.evaluate(() => {
+  const w = document.querySelector('#pad-room-window').getBoundingClientRect();
+  const p = document.querySelector('#pad').getBoundingClientRect();
+  return { w: w.width / p.width, h: w.height / p.height };
+});
+ok(`the Ink pad outlines the part of the photo the room can see (${win.w.toFixed(2)} wide, ${win.h.toFixed(2)} tall)`, win.w > 0.97 && win.h < 0.6);
+// Drawn while zoomed: near the photo's bottom-left, which the room can see.
+await dot(0.15, 0.85);
+await screen.waitForTimeout(600);
+await pad.click('.tab[data-tab="now"]');
+await pad.click('#zoom-fit-page');
+await screen.waitForFunction(() => !document.querySelector('.layer[data-role="program"] img.is-zoomed'), null, { timeout: 10000 });
+await screen.waitForTimeout(500);
+const back = await inkAt(0.15, 0.85);
+ok(`ink drawn zoomed in is in the right place on the whole photo (${back.px},${back.py})`, back.alpha > 0);
+ok('and the first stroke is back on the bright square', (await inkAt(500 / 600, 450 / 900)).alpha > 0);
+await ctx.close();
+}
+
 if (want('keeping what was on screen: panel photos, screenshots, and the export')) {
 console.log('\n-- keeping what was on screen: panel photos, screenshots, and the export --');
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });

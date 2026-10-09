@@ -52,7 +52,7 @@ The **Library** tab is where everything starts: tap a tile and it goes to the pr
 | **Document** | A plain markdown page to read (a handout, a reading), scrolled rather than paged. See *Markdown Documents* below. |
 | **Picture deck** | A folder of numbered slide images (e.g. exported from PowerPoint or Keynote), stepped through like a deck. |
 | **HTML slides** | An exported web deck, paged from the controller. |
-| **PDF** | Paged, zoomable and pannable on the projector (see below). |
+| **PDF** | Paged, zoomable and pannable on the projector, filling the screen when zoomed (see below). |
 | **Video / Audio** | Local or linked files, with full remote transport. |
 | **YouTube** | Embedded with remote transport, so the room never sees the YouTube site. |
 | **Live stream** | A live Twitch channel or YouTube broadcast, with video and sound, video only, or sound only (see [Live Streams](#live-streams-twitch--youtube-live)). |
@@ -200,7 +200,15 @@ The **Now** tab always opens with a large live view of what the focused pane is 
 
 ### PDFs: Zoom and Pan on the Projector
 
-PDFs page like a deck. When a PDF is focused, the **Now** tab adds zoom (1× to 4×) and four-way pan controls that change **what the room actually sees**, which is useful for a small figure or a dense table. Pan stops at the page's edges, so you never pan into empty letterboxing. Ink stays anchored correctly at any zoom level, and a zoomed page exports zoomed.
+PDFs page like a deck. When a PDF or a photo is focused (a photo shown whole, not cropped to fill), the **Now** tab adds zoom (1× to 6×), four-way pan, and **Fit page**, **Fit width** and **Fit height**. These change **what the room actually sees**, which is useful for a small figure, a dense table, or a portrait page.
+- **Zoomed in, the screen is filled** (Issue #262). The room sees a window the screen's own shape, cut from the page, so a portrait page has no black bars beside it.
+- **Fit width** makes a portrait page as wide as the screen, starting at its top; pan down to read on.
+- Pan stops at the page's edges.
+- **Ink stays on the content**:
+  - A circle drawn at 1× is still around the same word zoomed in, and comes back with it.
+  - Ink drawn while zoomed is in the right place on the whole page.
+  - The **Ink** pad always shows the whole page or photo, with a dashed outline marking the part the room can see.
+  - The Now preview shows the room's own zoomed view, and a photo of the panel shows the zoomed view with its ink.
 
 On a self-hosted server, **Upload/Load a PDF…** on the Library tab uploads straight into the library, and PowerPoint files are converted to PDF on upload (see [PowerPoint Uploads](#powerpoint-uploads)).
 

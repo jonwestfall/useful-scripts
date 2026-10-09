@@ -28,6 +28,7 @@ import { createDurationProber } from './duration-probe.js';
 import { initTheme, themeChoice, setThemeChoice, onThemeChange, THEME_KEY } from './theme.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
 import { createAttendancePanel } from './attendance-panel.js';
+import { clampView, fitView, zoomAround, panBy, isZoomed, visibleWindow } from './zoom.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -2681,17 +2682,19 @@ function renderNowPreview() {
   if ($('[data-panel="now"]').hidden) return;
   nowTabMirror ||= createLiveMirror($('#now-preview'));
   const live = focusedItem(state);
+  // Zoomed (Issue #262), the room sees a panel-shaped window, not the page.
+  const shownAspect = zoomableItem(live) && isZoomed(live) ? slotAspectFor(live) : contentAspectFor(live);
   // The preview is the shape of what is on screen (Issue #262): portrait for
   // a portrait page or photo, within its height limit.
   // Where its height limit binds, it narrows to the content's width and sits
   // centred, rather than a full-width box with bars down both sides.
   const preview = $('#now-preview');
-  const aspect = viewAspect(contentAspectFor(live));
+  const aspect = viewAspect(shownAspect);
   const maxH = parseFloat(getComputedStyle(preview).maxHeight) || Infinity;
   const room = preview.parentElement?.clientWidth || 0;
   preview.style.aspectRatio = String(aspect);
   preview.style.width = room && Number.isFinite(maxH) ? `${Math.min(room, maxH * aspect)}px` : '';
-  nowTabMirror.update(live);
+  nowTabMirror.update(live, shownAspect);
   const work = workItem();
   const note = $('#now-cued-note');
   note.hidden = work === live;
@@ -2742,13 +2745,14 @@ function renderNow() {
   }
   renderDocControls(item);
 
-  $('#pdf-zoom').hidden = type !== 'pdf';
-  $('#pdf-pan').hidden = type !== 'pdf';
-  if (type === 'pdf') {
+  // Projector zoom: a PDF page, or (Issue #262) a photo shown whole.
+  const zoomable = zoomableItem(item);
+  $('#pdf-zoom').hidden = !zoomable;
+  $('#pdf-pan').hidden = !zoomable;
+  if (zoomable) {
     const pdfZoom = item.zoom || 1;
     $('#pdf-zoom-level').textContent = `${pdfZoom.toFixed(pdfZoom % 1 ? 1 : 0)}×`;
     $('#pdf-zoom-out').disabled = pdfZoom <= 1;
-    $('#pdf-zoom-reset').disabled = pdfZoom <= 1;
     $$('.pan-btn', $('#pdf-pan')).forEach((b) => { b.disabled = pdfZoom <= 1; });
   }
 
@@ -3942,8 +3946,8 @@ function createLiveMirror(container) {
   // new slide/step without a full remount.
   const identity = (item) => (item ? `${item.type}:${item.deckId || item.src || ''}` : null);
 
-  function update(item) {
-    fitBox(viewport, frame, contentAspectFor(item));
+  function update(item, aspect = contentAspectFor(item)) {
+    fitBox(viewport, frame, aspect);
     const key = identity(item);
     if (key !== mountedKey) {
       renderer?.destroy();
@@ -4061,8 +4065,26 @@ let padMirrorRenderer = null;
 let padMirrorKey = null;
 let showMirror = true;
 
-function updatePadMirror() {
+// The pad is the whole page or photo, whatever the room's zoom (Issue #262):
+// ink is in fractions of the content, so drawing anywhere on it is drawing on
+// that spot of the content. An outline shows the part the room can see.
+function renderPadRoomWindow() {
+  const box = $('#pad-room-window');
   const item = workItem();
+  if (!box) return;
+  if (!zoomableItem(item) || !isZoomed(item)) { box.hidden = true; return; }
+  const win = visibleWindow(contentAspectFor(item), slotAspectFor(item), clampView(viewOf(item), contentAspectFor(item), slotAspectFor(item)));
+  box.hidden = false;
+  box.style.left = `${win.x * 100}%`;
+  box.style.top = `${win.y * 100}%`;
+  box.style.width = `${win.w * 100}%`;
+  box.style.height = `${win.h * 100}%`;
+}
+
+function updatePadMirror() {
+  renderPadRoomWindow();
+  const real = workItem();
+  const item = zoomableItem(real) && isZoomed(real) ? { ...real, zoom: 1, panX: 0.5, panY: 0.5 } : real;
   const key = item ? `${item.type}:${item.deckId || item.src || ''}` : null;
   if (key !== padMirrorKey) {
     padMirrorRenderer?.destroy();
@@ -6288,28 +6310,47 @@ $('#doc-scrub').addEventListener('change', (ev) => send({ op: 'nav', dir: 'goto'
 // [1,4] and pan to "still on the page"), so a press here can send whatever
 // the arithmetic works out to without duplicating that logic.
 const PDF_ZOOM_STEP = 1.6;
+
+// Issue #262: what zooms on the projector - a PDF page, or a photo shown
+// whole (one cropped to fill the screen has nothing more to show).
+function zoomableItem(item) {
+  return item?.type === 'pdf' || (item?.type === 'image' && item.fit !== 'cover');
+}
+
+/** The panel's shape this item is (or would be) shown in: what a zoom fills. */
+function slotAspectFor(item) {
+  return (item && state.slotAspects?.[inkSurfaceKey(item)]) || state.stageAspect || 16 / 9;
+}
+
+const viewOf = (item) => ({ zoom: item?.zoom || 1, panX: item?.panX ?? 0.5, panY: item?.panY ?? 0.5 });
+
+// Every zoom goes out already kept on the content - the controller knows both
+// shapes, so a later "pan down" starts from where the room really is.
+function sendView(view) {
+  send({ op: 'zoom', action: 'set', zoom: view.zoom, panX: view.panX, panY: view.panY });
+}
+
 function pdfZoomStep(dir) {
   const item = workItem();
-  if (item?.type !== 'pdf') return;
-  const zoom = dir > 0 ? (item.zoom || 1) * PDF_ZOOM_STEP : (item.zoom || 1) / PDF_ZOOM_STEP;
-  send({ op: 'zoom', action: 'set', zoom, panX: item.panX ?? 0.5, panY: item.panY ?? 0.5 });
+  if (!zoomableItem(item)) return;
+  const next = dir > 0 ? (item.zoom || 1) * PDF_ZOOM_STEP : (item.zoom || 1) / PDF_ZOOM_STEP;
+  sendView(zoomAround(viewOf(item), next, contentAspectFor(item), slotAspectFor(item)));
 }
 $('#pdf-zoom-in').addEventListener('click', () => pdfZoomStep(1));
 $('#pdf-zoom-out').addEventListener('click', () => pdfZoomStep(-1));
-$('#pdf-zoom-reset').addEventListener('click', () => send({ op: 'zoom', action: 'reset' }));
+for (const b of $$('#pdf-zoom [data-fit]')) {
+  b.addEventListener('click', () => {
+    const item = workItem();
+    if (!zoomableItem(item)) return;
+    sendView(fitView(b.dataset.fit, contentAspectFor(item), slotAspectFor(item)));
+  });
+}
 
 function pdfPan(dx, dy) {
   const item = workItem();
-  if (item?.type !== 'pdf' || (item.zoom || 1) <= 1) return;
-  // Half the visible window's share of the page at this zoom, so a press
-  // moves a consistent fraction of "what you can currently see" rather than
-  // a fixed amount that would feel huge zoomed in and tiny zoomed out.
-  const step = 0.6 / (item.zoom || 1);
-  send({
-    op: 'zoom', action: 'set', zoom: item.zoom,
-    panX: (item.panX ?? 0.5) + dx * step,
-    panY: (item.panY ?? 0.5) + dy * step,
-  });
+  if (!zoomableItem(item) || (item.zoom || 1) <= 1) return;
+  // Half of what the room can see, whatever the zoom.
+  sendView(panBy(viewOf(item), dx * 0.5, dy * 0.5, contentAspectFor(item), slotAspectFor(item)));
 }
 $('#pdf-pan-left').addEventListener('click', () => pdfPan(-1, 0));
 $('#pdf-pan-right').addEventListener('click', () => pdfPan(1, 0));

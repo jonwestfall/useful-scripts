@@ -22,6 +22,8 @@
 // compare against it: each page checks itself against the copy the server is
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
+import { ZOOM_MAX } from './zoom.js';
+
 export const BUILD = 107;
 
 // The release this is, as a person would say it out loud - what goes in a bug
@@ -436,7 +438,13 @@ function normalizeItem(item) {
   // everything else gets the same length caps and enum checks text's own
   // fields already have.
   if (copy.type === 'youtube') copy.videoId = String(copy.videoId || '').slice(0, 64);
-  if (copy.type === 'image') copy.fit = copy.fit === 'cover' ? 'cover' : 'contain';
+  if (copy.type === 'image') {
+    copy.fit = copy.fit === 'cover' ? 'cover' : 'contain';
+    // Issue #262: a photo zooms on the projector like a PDF page does.
+    copy.zoom = Math.min(ZOOM_MAX, Math.max(1, Number(copy.zoom) || 1));
+    copy.panX = Number.isFinite(copy.panX) ? copy.panX : 0.5;
+    copy.panY = Number.isFinite(copy.panY) ? copy.panY : 0.5;
+  }
   if (copy.type === 'qr') {
     copy.data = String(copy.data || '').slice(0, 2000);
     copy.caption = String(copy.caption || '').slice(0, 200);
@@ -449,7 +457,7 @@ function normalizeItem(item) {
   }
   if (copy.type === 'pdf') {
     copy.page = Math.max(1, Number(copy.page) || 1);
-    copy.zoom = Math.min(4, Math.max(1, Number(copy.zoom) || 1));
+    copy.zoom = Math.min(ZOOM_MAX, Math.max(1, Number(copy.zoom) || 1));
     copy.panX = Number.isFinite(copy.panX) ? copy.panX : 0.5;
     copy.panY = Number.isFinite(copy.panY) ? copy.panY : 0.5;
   }
@@ -1644,7 +1652,8 @@ function applyOp(state, cmd) {
     // panel here.
     case 'zoom': {
       const item = state.focus === 0 ? state[resolveVisualTarget(state, cmd)] : state.panels[state.focus - 1];
-      if (!item || item.type !== 'pdf') return false;
+      // A PDF page or (Issue #262) a photo shown whole, not cropped to fill.
+      if (!item || !(item.type === 'pdf' || (item.type === 'image' && item.fit !== 'cover'))) return false;
       if (cmd.action === 'reset') {
         item.zoom = 1;
         item.panX = 0.5;
@@ -1652,16 +1661,14 @@ function applyOp(state, cmd) {
         return true;
       }
       if (cmd.action !== 'set') return false;
-      const zoom = Math.min(4, Math.max(1, Number(cmd.zoom) || 1));
-      // Half the visible window's fraction of the page shrinks as zoom grows
-      // (a window 1/zoom as wide can only center within the middle 1-1/zoom
-      // of the page), which is what keeps a pan clamped to "still on the
-      // page" at every zoom level rather than just at zoom 1.
-      const half = 1 / (2 * zoom);
-      const clamp01 = (v) => Math.min(1 - half, Math.max(half, Number.isFinite(v) ? v : 0.5));
+      // Kept within bounds here; kept ON the content by whoever draws it, the
+      // one that knows both the content's and the panel's shape (see
+      // clampView in zoom.js - the controller clamps before it sends too).
+      const zoom = Math.min(ZOOM_MAX, Math.max(1, Number(cmd.zoom) || 1));
+      const unit = (v, d) => Math.min(1, Math.max(0, Number.isFinite(Number(v)) ? Number(v) : d));
       item.zoom = zoom;
-      item.panX = zoom === 1 ? 0.5 : clamp01(cmd.panX ?? item.panX ?? 0.5);
-      item.panY = zoom === 1 ? 0.5 : clamp01(cmd.panY ?? item.panY ?? 0.5);
+      item.panX = zoom === 1 ? 0.5 : unit(cmd.panX ?? item.panX, 0.5);
+      item.panY = zoom === 1 ? 0.5 : unit(cmd.panY ?? item.panY, 0.5);
       return true;
     }
 
