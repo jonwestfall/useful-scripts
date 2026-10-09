@@ -85,7 +85,7 @@ function moduleGraph(entry) {
 const WARM = warmList();
 chk(`the warm list parses out of sw.js (${WARM.size} entries)`, WARM.size > 10);
 
-for (const page of ['control.html', 'display.html', 'deck.html', 'quicklook.html', 'admin.html', 'me.html']) {
+for (const page of ['control.html', 'display.html', 'deck.html', 'quicklook.html', 'replay.html', 'admin.html', 'me.html']) {
   console.log(`\n-- ${page} --`);
   chk(`${page} itself is warmed`, WARM.has(page));
   const needed = new Set();

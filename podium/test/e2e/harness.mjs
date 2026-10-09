@@ -515,6 +515,8 @@ const expecting = {
   marpRetry: false,
   // My Files (Issue #243): a wrong current password, refused on purpose.
   passwordRefused: false,
+  // Replay (Issue #132): a lecture somebody else may not open, refused on purpose.
+  lectureNotFound: false,
   // Issue #258: a raw Word file refused without a choice (415), and a PDF
   // asked of a server that cannot make one (422) - both on purpose.
   wordRefused: false,
@@ -576,6 +578,7 @@ const trap = (page, tag) => {
     if (expecting.deckConflict && /responded with a status of 412/.test(text)) return;
     if (expecting.deckForbidden && /responded with a status of 403/.test(text)) return;
     if (expecting.passwordRefused && /responded with a status of 403/.test(text)) return;
+    if (expecting.lectureNotFound && /responded with a status of 404/.test(text)) return;
     if (expecting.wordRefused && /responded with a status of 4(15|22)/.test(text)) return;
     if (expecting.rosterConflict && /responded with a status of 409/.test(text)) return;
     if (expecting.attendRefused && /responded with a status of 40[34]/.test(text)) return;

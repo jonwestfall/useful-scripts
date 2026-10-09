@@ -6978,9 +6978,17 @@ function micMimeType() {
 // mics live together), and lecture_files is unique by name: two devices
 // racing to file "audio/0002.webm" would have the second replace the first
 // rather than both landing.
-function micChunkName(seq) {
+//
+// Each segment also says when it started and how long it ran (Issue #132):
+// "-t<start ms>-d<length ms>" before the extension. A recorder's own file
+// carries no reliable duration (a MediaRecorder WebM reports Infinity), and
+// the stop-and-restart at each boundary means seq x 2 minutes drifts - the
+// replay lines each segment up with the timeline from these two numbers.
+// replay-model.js reads them, and places an older name without them from
+// its recording's start and its sequence number.
+function micChunkName(seq, startedAt, length) {
   const ext = micMimeType().includes('ogg') ? 'ogg' : 'webm';
-  return `audio/${bus?.clientId || 'mic'}-${micSessionStamp}-${String(seq).padStart(4, '0')}.${ext}`;
+  return `audio/${bus?.clientId || 'mic'}-${micSessionStamp}-${String(seq).padStart(4, '0')}-t${startedAt}-d${Math.max(0, Math.round(length))}.${ext}`;
 }
 
 function beginMicSegment() {
@@ -6994,10 +7002,12 @@ function beginMicSegment() {
   // still be uploading after standDown has already cleared it.
   const lectureId = lastKnownLectureId;
   const parts = [];
+  let startedAt = Date.now();
+  recorder.onstart = () => { startedAt = Date.now(); };
   recorder.ondataavailable = (ev) => { if (ev.data.size) parts.push(ev.data); };
   recorder.onstop = () => {
     if (!parts.length) return;
-    fileWithLecture(micChunkName(seq), 'audio', new Blob(parts, { type: mimeType || 'audio/webm' }), mimeType || 'audio/webm', lectureId);
+    fileWithLecture(micChunkName(seq, startedAt, Date.now() - startedAt), 'audio', new Blob(parts, { type: mimeType || 'audio/webm' }), mimeType || 'audio/webm', lectureId);
   };
   micRecorder = recorder;
   recorder.start();

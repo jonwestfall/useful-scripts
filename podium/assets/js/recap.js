@@ -40,7 +40,7 @@ export const captionText = (event) =>
 // The same folder name the controller's export gives a deck's annotated
 // slides (safeName in control.js), so a kept `slides/<deck>/slide-07.png`
 // can be matched back to the timeline entry that showed slide 7 of that deck.
-const folderName = (text) => String(text || '')
+export const folderName = (text) => String(text || '')
   .replace(/[^a-z0-9-_ ]+/gi, '')
   .trim()
   .replace(/\s+/g, '-')

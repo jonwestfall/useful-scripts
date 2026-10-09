@@ -2872,3 +2872,67 @@ body:not(.is-doc) .doc-only { display: none !important; }
 .att-actions { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
 .att-parked.is-answered { opacity: .6; }
 .r-att.is-exit .r-att-heading { color: #1f5fcc; }
+
+/* Replay (Issue #132): a recorded lecture played back - the stage (what was
+   on screen) and the caption under it, the transcript beside, and the
+   playback bar across the bottom. */
+body.replay { display: flex; flex-direction: column; min-height: 100vh; background: var(--bg); }
+.rp-bar { flex-wrap: wrap; row-gap: 6px; }
+.rp-bar .brand { color: inherit; text-decoration: none; }
+.rp-title { font-weight: 650; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-meta { white-space: nowrap; }
+.rp-main {
+  flex: 1; min-height: 0; display: grid; gap: 12px; padding: 12px 16px 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-areas: "stage side" "controls controls" "note note";
+  height: calc(100vh - 56px);
+}
+.rp-main[hidden] { display: none; }
+.rp-stage-wrap { grid-area: stage; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.rp-stage {
+  flex: 1; min-height: 200px; position: relative; display: flex; align-items: center; justify-content: center;
+  background: #000; border-radius: var(--radius); overflow: hidden;
+}
+.rp-stage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.rp-card { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 24px; text-align: center; color: #e8ecf1; }
+.rp-card[hidden] { display: none; }
+.rp-scene-title { font-size: clamp(20px, 3vw, 34px); font-weight: 650; }
+.rp-scene-note { color: #97a2b0; font-size: 14px; }
+.rp-caption {
+  margin: 0; min-height: 2.8em; padding: 8px 12px; border-radius: 8px; font-size: 17px; line-height: 1.4;
+  background: var(--panel); border: 1px solid var(--line);
+}
+.rp-caption.is-empty { color: var(--dim); }
+.rp-side { grid-area: side; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.rp-side-head { margin: 0; padding: 10px 12px; font-size: 14px; border-bottom: 1px solid var(--line); }
+.rp-transcript { list-style: none; margin: 0; padding: 4px; overflow: auto; flex: 1; min-height: 0; }
+.rp-transcript .rp-line button {
+  display: flex; gap: 10px; align-items: baseline; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-radius: 6px;
+  background: none; color: var(--ink); font: inherit; font-size: 14px; cursor: pointer;
+}
+.rp-transcript .rp-line button:hover, .rp-transcript .rp-line button:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.rp-transcript .rp-line.is-current button { background: color-mix(in srgb, var(--accent) 20%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+.rp-transcript .rp-line-scene button { color: var(--dim); font-size: 12px; font-weight: 600; text-transform: none; }
+.rp-at { color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; min-width: 3.5rem; }
+.rp-none { padding: 8px; }
+.rp-controls { grid-area: controls; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rp-play { min-width: 7.5em; font-weight: 650; }
+.rp-time { font-variant-numeric: tabular-nums; color: var(--dim); min-width: 9em; text-align: center; }
+.rp-scrub { position: relative; flex: 1 1 240px; min-width: 160px; display: flex; align-items: center; }
+.rp-scrub input { width: 100%; position: relative; z-index: 1; background: transparent; }
+.rp-marks { position: absolute; left: 8px; right: 8px; top: 50%; height: 14px; transform: translateY(-50%); pointer-events: none; }
+.rp-mark { position: absolute; top: 0; width: 2px; height: 100%; border-radius: 1px; background: var(--dim); opacity: .55; }
+.rp-mark-poll { background: var(--cue); opacity: .9; width: 3px; }
+.rp-speed { display: inline-flex; gap: 6px; align-items: center; color: var(--dim); font-size: 13px; }
+.rp-audio-note { grid-area: note; margin: 0; }
+@media (max-width: 760px) {
+  .rp-main {
+    height: auto; grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    grid-template-areas: "stage" "controls" "side" "note";
+  }
+  .rp-stage { min-height: 0; aspect-ratio: 16 / 9; flex: none; }
+  .rp-side { max-height: 50vh; }
+  .rp-time { min-width: 0; }
+}
