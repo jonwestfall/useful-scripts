@@ -1831,17 +1831,20 @@ const pixelsAt1x = await screen.evaluate(() => {
 await pad.click('#pdf-zoom-in');
 await pad.waitForFunction(() => document.querySelector('#pdf-zoom-level').textContent === '1.6×', null, { timeout: 5000 });
 ok('zooming in updates the level shown on the controller', true);
+// Issue #262: zoomed, the canvas is the panel's own shape (filling it), so a
+// re-render is a different size as well as different pixels.
 await screen.waitForFunction((before) => {
   const canvas = document.querySelector('.layer[data-role="program"] .r-pdf-canvas');
+  if (!canvas.classList.contains('is-zoomed')) return false;
   const now = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
-  return now.length === before.length && !now.every((v, i) => v === before[i]);
+  return now.length !== before.length || !now.every((v, i) => v === before[i]);
 }, pixelsAt1x, { timeout: 8000 });
 ok('and the display actually re-renders a different (cropped, zoomed-in) image, not just a flag', true);
 ok('pan is enabled once zoomed in', await pad.evaluate(() => document.querySelector('#pdf-pan-left').disabled === false));
 
-await pad.click('#pdf-zoom-reset');
+await pad.click('#zoom-fit-page');
 await pad.waitForFunction(() => document.querySelector('#pdf-zoom-level').textContent === '1×', null, { timeout: 5000 });
-ok('reset zoom returns to 1x and disables pan again',
+ok('Fit page returns to 1x and disables pan again',
   await pad.evaluate(() => document.querySelector('#pdf-pan-left').disabled === true));
 
 await ctx.close();
