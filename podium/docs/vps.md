@@ -167,12 +167,22 @@ reveal who checked in from where. Evidence older than the
 `attendance_retention_days` setting (Admin → Server → Attendance, default 30)
 is deleted by an hourly sweep; the marks and the flags already raised stay.
 
-**What a syllabus can say.** *Attendance is taken with Podium: scan the code
-on the screen and pick your name. The record keeps your name, the time, and
-whether you were present or late. To catch one phone checking in several
-people, it also keeps a scrambled (hashed) form of your browser's random
-identifier and your network address for {30} days, after which they are
-deleted. No location, contacts or other phone data is collected.*
+**What a syllabus can say.** Adapt this to your settings. The {braces} mark
+what depends on them, and a sentence in [brackets] applies only if that
+feature is on:
+
+> *Attendance is taken with Podium: scan the code on the screen (or type it)
+> and pick your name. The record keeps your name, the time, and whether you
+> were present or late, plus any answers you give to the questions asked with
+> check-in. To catch one phone checking in several people, it also keeps a
+> scrambled (hashed) form of your browser's random identifier and your network
+> address for {30} days, after which they are deleted. [Check-in only works
+> from the room: your phone is asked for its location once, and only how far
+> you were from the room is kept - never where you were - for the same
+> {30} days.] [Each check-in emails you a receipt; if you ever get one for a
+> class you did not attend, tell me, because someone used your name.] No
+> contacts or other phone data are collected. Questions left in the parking
+> lot anonymously keep nothing that identifies you.*
 
 The students' side is public, like `/poll`: `GET /attend` (redirects to
 `attend.html`), `POST /attend/code` (a code for a ticket good for ten
@@ -200,6 +210,26 @@ is what lets it answer the exit ticket, or ask the parking lot in its own
 name, without picking a name again; answering still needs a fresh code from
 the screen. The new public routes are `POST /attend/answers`,
 `POST /attend/status` and `POST /attend/parking`.
+
+Phase 5 adds three columns:
+- `attendance_sessions.geofence` holds the ROOM's point and a radius. The
+  point is the instructor's device, at the moment check-in opened.
+- `attendance_evidence.distance_m` is how far each phone was. It is pruned
+  with the rest of the evidence.
+- `courses.attendance_receipts` is the course's switch for emailed receipts.
+
+A student's coordinates are sent once, used to work out a distance, and never
+stored. A phone is let in if its distance is within the radius plus its own
+stated accuracy, capped at the radius, because indoor fixes are often tens of
+metres out.
+
+Mail is Podium's own small SMTP client (`server/mail.js`), set with `SMTP_URL`
+and `MAIL_FROM` (see `deploy/README.md`). It never sends a password over an
+unencrypted connection, except to this machine. A receipt is sent after the
+check-in has been answered, and a failure only reaches the log. The admin
+defaults for the code's rotation (10, 15 or 30 seconds) and the "in the room"
+radius are the system settings `attendance_rotate_s` and
+`attendance_radius_m`.
 
 Passwords are `scrypt` with a per-user random salt, stored as
 `scrypt$N$r$p$salt$hash` so the parameters travel with the hash and can be

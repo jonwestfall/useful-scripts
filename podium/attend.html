@@ -141,6 +141,9 @@
       <button id="guest-back" class="plain" type="button">Back</button>
     </div>
   </form>
+  <!-- Only where the class asks: said before the phone's own prompt, so the
+       student knows why it is asking and what is kept. -->
+  <p class="note" id="where-note" hidden></p>
   <p class="note" id="who-note" role="status"></p>
 </div>
 
@@ -374,7 +377,24 @@
     $('who-course').textContent = [session.course, session.title || session.courseTitle].filter(Boolean).join(' · ')
       + (session.late ? ' · check-ins now count as late' : '');
     show('who');
+    $('where-note').hidden = !session.where;
+    $('where-note').textContent = session.where
+      ? 'This class checks that you are in the room: when you check in, your phone will ask for your location. Only how far you are from the room (it allows ' + session.where.radius + ' m) is kept - never where you are.'
+      : '';
     if (session.roster) { findStep(); } else { guestStep(false); }
+  }
+
+  // The phone's position, once, for a class that asks: only sent to work out
+  // a distance. A refusal is sent as a refusal, and the server says what to do.
+  function locate() {
+    return new Promise(function (resolve) {
+      if (!session || !session.where) { resolve(null); return; }
+      if (!navigator.geolocation) { resolve({ denied: true }); return; }
+      navigator.geolocation.getCurrentPosition(
+        function (pos) { resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }); },
+        function () { resolve({ denied: true }); },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+    });
   }
 
   $('enter').addEventListener('submit', function (ev) {
@@ -462,9 +482,11 @@
 
   async function send(body, button) {
     button.disabled = true;
-    say('who-note', 'Checking in…');
+    say('who-note', session && session.where ? 'Checking where you are…' : 'Checking in…');
     try {
-      var r = await post('checkin', Object.assign({ ticket: ticket, how: how }, body));
+      var location = await locate();
+      say('who-note', 'Checking in…');
+      var r = await post('checkin', Object.assign({ ticket: ticket, how: how, location: location }, body));
       keepReceipt(Object.assign({}, r, { already: false }));
       afterCheckIn(r);
     } catch (err) {

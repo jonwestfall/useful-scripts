@@ -745,6 +745,25 @@ Running Podium's own server (`server/podium-server.js` with a `DATA_DIR`) adds a
     - whether the parking lot opens.
 
     Taking it from the Library in class opens it for the plan's course and puts the code on screen. A lecture plans both by adding two items, one at the start and one at the end.
+  - **Only from phones in the room** (Issue #256, phase 5):
+    - Tick it when opening check-in, and pick how near: 50 to 500 m, defaulting to Admin's setting. The controller's own location is taken as the room.
+    - Before asking for a phone's location, the phone says why. It sends its position once; the server works out the distance and keeps only that.
+    - A phone that is too far, or won't share its location, is refused with the reason and told to ask to be marked by hand.
+    - Distances show in the controller's list and in the review, until the retention period ends.
+    - A phone's own stated accuracy is allowed for, up to the radius, because indoor locations are rough.
+    - The planner's Attendance item can ask for this too.
+  - **Receipts by email:**
+    - Once the server has mail set up (`SMTP_URL` and `MAIL_FROM`, see [deploy/README.md](../deploy/README.md)), a course's owners can turn on **Email each student a receipt when they check in** on My Files → Attendance.
+    - The receipt goes to the roster's address, or the one a guest gave.
+    - It also tells a student if someone checked in under their name.
+    - Without mail, the switch is shown off, with the reason.
+  - **Admin → Server → Attendance**:
+    - how long device details are kept;
+    - how often the code changes (10, 15 or 30 seconds);
+    - the default "in the room" radius;
+    - whether mail is set up, and **Send a test email**.
+
+    `podium-admin doctor` reports the mail settings too.
 - **Plans on the server**: a lecture saves itself to the server from the planner and is on the iPad in class without a file to carry. A plan file you exported stays untouched either way. Two edits to the same plan are caught rather than silently overwriting each other.
 
 ### Kiosks & Unattended Signage

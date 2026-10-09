@@ -51,6 +51,9 @@ const MAX_OPTION = 120;
 const MAX_ANSWER = 500;
 const MAX_PARKING_TEXT = 500;
 const MAX_PARKING = 500;            // per session
+const RADII = [25, 50, 100, 200, 500, 1000];   // metres a phone may be from the room
+const DEFAULT_RADIUS = 100;
+const EARTH_M = 6371008.8;
 const MAX_NAME = 120;
 const MAX_STUDENT_ID = 64;
 const MAX_EMAIL = 200;
@@ -286,6 +289,77 @@ function askedOf(db, session, markId) {
 
 // --- the student's side -------------------------------------------------------
 
+// --- the room's location ---------------------------------------------------------
+
+/** Metres between two points on the earth (haversine: good to a metre at these distances). */
+function distanceM(a, b) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat);
+  const dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_M * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function parseGeofence(text) {
+  try {
+    const g = JSON.parse(text || 'null');
+    return g && Number.isFinite(g.lat) && Number.isFinite(g.lng) && Number.isFinite(g.radius) ? g : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The room's point and radius, checked; null to require nothing. */
+function cleanGeofence(raw) {
+  if (!raw) return null;
+  const lat = Number(raw.lat);
+  const lng = Number(raw.lng);
+  const radius = Math.round(Number(raw.radius) || DEFAULT_RADIUS);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    throw fail('the room’s location could not be read - try “use this device’s location” again');
+  }
+  if (radius < 10 || radius > 5000) throw fail('the distance from the room must be between 10 and 5000 metres');
+  return { lat, lng, radius };
+}
+
+/**
+ * Whether a phone's reported position is near enough the room. A phone's
+ * location indoors is rough - often tens of metres out - so its own stated
+ * accuracy is given back to it, up to the radius itself. Only the distance
+ * leaves this function.
+ */
+function nearEnough(geofence, location) {
+  if (!location || location.denied || !Number.isFinite(Number(location.lat)) || !Number.isFinite(Number(location.lng))) {
+    return { ok: false, reason: 'location' };
+  }
+  const distance = Math.round(distanceM(geofence, { lat: Number(location.lat), lng: Number(location.lng) }));
+  const slack = Math.min(Math.max(Number(location.accuracy) || 0, 0), geofence.radius);
+  return { ok: distance <= geofence.radius + slack, distance };
+}
+
+// --- server-wide defaults (Admin -> Server -> Attendance) -------------------------
+
+function defaults(db) {
+  const rotate = Number(store.getSystemSetting(db, 'attendance_rotate_s', String(DEFAULT_ROTATE)));
+  const radius = Number(store.getSystemSetting(db, 'attendance_radius_m', String(DEFAULT_RADIUS)));
+  return {
+    rotate: ROTATIONS.includes(rotate) ? rotate : DEFAULT_ROTATE,
+    radius: RADII.includes(radius) ? radius : DEFAULT_RADIUS,
+  };
+}
+
+function setDefaults(db, { rotate, radius } = {}) {
+  if (rotate !== undefined) {
+    if (!ROTATIONS.includes(Number(rotate))) throw fail(`the code changes every ${ROTATIONS.join(', ')} seconds - pick one`);
+    store.setSystemSetting(db, 'attendance_rotate_s', String(Number(rotate)));
+  }
+  if (radius !== undefined) {
+    if (!RADII.includes(Number(radius))) throw fail(`the room's radius is one of ${RADII.join(', ')} metres`);
+    store.setSystemSetting(db, 'attendance_radius_m', String(Number(radius)));
+  }
+  return defaults(db);
+}
+
 /**
  * A typed or scanned code, swapped for a ticket good for the next few minutes.
  * Every wrong code counts against this browser and this network address.
@@ -318,6 +392,8 @@ function redeemCode(db, { code, device, ip, now = Date.now() } = {}) {
       title: session.title || '',
       roster: hasRoster(db, session.course_id),
       late: lateAt(session, now),
+      // Whether the phone will be asked where it is - never where the room is.
+      where: parseGeofence(session.geofence) ? { radius: parseGeofence(session.geofence).radius } : null,
       ...askedOf(db, session, null),
     },
   };
@@ -359,7 +435,7 @@ function cleanGuest(raw = {}) {
  * Check in: someone on the roster (`rosterId`) or a guest (`guest`). Checking
  * the same person in twice changes nothing and shows the first receipt again.
  */
-function checkIn(db, { ticket, device, ip, rosterId, guest, how = 'code', now = Date.now() } = {}) {
+function checkIn(db, { ticket, device, ip, rosterId, guest, how = 'code', location = null, now = Date.now() } = {}) {
   const deviceHash = keyed(db, 'd', cleanDevice(device));
   const session = redeemTicket(db, ticket, deviceHash, now);
   const ipHash = keyed(db, 'n', ip);
@@ -383,6 +459,20 @@ function checkIn(db, { ticket, device, ip, rosterId, guest, how = 'code', now = 
     : db.prepare('SELECT * FROM attendance_marks WHERE session_id = ? AND roster_id IS NULL AND guest_email = ?').get(session.id, guestFields.email);
   if (existing) return receiptOf(db, session, existing, true);
 
+  // Near the room, if the session asks: only the distance is kept.
+  const geofence = parseGeofence(session.geofence);
+  let distance = null;
+  if (geofence) {
+    const near = nearEnough(geofence, location);
+    if (near.reason === 'location') {
+      throw fail('this class checks that you are in the room, which needs your location - allow it and try again, or ask your instructor to mark you by hand', 403, { needs: 'location' });
+    }
+    if (!near.ok) {
+      throw fail(`you seem to be about ${near.distance} m from the room, and this class allows ${geofence.radius} m. If you are in the room, ask your instructor to mark you by hand`, 403, { needs: 'nearer' });
+    }
+    distance = near.distance;
+  }
+
   const total = db.prepare('SELECT COUNT(*) AS n FROM attendance_marks WHERE session_id = ?').get(session.id).n;
   if (total >= MAX_MARKS) throw fail('this check-in is full', 429);
   const fromThisDevice = deviceHash
@@ -402,8 +492,8 @@ function checkIn(db, { ticket, device, ip, rosterId, guest, how = 'code', now = 
       .run(session.id, person ? person.id : null,
         person ? '' : guestFields.name, person ? '' : guestFields.studentId, person ? '' : guestFields.email,
         status, how === 'scan' ? 'scan' : 'code', now, JSON.stringify(flags));
-    db.prepare('INSERT INTO attendance_evidence (mark_id, device_hash, ip_hash, created_at) VALUES (?, ?, ?, ?)')
-      .run(lastInsertRowid, deviceHash, ipHash, now);
+    db.prepare('INSERT INTO attendance_evidence (mark_id, device_hash, ip_hash, distance_m, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(lastInsertRowid, deviceHash, ipHash, distance, now);
     // The earlier check-ins from this browser are flagged too: the second
     // name is as much in question as the first.
     for (const other of fromThisDevice) {
@@ -571,6 +661,7 @@ function sessionView(db, session, now = Date.now()) {
     phase: session.phase === 'exit' ? 'exit' : 'entry',
     questions: parseQuestions(session.questions),
     parking: !!session.parking,
+    geofence: parseGeofence(session.geofence),
     counts,
     rosterSize: db.prepare('SELECT COUNT(*) AS n FROM course_roster WHERE course_id = ? AND removed_at IS NULL').get(session.course_id).n,
   };
@@ -581,7 +672,11 @@ function sessionView(db, session, now = Date.now()) {
  * for either or both phases ({entry: [...], exit: [...]}, each cleaned), and
  * whether its parking lot is open. Anything not given is left as it was.
  */
-function applyAsks(db, session, { questions, parking, phase } = {}) {
+function applyAsks(db, session, { questions, parking, phase, geofence } = {}) {
+  if (geofence !== undefined) {
+    const g = cleanGeofence(geofence);
+    db.prepare('UPDATE attendance_sessions SET geofence = ? WHERE id = ?').run(g ? JSON.stringify(g) : null, session.id);
+  }
   if (phase !== undefined) {
     if (!PHASES.includes(phase)) throw fail('a check-in is either the entry or the exit ticket');
     db.prepare('UPDATE attendance_sessions SET phase = ? WHERE id = ?').run(phase, session.id);
@@ -599,7 +694,7 @@ function applyAsks(db, session, { questions, parking, phase } = {}) {
  * lecture is opened again rather than a second one started - closing and
  * reopening is one window that happened twice, not two classes.
  */
-function openSession(db, user, { course: code, lectureId = null, title = '', lateRule: rule = null, rotate = DEFAULT_ROTATE, questions, parking, phase, now = Date.now() } = {}) {
+function openSession(db, user, { course: code, lectureId = null, title = '', lateRule: rule = null, rotate, questions, parking, phase, geofence, now = Date.now() } = {}) {
   const course = courseFor(db, user, code);
   const lecture = lectureId
     ? db.prepare('SELECT id, title FROM lectures WHERE id = ?').get(Number(lectureId))
@@ -611,10 +706,10 @@ function openSession(db, user, { course: code, lectureId = null, title = '', lat
     const next = cleanRule(rule, now);
     db.prepare(`UPDATE attendance_sessions SET opened_at = ?, closed_at = NULL${next ? ', late_rule = ?' : ''} WHERE id = ?`)
       .run(...[now, ...(next ? [JSON.stringify(next)] : []), existing.id]);
-    applyAsks(db, existing, { questions, parking, phase });
+    applyAsks(db, existing, { questions, parking, phase, geofence });
     return { session: sessionView(db, db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(existing.id), now), reopened: true };
   }
-  const seconds = ROTATIONS.includes(Number(rotate)) ? Number(rotate) : DEFAULT_ROTATE;
+  const seconds = ROTATIONS.includes(Number(rotate)) ? Number(rotate) : defaults(db).rotate;
   const cleanTitle = String(title || lecture?.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
   const { lastInsertRowid } = db.prepare(`INSERT INTO attendance_sessions
       (course_id, lecture_id, title, created_at, created_by, opened_at, late_rule, rotate_s, secret, screen_key)
@@ -622,7 +717,7 @@ function openSession(db, user, { course: code, lectureId = null, title = '', lat
     .run(course.id, lecture ? lecture.id : null, cleanTitle, now, user.id, now,
       JSON.stringify(cleanRule(rule, now) || { after: null, from: now }), seconds,
       crypto.randomBytes(32).toString('hex'), crypto.randomBytes(18).toString('base64url'));
-  applyAsks(db, db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(lastInsertRowid), { questions, parking, phase });
+  applyAsks(db, db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(lastInsertRowid), { questions, parking, phase, geofence });
   return { session: sessionView(db, db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(lastInsertRowid), now), reopened: false };
 }
 
@@ -698,7 +793,7 @@ function flagsFor(db, marks) {
 /** A session with everyone in it: the roster with their marks, then guests. */
 function getSession(db, user, id, { now = Date.now() } = {}) {
   const session = sessionFor(db, user, id);
-  const marks = db.prepare(`SELECT m.*, e.device_hash, e.ip_hash, r.name AS roster_name, r.student_id AS roster_student_id
+  const marks = db.prepare(`SELECT m.*, e.device_hash, e.ip_hash, e.distance_m, r.name AS roster_name, r.student_id AS roster_student_id
       FROM attendance_marks m
       LEFT JOIN attendance_evidence e ON e.mark_id = m.id
       LEFT JOIN course_roster r ON r.id = m.roster_id
@@ -716,6 +811,8 @@ function getSession(db, user, id, { now = Date.now() } = {}) {
   const markView = (m) => ({
     id: m.id, status: m.status, how: m.how, at: m.at, flags: flags.get(m.id) || [], edited: !!m.edited_at,
     answers: answers.get(m.id) || null,
+    // How far from the room, where the session asked (kept for the retention period).
+    distance: m.distance_m ?? null,
     editedBy: m.edited_at ? who(m.edited_by) : '',
     // Flags looked at and let go: still listed, no longer asking for attention.
     dismissed: m.flags_dismissed_at ? { at: m.flags_dismissed_at, by: who(m.flags_dismissed_by) } : null,
@@ -945,6 +1042,7 @@ function listSessions(db, user, code, { from, to, now = Date.now() } = {}) {
   return {
     course: course.code,
     mayEditRoster: courses.roleOf(db, user, code) === 'owner',
+    receipts: receiptsOn(db, course.id),
     sessions: rows.map((row) => {
       const marked = new Set(db.prepare('SELECT roster_id FROM attendance_marks WHERE session_id = ? AND roster_id IS NOT NULL').all(row.id).map((m) => m.roster_id));
       // Who never checked in to a closed session: absent, though nobody marked them so.
@@ -1088,6 +1186,55 @@ function exportCsv(db, user, code, { format = 'long', from, to, tz = 0, points =
   return `\uFEFF${lines.join('\r\n')}\r\n`;
 }
 
+// --- emailed receipts ---------------------------------------------------------------
+
+/** Whether a course emails receipts (its owners decide; mail must be set up to send any). */
+function receiptsOn(db, courseId) {
+  return !!db.prepare('SELECT attendance_receipts FROM courses WHERE id = ?').get(courseId)?.attendance_receipts;
+}
+
+function setReceipts(db, user, code, on) {
+  const course = courseFor(db, user, code);
+  if (courses.roleOf(db, user, code) !== 'owner') throw fail(`only an owner of ${course.code.toUpperCase()} or an admin can change this`, 403);
+  db.prepare('UPDATE courses SET attendance_receipts = ? WHERE id = ?').run(on ? 1 : 0, course.id);
+  return { course: course.code, receipts: !!on };
+}
+
+/**
+ * The email for a fresh check-in, if its course sends them and there is an
+ * address to send it to: the roster's, or the one a guest gave. Null
+ * otherwise. Besides being a receipt, it tells a student if someone else
+ * checked in under their name.
+ */
+function receiptEmail(db, receipt, { timeZone } = {}) {
+  if (!receipt || receipt.already || !receipt.markKey) return null;
+  const mark = markForKey(db, receipt.markKey);
+  const session = db.prepare('SELECT * FROM attendance_sessions WHERE id = ?').get(mark.session_id);
+  if (!session || !receiptsOn(db, session.course_id)) return null;
+  const to = mark.roster_id
+    ? db.prepare('SELECT email FROM course_roster WHERE id = ?').get(mark.roster_id)?.email || ''
+    : mark.guest_email;
+  if (!to) return null;
+  const course = courseOf(db, session);
+  const when = new Date(mark.at).toLocaleString('en-US', {
+    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', ...(timeZone ? { timeZone } : {}),
+  });
+  const what = [course.code.toUpperCase(), course.title && course.title !== course.code ? course.title : '', session.title].filter(Boolean).join(' — ');
+  return {
+    to,
+    subject: `Checked in: ${course.code.toUpperCase()}, ${when}`,
+    text: [
+      `Checked in as: ${receipt.name}`,
+      `Class: ${what}`,
+      `When: ${when}`,
+      `Marked: ${mark.status}`,
+      '',
+      'This is an automatic receipt from Podium, sent because you (or someone using your name) checked in.',
+      'If that was not you, tell your instructor.',
+    ].join('\n'),
+  };
+}
+
 // --- retention ------------------------------------------------------------------
 
 /** Days device and network hashes are kept: the admin's setting, 30 by default. */
@@ -1127,6 +1274,8 @@ module.exports = {
   // after class
   dismissFlags, addGuestToRoster, deleteSession, listSessions, grid, exportCsv,
   answerParking, answersCsv, cleanQuestions,
+  // location, defaults, receipts
+  defaults, setDefaults, receiptsOn, setReceipts, receiptEmail, distanceM, RADII,
   // retention
   retentionDays, setRetentionDays, prune,
   // for tests

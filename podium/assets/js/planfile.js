@@ -231,6 +231,11 @@ export const PLAN_TYPES = {
       { key: 'lateOn', label: 'Count check-ins after a while as late', kind: 'check', def: false },
       { key: 'lateAfter', label: 'Late after (minutes from opening)', kind: 'number', def: 10, min: 0, max: 600 },
       { key: 'parking', label: 'Open the parking lot (students leave questions)', kind: 'check', def: false },
+      // Phase 5: only from phones near the room - the controller's own
+      // position, taken when the item is, is the room.
+      { key: 'inRoom', label: 'Only from phones in the room (uses the controller\u2019s location)', kind: 'check', def: false },
+      { key: 'radius', label: 'How near', kind: 'select', def: '100',
+        options: [['50', '50 m'], ['100', '100 m'], ['200', '200 m'], ['500', '500 m']] },
     ],
   },
 };

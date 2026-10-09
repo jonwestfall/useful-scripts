@@ -52,6 +52,7 @@ const api = require('./api.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
 const attendance = require('./attendance.js');
+const mail = require('./mail.js');
 const zipStaging = require('./zip-staging.js');
 const { createViewCodes, VIEW_ROOM_RE } = require('./view-codes.js');
 
@@ -605,6 +606,7 @@ async function handleAttend(req, res, url) {
       pollJson(res, err.status || 500, {
         error: err.status ? err.message : 'that did not work',
         ...(err.retryAfterSeconds ? { retryAfterSeconds: err.retryAfterSeconds } : {}),
+        ...(err.needs ? { needs: err.needs } : {}),
       });
     }
   };
@@ -625,9 +627,19 @@ async function handleAttend(req, res, url) {
     return;
   }
   if (action === 'checkin') {
-    answer(() => attendance.checkIn(db, {
-      ticket: body.ticket, device: body.device, ip, rosterId: body.rosterId, guest: body.guest, how: body.how,
-    }));
+    answer(() => {
+      const receipt = attendance.checkIn(db, {
+        ticket: body.ticket, device: body.device, ip, rosterId: body.rosterId, guest: body.guest, how: body.how, location: body.location,
+      });
+      // A receipt by email, where the course sends them: after answering,
+      // and never in the way of it - a mail server that is down costs a
+      // line in the log, not a student's check-in.
+      const email = mail.mailConfig() ? attendance.receiptEmail(db, receipt) : null;
+      if (email) {
+        mail.sendMail(email).catch((err) => console.error(`podium: an attendance receipt to ${email.to} was not sent (${err.message})`));
+      }
+      return receipt;
+    });
     return;
   }
   pollJson(res, 404, { error: 'no such check-in route' });

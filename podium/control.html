@@ -993,6 +993,14 @@
               <label for="att-entry-questions" class="hint" style="margin: 0">Questions on check-in (optional): one per line, choices after a | — <i>Did you do the reading? | Yes | Some | No</i></label>
               <textarea id="att-entry-questions" rows="2" placeholder="Leave empty to just take attendance"></textarea>
               <label class="check" style="margin: 0"><input id="att-parking-start" type="checkbox"> Open the parking lot (students can leave a question)</label>
+              <div class="inline">
+                <label class="check" style="margin: 0"><input id="att-in-room" type="checkbox"> Only from phones in the room</label>
+                <span id="att-room-row" class="inline" hidden>
+                  <label for="att-radius" class="hint" style="margin: 0">within</label>
+                  <select id="att-radius"></select>
+                  <span class="hint">of this device, which is taken as the room. Indoors a phone's location is often 50 m out: 100 m or more is safer. Only each phone's distance is kept.</span>
+                </span>
+              </div>
               <button id="att-open" type="button">Open check-in</button>
             </div>
             <div id="att-live" class="stack" hidden>

@@ -83,6 +83,7 @@ export function createAttendanceReview({ api, dialog, courses, initial = '' }) {
     let data;
     try { data = await api(`${base()}/sessions?${range()}`); } catch (err) { say(err.message, true); list.replaceChildren(); return; }
     mayEditRoster = !!data.mayEditRoster;
+    showReceipts(data);
     if (!data.sessions.length) {
       list.replaceChildren(el('p', { class: 'hint' }, 'No attendance taken in this course yet (in this range). Open check-in from the controller’s Attendance tab.'));
       return;
@@ -120,6 +121,16 @@ export function createAttendanceReview({ api, dialog, courses, initial = '' }) {
     } catch (err) { say(err.message, true); }
   }
 
+  // Emailed receipts: the course's owners turn them on, where the server can send mail.
+  let mailInfo = null;
+  async function showReceipts(data) {
+    mailInfo ??= await api('/api/attendance/settings').then((r) => r.mail).catch(() => ({ configured: false, reason: 'the server did not say' }));
+    $('#attn-receipts-row').hidden = !data.mayEditRoster;
+    $('#attn-receipts').checked = !!data.receipts;
+    $('#attn-receipts').disabled = !mailInfo.configured && !data.receipts;
+    $('#attn-receipts-why').textContent = mailInfo.configured ? '' : `Off: mail is not set up on this server (${mailInfo.reason}).`;
+  }
+
   // --- one session's review --------------------------------------------------------
 
   async function loadReview(id) {
@@ -152,6 +163,7 @@ export function createAttendanceReview({ api, dialog, courses, initial = '' }) {
       const flags = mark?.flags?.length ? flagText(mark.flags) : '';
       const bits = [meta,
         mark && mark.how !== 'hand' && `checked in ${timeOf(mark.at)} by ${mark.how === 'scan' ? 'scanning' : 'typing the code'}`,
+        mark?.distance != null && `${mark.distance} m from the room`,
         mark?.how === 'hand' && 'marked by hand',
         mark?.edited && `changed${mark.editedBy ? ` by ${mark.editedBy}` : ''}`].filter(Boolean).join(' · ');
       return el('div', { class: `att-row${isFlagged(mark) ? ' is-flagged' : ''}`, role: 'listitem' },
@@ -310,6 +322,12 @@ export function createAttendanceReview({ api, dialog, courses, initial = '' }) {
   $('#attn-show-sessions').addEventListener('click', () => { reviewing = null; view = 'sessions'; load(); });
   $('#attn-show-grid').addEventListener('click', () => { reviewing = null; view = 'grid'; load(); });
   $('#attn-export-canvas').addEventListener('click', canvasExport);
+  $('#attn-receipts').addEventListener('change', async (ev) => {
+    try {
+      await api(`${base()}/receipts`, { method: 'PUT', body: { on: ev.target.checked } });
+      say(ev.target.checked ? 'Each student is emailed a receipt when they check in.' : 'No more receipts by email.');
+    } catch (err) { ev.target.checked = !ev.target.checked; say(err.message, true); }
+  });
 
   return {
     async open() { fillCourses(); await load(); },

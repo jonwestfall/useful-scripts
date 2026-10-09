@@ -75,6 +75,28 @@ holding. The CLI stays the right tool for installing, for scripting, and for
 getting back in — it is the one path that will still disable the last
 administrator when you need it to.
 
+## Outgoing mail (attendance receipts)
+
+Optional. With mail set up, a course's owners can have each student emailed a
+receipt when they check in (My Files → Attendance). Set two lines in
+`podium.env` and restart:
+
+```
+SMTP_URL=smtp://user:password@mail.example.edu:587
+MAIL_FROM="Podium <podium@example.edu>"
+```
+
+- `smtp://` upgrades with STARTTLS. Podium will not send a password over a
+  connection that did not encrypt, unless the mail server is this machine.
+- `smtps://` is TLS from the start (port 465 by default).
+- `smtp://127.0.0.1:25` is a local relay (Postfix, say), with no login.
+- Percent-encode special characters in the user or password, as in any URL
+  (`@` is `%40`).
+
+`podium-admin doctor` says whether it reads, and Admin → Server → Attendance
+has **Send a test email** to prove a message gets through. A receipt that
+cannot be sent is logged; it never holds up a student's check-in.
+
 ## Session records, and how long they are kept
 
 Once there are accounts, the display writes down what it showed, and the

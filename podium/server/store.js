@@ -693,6 +693,18 @@ const MIGRATIONS = [
       CREATE INDEX attendance_parking_by_session ON attendance_parking(session_id, at);
     `);
   },
+  (db) => {
+    db.exec(`
+      -- Location and receipts (Issue #256, phase 5). A session can require
+      -- phones to be near the room: the ROOM's point, set by the instructor's
+      -- own device, and a radius. A student's coordinates are never stored -
+      -- only how far away they were, as evidence, pruned with the rest.
+      ALTER TABLE attendance_sessions ADD COLUMN geofence TEXT;   -- {lat, lng, radius} or NULL
+      ALTER TABLE attendance_evidence ADD COLUMN distance_m INTEGER;
+      -- Whether a course emails each student a receipt when they check in.
+      ALTER TABLE courses ADD COLUMN attendance_receipts INTEGER NOT NULL DEFAULT 0;
+    `);
+  },
 ];
 
 function migrate(db) {
