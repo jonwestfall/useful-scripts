@@ -609,7 +609,9 @@ function inkAspects() {
   const out = {};
   for (const panel of activePanels()) {
     if (!panel.item) continue;
-    const rect = inkRectFor(panel.slot, panel.renderer);
+    // The box the content shows in, not a document's whole page (its pageRect):
+    // the pad is the window onto a document, and maps itself to the page.
+    const rect = contentRectFor(panel.slot, panel.renderer);
     if (rect.w > 0 && rect.h > 0) out[inkSurfaceKey(panel.item)] = Math.round((rect.w / rect.h) * 10000) / 10000;
   }
   return out;
