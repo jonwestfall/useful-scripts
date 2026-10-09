@@ -910,6 +910,8 @@ async function refreshSystemSettings() {
     if (zipMb) zipMb.value = String(body.maxZipUploadMb ?? 200);
     const keep = $('#attendance-retention-days');
     if (keep) keep.value = String(body.attendanceRetentionDays ?? 30);
+    if ($('#screen-video-check')) $('#screen-video-check').checked = !!body.screenVideo;
+    if ($('#screen-video-mb')) $('#screen-video-mb').value = String(body.screenVideoMb ?? 1000);
     if ($('#attendance-rotate')) $('#attendance-rotate').value = String(body.attendanceRotate ?? 15);
     if ($('#attendance-radius')) $('#attendance-radius').value = String(body.attendanceRadius ?? 100);
     if ($('#mail-status')) {
@@ -939,6 +941,34 @@ async function updateMaxZipUpload(ev) {
     }
     ev.target.value = String(body.maxZipUploadMb);
     status.textContent = `Saved — ZIP imports now take up to ${body.maxZipUploadMb} MB.`;
+    setTimeout(() => { if (status.textContent.startsWith('Saved')) status.textContent = ''; }, 4000);
+  } catch {
+    status.textContent = 'Could not reach server.';
+  }
+}
+
+// Screen video (Issue #132, phase 3): on or off, and the per-lecture budget.
+async function updateScreenVideo(change) {
+  const status = $('#screen-video-status');
+  status.textContent = 'Saving…';
+  try {
+    const res = await fetch('/api/system/settings', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(change),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      status.textContent = body.error || 'Could not save setting.';
+      await refreshSystemSettings();
+      return;
+    }
+    $('#screen-video-check').checked = !!body.screenVideo;
+    $('#screen-video-mb').value = String(body.screenVideoMb);
+    status.textContent = body.screenVideo
+      ? `Saved - displays may record the screen, up to ${body.screenVideoMb} MB a lecture.`
+      : 'Saved - displays do not record the screen.';
     setTimeout(() => { if (status.textContent.startsWith('Saved')) status.textContent = ''; }, 4000);
   } catch {
     status.textContent = 'Could not reach server.';
@@ -2830,6 +2860,8 @@ if (!info.features.includes('library')) {
       $('#backup-go').addEventListener('click', downloadBackup);
       $('#allow-poll-names-check')?.addEventListener('change', updateAllowPollNames);
       $('#max-zip-upload-mb')?.addEventListener('change', updateMaxZipUpload);
+      $('#screen-video-check')?.addEventListener('change', (ev) => updateScreenVideo({ screenVideo: ev.target.checked }));
+      $('#screen-video-mb')?.addEventListener('change', (ev) => updateScreenVideo({ screenVideoMb: Number(ev.target.value) }));
       $('#attendance-retention-days')?.addEventListener('change', updateAttendanceRetention);
       $('#attendance-rotate')?.addEventListener('change', (ev) => updateAttendanceDefaults('attendanceRotate', ev.target.value));
       $('#attendance-radius')?.addEventListener('change', (ev) => updateAttendanceDefaults('attendanceRadius', ev.target.value));

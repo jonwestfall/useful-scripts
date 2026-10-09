@@ -121,6 +121,16 @@ sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js lectures list
 sudo -u podium DATA_DIR=/var/lib/podium node podium-admin.js lectures prune --days 180
 ```
 
+**Screen video** (Issue #132) is the one part of a session record that can be
+large. It is off until an administrator turns it on (**Admin › Server › Screen
+video**). With it on, a display's Go live screen offers **Go live and record the
+screen**, and that lecture keeps its screen as video at about 540 MB an hour,
+up to a per-lecture limit (1000 MB unless you change it). That limit is separate
+from the 400 MB a session may use for photos, ink and mic audio. Plan the disk
+for it before turning it on: a course recording 30 lectures can keep 15 GB or
+more. `LECTURE_RETENTION_DAYS` ages screen video out along with the other
+files.
+
 Courses are how the library is shared: an item filed under `psy415` is visible
 to that course's members, an item filed under nothing is visible to everyone
 with an account here. Members can add to a course library and present from it;

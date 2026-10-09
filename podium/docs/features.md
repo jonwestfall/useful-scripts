@@ -712,6 +712,11 @@ On a server with accounts, the display writes down what it showed as it goes: a 
 - **Several mics:** with more than one, each has its own button to mute it, for example a student's answer without the instructor's mic.
 - **On a phone:** the controls stay pinned to the bottom while the transcript scrolls.
 - **Links:** the address keeps your place (`replay.html?lecture=…&at=…`), so a reload or a shared link opens at the same moment. Only someone who could open the lecture can replay it.
+- **Screen video** (optional): if an administrator has turned on **Admin › Server › Screen video**, the display's Go live screen also offers **● Go live and record the screen**. The browser asks to share that tab, and the display records it (with the tab's own sound) in 30-second segments uploaded as it goes.
+  - A small **● Recording the screen** badge stays on screen while it runs, and the arming screen says the screen is kept too.
+  - Recording stops when you stand down, when the browser's own *Stop sharing* is pressed, or when the lecture reaches the server's screen-video limit (the badge says why).
+  - In the replay, wherever video was recorded it plays on the stage in place of the saved pictures; elsewhere the pictures show as before.
+  - Kiosks and Guest View never record. A lecture that kept a recording (screen or mic) is never thrown away as empty when it ends.
 - **Play from here:** every search result has a **▶**, and every moment of an opened timeline (in search results and on the admin page's Sessions tab) has a **▶** time. Each opens the replay a few seconds before that moment, so the sentence is heard from its start.
 
 **Searching past sessions** (Issue #159): the server keeps a full-text index of every session's caption lines, what was on screen, timeline notes and poll questions, plus what attendance asked: each check-in's entry and exit questions and its parking-lot questions. It is kept up to date as the display records, and history from before the index existed is added the first time the server starts.

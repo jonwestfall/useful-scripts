@@ -2826,6 +2826,113 @@ await kioskCtx.close();
 kioskServer.kill();
 }
 
+if (want('recording the screen (#132)')) {
+console.log('\n-- recording the screen (#132) --');
+// Its own server and account, like the kiosk section above. The browser's
+// "share this tab" picker cannot be clicked headlessly, so getDisplayMedia is
+// stood in for by a canvas that changes colour - everything after it (the
+// recorder, the segments, the uploads, the replay) is the real thing.
+const svPort = await freePort();
+const svBase = `http://127.0.0.1:${svPort}`;
+const svData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-screen-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'screenop', '--admin', '--name', 'Screen Op', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: svData }, input: 'record the whole screen\n',
+});
+const svServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(svPort), STATIC: '../', DATA_DIR: svData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+svServer.stderr.on('data', (d) => process.stderr.write(`[screen-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('screen relay did not start')), 10000);
+  let log = '';
+  svServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  svServer.on('exit', (code) => reject(new Error(`screen relay exited with ${code}`)));
+});
+const svCtx = await browser.newContext();
+await svCtx.addInitScript((cfg) => {
+  localStorage.setItem('podium.config.v2', cfg);
+  window.__PODIUM_TEST_SCREEN_SEGMENT_MS__ = 1500;
+  if (navigator.mediaDevices) {
+    navigator.mediaDevices.getDisplayMedia = async () => {
+      const canvas = Object.assign(document.createElement('canvas'), { width: 320, height: 180 });
+      const g = canvas.getContext('2d');
+      let i = 0;
+      setInterval(() => { g.fillStyle = `hsl(${(i++ * 25) % 360}, 70%, 50%)`; g.fillRect(0, 0, 320, 180); }, 66);
+      window.__screenShared = true;
+      return canvas.captureStream(15);
+    };
+  }
+}, JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${svPort}/podium`, room: 'screen-class', passphrase: 'record the room' }));
+const svSignIn = await svCtx.newPage();
+trap(svSignIn, 'screen sign-in');
+await svSignIn.goto(`${svBase}/control.html`);
+await svSignIn.waitForSelector('#form');
+await svSignIn.fill('#username', 'screenop');
+await svSignIn.fill('#password', 'record the whole screen');
+await Promise.all([svSignIn.waitForURL(/control\.html/), svSignIn.click('#go')]);
+await svSignIn.waitForSelector('#app:not([hidden])');
+
+const svDisplay = await svCtx.newPage();
+trap(svDisplay, 'screen display');
+await svDisplay.goto(`${svBase}/display.html`);
+await svDisplay.waitForSelector('#arm-record:not([hidden])', { timeout: 10000 });
+ok('off by default: the display offers no screen recording', await svDisplay.isHidden('#arm-record-screen'));
+
+const turnedOn = await svSignIn.evaluate(() => fetch('/api/system/settings', {
+  method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ screenVideo: true, screenVideoMb: 200 }),
+}).then((r) => r.json()));
+ok(`an administrator turns it on (${JSON.stringify({ on: turnedOn.screenVideo, mb: turnedOn.screenVideoMb })})`, turnedOn.screenVideo === true && turnedOn.screenVideoMb === 200);
+await svDisplay.reload();
+await svDisplay.waitForSelector('#arm-record-screen:not([hidden])', { timeout: 10000 })
+  .then(() => ok('then the Go live screen offers "Go live and record the screen"', true))
+  .catch(() => ok('then the Go live screen offers "Go live and record the screen"', false));
+ok(`and the room is told the screen is kept too (${await svDisplay.textContent('#arm-record')})`, /screen itself is kept as video/.test(await svDisplay.textContent('#arm-record')));
+
+await svDisplay.click('#arm-record-screen');
+await svDisplay.waitForSelector('#screen-rec.is-live:not([hidden])', { timeout: 10000 })
+  .then(async () => ok(`going live that way records the screen, and says so on it (${await svDisplay.textContent('#screen-rec')})`, true))
+  .catch(() => ok('going live that way records the screen, and says so on it', false));
+ok('it went live as well', await svDisplay.isHidden('#arm'));
+const lectureFiles = () => svDisplay.evaluate(async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  if (!lectures.length) return { id: null, video: [] };
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' }).then((r) => r.json());
+  return { id: lecture.id, video: lecture.files.filter((f) => f.kind === 'video').map((f) => f.name) };
+});
+await pollUntil(svDisplay, async () => {
+  const { lectures } = await fetch('/api/lectures', { credentials: 'same-origin' }).then((r) => r.json());
+  if (!lectures.length) return false;
+  const { lecture } = await fetch(`/api/lectures/${lectures[0].id}`, { credentials: 'same-origin' }).then((r) => r.json());
+  return lecture.files.filter((f) => f.kind === 'video').length >= 2;
+}, null, { timeout: 20000 }).catch(() => {});
+const filed = await lectureFiles();
+ok(`segments are filed with the lecture as it goes (${filed.video.length}: ${filed.video[0] || 'none'})`,
+  filed.video.length >= 2 && filed.video.every((n) => /^video\/screen-[A-Za-z0-9]+-\d+-\d{4}-t\d+-d\d+\.webm$/.test(n)));
+
+await svDisplay.keyboard.press('e');
+await svDisplay.waitForSelector('#arm:not([hidden])', { timeout: 5000 });
+ok('standing down stops recording the screen', await svDisplay.isHidden('#screen-rec'));
+await svDisplay.waitForTimeout(1500);
+const after = await lectureFiles();
+ok(`and the last segment still lands with the lecture (${after.video.length} in all)`, after.video.length > filed.video.length);
+
+const replay = await svCtx.newPage();
+trap(replay, 'screen replay');
+await replay.goto(`${svBase}/replay.html?lecture=${after.id}`);
+await replay.waitForSelector('#rp-main:not([hidden])', { timeout: 10000 });
+ok(`the replay knows the screen was recorded (${await replay.textContent('#rp-audio-note')})`, /screen was recorded as video/.test(await replay.textContent('#rp-audio-note')));
+await replay.evaluate(() => window.__podiumReplay.seek(window.__podiumReplay.model.video[0].segments[0].start - window.__podiumReplay.model.start + 300));
+await replay.waitForFunction(() => { const v = document.querySelector('.rp-video'); return v && !v.hidden && v.readyState >= 1; }, null, { timeout: 10000 })
+  .then(() => ok('and plays it on the stage, in place of the pictures', true))
+  .catch(() => ok('and plays it on the stage, in place of the pictures', false));
+ok('served as video', await replay.evaluate(async () => (await fetch(document.querySelector('.rp-video').currentSrc || document.querySelector('.rp-video').src)).headers.get('content-type')) === 'video/webm');
+
+await svCtx.close();
+svServer.kill();
+}
+
 if (want('kiosk profiles: admin-managed provisioning')) {
 console.log('\n-- kiosk profiles: admin-managed provisioning --');
 // Its own server, accounts included: this is the flow #151 actually added -

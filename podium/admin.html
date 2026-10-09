@@ -136,6 +136,18 @@
     </div>
     <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 12px 0">
     <div class="admin-head">
+      <h2>Screen video</h2>
+    </div>
+    <div class="admin-actions" style="align-items: flex-start; flex-direction: column; gap: 8px;">
+      <label><input type="checkbox" id="screen-video-check"> Let displays record the screen as video, for lecture replays</label>
+      <span class="hint">Off by default. When on, a display's Go live screen offers <b>Go live and record the screen</b>; the browser asks to share that tab, and the video is kept with the lecture in short segments. The replay then shows the video instead of still pictures. An hour of video is several hundred MB, so plan the server's disk for it.</span>
+      <label for="screen-video-mb">Screen video one lecture may keep (MB)</label>
+      <input id="screen-video-mb" type="number" min="50" max="8000" step="50" inputmode="numeric" style="width: 120px;">
+      <span class="hint">Default 1000 - about an hour and a half at the quality displays record. Recording stops, and the display says so, when a lecture reaches it. Kept separately from the 400 MB a session may use for photos, ink and audio.</span>
+      <span class="hint" id="screen-video-status" role="status"></span>
+    </div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 12px 0">
+    <div class="admin-head">
       <h2>Attendance</h2>
     </div>
     <div class="admin-actions" style="align-items: flex-start; flex-direction: column; gap: 8px;">

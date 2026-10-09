@@ -22,6 +22,9 @@
      included, which a screen reader coalesces rather than reading every
      interim word. -->
 <div id="overlay" role="status" aria-live="polite" aria-atomic="true" aria-label="Caption"></div>
+<!-- While the screen is being recorded (Issue #132, phase 3), the room sees
+     that it is - and why, if it stops on its own. -->
+<div id="screen-rec" class="screen-rec" role="status" hidden></div>
 <!-- A name or logo pinned to one corner for the whole lecture - not content,
      so it survives every pick, freeze and blank, and is meant to end up IN a
      screen grab rather than only ever being something the room sees live
@@ -94,6 +97,9 @@
     <h1>Podium</h1>
     <p>Go live takes the screen fullscreen, with sound, and keeps it awake.</p>
     <button id="arm-button" class="big-button">Go live</button>
+    <!-- Issue #132, phase 3: only where an administrator lets displays record
+         the screen. The browser then asks to share this tab. -->
+    <button id="arm-record-screen" type="button" class="arm-record-screen" hidden>● Go live and record the screen</button>
     <div class="row" style="margin-top:14px">
       <button id="pair-button">Pair a device</button>
       <button id="arm-settings">Settings</button>

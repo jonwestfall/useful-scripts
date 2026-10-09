@@ -191,6 +191,9 @@ function capabilities(ctx, user) {
     version: API_VERSION,
     features,
     allowPollNames,
+    // Whether a display may offer to record the screen, and how much one
+    // lecture may keep (Issue #132, phase 3).
+    screenVideo: ctx.db && ctx.hasAccounts() ? lectures.screenVideo(ctx.db) : { enabled: false, mb: 0 },
     // Word/RTF as a PDF, and old .doc files at all, need LibreOffice (#258).
     officeConvert: !!(ctx.db && ctx.hasAccounts() && pptxConvert.hasLibreOffice()),
     auth: {
@@ -1183,6 +1186,10 @@ async function handleApi(req, res, url, ctx) {
         attendanceRotate: attendance.defaults(ctx.db).rotate,
         attendanceRadius: attendance.defaults(ctx.db).radius,
         mail: mail.describe(mail.mailConfig()),
+        // Issue #132, phase 3: displays may record the screen, and how much
+        // video one lecture may keep.
+        screenVideo: lectures.screenVideo(ctx.db).enabled,
+        screenVideoMb: lectures.screenVideo(ctx.db).mb,
       });
       if (rest.length === 1 && req.method === 'GET') {
         json(res, 200, current());
@@ -1208,6 +1215,11 @@ async function handleApi(req, res, url, ctx) {
         }
         if (body.attendanceRetentionDays !== undefined) {
           changed.attendanceRetentionDays = attendance.setRetentionDays(ctx.db, body.attendanceRetentionDays);
+        }
+        if (body.screenVideo !== undefined || body.screenVideoMb !== undefined) {
+          const set = lectures.setScreenVideo(ctx.db, { enabled: body.screenVideo, mb: body.screenVideoMb });
+          if (body.screenVideo !== undefined) changed.screenVideo = set.enabled;
+          if (body.screenVideoMb !== undefined) changed.screenVideoMb = set.mb;
         }
         if (body.allowPollNames !== undefined) {
           store.setSystemSetting(ctx.db, 'allow_poll_names', body.allowPollNames ? '1' : '0');

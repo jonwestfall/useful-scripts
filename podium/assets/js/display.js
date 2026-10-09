@@ -34,6 +34,7 @@ import { createAssetResolver } from './assets.js';
 import { deckId } from './deck.js';
 import { assetRefsIn } from './deck-source.js';
 import { createCaptionLog } from './caption-log.js';
+import { canRecordScreen, requestScreen, createScreenRecorder } from './screen-record.js';
 import { createDocReader } from './doc-reader.js';
 import { createDurationProber } from './duration-probe.js';
 import { makeSigningKey, importSigningKey, importVerifyKey, signText, verifyText } from './crypto.js';
@@ -1541,6 +1542,80 @@ serverInfo().then((info) => {
 
 const lectureUrl = (id, suffix = '') => `/api/lectures/${encodeURIComponent(id)}${suffix}`;
 
+// --- recording the screen (Issue #132, phase 3) ------------------------------
+//
+// Only where an administrator has turned it on, only on a display somebody
+// is standing at (never a kiosk or a viewer), and only when they choose "Go
+// live and record the screen" - the browser asks them to share this tab, and
+// a small badge on the screen says it is being recorded for as long as it is.
+let screenRec = null;
+let lastLectureId = null;   // the lecture a segment finishing after stand-down still belongs to
+
+serverInfo().then((info) => {
+  if (VIEWER || cfg.kiosk || !info.features.includes('sessions') || !info.screenVideo?.enabled || !canRecordScreen()) return;
+  $('#arm-record-screen').hidden = false;
+  const note = $('#arm-record');
+  if (note.textContent) note.textContent += ' With “Go live and record the screen”, the screen itself is kept as video too.';
+});
+
+function showScreenBadge(text, live) {
+  const badge = $('#screen-rec');
+  badge.textContent = text;
+  badge.classList.toggle('is-live', !!live);
+  badge.hidden = !text;
+}
+
+async function uploadScreen(name, blob) {
+  const id = lectureId || lastLectureId;
+  if (!id) return 0;
+  try {
+    const res = await fetch(lectureUrl(id, `/files?name=${encodeURIComponent(name)}&kind=video`), {
+      method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'video/webm' }, body: blob,
+    });
+    return res.status;
+  } catch { return 0; }
+}
+
+function startScreenRecording(stream) {
+  screenRec?.stop();
+  screenRec = createScreenRecorder({
+    stream,
+    device: `screen-${(bus?.clientId || 'display').replace(/[^a-zA-Z0-9]+/g, '').slice(0, 24) || 'display'}`,
+    upload: uploadScreen,
+    onStop: (reason) => {
+      screenRec = null;
+      const why = { full: 'Screen recording stopped: this lecture has kept as much video as the server allows.',
+        refused: 'Screen recording stopped: this server no longer keeps screen video.',
+        ended: 'Screen recording stopped: sharing this tab was ended.' }[reason];
+      showScreenBadge(why || '', false);
+      if (why) setTimeout(() => { if (!screenRec) showScreenBadge('', false); }, 12000);
+    },
+  });
+  showScreenBadge('● Recording the screen', true);
+}
+
+function stopScreenRecording() {
+  screenRec?.stop();
+  screenRec = null;
+  showScreenBadge('', false);
+}
+
+// Straight from the click: the browser only offers to share a tab from one,
+// so the request goes first, and Go live (fullscreen, sound) right after it in
+// the same click. Declining the share still goes live, without the video.
+function goLiveRecording() {
+  let asked;
+  try { asked = requestScreen(); } catch (err) { asked = Promise.reject(err); }
+  goLive();
+  asked.then((stream) => {
+    if (!state.armed) { for (const t of stream.getTracks()) t.stop(); return; }
+    startScreenRecording(stream);
+  }).catch(() => {
+    showScreenBadge('The screen is not being recorded - sharing was declined.', false);
+    setTimeout(() => { if (!screenRec) showScreenBadge('', false); }, 8000);
+  });
+}
+
 const postJson = (url, body) => fetch(url, {
   method: 'POST',
   credentials: 'same-origin',
@@ -1601,6 +1676,7 @@ async function startRecording() {
     if (!res.ok) return;
     const { lecture } = await res.json();
     lectureId = lecture.id;
+    lastLectureId = lecture.id;
     state.lectureId = lecture.id;
     captionLog.reset();
     lastSurface = null;
@@ -1685,6 +1761,9 @@ function startHeartbeat(id) {
 }
 
 async function stopRecording() {
+  // The screen stops with the lecture; its last segment still files under it
+  // (see lastLectureId).
+  stopScreenRecording();
   const id = lectureId;
   if (!id) return;
   // A line still on the caption bar at stand-down was still said. Written
@@ -3378,6 +3457,7 @@ if (VIEWER) {
   // --- wiring -----------------------------------------------------------------
 
   $('#arm-button').addEventListener('click', goLive);
+  $('#arm-record-screen').addEventListener('click', goLiveRecording);
   $('#arm-settings').addEventListener('click', showSetup);
 
   wireSetup();

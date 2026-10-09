@@ -27,6 +27,7 @@ const path = require('node:path');
 const library = require('./library.js');
 const settings = require('./settings.js');
 const courses = require('./courses.js');
+const store = require('./store.js');
 
 // A 90-minute lecture recording a surface change every 15 seconds tops out
 // around 360 events. 5000 is "something is looping", and the point of the cap
@@ -70,7 +71,35 @@ const KEEPABLE = new Map(Object.entries({
 // in the room, the ink as strokes, a page the controller rasterized when it
 // exported, or a segment of a controller's own recorded mic. Anything else is
 // filed as a plain part of the export.
-const FILE_KINDS = new Set(['photo', 'ink', 'session', 'audio']);
+const FILE_KINDS = new Set(['photo', 'ink', 'session', 'audio', 'video']);
+
+// Screen video (Issue #132, phase 3): the display recording its own tab, in
+// segments named "video/<device>-<recording>-<seq>-t<start>-d<ms>.webm" like
+// the mic's. Off unless an administrator turns it on, and held to its own
+// per-lecture budget rather than MAX_LECTURE_BYTES - an hour of video is
+// hundreds of megabytes, and it must never crowd out the photos, ink and
+// audio that budget is sized for.
+const SCREEN_VIDEO_DEFAULT_MB = 1000;
+const SCREEN_VIDEO_MAX_MB = 8000;
+const isVideoName = (name) => /^video\/[^/]+\.webm$/i.test(String(name || ''));
+
+function screenVideo(db) {
+  const enabled = !!db && store.getSystemSetting(db, 'screen_video', '0') === '1';
+  const mb = Number(db ? store.getSystemSetting(db, 'screen_video_mb', String(SCREEN_VIDEO_DEFAULT_MB)) : SCREEN_VIDEO_DEFAULT_MB);
+  return { enabled, mb: Number.isInteger(mb) && mb >= 50 && mb <= SCREEN_VIDEO_MAX_MB ? mb : SCREEN_VIDEO_DEFAULT_MB };
+}
+
+function setScreenVideo(db, { enabled, mb } = {}) {
+  if (enabled !== undefined) store.setSystemSetting(db, 'screen_video', enabled ? '1' : '0');
+  if (mb !== undefined) {
+    const n = Number(mb);
+    if (!Number.isInteger(n) || n < 50 || n > SCREEN_VIDEO_MAX_MB) {
+      throw Object.assign(new Error(`a lecture's screen video may use from 50 to ${SCREEN_VIDEO_MAX_MB} MB`), { status: 400 });
+    }
+    store.setSystemSetting(db, 'screen_video_mb', String(n));
+  }
+  return screenVideo(db);
+}
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_FILES_PER_LECTURE = 500;
@@ -79,7 +108,9 @@ const MAX_FILES_PER_LECTURE = 500;
 // without letting a wedged controller fill the disk in an afternoon.
 const MAX_LECTURE_BYTES = 400 * 1024 * 1024;
 
-const keepableType = (name) => KEEPABLE.get(path.extname(String(name || '')).toLowerCase()) || null;
+// A screen video segment is WebM like the mic's audio, but it is video: a
+// browser told audio/webm will not draw a picture from it.
+const keepableType = (name) => (isVideoName(name) ? 'video/webm' : KEEPABLE.get(path.extname(String(name || '')).toLowerCase()) || null);
 
 // The path a file has inside the zip, and the only thing a caller chooses about
 // where the bytes land - so it is cleaned rather than trusted. Forward slashes
@@ -252,6 +283,15 @@ function getLecture(db, user, id) {
  * (a test exercising the schema alone, say) gets the row deleted and the
  * bytes left alone rather than a crash.
  */
+// Whether a lecture kept a recording - the mic's audio (#147) or the screen's
+// video (#132). A lecture with no timeline and no polls is normally "nothing
+// happened" and is thrown away when it ends, but one that recorded sound or
+// video did happen, and losing that recording silently is the one outcome
+// this must never have.
+const keptRecording = (db, lectureId) => !!db.prepare(
+  "SELECT 1 FROM lecture_files WHERE lecture_id = ? AND kind IN ('audio', 'video') LIMIT 1",
+).get(lectureId);
+
 function discardLecture(db, dataDir, lectureId) {
   const held = dataDir
     ? db.prepare(`SELECT m.sha256 FROM lecture_files lf JOIN media m ON m.id = lf.media_id
@@ -309,7 +349,7 @@ function startLecture(db, user, { room, title, dataDir, resume = true, now = Dat
 
   for (const row of open) {
     if (live && row.id === live.id) continue;
-    if (!row.last_at && !row.poll_count) discardLecture(db, dataDir, row.id);
+    if (!row.last_at && !row.poll_count && !keptRecording(db, row.id)) discardLecture(db, dataDir, row.id);
     // A stale lecture that ran a poll but never wrote a timeline event (a
     // display that only ever showed the arming screen while a poll ran
     // through the controller) still has a real end time - the poll's, not
@@ -378,7 +418,7 @@ function closeIdleLectures(db, dataDir, { idleMs = IDLE_MS, now = Date.now() } =
   let closed = 0;
   let discarded = 0;
   for (const row of idle) {
-    if (!row.last_at && !row.poll_count) { discardLecture(db, dataDir, row.id); discarded += 1; continue; }
+    if (!row.last_at && !row.poll_count && !keptRecording(db, row.id)) { discardLecture(db, dataDir, row.id); discarded += 1; continue; }
     db.prepare('UPDATE lectures SET ended_at = ? WHERE id = ?')
       .run(row.last_seen_at ?? row.started_at, row.id);
     closed += 1;
@@ -410,7 +450,7 @@ function endLecture(db, user, id, { at, dataDir } = {}) {
   // /end it merely never heard the response to - must not re-date a record
   // that already has its real end time. Idempotent no-op instead.
   if (row.endedAt != null) return row;
-  if (!row.events && !row.polls) {
+  if (!row.events && !row.polls && !keptRecording(db, row.id)) {
     // A photo or the ink can exist before the first timeline event or poll -
     // fileInk and a photo upload both happen independently of appendEvents -
     // so "recorded nothing" is judged by events and polls but the files still
@@ -643,13 +683,24 @@ function addFile(db, user, id, { name, kind, sha256, bytes, contentType, dataDir
   // retry with the same bytes.
   const mediaId = library.rememberMedia(db, user, { sha256, bytes, contentType });
 
-  const held = db.prepare(`SELECT COUNT(*) AS files, COALESCE(SUM(m.bytes), 0) AS bytes
+  // Video is its own budget (see screenVideo): the file count is shared, the
+  // bytes are not.
+  const video = isVideoName(clean);
+  if (video && !screenVideo(db).enabled) {
+    throw Object.assign(new Error('this server does not keep screen video - an administrator can turn it on'), { status: 403 });
+  }
+  const held = db.prepare(`SELECT COUNT(*) AS files,
+         COALESCE(SUM(CASE WHEN lf.name LIKE 'video/%' THEN 0 ELSE m.bytes END), 0) AS bytes,
+         COALESCE(SUM(CASE WHEN lf.name LIKE 'video/%' THEN m.bytes ELSE 0 END), 0) AS video
       FROM lecture_files lf JOIN media m ON m.id = lf.media_id
      WHERE lf.lecture_id = ? AND lf.name <> ?`).get(lecture.id, clean);
   if (held.files >= MAX_FILES_PER_LECTURE) {
     throw Object.assign(new Error('that lecture already keeps as many files as it can'), { status: 413 });
   }
-  if (held.bytes + bytes > MAX_LECTURE_BYTES) {
+  if (video && held.video + bytes > screenVideo(db).mb * 1024 * 1024) {
+    throw Object.assign(new Error('that lecture has recorded as much screen video as this server keeps for one session'), { status: 413 });
+  }
+  if (!video && held.bytes + bytes > MAX_LECTURE_BYTES) {
     throw Object.assign(new Error('that lecture has reached the space one session may use'), { status: 413 });
   }
   const previous = db.prepare(`SELECT m.sha256 FROM lecture_files lf JOIN media m ON m.id = lf.media_id
@@ -659,7 +710,7 @@ function addFile(db, user, id, { name, kind, sha256, bytes, contentType, dataDir
       ON CONFLICT(lecture_id, name) DO UPDATE SET
         media_id = excluded.media_id, kind = excluded.kind,
         created_at = excluded.created_at, created_by = excluded.created_by`)
-    .run(lecture.id, mediaId, FILE_KINDS.has(kind) ? kind : 'session', clean, Date.now(), user.id);
+    .run(lecture.id, mediaId, video ? 'video' : FILE_KINDS.has(kind) && kind !== 'video' ? kind : 'session', clean, Date.now(), user.id);
   if (previous && previous.sha256 !== sha256) library.forgetMediaIfUnused(db, dataDir, previous.sha256);
 
   return { name: clean, bytes };
@@ -966,6 +1017,7 @@ module.exports = {
   listLectures, getLecture, startLecture, endLecture, appendEvents, recordPoll, keepAlive, closeIdleLectures, IDLE_MS, HEARTBEAT_MS,
   renameLecture, deleteLecture, mayDelete, courseIdForRoom,
   addFile, removeFile, listFiles, pruneFiles, usage, keepableType, cleanName, visibleLecture,
+  screenVideo, setScreenVideo, SCREEN_VIDEO_MAX_MB,
   MAX_EVENTS, MAX_EVENTS_PER_POST, MAX_POLLS,
   MAX_FILE_BYTES, MAX_FILES_PER_LECTURE, MAX_LECTURE_BYTES, KEEPABLE,
 };
