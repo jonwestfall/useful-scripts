@@ -66,7 +66,7 @@ Podium tracks two identifiers defined in [`assets/js/protocol.js`](../assets/js/
 *   **Controller**: Open **Settings** (or inspect the top bar: `Display connected · 120 ms · build 23`).
 *   **Display**: Open **Settings**, located next to *Clear settings & reload*.
 *   **Planning page**: Located in the footer.
-*   **Server health check**: Query `GET /healthz` (returns `ok Podium 1.0, build 23, ...`).
+*   **Server health check**: Query `GET /healthz` (returns something like `ok Podium 1.3, build 117, 2 rooms, 0 polls`).
 *   **CLI diagnostics**: Run `podium-admin doctor`.
 
 ### Stale build detection & cache busting
@@ -129,3 +129,43 @@ When the display runs fullscreen on the classroom PC with browser controls hidde
 
 > [!NOTE]
 > Shortcut keybindings are disabled when focused inside input fields (such as typing room names or passphrases in Settings).
+
+---
+
+## 5. Recording, Replay, Search & Attendance (Your Own Server)
+
+These all need Podium's own server with accounts (see [vps.md](vps.md)).
+
+### "Go live and record the screen" isn't on the Go live screen
+- An administrator hasn't turned it on: **Admin › Server › Screen video**. It is off by default.
+- The display is a **kiosk**, or the page is Guest View. Neither ever records.
+- The browser can't record a tab. Use a current Chrome or Edge on the classroom PC.
+
+### The screen recording stopped by itself
+The badge in the corner of the projector says why:
+- **Sharing this tab was ended:** someone pressed the browser's own *Stop sharing*.
+- **This lecture has kept as much video as the server allows:** the per-lecture limit on **Admin › Server › Screen video** was reached. Raise it for long lectures, after checking the server's disk.
+- **This server no longer keeps screen video:** an administrator turned it off mid-lecture.
+
+### The replay has no sound
+- Only the controller mic records sound, and only with **Record this mic to the session** on (the controller's **Say** tab). The replay says "No microphone was recorded in this lecture" when there was none.
+- Screen video records the display tab's own sound (videos and music), not the room.
+
+### The replay's sound is a little out of step with the slides
+- Mic segments carry the controller's own clock. A controller whose clock is off by some seconds is off by the same amount in the replay. Setting the device to set its time automatically fixes it for future lectures.
+- Recordings made before 1.3 are placed from when recording began, two minutes per segment, so they can drift by a second or so across a long lecture.
+
+### A search finds nothing
+- Search matches whole words (ignoring case, accents and word endings). Use `memor*` for "memory", "memorise" and "memorable"; put a phrase in quotes only if those words were said in that order.
+- It only covers sessions you could already open: your own, and your courses' while the course isn't archived.
+- Only what was recorded can be found: captions (if they were on), what was on screen, notes, polls, and attendance questions.
+
+### A student's attendance code is refused
+- The code changes every 10–30 seconds and is accepted for one change after it leaves the screen. A photo of the screen sent to someone outside goes stale almost at once, which is the point. Ask them to scan the screen itself.
+- Too many wrong codes from one phone are slowed down for a minute.
+- With **Only from phones in the room** on, a phone that is too far away, or won't share its location, is refused with the reason. Indoors a phone's location can be 50 m or more out; a larger radius helps. Either way, the student can be marked by hand.
+
+### Attendance receipts aren't arriving by email
+- Check that mail is set up: **Admin › Server › Attendance** says so, and **Send a test email** tries it. `podium-admin doctor` checks it too.
+- The course's own switch must be on: **Email each student a receipt when they check in**, on **My Files › Attendance**.
+- A receipt goes to the roster's email address (or the one a guest typed). A student with no address on the roster gets none.

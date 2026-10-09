@@ -223,6 +223,9 @@
     letter-spacing: .06em; text-transform: uppercase; padding: 1px 7px; border-radius: 6px;
     color: var(--violet); border: 1px solid color-mix(in srgb, var(--violet) 45%, transparent);
   }
+  .tag.new { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .new-list { display: grid; gap: 14px; }
+  .new-list .card h3 { font-size: 17px; }
   .feature.wide { grid-column: span 2; }
   @media (max-width: 640px) { .feature.wide { grid-column: auto; } }
 
@@ -318,6 +321,7 @@
     </a>
     <nav aria-label="Guide sections">
       <a class="opt" href="#how">How it works</a>
+      <a href="#new">New in 1.3</a>
       <a href="#features">Features</a>
       <a class="opt" href="#setup">Setup</a>
       <a href="#docs">Docs</a>
@@ -332,15 +336,17 @@
 <section class="hero">
   <div class="wrap hero-grid">
     <div>
-      <span class="eyebrow">The Podium Guide · version 1.2</span>
+      <span class="eyebrow">The Podium Guide · version 1.3</span>
       <h1>Teach from <span class="grad">anywhere in the room.</span></h1>
       <p class="lede">
         Podium turns the classroom computer into a screen you drive from your iPad or phone.
-        Open one browser tab on the machine wired to the projector and walk away. Slides, PDFs,
-        video, handwriting, timers, polls and your phone's camera all come from the device in your hand.
+        Open one browser tab on the machine wired to the projector and walk away. Slides, PDFs, documents,
+        video, handwriting, timers, polls, attendance and your phone's camera all come from the device in your hand,
+        and afterwards every lecture can be searched and replayed.
       </p>
       <div class="cta">
         <a class="btn primary" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/quickstart.md">Set it up in 20 minutes →</a>
+        <a class="btn" href="#new">What's new in 1.3</a>
         <a class="btn" href="#features">Tour the features</a>
       </div>
       <ul class="pills" aria-label="At a glance">
@@ -413,6 +419,61 @@
 </section>
 
 <!-- ===================================================================== -->
+<!-- ===================================================================== -->
+<section class="block" id="new" aria-labelledby="new-h">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="kicker">New in Podium 1.3</p>
+      <h2 id="new-h">Take attendance, then replay the whole lecture</h2>
+      <p>The biggest release yet. Everything below is new since 1.2; the cards further down mark it
+        <span class="tag new" style="margin-left:0">New</span>. The full list is in
+        <a href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/whats-new-1.3.md">What's new in 1.3</a>.</p>
+    </div>
+    <div class="grid g4 new-list">
+      <div class="card feature">
+        <div class="ico" aria-hidden="true">✅</div>
+        <h3>Attendance<span class="tag">Server</span></h3>
+        <p>Students scan a code that changes every few seconds, against your roster. Entry and exit tickets, a parking lot for questions, and a Canvas gradebook export.</p>
+      </div>
+      <div class="card feature">
+        <div class="ico" aria-hidden="true">⏯️</div>
+        <h3>Replay any lecture<span class="tag">Server</span></h3>
+        <p>Your mic, what was on screen, the captions and polls, in time. Tap the transcript to jump, or record the screen as video too.</p>
+      </div>
+      <div class="card feature">
+        <div class="ico" aria-hidden="true">🔎</div>
+        <h3>Search every lecture<span class="tag">Server</span></h3>
+        <p>"The lecture where I mentioned working memory": search what was said and shown across the term, and play from that moment.</p>
+      </div>
+      <div class="card feature">
+        <div class="ico" aria-hidden="true">📖</div>
+        <h3>Markdown &amp; Word documents</h3>
+        <p>A plain <code>.md</code> (or a Word or RTF file) as one readable page you scroll for the room, with headings to jump between and ink pinned to the words.</p>
+      </div>
+      <div class="card feature">
+        <div class="ico" aria-hidden="true">🤏</div>
+        <h3>Pinch to zoom</h3>
+        <p>PDFs and photos fill the screen when zoomed. Pinch and drag on the preview or the ink pad; portrait pages keep their shape on your iPad.</p>
+      </div>
+      <div class="card feature">
+        <div class="ico" aria-hidden="true">✍️</div>
+        <h3>A real deck editor</h3>
+        <p>Write slides beside the projector's own preview, with pictures, video slides, Mermaid diagrams, templates, previous versions, and PDF export.</p>
+      </div>
+      <div class="card feature">
+        <div class="ico" aria-hidden="true">🗂️</div>
+        <h3>My Files &amp; Quick Look<span class="tag">Server</span></h3>
+        <p>Everything that's yours on the server in one place, and any file previewed privately in its own tab before class.</p>
+      </div>
+      <div class="card feature">
+        <div class="ico" aria-hidden="true">📡</div>
+        <h3>Stream it live</h3>
+        <p>A step-by-step guide to OBS with YouTube or Twitch, from the classroom PC or from a Guest View link anywhere.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="block alt" id="author" aria-labelledby="author-h">
   <div class="wrap">
     <div class="author">
@@ -520,13 +581,14 @@
         <h3><span class="dot" style="background: var(--cue)"></span>The planning desk</h3>
         <p class="file">plan.html</p>
         <p class="dim">For your office. Build a lecture's running order, then carry it to class as a
-          single file, or let it save itself to your own server as you work.</p>
+          single file, or let it save itself to your own server as you work. The deck editor
+          (<code>deck.html</code>) sits beside it.</p>
       </div>
       <div class="card role">
         <h3><span class="dot" style="background: var(--violet)"></span>The audience</h3>
-        <p class="file">join.html · view.html</p>
-        <p class="dim">Students answer polls on their own phones with no app and no login. Guest viewers
-          watch the screen on their own device and can't change anything.</p>
+        <p class="file">join.html · attend.html · view.html</p>
+        <p class="dim">Students answer polls and check in for attendance on their own phones with no app
+          and no login. Guest viewers watch the screen on their own device and can't change anything.</p>
       </div>
     </div>
   </div>
@@ -565,7 +627,7 @@
         <ul>
           <li><strong>Freeze</strong>, line up the next thing, then <strong>TAKE</strong> it.</li>
           <li>Write on slides with <strong>ink</strong> and point with the <strong>laser</strong>.</li>
-          <li>Run a <strong>poll</strong>, show a <strong>document camera</strong>, put up <strong>captions</strong>.</li>
+          <li>Take <strong>attendance</strong>, run a <strong>poll</strong>, show a <strong>document camera</strong>, put up <strong>captions</strong>.</li>
         </ul>
       </li>
       <li class="card">
@@ -574,7 +636,7 @@
         <ul>
           <li>Export annotated slides and boards as a <strong>ZIP or PDF</strong>.</li>
           <li>Download poll results as <strong>CSV</strong>.</li>
-          <li>On your own server, get a <strong>lecture recap</strong> PDF.</li>
+          <li>On your own server, <strong>replay</strong> the lecture, <strong>search</strong> what you said, or get a <strong>recap</strong> PDF.</li>
         </ul>
       </li>
     </ol>
@@ -649,12 +711,32 @@
           <div class="ico" aria-hidden="true">📝</div>
           <h3>Slides in Markdown</h3>
           <p><a href="https://marp.app/">Marp</a> decks rendered live in the browser, with KaTeX math,
-            progressive builds, presenter notes and your department's own CSS theme.</p>
+            <strong>Mermaid diagrams</strong>, progressive builds, presenter notes and your department's own CSS theme.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">✍️</div>
+          <h3>The deck editor<span class="tag new">New</span></h3>
+          <p>Write a deck beside the projector's own preview, with a toolbar for slides, columns and builds.
+            Drop in pictures, add <strong>video slides</strong>, start from course templates, go back to a previous
+            version, and export a <code>.zip</code> or a PDF. Decks already on the server are edited where they live.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📖</div>
+          <h3>Markdown documents<span class="tag new">New</span></h3>
+          <p>A plain <code>.md</code> shown as one page to read: scroll it for the room, jump between headings,
+            and mark it up with ink that stays on the words. Guest viewers can read it at their own pace on a phone.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">👁️</div>
+          <h3>Quick Look<span class="tag new">New</span></h3>
+          <p>Check a deck, PDF or video privately in its own tab, from the controller, planner, library or
+            deck editor. The projector is never involved.</p>
         </div>
         <div class="card feature">
           <div class="ico" aria-hidden="true">📄</div>
-          <h3>PDFs, PowerPoint &amp; Word</h3>
-          <p>Page through PDFs, and <strong>zoom and pan the projector</strong> into a figure.
+          <h3>PDFs, PowerPoint &amp; Word<span class="tag new">New</span></h3>
+          <p>Page through PDFs, and <strong>zoom the projector</strong> into a figure: zoomed in, the page
+            fills the screen, and you can pinch and drag on your iPad or tap Fit width.<span class="tag new">New</span>
             A Word or RTF file becomes a readable document, or a PDF if you'd rather keep its layout.
             On your own server, <code>.pptx</code> uploads become PDFs automatically.<span class="tag">Server</span></p>
         </div>
@@ -697,7 +779,8 @@
           <div class="ico" aria-hidden="true">✏️</div>
           <h3>Live ink</h3>
           <p>Pen, highlighter and a stroke-by-stroke eraser in any colour and thickness. Ink stays pinned
-            to the slide, and each slide keeps its own drawing.</p>
+            to the slide, and each slide keeps its own drawing. The pad takes the shape of what you draw on,
+            so a portrait page or an upright photo lines up exactly, and a pinch zooms in for detail.</p>
         </div>
         <div class="card feature">
           <div class="ico" aria-hidden="true">📐</div>
@@ -820,6 +903,17 @@
             or someone not in the room. It's watch-only and signed by the display, and presenter notes
             and the cue are never included.</p>
         </div>
+        <div class="card feature wide">
+          <div class="ico" aria-hidden="true">✅</div>
+          <h3>Attendance<span class="tag">Server</span><span class="tag new">New</span></h3>
+          <ul>
+            <li>Students check in from their own phones: a QR code and a six-digit code on screen that change every few seconds</li>
+            <li>Against your course roster (imported from Canvas, Blackboard or Moodle), with guests welcome</li>
+            <li>Flags one phone checking in two people, and can require phones to be in the room</li>
+            <li><strong>Entry and exit tickets</strong>, and an anonymous <strong>parking lot</strong> for questions</li>
+            <li>Emailed receipts, a term grid, CSV and a <strong>Canvas gradebook</strong> export</li>
+          </ul>
+        </div>
       </div>
     </div>
 
@@ -851,8 +945,9 @@
         </div>
         <div class="card feature">
           <div class="ico" aria-hidden="true">🌗</div>
-          <h3>Light &amp; high contrast</h3>
-          <p>A high-contrast light theme for bright rooms and window glare, or follow the system setting.</p>
+          <h3>Light or dark, everywhere</h3>
+          <p>A high-contrast light theme for bright rooms and window glare, a dark one, or follow the device,
+            on every page. On your own server it is one choice on your account.</p>
         </div>
       </div>
     </div>
@@ -915,6 +1010,11 @@
           <h3>Import a whole folder<span class="tag">Server</span></h3>
           <p>Drop in a ZIP of exported slides, decks, PDFs and media, check what Podium found, then import. Courses can share plan templates.</p>
         </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📂</div>
+          <h3>Choose from the server<span class="tag">Server</span><span class="tag new">New</span></h3>
+          <p>Pick decks and files already on the server, several at once, and archive last term's lectures out of your list.</p>
+        </div>
       </div>
     </div>
 
@@ -972,6 +1072,23 @@
           <h3>Session history<span class="tag">Server</span></h3>
           <p>Past lectures with their timeline, ink and poll results, downloadable again later and pruned on your schedule.</p>
         </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">⏯️</div>
+          <h3>Replay a lecture<span class="tag">Server</span><span class="tag new">New</span></h3>
+          <p>Your mic audio with what was on screen, the captions and polls, all in time, and a transcript
+            you tap to jump. Optionally, the screen itself is kept as video.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🔎</div>
+          <h3>Search every lecture<span class="tag">Server</span><span class="tag new">New</span></h3>
+          <p>Find what was said or shown across the whole term, then <strong>play from that moment</strong>.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">📡</div>
+          <h3>Stream it live<span class="tag new">New</span></h3>
+          <p>Stream class to YouTube or Twitch with OBS, and keep the stream as the recording.
+            <a href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/streaming.md">The guide →</a></p>
+        </div>
       </div>
     </div>
 
@@ -994,6 +1111,11 @@
           <div class="ico" aria-hidden="true">📚</div>
           <h3>A shared library</h3>
           <p>Upload decks, PDFs and media from a browser. The admin page manages themes, music playlists and the built-in tools too.</p>
+        </div>
+        <div class="card feature">
+          <div class="ico" aria-hidden="true">🗄️</div>
+          <h3>My Files<span class="tag new">New</span></h3>
+          <p>Everything that's yours on the server (files, lectures, templates, recordings, rosters and attendance), each saying what you may do with it.</p>
         </div>
         <div class="card feature">
           <div class="ico" aria-hidden="true">🪧</div>
@@ -1052,9 +1174,9 @@
         <p class="dim">Podium's own Node.js server on a small VPS, with an install script, systemd, nginx and
           backups. <a href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/deploy/README.md">Deploy guide</a>.</p>
         <ul>
-          <li>Polls, accounts and courses</li>
-          <li>Shared library and session history</li>
-          <li>Guest View codes, kiosks and recaps</li>
+          <li>Polls, attendance, accounts and courses</li>
+          <li>Shared library, My Files, session history</li>
+          <li>Lecture replay and search, kiosks, recaps</li>
         </ul>
       </div>
     </div>
@@ -1066,13 +1188,15 @@
           <tr><th scope="col">Feature</th><th scope="col">MQTT</th><th scope="col">Supabase</th><th scope="col">Own server</th></tr>
         </thead>
         <tbody>
-          <tr><th scope="row">Slides, PDFs, media, ink, layouts, timers, music, captions</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+          <tr><th scope="row">Slides, PDFs, documents, media, ink, zoom, layouts, timers, music, captions</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
           <tr><th scope="row">Document camera, sets, messages, watermark, session export</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
           <tr><th scope="row">Plan files, pairing, Simple Mode, Guest View links</th><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
           <tr><th scope="row">Audience polls, quizzes, Q&amp;A, word clouds</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
           <tr><th scope="row">Accounts, courses, uploads, stored plans, templates</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
           <tr><th scope="row">Session history, lecture recaps, mic recording</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
-          <tr><th scope="row">Guest View typed codes, kiosk profiles, PowerPoint conversion</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
+          <tr><th scope="row">Lecture replay and search, screen video</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
+          <tr><th scope="row">Attendance, rosters, entry and exit tickets</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
+          <tr><th scope="row">Guest View typed codes, kiosk profiles, PowerPoint and Word conversion</th><td class="n">–</td><td class="n">–</td><td class="y">✓</td></tr>
         </tbody>
       </table>
     </div>
@@ -1104,14 +1228,16 @@
           <div class="fact"><span class="num">Offline</span><p><strong>A service worker caches the pages</strong>, so loaded slides, ink and timers keep working if the campus network drops.</p></div>
           <div class="fact"><span class="num">Reload</span><p><strong>The display resumes the lecture</strong> after a crash or refresh, or starts black if you prefer.</p></div>
           <div class="fact"><span class="num">Build</span><p><strong>Out-of-date copies are detected.</strong> A controller says which device is running old code and offers to reload it.</p></div>
-          <div class="fact"><span class="num">Tests</span><p><strong>Over two dozen unit suites and a browser end-to-end suite</strong> run on every change, covering freeze safety, ink, audio math and encryption.</p></div>
+          <div class="fact"><span class="num">Tests</span><p><strong>Over fifty unit suites and a five-part browser end-to-end suite</strong> run on every change, covering freeze safety, ink, audio math and encryption.</p></div>
         </div>
       </div>
     </div>
-    <p class="note"><strong>Stated plainly:</strong> two things step outside the encryption, and both are opt-in.
-      Audience polls go through your own server, because students' phones don't hold the room key.
+    <p class="note"><strong>Stated plainly:</strong> a few things step outside the encryption, and all are opt-in.
+      Audience polls and attendance check-ins go through your own server, because students' phones don't hold the room key.
+      Session records and recordings are kept, readable, on your own server so they can be replayed and searched,
+      and emailed attendance receipts go through the mail server you set up.
       Live captions in Chrome and Edge send audio to Google for recognition, while Safari recognizes speech
-      on the device. The <a href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/architecture.md#security--end-to-end-cryptography">architecture guide</a> explains both.</p>
+      on the device. The <a href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/architecture.md#security--end-to-end-cryptography">architecture guide</a> explains each.</p>
   </div>
 </section>
 
@@ -1161,6 +1287,11 @@
       <p>Start at the top. Most teachers never need to go past the first two.</p>
     </div>
     <div class="grid g3">
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/whats-new-1.3.md">
+        <h3>🆕 What's new in 1.3</h3>
+        <p>Attendance, lecture replay and search, documents, pinch to zoom, the deck editor and more, in one page.</p>
+        <span class="for">For everyone</span>
+      </a>
       <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/quickstart.md">
         <h3>🚀 Quickstart</h3>
         <p>Put Podium online for free in about twenty minutes, in plain English, with no terminal.</p>
@@ -1170,6 +1301,11 @@
         <h3>🎨 Features &amp; teaching guide</h3>
         <p>Every feature in detail, organized the same way as this page.</p>
         <span class="for">For every teacher</span>
+      </a>
+      <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/streaming.md">
+        <h3>📡 Streaming a lecture</h3>
+        <p>OBS with YouTube or Twitch, from the classroom PC or from a Guest View link, and how it compares with the replay.</p>
+        <span class="for">Anyone streaming class</span>
       </a>
       <a class="card doc" href="https://github.com/jonwestfall/useful-scripts/blob/main/podium/docs/troubleshooting.md">
         <h3>🩺 Troubleshooting</h3>
