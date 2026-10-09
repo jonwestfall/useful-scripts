@@ -6,6 +6,7 @@
 
 import {
   parseSegmentName, buildTracks, segmentAt, buildScenes, buildReplay, captionAt, latestAt, indexAt, clockOf, SEGMENT_MS,
+  buildPolls, buildPhotos, heldAt, replayUrl, POLL_HOLD_MS, PHOTO_HOLD_MS,
 } from '../assets/js/replay-model.js';
 
 const fails = [];
@@ -70,6 +71,29 @@ ok('what was on screen at a moment', latestAt(r.scenes, T0 + 130000).title === '
 ok('and its position', indexAt(r.scenes, T0 + 61000) === 1 && indexAt(r.scenes, T0) === -1);
 ok('the caption under the stage, for a few seconds', captionAt(r.captions, T0 + 3000)?.text === 'Hello everyone' && captionAt(r.captions, T0 + 30000) === null);
 ok('a lecture with no audio still replays', buildReplay({ startedAt: T0, endedAt: T0 + 5000, timeline: [], files: [] }).hasAudio === false);
+
+console.log('\n-- polls and photos (phase 2) --');
+const polls = buildPolls([
+  { id: 2, kind: 'text', question: 'One word?', answers: ['loop', 'rude word', 'buffer'], hiddenAnswers: [1], voters: 3, endedAt: T0 + 9000 },
+  { id: 1, kind: 'choice', question: 'Which store?', options: ['Loop', 'Sketchpad'], counts: [3, 1], voters: 4, endedAt: T0 + 5000 },
+  { id: 3, question: 'Never closed' },
+]);
+ok(`polls in the order they closed; one never closed is left out (${polls.map((p) => p.question)})`, polls.length === 2 && polls[0].question === 'Which store?');
+ok(`a choice poll's rows with counts and shares (${JSON.stringify(polls[0].rows)})`, polls[0].rows[0].count === 3 && polls[0].rows[0].share === 0.75 && polls[0].rows[1].label === 'Sketchpad');
+ok('a text poll shows only the answers the room saw', polls[1].answers.join() === 'loop,buffer');
+const photos = buildPhotos([
+  { kind: 'photo', name: 'photos/abc123-Lab-bench.jpg', url: '/p1', at: T0 + 7000 },
+  { kind: 'photo', name: 'screens/xyz-Marked-up.png', url: '/s', at: T0 + 8000 },
+]);
+ok(`photos taken in the room, titled from their names (${JSON.stringify(photos)})`, photos.length === 1 && photos[0].title === 'Lab bench' && photos[0].url === '/p1');
+ok('a poll result stays up a while after it closed, then goes', heldAt(polls, T0 + 6000, POLL_HOLD_MS)?.question === 'Which store?'
+  && heldAt(polls, T0 + 4000, POLL_HOLD_MS) === null && heldAt(polls, T0 + 9000 + POLL_HOLD_MS + 1, POLL_HOLD_MS) === null);
+ok('and so does a photo', heldAt(photos, T0 + 8000, PHOTO_HOLD_MS)?.url === '/p1' && heldAt(photos, T0 + 7000 + PHOTO_HOLD_MS, PHOTO_HOLD_MS) === null);
+const withBoth = buildReplay({ startedAt: T0, endedAt: T0 + 20000, timeline: [], files: [{ kind: 'photo', name: 'photos/a-x.jpg', url: '/x', at: T0 + 1000 }],
+  pollResults: [{ id: 1, question: 'Q', options: ['a'], counts: [1], voters: 1, endedAt: T0 + 2000 }] });
+ok(`both are marked on the scrubber (${withBoth.marks.map((m) => m.kind)})`, withBoth.marks.map((m) => m.kind).join() === 'photo,poll' && withBoth.polls.length === 1 && withBoth.photos.length === 1);
+ok(`"Play from here" starts a few seconds before the moment (${replayUrl(7, T0, T0 + 65000)})`,
+  replayUrl(7, T0, T0 + 65000) === 'replay.html?lecture=7&at=62000' && replayUrl(7, T0, T0 + 1000) === 'replay.html?lecture=7');
 
 console.log('\n-- the clock --');
 ok(`m:ss, and h:mm:ss from an hour (${clockOf(75000)}, ${clockOf(3725000)})`, clockOf(75000) === '1:15' && clockOf(3725000) === '1:02:05' && clockOf(-5) === '0:00');

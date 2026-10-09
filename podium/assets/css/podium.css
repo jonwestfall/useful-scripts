@@ -740,6 +740,15 @@ body.guest {
 .ss-kind { color: var(--dim); font-size: 12px; min-width: 4.5rem; }
 .ss-snip { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .ss-who { color: var(--dim); font-size: 12px; }
+/* Play from here (Issue #132): beside each hit, and on each moment's time. */
+.ss-hit-row { display: flex; gap: 4px; align-items: stretch; }
+.ss-hit-row .ss-hit { flex: 1; min-width: 0; }
+.ss-play { flex: none; min-width: 36px; min-height: 32px; padding: 0 10px; font-size: 13px; }
+.timeline-play {
+  background: none; border: 0; padding: 0 4px; border-radius: 4px; cursor: pointer; text-align: left;
+  font: inherit; font-size: 12px; color: var(--dim); min-height: 0;
+}
+.timeline-play:hover, .timeline-play:focus-visible { color: var(--accent); text-decoration: underline; }
 .ss-hit.is-static { cursor: default; }
 .ss-hit.is-static:hover { background: none; }
 .session-search mark {
@@ -2924,6 +2933,31 @@ body.replay { display: flex; flex-direction: column; min-height: 100vh; backgrou
 .rp-marks { position: absolute; left: 8px; right: 8px; top: 50%; height: 14px; transform: translateY(-50%); pointer-events: none; }
 .rp-mark { position: absolute; top: 0; width: 2px; height: 100%; border-radius: 1px; background: var(--dim); opacity: .55; }
 .rp-mark-poll { background: var(--cue); opacity: .9; width: 3px; }
+.rp-mark-photo { background: var(--accent); opacity: .9; width: 3px; }
+.rp-mics { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.rp-mic { min-height: 32px; padding: 0 10px; font-size: 13px; }
+.rp-mic[aria-pressed="false"] { opacity: .6; text-decoration: line-through; }
+/* A poll's result and a photo over the stage, at their moments (phase 2). */
+.rp-poll {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, 88%); max-height: 86%; overflow: auto;
+  display: flex; flex-direction: column; gap: 8px; padding: 16px 18px; border-radius: var(--radius);
+  background: #0e1216; color: #e8ecf1; box-shadow: 0 8px 30px rgba(0, 0, 0, .5); z-index: 1;
+}
+.rp-poll[hidden], .rp-photo[hidden] { display: none; }
+.rp-poll-tag { color: #ffc94d; font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
+.rp-poll-q { font-size: 18px; }
+.rp-poll-rows, .rp-poll-answers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.rp-poll-rows li { display: grid; grid-template-columns: minmax(0, 1fr) 40% auto; gap: 10px; align-items: center; }
+.rp-poll-label { overflow-wrap: anywhere; }
+.rp-poll-bar { height: 10px; border-radius: 5px; background: rgba(255, 255, 255, .12); overflow: hidden; }
+.rp-poll-bar span { display: block; height: 100%; background: #6ea8fe; }
+.rp-poll-count { color: #97a2b0; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rp-poll-answers li { padding: 4px 8px; border-radius: 6px; background: rgba(255, 255, 255, .08); }
+.rp-photo {
+  position: absolute; right: 12px; bottom: 12px; margin: 0; width: min(34%, 260px); display: flex; flex-direction: column; gap: 4px;
+  padding: 6px; border-radius: 8px; background: rgba(14, 18, 22, .9); color: #e8ecf1; font-size: 12px;
+}
+.rp-photo img { width: 100%; border-radius: 4px; display: block; }
 .rp-speed { display: inline-flex; gap: 6px; align-items: center; color: var(--dim); font-size: 13px; }
 .rp-audio-note { grid-area: note; margin: 0; }
 @media (max-width: 760px) {
@@ -2935,4 +2969,9 @@ body.replay { display: flex; flex-direction: column; min-height: 100vh; backgrou
   .rp-stage { min-height: 0; aspect-ratio: 16 / 9; flex: none; }
   .rp-side { max-height: 50vh; }
   .rp-time { min-width: 0; }
+  /* The controls stay in reach while the transcript scrolls. */
+  .rp-controls { position: sticky; bottom: 0; z-index: 2; padding: 8px 0; background: var(--bg); border-top: 1px solid var(--line); }
+  .rp-photo { width: 40%; right: 8px; bottom: 8px; }
+  .rp-poll { padding: 10px 12px; }
+  .rp-poll-q { font-size: 15px; }
 }

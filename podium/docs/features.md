@@ -708,7 +708,11 @@ On a server with accounts, the display writes down what it showed as it goes: a 
 - **Captions and transcript:** the caption being said appears under the stage. The transcript beside it scrolls along with playback; tap any line to jump there.
 - **Sound:** the controller mic audio plays wherever it was recorded. Several mics play together, and stretches with no recording run silently. A lecture with no mic at all still replays its screens and captions in time.
 - **Controls:** a scrubber marked with each thing that went on screen and each poll, ±15 s, and speeds from 0.75× to 2×. Keys: **Space** plays and pauses, **← / →** skip 15 s, **Home / End** go to the start or end.
+- **Polls and photos:** a poll's result comes up over the stage as it closed, and a photo taken in the room appears in the corner as it was taken. Both are marked on the scrubber and listed in the transcript.
+- **Several mics:** with more than one, each has its own button to mute it, for example a student's answer without the instructor's mic.
+- **On a phone:** the controls stay pinned to the bottom while the transcript scrolls.
 - **Links:** the address keeps your place (`replay.html?lecture=…&at=…`), so a reload or a shared link opens at the same moment. Only someone who could open the lecture can replay it.
+- **Play from here:** every search result has a **▶**, and every moment of an opened timeline (in search results and on the admin page's Sessions tab) has a **▶** time. Each opens the replay a few seconds before that moment, so the sentence is heard from its start.
 
 **Searching past sessions** (Issue #159): the server keeps a full-text index of every session's caption lines, what was on screen, timeline notes and poll questions, plus what attendance asked: each check-in's entry and exit questions and its parking-lot questions. It is kept up to date as the display records, and history from before the index existed is added the first time the server starts.
 - `GET /api/lectures/search?q=…` searches every session you could already open (your own, and your courses'), best match first. `&course=psy415` narrows it to one course.

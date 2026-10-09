@@ -11,7 +11,9 @@
 //             - an annotated slide from the export, or a marked-up screen
 //   captions  what was being said, as the caption bar showed it
 //   marks     the things worth seeing on the scrubber: what went on screen,
-//             each poll as it closed
+//             each poll as it closed, each photo as it was taken
+//   polls     each poll's result, shown over the stage as it closed
+//   photos    photos taken in the room, shown as they were taken
 
 import { captionText, describeEvent, folderName } from './recap.js';
 
@@ -22,6 +24,13 @@ export const SEGMENT_MS = 120000;
 // A caption line stays under the stage this long after it was finished,
 // unless the next one replaces it sooner.
 export const CAPTION_HOLD_MS = 6000;
+
+// How long a poll's result and a photo stay over the stage after their moment.
+export const POLL_HOLD_MS = 15000;
+export const PHOTO_HOLD_MS = 10000;
+// "Play from here" starts this much before the moment, so the sentence it is
+// in is heard from its start.
+export const LEAD_IN_MS = 3000;
 
 const SLIDE_FILE_RE = /^slides\/([^/]+)\/slide-(\d+)\.png$/i;
 
@@ -133,6 +142,53 @@ export function indexAt(list, t) {
   return entry ? list.indexOf(entry) : -1;
 }
 
+/**
+ * Each poll as it closed: { at, question, kind, voters, rows: [{ label, count, share }] }
+ * for a choice poll, or `answers` (only those shown to the room) for a text one.
+ */
+export function buildPolls(pollResults) {
+  return (pollResults || [])
+    .filter((p) => Number.isFinite(p.endedAt))
+    .map((p) => {
+      const base = { at: p.endedAt, question: p.question || 'Poll', kind: p.kind === 'text' ? 'text' : 'choice', voters: Number(p.voters) || 0 };
+      if (base.kind === 'text') {
+        const hidden = new Set(p.hiddenAnswers || []);
+        return { ...base, answers: (p.answers || []).filter((_, i) => !hidden.has(i)).map(String) };
+      }
+      const counts = (p.options || []).map((_, i) => Number(p.counts?.[i]) || 0);
+      const total = counts.reduce((a, b) => a + b, 0);
+      return { ...base, rows: (p.options || []).map((label, i) => ({ label: String(label), count: counts[i], share: total ? counts[i] / total : 0 })) };
+    })
+    .sort((a, b) => a.at - b.at);
+}
+
+/** Photos taken in the room ("photos/…"), at the moment each was filed. */
+export function buildPhotos(files) {
+  return (files || [])
+    .filter((f) => /^photos\//.test(f.name) && Number.isFinite(f.at))
+    .map((f) => ({
+      at: f.at,
+      url: f.url,
+      title: f.name.replace(/^photos\/(?:[A-Za-z0-9]+-)?/, '').replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ').trim() || 'Photo',
+    }))
+    .sort((a, b) => a.at - b.at);
+}
+
+/** The latest of `list` within `hold` ms before `t`, or null. */
+export function heldAt(list, t, hold) {
+  const entry = latestAt(list, t);
+  return entry && t - entry.at < hold ? entry : null;
+}
+
+/**
+ * The replay of `lectureId` from just before `at` (an absolute time), for a
+ * lecture that started at `startedAt` - what "Play from here" opens.
+ */
+export function replayUrl(lectureId, startedAt, at, lead = LEAD_IN_MS) {
+  const ms = Math.max(0, Math.round(Number(at) - Number(startedAt) - lead));
+  return `replay.html?lecture=${encodeURIComponent(lectureId)}${ms ? `&at=${ms}` : ''}`;
+}
+
 /** The caption under the stage at `t`: the last line said, for a few seconds. */
 export function captionAt(captions, t, hold = CAPTION_HOLD_MS) {
   const line = latestAt(captions, t);
@@ -152,9 +208,12 @@ export function buildReplay(detail, opts = {}) {
     .filter((e) => e.kind === 'caption')
     .map((e) => ({ at: e.at, text: captionText(e) }))
     .filter((c) => c.text);
+  const polls = buildPolls(detail.pollResults);
+  const photos = buildPhotos(detail.files);
   const marks = [
     ...scenes.map((s) => ({ at: s.at, kind: 'program', label: s.title })),
-    ...(detail.pollResults || []).map((p) => ({ at: p.endedAt, kind: 'poll', label: `Poll: ${p.question || ''}`.trim() })),
+    ...polls.map((p) => ({ at: p.at, kind: 'poll', label: `Poll: ${p.question}` })),
+    ...photos.map((p) => ({ at: p.at, kind: 'photo', label: `Photo: ${p.title}` })),
   ].sort((a, b) => a.at - b.at);
   const start = Number(detail.startedAt) || timeline[0]?.at || 0;
   const lastSeen = Math.max(
@@ -164,7 +223,7 @@ export function buildReplay(detail, opts = {}) {
     ...tracks.flatMap((t) => t.segments.map((s) => s.end)),
     ...marks.map((m) => m.at),
   );
-  return { start, end: lastSeen, tracks, scenes, captions, marks, hasAudio: tracks.some((t) => t.segments.length) };
+  return { start, end: lastSeen, tracks, scenes, captions, marks, polls, photos, hasAudio: tracks.some((t) => t.segments.length) };
 }
 
 /** "m:ss", or "h:mm:ss" from an hour, for `ms` into the lecture. */
