@@ -24,7 +24,7 @@
 // display's, and both show it on screen so you can read it off directly.
 import { ZOOM_MAX } from './zoom.js';
 
-export const BUILD = 119;
+export const BUILD = 120;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -40,7 +40,7 @@ export const BUILD = 119;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.3';
-export const COMMIT = '1bcf8c8';
+export const COMMIT = '22fcd4e';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
