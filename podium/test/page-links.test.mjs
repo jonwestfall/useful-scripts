@@ -42,7 +42,7 @@ test('every GitHub link names a file or folder that is in the repository', () =>
       if (!href.startsWith(REPO)) continue;
       const m = /^(?:blob|tree)\/main\/(.+)$/.exec(href.slice(REPO.length).split('#')[0]);
       if (!m) continue; // the repository itself, its issues
-      assert.ok(existsSync(path.join(root, '..', m[1])), `${page}: ${href}`);
+      assert.ok(existsSync(m[1].startsWith('podium/') ? path.join(root, m[1].slice('podium/'.length)) : path.join(root, '..', m[1])), `${page}: ${href}`);
     }
   }
 });
