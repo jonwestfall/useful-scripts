@@ -89,6 +89,16 @@ function writeImageFixture() {
   return file;
 }
 
+// A phone photo held upright (Issue #262): 2:3, with a bright square at a known
+// spot (the middle of its right-hand third) so a test can find it on screen.
+function writePortraitImageFixture() {
+  const file = path.join(HERE, 'fixtures', 'portrait.png');
+  if (fs.existsSync(file)) return file;
+  const w = 600, h = 900;
+  writePng(file, w, h, 3, (x, y) => (x > 440 && x < 560 && y > 390 && y < 510 ? [255, 255, 255] : [30, 60 + Math.round(y * 120 / h), 110]));
+  return file;
+}
+
 // A PNG with real alpha: transparent everywhere except an opaque blue block
 // in one corner, so a test can tell "the background survived as transparent"
 // from "it got flattened to a black box", which is what plain JPEG
@@ -614,6 +624,6 @@ function exitWithResult() {
 export {
   HERE, ROOT, fs, path, os, http, spawn, execFileSync,
   writeImageFixture, writeAlphaImageFixture, writeSlideFixtures, writeMinimalPptxFixture, SLIDE_COLOURS, freePort,
-  devices, PORT, BASE, CFG, browser, ok, errors, want, trap, expecting,
+  devices, PORT, BASE, CFG, browser, ok, errors, want, trap, expecting, writePortraitImageFixture,
   pollUntil, bgMatches, reportErrors, teardown, exitWithResult,
 };
