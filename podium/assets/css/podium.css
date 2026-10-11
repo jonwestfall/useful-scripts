@@ -3026,3 +3026,35 @@ body.replay { display: flex; flex-direction: column; min-height: 100vh; backgrou
 /* Admin › Content › Marp Themes: Marp's own, Podium's, and those added here. */
 .themes-group { margin: 16px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
 .admin-row.is-muted .admin-title { opacity: .6; }
+
+/* A theme's cheat sheet (theme-sheet-ui.js): a sample slide per class, its colours, fonts and directives. */
+.theme-sheet-card-outer { width: min(1100px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+.theme-sheet-head { display: flex; align-items: center; gap: 12px; position: sticky; top: -16px; background: var(--panel); padding: 4px 0 8px; z-index: 1; }
+.theme-sheet-head h2 { flex: 1; margin: 0; }
+.theme-sheet-close { min-width: 36px; font-size: 20px; line-height: 1; }
+.theme-sheet h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 18px 0 8px; }
+.theme-sheet-about { margin: 0 0 6px; }
+.theme-sheet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.theme-sheet-card { margin: 0; display: grid; gap: 6px; align-content: start; }
+.theme-sheet-slide { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #fff; }
+.theme-sheet-card figcaption { display: grid; gap: 3px; font-size: 13px; }
+.theme-sheet-card code { font-size: 12px; word-break: break-all; }
+.theme-sheet-use { justify-self: start; min-height: 30px; font-size: 13px; }
+.theme-sheet-colours { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.theme-sheet-colour { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.theme-sheet-chip { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--line); flex: none; }
+.theme-sheet-fonts { margin: 0; padding-left: 18px; }
+.theme-sheet-directives { border-collapse: collapse; width: 100%; font-size: 13px; }
+.theme-sheet-directives th, .theme-sheet-directives td { text-align: left; vertical-align: top; padding: 5px 8px; border-top: 1px solid var(--line); }
+.theme-sheet-directives code { font-size: 12px; white-space: nowrap; }
+@media (max-width: 640px) { .theme-sheet-directives code { white-space: normal; word-break: break-all; } }
+.deck-theme-row { gap: 6px; }
+.deck-theme-row select { flex: 1; min-width: 0; }
+/* Admin's theme quick settings. */
+.theme-quick { margin: 0 0 12px; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; }
+.theme-quick summary { cursor: pointer; font-weight: 600; }
+.theme-quick-grid { display: grid; grid-template-columns: max-content 56px max-content 56px; gap: 8px 12px; align-items: center; margin-top: 8px; }
+.theme-quick-grid input[type="color"] { width: 56px; height: 32px; padding: 2px; }
+.theme-quick-font { grid-column: span 3; display: flex; gap: 8px; flex-wrap: wrap; }
+.theme-quick-font select, .theme-quick-font input { flex: 1; min-width: 140px; }
+@media (max-width: 640px) { .theme-quick-grid { grid-template-columns: max-content 56px; } .theme-quick-font { grid-column: span 1; } }

@@ -363,7 +363,11 @@
     <h3 class="deck-only">Deck</h3>
     <div class="deck-settings deck-only">
       <label for="deck-theme">Theme</label>
-      <select id="deck-theme"></select>
+      <div class="inline deck-theme-row">
+        <select id="deck-theme"></select>
+        <!-- What the theme offers, as sample slides (theme-sheet-ui.js). -->
+        <button id="deck-theme-guide" type="button" title="The theme's classes as sample slides, its colours, fonts and directives">Theme guide</button>
+      </div>
       <label for="deck-size">Shape</label>
       <select id="deck-size">
         <option value="">16:9 (default)</option>
