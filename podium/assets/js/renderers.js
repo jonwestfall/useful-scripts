@@ -26,6 +26,7 @@ import { renderDoc, measureDoc, DOC_WIDTH, DOC_VIEW } from './doc.js';
 import { BLANK_PIXEL } from './assets.js';
 import { contentRect, isZoomed } from './zoom.js';
 import { formatPollCode } from './poll-link.js';
+import { lookColors, lookVars } from './poll-look.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -940,7 +941,9 @@ function renderPoll(item, opts) {
         }
         const maxCount = Math.max(1, ...words.map((w) => w.count));
         const minCount = Math.min(...words.map((w) => w.count));
-        const palette = [
+        // A poll with a look (poll-look.js) draws its words in that look's
+        // result colours; one without keeps the mixed set it always had.
+        const palette = it.look && colors.palette.length > 1 ? colors.palette : [
           'var(--accent)',
           'var(--ok)',
           'var(--cue)',
@@ -1010,6 +1013,7 @@ function renderPoll(item, opts) {
       const count = counts[i] || 0;
       const fill = el('div', { class: 'r-poll-bar-fill' });
       fill.style.width = `${Math.round((count / max) * 100)}%`;
+      if (it.look) fill.style.background = colors.palette[i % colors.palette.length];
       const isCorrect = it.revealed && it.correct === i;
       const letter = String.fromCharCode(65 + i);
       const votersForThisOption = (it.showNames && Array.isArray(it.responses))
@@ -1057,7 +1061,22 @@ function renderPoll(item, opts) {
     }
   };
 
+  // The look (poll-look.js): its colours as custom properties on the poll,
+  // which the stylesheet reads, falling back to the dark look a poll
+  // without one has always had.
+  let colors = lookColors(null);
+  const applyLook = (it) => {
+    colors = lookColors(it.look);
+    node.classList.toggle('has-look', !!it.look);
+    node.classList.toggle('is-light-look', !!it.look && !colors.dark);
+    for (const [name, value] of Object.entries(lookVars(it.look))) {
+      if (it.look) node.style.setProperty(name, value);
+      else node.style.removeProperty(name);
+    }
+  };
+
   const draw = (it) => {
+    applyLook(it);
     // viewerLive: a guest viewer's copy of a live poll, whose token was
     // stripped before it left the display (see viewerPoll in protocol.js) -
     // live all the same, not an archived snapshot.

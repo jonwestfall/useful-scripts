@@ -32,6 +32,8 @@ import { clampView, fitView, zoomAround, panBy, isZoomed, visibleWindow, viewKee
 import { attachGestures } from './gestures.js';
 import { resolvePollBase, pollLinkBlock, pollLinksSummary, newPollKey, isPollKey } from './poll-link-ui.js';
 import { formatPollCode } from './poll-link.js';
+import { pollLookPicker } from './poll-look-ui.js';
+import { normalizeLook } from './poll-look.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -3237,6 +3239,7 @@ function restoredPollDraft() {
       namePrompt: String(saved.namePrompt || 'Name:').slice(0, 50),
       link: saved.link,
       planItemId: String(saved.planItemId || ''),
+      look: normalizeLook(saved.look) || undefined,
     };
   } catch {
     return null;
@@ -3335,6 +3338,8 @@ function openPollDraftFromPlan(item) {
     namePrompt: item.namePrompt || 'Name:',
     link: isPollKey(item.link) ? item.link : '',
     planItemId: item.id || '',
+    // A look planned for it (poll-look.js); none means as Settings says.
+    look: normalizeLook(item.look) || undefined,
   };
   savePollDraft();
   pollError = '';
@@ -3384,6 +3389,7 @@ async function startPoll() {
       kind: pollDraft.kind, question, options, correct, askName, namePrompt, showNames: false,
       open: true, revealed: false,
       showUrl: presentation.showPollUrl,
+      ...(lookForDraft() ? { look: lookForDraft() } : {}),
     });
     pollDraft = null;
     try { localStorage.removeItem(POLL_DRAFT_KEY); } catch { /* nothing kept */ }
@@ -3516,7 +3522,7 @@ async function endPoll() {
       pollId: item.pollId, kind: item.kind, question: item.question, options: item.options, correct: item.correct,
       askName: item.askName, namePrompt: item.namePrompt, responses: item.responses || [],
       counts: item.counts || [], answers: item.answers || [], voters: item.voters || 0,
-      hiddenAnswers: item.hiddenAnswers || [], endedAt: Date.now(),
+      hiddenAnswers: item.hiddenAnswers || [], endedAt: Date.now(), look: item.look || null,
       // Which lecture this poll belongs to, so a later export - in a
       // different lecture entirely - knows not to include it. pollHistory
       // outlives any one lecture (it is the presenter's own scrollback of
@@ -3560,6 +3566,7 @@ function reopenFromHistory(row) {
     // Asked again under the same link, when it was started from one.
     link: pollLinkKeys.get(row.pollId) || '',
     planItemId: '',
+    look: row.look || undefined,
   };
   savePollDraft();
   pollError = '';
@@ -3574,6 +3581,7 @@ function redisplayFromHistory(row) {
     askName: row.askName, namePrompt: row.namePrompt, responses: row.responses || [],
     open: false, revealed: true, showNames: false, voters: row.voters, counts: row.counts, answers: row.answers,
     hiddenAnswers: row.hiddenAnswers || [],
+    ...(row.look ? { look: row.look } : {}),
   });
 }
 
@@ -3639,7 +3647,37 @@ function renderPollBuilder() {
   $('#poll-error').hidden = !pollError;
   $('#poll-error').textContent = pollError;
   $('#poll-start').disabled = pollBusy;
+  renderPollLookPicker();
   savePollDraft();
+}
+
+// --- how a poll looks (poll-look.js) ------------------------------------------------
+//
+// Settings → Presentation picks how this device's polls look; the composer
+// can pick another for the one poll, and a planned poll can say its own.
+
+/** The look a poll started now gets: the draft's own, else Settings', else none (the classic dark). */
+function lookForDraft() {
+  return normalizeLook(pollDraft?.look) || normalizeLook(presentation.pollLook) || null;
+}
+
+let lookPickerFor = null;    // the draft the composer's picker was drawn for
+function renderPollLookPicker() {
+  if (!pollDraft || lookPickerFor === pollDraft) return;
+  lookPickerFor = pollDraft;
+  const draft = pollDraft;
+  const summary = () => {
+    const look = normalizeLook(draft.look);
+    $('#poll-look-summary').textContent = look ? `Look: this poll's own` : 'Look: as set in Settings';
+  };
+  $('#poll-look-picker').replaceChildren(pollLookPicker({
+    value: draft.look || { mode: '' },
+    allowDefault: true,
+    defaultLabel: 'As set in Settings',
+    idPrefix: 'poll-look',
+    onChange: (look) => { draft.look = look || undefined; summary(); savePollDraft(); },
+  }));
+  summary();
 }
 
 let pollRunningDrawn = '';
@@ -7859,6 +7897,8 @@ const PRESENTATION_DEFAULTS = {
   // Follows the device's own light/dark setting unless chosen here (Issue #210).
   theme: 'auto',
   showPollUrl: true,
+  // How polls look (poll-look.js); null is the dark look polls always had.
+  pollLook: null,
   blankOnConnect: true,
   keepAwake: true,
   haptics: true,
@@ -8472,6 +8512,11 @@ $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () =
 
 $('#pref-theme')?.addEventListener('change', (ev) => { setThemeChoice(ev.target.value); });
 $('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
+$('#pref-poll-look').replaceChildren(pollLookPicker({
+  value: normalizeLook(presentation.pollLook) || { mode: 'dark' },
+  idPrefix: 'pref-poll-look',
+  onChange: (look) => { presentation.pollLook = look; savePresentation(); },
+}));
 $('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
 $('#pref-auto-switch-tab').addEventListener('change', (ev) => { presentation.autoSwitchTab = ev.target.checked; savePresentation(); });
 $('#pref-help-open').addEventListener('change', (ev) => { presentation.helpOpen = ev.target.checked; savePresentation(); applyHelpOpen(); });

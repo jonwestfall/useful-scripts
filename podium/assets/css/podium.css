@@ -437,8 +437,12 @@ dl.keys dd { margin: 0; color: var(--dim); }
 
 .r-poll {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 3cqh; background: #0a0d12; padding: 5cqh 6cqw; text-align: center;
+  gap: 3cqh; background: var(--poll-bg, #0a0d12); padding: 5cqh 6cqw; text-align: center;
 }
+/* A poll with a look (poll-look.js) sets these; one without keeps the page's. */
+.r-poll.has-look { color: var(--poll-fg); --dim: var(--poll-dim); --accent: var(--poll-accent); --ok: var(--poll-ok); --panel: var(--poll-card); }
+/* The join card stays white, for the QR code; on a light screen it needs an edge. */
+.r-poll.is-light-look .r-poll-join { box-shadow: 0 0 0 1px rgba(0,0,0,.12), 0 1cqh 3cqh rgba(0,0,0,.08); }
 .r-poll-question { font-size: clamp(12px, 6cqw, 92px); font-weight: 700; line-height: 1.15; }
 .r-poll-join { display: grid; place-items: center; gap: 1.4cqh; background: #fff; color: #111; border-radius: 2cqh; padding: 3cqh 4cqw; }
 .r-poll.is-revealed .r-poll-join { display: none; }
@@ -453,10 +457,10 @@ dl.keys dd { margin: 0; color: var(--dim); }
 .r-poll-results { width: min(90cqw, 900px); display: flex; flex-direction: column; gap: 1.6cqh; }
 .r-poll-bar-row { display: flex; flex-direction: column; gap: .6cqh; }
 .r-poll-bar-label { display: flex; justify-content: space-between; font-size: clamp(9px, 2.6cqw, 36px); font-weight: 600; }
-.r-poll-bar-track { height: 3.2cqh; background: #1b222c; border-radius: 999px; overflow: hidden; }
+.r-poll-bar-track { height: 3.2cqh; background: var(--poll-track, #1b222c); border-radius: 999px; overflow: hidden; }
 .r-poll-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s ease; }
 .r-poll-answers { display: flex; flex-direction: column; gap: 1cqh; max-height: 70cqh; overflow: auto; }
-.r-poll-answer { font-size: clamp(9px, 2.6cqw, 34px); background: #151b23; border-radius: 1.2cqh; padding: 1.2cqh 1.8cqw; text-align: left; }
+.r-poll-answer { font-size: clamp(9px, 2.6cqw, 34px); background: var(--poll-card, #151b23); border-radius: 1.2cqh; padding: 1.2cqh 1.8cqw; text-align: left; }
 .r-poll-answer.r-poll-empty { color: var(--dim); text-align: center; }
 
 /* Check-in on screen (Issue #256): white, like a QR code item, so a phone
@@ -512,7 +516,8 @@ dl.keys dd { margin: 0; color: var(--dim); }
   padding: 0.1em 0.4em;
   border-radius: 999px;
 }
-:root[data-theme="light"] .r-poll-cloud-count {
+:root[data-theme="light"] .r-poll-cloud-count,
+.r-poll.is-light-look .r-poll-cloud-count {
   background: rgba(0, 0, 0, 0.08);
 }
 
@@ -3006,3 +3011,14 @@ body.replay { display: flex; flex-direction: column; min-height: 100vh; backgrou
 .deck-link-preview { display: flex; justify-content: center; }
 .deck-link-preview:empty { display: none; }
 .deck-link-preview svg { width: 140px; height: auto; background: #fff; }
+
+/* Choosing how a poll looks (poll-look-ui.js). */
+.poll-look { display: grid; gap: 6px; }
+.poll-look-row { display: flex; align-items: center; gap: 8px; }
+.poll-look-row[hidden] { display: none; }
+.poll-look-row label { min-width: 7.5em; margin: 0; font-size: 13px; }
+.poll-look-row select { flex: 1; }
+.poll-look-swatch { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-items: center; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line, rgba(127,127,127,.3)); }
+.poll-look-swatch[hidden] { display: none; }
+.poll-look-swatch-text { grid-row: span 7; font-weight: 700; font-size: 22px; }
+.poll-look-swatch-bar { display: block; height: 7px; border-radius: 999px; }

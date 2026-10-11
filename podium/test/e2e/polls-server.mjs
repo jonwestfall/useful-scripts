@@ -1097,6 +1097,105 @@ ok('and after a reload the draft is still there with the same link',
 await solo.close();
 }
 
+if (want('how a poll looks: light, dark, a slide theme, and result colours')) {
+console.log('\n-- how a poll looks: light, dark, a slide theme, and result colours --');
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-look-room', passphrase: 'colours of the room' }));
+const screen = await ctx.newPage();
+trap(screen, 'poll look display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'poll look pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+const pollBg = () => screen.evaluate(() => { const n = document.querySelector('.r-poll'); return n ? getComputedStyle(n).backgroundColor : ''; });
+const fills = () => screen.$$eval('.r-poll-bar-fill', (els) => els.map((e) => getComputedStyle(e).backgroundColor));
+const vote = (code, voter, answer) => fetch(`${BASE}/poll/${code}/vote`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ voter, answer }) });
+const runPoll = async (question) => {
+  await pad.click('.tab[data-tab="polls"]');
+  await pad.fill('#poll-question', question);
+  await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'One');
+  await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'Two');
+  await pad.click('#poll-option-add');
+  await pad.fill('#poll-options .poll-option-row:nth-child(3) input', 'Three');
+  await pad.click('#poll-start');
+  await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+  await screen.waitForFunction((q) => document.querySelector('.r-poll-question')?.textContent === q, question, { timeout: 5000 });
+  const code = (await pad.textContent('#poll-running-code')).trim();
+  await vote(code, 'a', 0); await vote(code, 'b', 1); await vote(code, 'c', 2);
+  await screen.waitForFunction(() => document.querySelector('.r-poll-status')?.textContent.includes('3 responses'), null, { timeout: 8000 });
+  await pad.click('#poll-toggle-reveal');
+  await screen.waitForFunction(() => document.querySelector('.r-poll')?.classList.contains('is-revealed'), null, { timeout: 5000 });
+};
+const endPoll = async () => {
+  await pad.click('#poll-end');
+  if (await pad.isVisible('#poll-end')) await pad.click('#poll-end').catch(() => {});
+  await pad.waitForFunction(() => document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+};
+
+// With nothing chosen, a poll is the dark screen it always was.
+await runPoll('Plain?');
+ok('with nothing chosen, a poll is the dark screen it always was',
+  (await pollBg()) === 'rgb(10, 13, 18)' && await screen.evaluate(() => !document.querySelector('.r-poll').classList.contains('has-look')));
+await endPoll();
+
+// Settings → Presentation: light, rainbow.
+await pad.click('#topbar-more'); await pad.click('#open-settings');
+await pad.waitForSelector('#setup:not([hidden])');
+await pad.selectOption('#pref-poll-look-mode', 'light');
+await pad.selectOption('#pref-poll-look-palette', 'rainbow');
+await pad.waitForFunction(() => JSON.parse(localStorage.getItem('podium.presentation.v1') || '{}').pollLook?.palette === 'rainbow', null, { timeout: 5000 });
+ok('Settings keeps the look this device\'s polls get', true);
+ok('with a strip showing what it comes to', await pad.evaluate(() => document.querySelectorAll('#pref-poll-look .poll-look-swatch-bar').length === 7));
+await pad.click('#setup-close');
+await runPoll('Light?');
+ok('a poll started now is light', (await pollBg()) === 'rgb(247, 248, 250)'
+  && await screen.evaluate(() => document.querySelector('.r-poll').classList.contains('is-light-look')));
+const rainbow = await fills();
+ok(`and its result bars are rainbow colours, each its own (${rainbow.join(' ')})`, rainbow.length === 3 && new Set(rainbow).size === 3);
+await endPoll();
+
+// The composer: this one poll in a slide theme's colours.
+await pad.click('#poll-look-summary');
+await pad.selectOption('#poll-look-mode', 'theme');
+await pad.waitForFunction(() => document.querySelectorAll('#poll-look-theme option').length >= 4, null, { timeout: 10000 });
+const offered = await pad.$$eval('#poll-look-theme option', (o) => o.map((x) => x.value));
+ok(`the slide themes on offer are Marp's and this Podium's own (${offered.join(', ')})`,
+  ['default', 'gaia', 'uncover', 'psy415-dsu'].every((t) => offered.includes(t)));
+await pad.selectOption('#poll-look-theme', 'psy415-dsu');
+await pad.selectOption('#poll-look-palette', 'theme');
+await pad.waitForFunction(() => /own/.test(document.querySelector('#poll-look-summary').textContent), null, { timeout: 10000 });
+await runPoll('In the course colours?');
+const look = await screen.evaluate(() => {
+  const n = document.querySelector('.r-poll');
+  return { bg: getComputedStyle(n).backgroundColor, fg: getComputedStyle(n.querySelector('.r-poll-question')).color };
+});
+ok(`a poll in a theme's colours takes its background and text (${look.bg}, ${look.fg})`, look.bg !== 'rgb(10, 13, 18)' && look.bg !== 'rgb(247, 248, 250)' && look.fg !== look.bg);
+const themed = await fills();
+ok(`and its bars are the theme's own colours (${themed.join(' ')})`, themed.length === 3 && themed.some((f) => /rgb\(0, 1[0-9]{2}, [0-9]{2}\)/.test(f)));
+await endPoll();
+await ctx.close();
+
+// The planner: a planned poll says its own look, and its preview shows it.
+const office = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+const desk = await office.newPage();
+trap(desk, 'poll look planner');
+await desk.goto(`${BASE}/plan.html`);
+await desk.waitForSelector('#type-picker .type-btn');
+await desk.click('#type-picker .type-btn:has-text("Poll")');
+await desk.fill('#item-fields textarea >> nth=0', 'Planned in light?');
+await desk.waitForSelector('#item-poll-look-mode');
+ok('a planned poll follows the controller unless it says otherwise', (await desk.inputValue('#item-poll-look-mode')) === '');
+await desk.selectOption('#item-poll-look-mode', 'light');
+await desk.waitForFunction(() => document.querySelector('#item-preview .r-poll')?.classList.contains('is-light-look'), null, { timeout: 10000 });
+ok('choosing light shows in the planner\'s own preview of the projector', true);
+await office.close();
+}
+
 if (want('exporting a session includes its polls')) {
 console.log('\n-- exporting a session includes its polls --');
 // The full "photos, ink, boards" export is covered elsewhere; this only has

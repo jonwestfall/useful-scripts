@@ -31,6 +31,7 @@ import { startPageTheme } from './theme.js';
 import { wordKind, askWordChoice, wordToDocument, wordToLibraryPdf, reportLine } from './word-upload.js';
 import { loadConfig } from './config.js';
 import { resolvePollBase, pollLinkBlock, pollLinksSummary, newPollKey, isPollKey } from './poll-link-ui.js';
+import { pollLookPicker } from './poll-look-ui.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -962,6 +963,15 @@ function renderPollLinks() {
 function fieldFor(item, spec) {
   if (spec.hidden) return '';
   const set = (value, opts) => { item[spec.key] = value; afterEdit(opts); };
+
+  if (spec.kind === 'poll-look') {
+    return field(spec.label, pollLookPicker({
+      value: item[spec.key] || { mode: '' },
+      allowDefault: true,
+      idPrefix: 'item-poll-look',
+      onChange: (look) => { item[spec.key] = look; afterEdit({ remount: true }); },
+    }), 'Dark, light, or a slide theme\u2019s colours, and the colours its results are drawn in. Left as the controller is set, it follows Settings \u2192 Presentation on the device that starts it.');
+  }
 
   if (spec.kind === 'poll-link') {
     return field(spec.label, pollLinkBlock({

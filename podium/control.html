@@ -952,6 +952,11 @@
               </label>
               <input id="poll-name-prompt" aria-label="Name prompt shown to participants" type="text" placeholder="Name:" value="Name:" maxlength="50" style="max-width: 140px; padding: 4px 8px; font-size: 13px;" hidden>
             </div>
+            <!-- How it looks on the projector (poll-look.js). -->
+            <details id="poll-look-box" class="poll-look-box">
+              <summary id="poll-look-summary">Look: as set in Settings</summary>
+              <div id="poll-look-picker"></div>
+            </details>
             <!-- A link to hand out before class (poll-link.js). -->
             <div id="poll-link-box"></div>
             <p id="poll-error" class="hint" role="alert" hidden></p>
@@ -1303,6 +1308,21 @@
         </p>
         </details>
       </div>
+
+      <div class="field" style="margin-top:12px;">
+        <label for="pref-poll-look-mode">How polls look on the projector</label>
+        <div id="pref-poll-look"></div>
+      </div>
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
+        Dark or light, or the colours of one of the slide themes on this Podium: its background,
+        its text and its heading colour, adjusted where needed so everything reads from the back
+        of the room. <b>Result colours</b> are what the bars and word clouds are drawn in. This is
+        the look every poll you start gets; the Polls tab can choose another for one poll, and a
+        poll planned in the planner can say its own. The join card stays white, for the QR code.
+        </p>
+      </details>
 
       <label class="check"><input id="pref-poll-url" type="checkbox"> Show the voting URL below the QR code</label>
       <details class="help">

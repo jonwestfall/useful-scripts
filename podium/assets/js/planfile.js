@@ -16,6 +16,7 @@ import { uid } from './util.js';
 import { MAX_TIMERS } from './protocol.js';
 import { assetRefsIn } from './deck-source.js';
 import { isPollKey } from './poll-link.js';
+import { normalizeLook } from './poll-look.js';
 
 export const PLAN_VERSION = 1;
 
@@ -218,6 +219,8 @@ export const PLAN_TYPES = {
       // A link to hand out before class (poll-link.js): the secret its code
       // is worked out from. Empty for a poll that gets a code when it starts.
       { key: 'link', label: 'Link to share in advance', kind: 'poll-link' },
+      // How it looks on the projector (poll-look.js); none: as the controller is set.
+      { key: 'look', label: 'How it looks on the projector', kind: 'poll-look' },
     ],
   },
   // Issue #256: attendance, planned. Taking it in class opens check-in (or
@@ -504,6 +507,7 @@ export function readPlan(raw) {
       else if (field.kind === 'textarea') item[field.key] = str(value, field.max ?? 4000);
       else if (field.kind === 'timer-pick') item[field.key] = str(value, 40);
       else if (field.kind === 'poll-link') item[field.key] = isPollKey(value) ? value : '';
+      else if (field.kind === 'poll-look') item[field.key] = normalizeLook(value);
       else item[field.key] = str(value, 100000);
     }
     // A countdown pointing at a timer this plan does not define would come up
