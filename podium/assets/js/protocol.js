@@ -23,6 +23,7 @@
 // serving right now (see servedBuild in util.js), the controller checks the
 // display's, and both show it on screen so you can read it off directly.
 import { ZOOM_MAX } from './zoom.js';
+import { normalizeLook } from './poll-look.js';
 
 export const BUILD = 122;
 
@@ -530,6 +531,9 @@ function normalizeItem(item) {
     // answers) and this normalization must not clobber on every re-stage.
     copy.kind = ['text', 'qna'].includes(copy.kind) ? copy.kind : 'choice';
     copy.question = String(copy.question || '').slice(0, 500);
+    // How it looks (poll-look.js): only colours, checked one by one, or none.
+    const look = normalizeLook(copy.look);
+    if (look) copy.look = look; else delete copy.look;
     copy.options = copy.kind === 'choice'
       ? (Array.isArray(copy.options) ? copy.options : []).slice(0, 8).map((o) => String(o).slice(0, 200))
       : [];

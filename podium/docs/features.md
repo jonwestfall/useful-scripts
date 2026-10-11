@@ -416,6 +416,12 @@ Engage your class without third-party software or student logins. Polls need Pod
 - Add a voting countdown (**+30s**, **+60s**, **+2m**) that closes the poll automatically, or **Close voting** by hand.
 - Results appear live on your controller and stay private until you tap **Reveal to room**. **End poll** finishes it.
 
+**How a poll looks on the projector.** Settings → Presentation → *How polls look on the projector* sets it for every poll this device starts; the Polls tab's **Look** can choose another for one poll, and a planned poll can say its own (the planner's preview shows it).
+- **Poll screen**: *Dark* (the screen polls have always had), *Light*, or *A slide theme's colours*: any Marp theme on this Podium (the built-in `default`, `gaia` and `uncover`, and those in `marp-themes/`). Podium draws a sample slide in that theme and takes its background, its text and the colours of its headings, links and emphasis.
+- **Result colours**, for the bars and the word cloud: *One colour*, *Primary colours*, *Rainbow*, *Soft*, *Shades of one colour*, or *The theme's colours*.
+- Whatever a theme brings, every colour is adjusted until it reads from the back of the room: text at 7:1 against the background (or as close as that background allows), the dimmer lines at 4.5:1, bars and words at 3:1. So a pale theme's yellow becomes a darker gold on a light screen. The join card stays white, so the QR code always scans.
+- The colours travel with the poll itself, so Guest View, the controller's preview and a replay show the same thing, and a theme changed later does not change a poll already run.
+
 **Links to share in advance.** A poll's code is normally made when you start it, so it can't go in anything sent out beforehand. For a handout, an email or a chat message before class (a talk over Zoom, say), give the poll a **link to share in advance**:
 - In the planner, a poll's **Link to share in advance** makes one, with its QR code beside it: **Copy link**, **Save QR picture** (a PNG for your own handout), **New link** (the old one stops working) and **Remove**. **Lecture settings → Poll links** does every poll in the lecture at once, with **Copy all links** and a **sheet to print or save as a PDF**, with clickable links and QR codes.
 - In the controller, the Polls tab's composer offers the same for the poll you're writing, and **Links for this lecture's polls** for the lecture you opened. A link made there for a lecture opened from the server is saved back to it.
