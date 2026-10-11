@@ -12,7 +12,7 @@ import { $, $$, el, uid, guessItemFromUrl, wireDangerButton, servedBuild, safeSt
 import {
   PLAN_TYPES, emptyPlan, newItem, readPlan, planToJson, planFileName, planBytes,
   itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, pruneAssets, emptyAutoLaunch, emptyPip,
-  MAX_ASSET_CHARS, MAX_PLAN_BYTES,
+  MAX_ASSET_CHARS, MAX_PLAN_BYTES, withoutPollLinks,
 } from './planfile.js';
 import {
   allPlans, savePlan, loadPlan, removePlan,
@@ -29,6 +29,8 @@ import { mountSessionBadge, serverInfo } from './server.js';
 import { mountZipImport } from './zip-review.js';
 import { startPageTheme } from './theme.js';
 import { wordKind, askWordChoice, wordToDocument, wordToLibraryPdf, reportLine } from './word-upload.js';
+import { loadConfig } from './config.js';
+import { resolvePollBase, pollLinkBlock, pollLinksSummary, newPollKey, isPollKey } from './poll-link-ui.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -584,6 +586,7 @@ function duplicate(id) {
   // The asset table is shared on purpose: two rows showing the same photo
   // should not double the size of the file you carry.
   const copy = { ...structuredClone(plan.items[index]), id: uid(8) };
+  if (copy.type === 'poll') copy.link = '';
   plan.items.splice(index + 1, 0, copy);
   touch();
   select(copy.id);
@@ -704,6 +707,7 @@ function renderEditor() {
   $('#order-settings').classList.toggle('is-on', !item);
   $('#order-settings').setAttribute('aria-pressed', String(!item));
   if (!item) {
+    renderPollLinks();
     $('#item-heading').textContent = 'Lecture settings';
     $('#item-blurb').textContent = 'For the whole lecture. Pick something in the running order to edit it instead.';
     $('#item-preview-wrap').hidden = true;
@@ -927,9 +931,46 @@ function field(label, control, hint) {
     hint ? el('p', { class: 'hint' }, hint) : null);
 }
 
+// Where a poll's link made in advance points (poll-link-ui.js). Worked out
+// once; the editor is drawn again when it is known.
+let pollBase = null;
+loadConfig().catch(() => null).then(resolvePollBase).then((base) => {
+  pollBase = base;
+  renderEditor();
+});
+
+function pollPlanItems() {
+  return (plan?.items || []).filter((i) => i.type === 'poll');
+}
+
+// The lecture's polls and their links, under Lecture settings.
+function renderPollLinks() {
+  const polls = pollPlanItems();
+  $('#plan-poll-links-box').hidden = !polls.length;
+  $('#plan-poll-links').replaceChildren(pollLinksSummary({
+    title: plan?.title || 'Lecture',
+    polls,
+    base: pollBase,
+    onMakeAll: () => {
+      for (const poll of polls) if (!isPollKey(poll.link)) poll.link = newPollKey();
+      touch();
+      renderPollLinks();
+    },
+  }));
+}
+
 function fieldFor(item, spec) {
   if (spec.hidden) return '';
   const set = (value, opts) => { item[spec.key] = value; afterEdit(opts); };
+
+  if (spec.kind === 'poll-link') {
+    return field(spec.label, pollLinkBlock({
+      base: pollBase,
+      key: item[spec.key],
+      question: item.question,
+      onChange: (key) => { item[spec.key] = key; touch(); renderEditor(); },
+    }));
+  }
 
   if (spec.kind === 'poll-options') {
     const rawOptions = (item[spec.key] || '').split('\n').map((s) => s.trim()).filter(Boolean);
@@ -2246,7 +2287,7 @@ $('#plan-new-from-template').addEventListener('click', async () => {
   if (!existing?.doc) return;
   try {
     const { plan: loaded, warnings } = readPlan(typeof existing.doc === 'string' ? existing.doc : JSON.stringify(existing.doc));
-    await newPlan(loaded);
+    await newPlan(withoutPollLinks(loaded));
     warn(warnings.length ? `Opened with ${warnings.length} problem${warnings.length === 1 ? '' : 's'}: ${warnings.join(' ')}` : '');
   } catch (err) {
     warn(`That template did not open: ${err.message}`);
@@ -2352,7 +2393,7 @@ $('#plan-duplicate').addEventListener('click', async () => {
   copy.title = `${plan.title} (copy)`;
   copy.created = Date.now();
   copy.server = null;
-  await newPlan(copy);
+  await newPlan(withoutPollLinks(copy));
 });
 
 // wireDangerButton leaves the button disabled after the action, which is right

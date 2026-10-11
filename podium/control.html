@@ -952,9 +952,18 @@
               </label>
               <input id="poll-name-prompt" aria-label="Name prompt shown to participants" type="text" placeholder="Name:" value="Name:" maxlength="50" style="max-width: 140px; padding: 4px 8px; font-size: 13px;" hidden>
             </div>
+            <!-- A link to hand out before class (poll-link.js). -->
+            <div id="poll-link-box"></div>
             <p id="poll-error" class="hint" role="alert" hidden></p>
             <button id="poll-start" type="submit">Start poll</button>
           </form>
+
+          <!-- The lecture's planned polls and their links, for a handout. -->
+          <div id="poll-links-planned" hidden>
+            <h3>Links for this lecture's polls</h3>
+            <div id="poll-links-summary"></div>
+            <p id="poll-links-note" class="hint" role="status"></p>
+          </div>
 
           <h3>This session</h3>
           <details class="help">

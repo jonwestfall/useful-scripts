@@ -1493,6 +1493,15 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 .poll-option-row { display: flex; gap: 8px; align-items: center; }
 .poll-option-row input { flex: 1; }
 .poll-option-row button { min-width: 32px; min-height: 32px; padding: 0; font-size: 14px; color: var(--live); }
+/* A poll link made in advance (poll-link-ui.js): QR beside the link. */
+.poll-link-row { display: flex; gap: 12px; align-items: flex-start; }
+.poll-link-qr { flex: none; width: 96px; background: #fff; border-radius: 6px; padding: 4px; }
+.poll-link-qr svg { display: block; width: 100%; height: auto; }
+.poll-link-text { min-width: 0; flex: 1; }
+.poll-link-url { display: block; word-break: break-all; font-size: 13px; }
+.poll-link-actions { flex-wrap: wrap; gap: 6px; }
+.poll-link .hint { margin: 4px 0; }
+@media (max-width: 480px) { .poll-link-row { flex-direction: column; } }
 .poll-running-question { font-weight: 650; font-size: 16px; }
 #poll-running-code { font-family: ui-monospace, Menlo, monospace; font-weight: 700; letter-spacing: 0.08em; font-size: 15px; }
 .poll-bar-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
@@ -2984,6 +2993,7 @@ body.replay { display: flex; flex-direction: column; min-height: 100vh; backgrou
    screen, and the badge the room sees while it runs. */
 .arm-record-screen { display: block; margin: 10px auto 0; }
 .arm-record-screen[hidden] { display: none; }
+.arm-window { display: block; margin: 10px auto 0; }
 .screen-rec {
   position: fixed; left: 12px; bottom: 12px; z-index: 60; max-width: min(520px, 80vw);
   padding: 4px 10px; border-radius: 999px; font: 600 12px/1.4 system-ui, sans-serif;

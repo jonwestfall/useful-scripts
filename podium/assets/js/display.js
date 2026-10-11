@@ -3039,7 +3039,10 @@ function blessMusic() {
     });
 }
 
-function goLive() {
+// `windowed`: live in this window as it is, without going fullscreen - for a
+// display that Zoom or Teams shares as a window, or one sharing a screen with
+// other things. Everything else is the same; F still goes fullscreen later.
+function goLive({ windowed = false } = {}) {
   armEl.hidden = true;
   document.body.classList.add('is-live');
   state.armed = true;
@@ -3054,7 +3057,7 @@ function goLive() {
   let context = Promise.resolve();
   try { context = new (window.AudioContext || window.webkitAudioContext)().resume(); } catch { /* noop */ }
 
-  const fullscreen = enterFullscreen().catch(() => { /* the user can still press F11 */ });
+  const fullscreen = windowed ? Promise.resolve() : enterFullscreen().catch(() => { /* the user can still press F11 */ });
 
   sizeInk();
   commit();
@@ -3456,7 +3459,8 @@ if (VIEWER) {
 } else {
   // --- wiring -----------------------------------------------------------------
 
-  $('#arm-button').addEventListener('click', goLive);
+  $('#arm-button').addEventListener('click', () => goLive());
+  $('#arm-window').addEventListener('click', () => goLive({ windowed: true }));
   $('#arm-record-screen').addEventListener('click', goLiveRecording);
   $('#arm-settings').addEventListener('click', showSetup);
 

@@ -17,7 +17,7 @@ Podium is built for real classroom lectures. It gives you complete control of th
 7. **[Sharing the Lectern](#part-7--sharing-the-lectern)**: Pairing · Several controllers · Simple Mode
 8. **[Planning Lectures](#part-8--planning-lectures)**: `plan.html` · Choosing files from the server 🖥️ · Archive · ZIP import 🖥️ · PowerPoint, Word & RTF
 9. **[Making the Controller Yours](#part-9--making-the-controller-yours)**: Tabs, dock & clickers · Comfort settings · Pacing clock · Keyboard shortcuts
-10. **[After Class](#part-10--after-class)**: Session export · Lecture recaps 🖥️ · Session history 🖥️ · Replaying a lecture 🖥️ · Searching past sessions 🖥️ · Streaming
+10. **[After Class](#part-10--after-class)**: Session export · Lecture recaps 🖥️ · Session history 🖥️ · Replaying a lecture 🖥️ · Searching past sessions 🖥️ · Presenting over Zoom or Teams · Streaming
 11. **[Your Own Server](#part-11--your-own-server)** 🖥️: Accounts, courses & My Files · Kiosks · Operations
 
 ---
@@ -415,6 +415,12 @@ Engage your class without third-party software or student logins. Polls need Pod
 - Add a voting countdown (**+30s**, **+60s**, **+2m**) that closes the poll automatically, or **Close voting** by hand.
 - Results appear live on your controller and stay private until you tap **Reveal to room**. **End poll** finishes it.
 
+**Links to share in advance.** A poll's code is normally made when you start it, so it can't go in anything sent out beforehand. For a handout, an email or a chat message before class (a talk over Zoom, say), give the poll a **link to share in advance**:
+- In the planner, a poll's **Link to share in advance** makes one, with its QR code beside it: **Copy link**, **Save QR picture** (a PNG for your own handout), **New link** (the old one stops working) and **Remove**. **Lecture settings → Poll links** does every poll in the lecture at once, with **Copy all links** and a **sheet to print or save as a PDF**, with clickable links and QR codes.
+- In the controller, the Polls tab's composer offers the same for the poll you're writing, and **Links for this lecture's polls** for the lecture you opened. A link made there for a lecture opened from the server is saved back to it.
+- The link opens the poll the moment you start it, under the code it already names (ten characters, shown as `ABCDE-FGHJK`), and every time you start it again. Someone who opens it early is told the poll hasn't started and picks it up by themselves when it does.
+- Only whoever has the lecture can start a poll under its link: the link is worked out from a secret kept with the lecture, and the server checks it. Copying a lecture, or starting one from a template, gives its polls no links, so two lectures never share one.
+
 **Names are optional, and off unless allowed.** An administrator decides whether presenters may collect participant names or IDs. When it's allowed, **Ask participants for name / ID** adds a prompt, and **Show names to room** is a separate choice from revealing results.
 
 **Afterwards**
@@ -798,6 +804,10 @@ A lecture nobody has heard from in 15 minutes closes itself. Retention is config
   - Tap a match to open that session's whole timeline right there, scrolled to that moment and highlighted, with what came before and after for context. Other matches in the same session are tinted; **‹ Previous** and **Next ›** step between them.
 
 
+
+### Presenting over Zoom or Teams
+
+The display can run in an ordinary window rather than fullscreen. On the Go live screen choose **Go live in a window (for Zoom or Teams)**, size the window (16:9 suits most calls), and share that window in the call; turn on the call's **share sound** option if you play video or music. The stage fills whatever size the window is. **F** goes fullscreen at any point and **Esc** or **F** comes back out, and either way the display stays live. Your controller works exactly as in a room, and [poll links made in advance](#audience-polls-quizzes--qa) can go out with the invitation or the handout.
 
 ### Streaming a Lecture
 

@@ -15,6 +15,7 @@
 import { uid } from './util.js';
 import { MAX_TIMERS } from './protocol.js';
 import { assetRefsIn } from './deck-source.js';
+import { isPollKey } from './poll-link.js';
 
 export const PLAN_VERSION = 1;
 
@@ -204,7 +205,7 @@ export const PLAN_TYPES = {
   camera: { label: 'Phone camera', icon: '\u{1F4F7}', blurb: 'Your phone’s camera on the projector, for a document or a demo.', fields: [] },
   poll: {
     label: 'Poll', icon: '\u{1F4CA}',
-    blurb: 'A question the room answers on their own phones. Write it now; starting it - creating the actual join code on the relay - happens from the Polls tab in class.',
+    blurb: 'A question the room answers on their own phones. Write it now and start it from the Polls tab in class - or give it a link now, to send out before class.',
     fields: [
       { key: 'kind', label: 'Type', kind: 'select', def: 'choice',
         options: [['choice', 'Multiple choice'], ['text', 'Short answer']] },
@@ -214,6 +215,9 @@ export const PLAN_TYPES = {
       { key: 'askName', label: 'Ask for participant name', kind: 'check', def: false },
       { key: 'namePrompt', label: 'Name prompt', kind: 'text', def: 'Name:', placeholder: 'Name:' },
       { key: 'correct', kind: 'number', def: -1, hidden: true },
+      // A link to hand out before class (poll-link.js): the secret its code
+      // is worked out from. Empty for a poll that gets a code when it starts.
+      { key: 'link', label: 'Link to share in advance', kind: 'poll-link' },
     ],
   },
   // Issue #256: attendance, planned. Taking it in class opens check-in (or
@@ -314,6 +318,14 @@ export function newItem(type) {
     if (field.def !== undefined) item[field.key] = field.def;
   }
   return item;
+}
+
+// A copy of a lecture is a different lecture: its polls get links of their
+// own when asked for, rather than sharing (and restarting) the original's.
+// Opening or importing a plan keeps them - that is the same lecture.
+export function withoutPollLinks(plan) {
+  for (const item of plan.items || []) if (item.type === 'poll') item.link = '';
+  return plan;
 }
 
 // What the display and the controller actually need: the library/protocol item,
@@ -491,6 +503,7 @@ export function readPlan(raw) {
       else if (field.kind === 'select') item[field.key] = field.options.some(([v]) => v === value) ? value : field.def;
       else if (field.kind === 'textarea') item[field.key] = str(value, field.max ?? 4000);
       else if (field.kind === 'timer-pick') item[field.key] = str(value, 40);
+      else if (field.kind === 'poll-link') item[field.key] = isPollKey(value) ? value : '';
       else item[field.key] = str(value, 100000);
     }
     // A countdown pointing at a timer this plan does not define would come up
