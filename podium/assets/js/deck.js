@@ -10,6 +10,7 @@
 
 import { PODIUM_DIRECTIVES, MERMAID_DIRECTIVE, parseDeck, ASSET_REF } from './deck-source.js';
 import { drawDiagrams, DIAGRAM_CSS } from './deck-mermaid.js';
+import { drawQrCodes, QR_CSS } from './deck-qr.js';
 
 // What an `asset:` picture this device has not been given is drawn as (Issue
 // #226) - the same blank as assets.js's, rather than an address no browser
@@ -665,10 +666,12 @@ export async function render(source, id) {
   // html is one wrapping <div class="marpit"> holding every slide's <svg>.
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const root = doc.querySelector('.marpit') || doc.body;
-  const combinedCss = `${css}\n${MATH_CSS}\n${DIAGRAM_CSS}`;
+  const combinedCss = `${css}\n${MATH_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`;
   // ```mermaid blocks drawn as diagrams (Issue #235), first: they change
   // what fits, and a slide's title is never a diagram's source text.
   const diagrams = await drawDiagrams(root, combinedCss, slideSections);
+  // ```qr blocks drawn as the QR code for their link (deck-qr.js).
+  const qrCodes = await drawQrCodes(root);
   const { fragments, builds } = markFragments(root);
   const titles = outline(root);
   const sections = parseSections(root);
@@ -728,10 +731,11 @@ export async function render(source, id) {
     // the theme it was drawn in, why it could not be drawn if it was not, and
     // the picture it was drawn as (its SVG, for a .zip export).
     diagrams,
+    qrCodes,
   };
   // A deck drawn while the diagram bundle would not load is shown with that
   // said where each diagram goes, but not kept: the next render tries again.
-  if (!diagrams.some((d) => d.error?.retry)) cache.set(key, result);
+  if (!diagrams.some((d) => d.error?.retry) && !qrCodes.some((q) => /could not load/.test(q.error || ''))) cache.set(key, result);
   return result;
 }
 

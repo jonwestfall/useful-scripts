@@ -1211,6 +1211,66 @@ ok(`nothing went to mermaid.live but the one link opened (${opened.length})`, op
 await ctx.close();
 }
 
+if (want('the deck editor: a link and its QR code')) {
+console.log('\n-- the deck editor: a link and its QR code --');
+// 🔗 Link puts in the link and a ```qr block, which every slide view draws as
+// the QR code for that link - with no server, no picture file to keep.
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+const page = await ctx.newPage();
+trap(page, 'editor link and QR code');
+await page.goto(`${BASE}/deck.html`);
+await page.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 2, null, { timeout: 20000 });
+const doc = () => page.evaluate(async () => {
+  const CM = await import('/assets/vendor/codemirror.esm.js');
+  return CM.EditorView.findFromDOM(document.querySelector('.cm-editor')).state.doc.toString();
+});
+const codes = () => page.evaluate(() => [...document.querySelector('#deck-strip').shadowRoot.querySelectorAll('img.podium-qr')]
+  .map((img) => ({ alt: img.alt, width: img.getAttribute('width'), href: img.closest('a')?.getAttribute('href') || '', target: img.closest('a')?.getAttribute('target') || '' })));
+
+await page.click('.cm-content');
+await page.keyboard.press('Control+End');
+await page.click('.deck-toolbar [data-cmd="link"]');
+await page.waitForSelector('#deck-link-dialog:not([hidden])');
+ok('🔗 Link opens a dialog for the address', await page.evaluate(() => document.activeElement?.id === 'deck-link-url'));
+await page.fill('#deck-link-url', 'https://example.edu/survey');
+await page.fill('#deck-link-label', 'Course survey');
+await page.selectOption('#deck-link-size', 'large');
+await page.waitForFunction(() => !!document.querySelector('#deck-link-preview svg'), null, { timeout: 10000 });
+ok('it shows the QR code it will add', true);
+await page.click('#deck-link-insert');
+ok('Add puts in the link and its ```qr block',
+  (await doc()).includes('[Course survey](https://example.edu/survey)\n\n```qr\nhttps://example.edu/survey\nsize: large\n```'));
+await until(async () => (await codes()).length === 1, { timeout: 20000 }).catch(() => {});
+const [drawn] = await codes();
+ok(`the slide draws the QR code for the link (${JSON.stringify(drawn)})`,
+  drawn?.alt === 'QR code: https://example.edu/survey' && drawn.width === '440');
+ok('and it is also the link itself, opened in a new tab rather than over the editor',
+  drawn?.href === 'https://example.edu/survey' && drawn.target === '_blank');
+ok('the code is a real one: black on white', await page.evaluate(() => {
+  const src = document.querySelector('#deck-strip').shadowRoot.querySelector('img.podium-qr').getAttribute('src');
+  return /^data:image\/svg\+xml/.test(src) && /fill%3D%22white%22/.test(src);
+}));
+
+// Changing the address in the markdown changes the code.
+await page.evaluate(async () => {
+  const CM = await import('/assets/vendor/codemirror.esm.js');
+  const view = CM.EditorView.findFromDOM(document.querySelector('.cm-editor'));
+  const text = view.state.doc.toString();
+  const at = text.lastIndexOf('https://example.edu/survey\nsize');
+  view.dispatch({ changes: { from: at, to: at + 'https://example.edu/survey'.length, insert: 'https://example.edu/other' } });
+});
+await until(async () => (await codes())[0]?.href === 'https://example.edu/other', { timeout: 20000 }).catch(() => {});
+ok('editing the address in the markdown redraws the code for the new one', (await codes())[0]?.alt === 'QR code: https://example.edu/other');
+
+// A code for something that is not a web link is a code, never a link.
+await page.click('.cm-content');
+await page.keyboard.press('Control+End');
+await page.keyboard.type('\n\n```qr\njavascript:alert(1)\n```\n');
+await until(async () => (await codes()).length === 2, { timeout: 20000 }).catch(() => {});
+ok('a code holding something other than a web address is drawn, but is not a link', (await codes())[1]?.href === '');
+await ctx.close();
+}
+
 if (want('the planner: archiving lectures from your own list (#239)')) {
 console.log('\n-- the planner: archiving lectures from your own list (#239) --');
 // A class of its own, so the other sections' lectures never get in the count.

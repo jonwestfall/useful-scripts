@@ -51,7 +51,7 @@ const WARM = [
   // display.js or deck-editor.js imports that is missing here fails the whole
   // page offline.
   ...[
-    'admin', 'assets', 'attendance-panel', 'attendance-review', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-checks', 'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-source', 'deck-templates',
+    'admin', 'assets', 'attendance-panel', 'attendance-review', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-checks', 'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-qr', 'deck-source', 'deck-templates',
     'defaults', 'display', 'doc', 'doc-reader', 'duration-probe', 'file-browser', 'gestures',
     'index', 'me', 'pdf-writer', 'pip', 'plan', 'planfile', 'poll-link', 'poll-link-ui', 'protocol', 'quicklook', 'quicklook-open', 'recap', 'recap-pdf', 'renderers', 'replay', 'replay-model', 'roster-panel', 'screen-record', 'session-search',
     'rtc', 'server', 'store', 'theme', 'theme-boot', 'thumbs', 'util', 'watermark', 'word-import', 'word-upload', 'zip', 'zip-review', 'zoom',

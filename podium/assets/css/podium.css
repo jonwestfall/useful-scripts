@@ -3001,3 +3001,8 @@ body.replay { display: flex; flex-direction: column; min-height: 100vh; backgrou
 }
 .screen-rec.is-live { color: #ffb3b3; }
 .screen-rec[hidden] { display: none; }
+
+/* The deck editor's link dialog: the QR code it will add. */
+.deck-link-preview { display: flex; justify-content: center; }
+.deck-link-preview:empty { display: none; }
+.deck-link-preview svg { width: 140px; height: auto; background: #fff; }

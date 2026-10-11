@@ -18,6 +18,7 @@
 import { HTML_ALLOWLIST, BLANK, MARP_URL } from './deck.js';
 import { ASSET_REF, MERMAID_THEMES } from './deck-source.js';
 import { drawDiagrams, DIAGRAM_CSS } from './deck-mermaid.js';
+import { drawQrCodes, QR_CSS } from './deck-qr.js';
 import { DOC_WIDTH, DOC_VIEW, DOC_STEP, clampDocAt, docMaxAt } from './protocol.js';
 
 // The page's width (about 70 characters of projector type), one screenful of
@@ -311,16 +312,19 @@ export async function renderDoc(source, id, { look = '' } = {}) {
   const inner = md.render(body.includes('asset:') ? body.replace(ASSET_REF, BLANK) : body, env);
   const wanted = MERMAID_THEMES.includes(meta.mermaidTheme) ? meta.mermaidTheme : '';
   const pageHtml = `<article class="podium-doc${shade === 'dark' ? ' is-dark' : ''}"${wanted ? ` data-mermaid-theme="${wanted}"` : ''}>${inner}</article>`;
-  const css = `${katexCss}\n${DOC_CSS}\n${DIAGRAM_CSS}`;
+  const css = `${katexCss}\n${DOC_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`;
 
   let html = pageHtml;
   let diagrams = [];
-  if (typeof DOMParser !== 'undefined' && /<code class="language-mermaid"/.test(inner)) {
+  let qrCodes = [];
+  if (typeof DOMParser !== 'undefined' && /<code class="language-(mermaid|qr)"/.test(inner)) {
     // ```mermaid blocks drawn as diagrams, as in a deck - the page is the one
-    // "slide" they are drawn against, so they take its colours.
+    // "slide" they are drawn against, so they take its colours - and ```qr
+    // blocks as QR codes (deck-qr.js).
     const doc = new DOMParser().parseFromString(`<div>${pageHtml}</div>`, 'text/html');
     const root = doc.body.firstElementChild;
     diagrams = await drawDiagrams(root, css, (r) => Array.from(r.querySelectorAll('article.podium-doc')));
+    qrCodes = await drawQrCodes(root);
     html = root.innerHTML;
   }
 
@@ -333,8 +337,9 @@ export async function renderDoc(source, id, { look = '' } = {}) {
     outline: env.outline || [],
     notes: env.notes || [],
     diagrams,
+    qrCodes,
   };
-  if (id && !diagrams.some((d) => d.error?.retry)) cache.set(key, result);
+  if (id && !diagrams.some((d) => d.error?.retry) && !qrCodes.some((q) => /could not load/.test(q.error || ''))) cache.set(key, result);
   return result;
 }
 

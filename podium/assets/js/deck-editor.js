@@ -34,6 +34,7 @@ import { exportZip, readDeckZip, exportPdf, exportDocPdf, replaceRef } from './d
 import { deckProblems, docProblems, checkServerMedia } from './deck-checks.js';
 import { renderDoc, forgetDoc, headingAt, docMaxAt, DOC_VIEW, DOC_STEP } from './doc.js';
 import { openQuickLook } from './quicklook-open.js';
+import { linkMarkdown, qrPreview } from './deck-qr.js';
 import { createTemplatesPanel, findTemplate, slidesOf } from './deck-templates.js';
 import {
   STARTERS, starterFence, isMermaidLiveLink, readMermaidLiveLink, fenceFromLink, mermaidLiveLink, fenceAt,
@@ -1058,11 +1059,71 @@ const COMMANDS = {
   numbered: () => prefixLines((t, i) => (/^\s*\d+[.)]\s/.test(t) ? t.replace(/^(\s*)\d+[.)]\s/, '$1') : `${i + 1}. ${t}`)),
   build: () => applyText(DS.setSlideBuild(text(), current, !deck.slides[current]?.hasBuild)),
   image: () => media.openPicture(),
+  link: () => openLinkDialog(),
   template: () => templates.open({ kind: 'slide' }),
   video: () => media.openVideo(),
   math: () => insertBlock('$$\n\n$$\n', 3),
   code: () => insertBlock('```\n\n```\n', 4),
 };
+
+// --- links and their QR codes (deck-qr.js) ------------------------------------------
+
+let linkRange = null;    // {from, to} of the text the link replaces
+
+function openLinkDialog() {
+  const { from, to } = view.state.selection.main;
+  linkRange = { from, to };
+  const picked = view.state.sliceDoc(from, to).trim();
+  const isUrl = /^(https?:\/\/|mailto:)\S+$/i.test(picked);
+  $('#deck-link-url').value = isUrl ? picked : '';
+  $('#deck-link-label').value = isUrl ? '' : picked.split('\n')[0].slice(0, 120);
+  $('#deck-link-note').textContent = '';
+  $('#deck-link-dialog').hidden = false;
+  renderLinkPreview();
+  $('#deck-link-url').focus();
+}
+
+function closeLinkDialog() {
+  $('#deck-link-dialog').hidden = true;
+  linkRange = null;
+  view.focus();
+}
+
+let previewSeq = 0;
+async function renderLinkPreview() {
+  const url = $('#deck-link-url').value.trim();
+  const qr = $('#deck-link-qr').checked;
+  $('#deck-link-size-row').hidden = !qr;
+  $('#deck-link-label').disabled = !$('#deck-link-text').checked;
+  const seq = ++previewSeq;
+  const svg = qr && url ? await qrPreview(url) : '';
+  if (seq !== previewSeq) return;
+  $('#deck-link-preview').innerHTML = svg;
+  $('#deck-link-note').textContent = qr && url && !svg ? 'That is too long for a QR code. Use a shorter link.' : '';
+}
+
+function insertLink(ev) {
+  ev.preventDefault();
+  const url = $('#deck-link-url').value.trim();
+  const text = $('#deck-link-text').checked;
+  const qr = $('#deck-link-qr').checked;
+  if (!url) { $('#deck-link-note').textContent = 'Type or paste the address first.'; return; }
+  if (!text && !qr) { $('#deck-link-note').textContent = 'Choose the link as text, a QR code, or both.'; return; }
+  const block = linkMarkdown({ url, label: $('#deck-link-label').value, text, qr, size: $('#deck-link-size').value });
+  const { from, to } = linkRange || view.state.selection.main;
+  view.dispatch(blockChange(from, to, block, block.length));
+  closeLinkDialog();
+}
+
+function wireLinkDialog() {
+  $('#deck-link-form').addEventListener('submit', insertLink);
+  $('#deck-link-cancel').addEventListener('click', closeLinkDialog);
+  $('#deck-link-dialog').addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); closeLinkDialog(); } });
+  for (const id of ['#deck-link-url', '#deck-link-qr', '#deck-link-text', '#deck-link-size']) {
+    $(id).addEventListener('input', renderLinkPreview);
+    $(id).addEventListener('change', renderLinkPreview);
+  }
+}
 
 // --- diagrams (Issue #235) ---------------------------------------------------------
 
@@ -2005,6 +2066,7 @@ wireSlidePanel();
 wireDeckSettings();
 wirePageDrops();
 wireVersions();
+wireLinkDialog();
 wireLibraryDialog();
 wireSaveMenu();
 start();
