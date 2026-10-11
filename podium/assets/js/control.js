@@ -13,7 +13,7 @@ import { createCameraSender, createMicSender } from './rtc.js';
 import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill, videoSlides, deckLocation } from './deck.js';
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
-import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS } from './planfile.js';
+import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS, planToJson } from './planfile.js';
 import { assetRefsIn, ASSET_REF } from './deck-source.js';
 import { docTitle, notesInView, headingAt, headingAtTop, docMaxAt, docInkSpace, DOC_WIDTH, DOC_VIEW, DOC_STEP } from './doc.js';
 import { openQuickLook, canQuickLook } from './quicklook-open.js';
@@ -30,6 +30,8 @@ import { wordKind, uploadWordFile } from './word-upload.js';
 import { createAttendancePanel } from './attendance-panel.js';
 import { clampView, fitView, zoomAround, panBy, isZoomed, visibleWindow, viewKeeping, contentPointAt, panelPointOf, zoomToSlider, sliderToZoom } from './zoom.js';
 import { attachGestures } from './gestures.js';
+import { resolvePollBase, pollLinkBlock, pollLinksSummary, newPollKey, isPollKey } from './poll-link-ui.js';
+import { formatPollCode } from './poll-link.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -3194,9 +3196,124 @@ async function pollApi(suffix, opts = {}) {
 }
 
 function newPollDraft() {
-  pollDraft = { kind: 'choice', question: '', options: ['', ''], correct: -1, askName: false, namePrompt: 'Name:' };
+  pollDraft = restoredPollDraft() || { kind: 'choice', question: '', options: ['', ''], correct: -1, askName: false, namePrompt: 'Name:', link: '', planItemId: '' };
   pollError = '';
   pollOptionsDrawn = -1;
+}
+
+// --- poll links made in advance (poll-link.js) --------------------------------
+//
+// A poll can have a link to hand out before class - made in the planner, or
+// here. Starting it sends the link's key, so the relay opens it under the
+// code the link already names. The key never goes to the display: it is what
+// lets someone start a poll under that code, and the projector has no use
+// for it. Which key a running poll was started with is kept here only, so
+// Reopen asks again under the same link.
+
+const POLL_DRAFT_KEY = 'podium.pollDraft.v1';
+const pollLinkKeys = new Map();     // pollId -> key, for polls started from a link
+let pollLinkBase = null;
+
+// A draft with a link is kept on this device until it is started: the link
+// may already be in people's inboxes, and a reload must not lose the only
+// copy of what opens it.
+function savePollDraft() {
+  try {
+    if (pollDraft && isPollKey(pollDraft.link)) safeStorageSet(localStorage, POLL_DRAFT_KEY, JSON.stringify(pollDraft));
+    else localStorage.removeItem(POLL_DRAFT_KEY);
+  } catch { /* private mode: kept for this page load */ }
+}
+
+function restoredPollDraft() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(POLL_DRAFT_KEY) || 'null');
+    if (!saved || !isPollKey(saved.link) || typeof saved.question !== 'string') return null;
+    return {
+      kind: ['text', 'qna'].includes(saved.kind) ? saved.kind : 'choice',
+      question: saved.question.slice(0, 500),
+      options: Array.isArray(saved.options) && saved.options.length ? saved.options.map(String).slice(0, 8) : ['', ''],
+      correct: Number.isFinite(Number(saved.correct)) ? Number(saved.correct) : -1,
+      askName: !!saved.askName,
+      namePrompt: String(saved.namePrompt || 'Name:').slice(0, 50),
+      link: saved.link,
+      planItemId: String(saved.planItemId || ''),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function planPolls() {
+  return (currentPlan?.items || []).filter((i) => i.type === 'poll');
+}
+
+// A link made here for a planned poll belongs to the lecture: kept with it on
+// this device, and - for a lecture opened from the server - written back to
+// it, so the planner (and every other device) has it too. Merged into the
+// server's copy as it is now rather than sending ours over it: only links
+// this lecture does not have yet are filled in.
+async function keepPlanPollLinks(note = (text) => { $('#poll-links-note').textContent = text; }) {
+  if (!currentPlan) return;
+  try { await saveCurrentPlan(currentPlan); } catch (err) { reportStorageFailure('current plan', err); }
+  const ref = currentPlan.server;
+  if (!ref?.id) {
+    note('Kept with this lecture on this device. To keep the links for good, make them in the planner, or export the lecture.');
+    return;
+  }
+  try {
+    const res = await fetch(`/api/plans/${encodeURIComponent(ref.id)}`, { credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || 'it did not open');
+    const { plan: theirs } = readPlan(typeof body.plan.doc === 'string' ? body.plan.doc : JSON.stringify(body.plan.doc));
+    const mine = new Map(planPolls().map((p) => [p.id, p.link]));
+    let changed = 0;
+    for (const item of theirs.items) {
+      if (item.type !== 'poll' || isPollKey(item.link) || !isPollKey(mine.get(item.id))) continue;
+      item.link = mine.get(item.id);
+      changed++;
+    }
+    if (!changed) { note('Saved with the lecture.'); return; }
+    const put = await fetch(`/api/plans/${encodeURIComponent(ref.id)}`, {
+      method: 'PUT', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ doc: planToJson(theirs), baseUpdatedAt: body.plan.updatedAt }),
+    });
+    const saved = await put.json().catch(() => ({}));
+    if (!put.ok) throw new Error(saved.error || 'it was not saved');
+    currentPlan.server = { ...ref, updatedAt: saved.plan?.updatedAt ?? ref.updatedAt };
+    note('Saved with the lecture on the server, so the planner has them too.');
+  } catch (err) {
+    note(`Kept on this device, but not saved to the lecture on the server (${err.message}). Make the links in the planner to keep them for good.`);
+  }
+}
+
+function renderPollLinks() {
+  const box = $('#poll-link-box');
+  if (box && pollDraft) {
+    box.replaceChildren(pollLinkBlock({
+      base: pollLinkBase,
+      key: pollDraft.link,
+      question: pollDraft.question,
+      onChange: (key) => {
+        pollDraft.link = key;
+        savePollDraft();
+        const planned = pollDraft.planItemId && planPolls().find((p) => p.id === pollDraft.planItemId);
+        if (planned) { planned.link = key; keepPlanPollLinks(); }
+        renderPollLinks();
+      },
+    }));
+  }
+  const polls = planPolls();
+  $('#poll-links-planned').hidden = !polls.length;
+  $('#poll-links-summary').replaceChildren(pollLinksSummary({
+    title: currentPlan?.title || 'Lecture',
+    polls,
+    base: pollLinkBase,
+    onMakeAll: () => {
+      for (const poll of polls) if (!isPollKey(poll.link)) poll.link = newPollKey();
+      keepPlanPollLinks();
+      renderPollLinks();
+    },
+  }));
 }
 
 // A poll written into a lecture plan (planfile.js's PLAN_TYPES.poll) carries
@@ -3204,6 +3321,10 @@ function newPollDraft() {
 // field editor only knows scalar kinds - split back into the array shape the
 // composer already works in.
 function openPollDraftFromPlan(item) {
+  // A poll written here with a link of its own is the one copy of what opens
+  // that link: replacing it is worth a question.
+  if (pollDraft && isPollKey(pollDraft.link) && !pollDraft.planItemId && pollDraft.link !== item.link
+    && !window.confirm('Replace the poll you are writing? The link you made for it will stop working.')) return;
   const options = String(item.options || '').split('\n').map((s) => s.trim()).filter(Boolean);
   pollDraft = {
     kind: ['text', 'qna'].includes(item.kind) ? item.kind : 'choice',
@@ -3212,7 +3333,10 @@ function openPollDraftFromPlan(item) {
     correct: Number.isFinite(Number(item.correct)) ? Number(item.correct) : -1,
     askName: !!item.askName,
     namePrompt: item.namePrompt || 'Name:',
+    link: isPollKey(item.link) ? item.link : '',
+    planItemId: item.id || '',
   };
+  savePollDraft();
   pollError = '';
   pollOptionsDrawn = -1;
   tab('polls');
@@ -3245,7 +3369,11 @@ async function startPoll() {
   pollError = '';
   renderPollsPanel();
   try {
-    const created = await pollApi('', { method: 'POST' });
+    const key = isPollKey(pollDraft.link) ? pollDraft.link : '';
+    const created = await pollApi('', key
+      ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key }) }
+      : { method: 'POST' });
+    if (key) pollLinkKeys.set(created.code, key);
     await pollApi(`/${created.code}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${created.token}` },
@@ -3258,6 +3386,7 @@ async function startPoll() {
       showUrl: presentation.showPollUrl,
     });
     pollDraft = null;
+    try { localStorage.removeItem(POLL_DRAFT_KEY); } catch { /* nothing kept */ }
   } catch (err) {
     pollError = err.message || 'Could not start the poll.';
   } finally {
@@ -3428,7 +3557,11 @@ function reopenFromHistory(row) {
     correct: Number.isFinite(Number(row.correct)) ? Number(row.correct) : -1,
     askName: !!row.askName,
     namePrompt: row.namePrompt || 'Name:',
+    // Asked again under the same link, when it was started from one.
+    link: pollLinkKeys.get(row.pollId) || '',
+    planItemId: '',
   };
+  savePollDraft();
   pollError = '';
   pollOptionsDrawn = -1;
   renderPollsPanel();
@@ -3506,6 +3639,7 @@ function renderPollBuilder() {
   $('#poll-error').hidden = !pollError;
   $('#poll-error').textContent = pollError;
   $('#poll-start').disabled = pollBusy;
+  savePollDraft();
 }
 
 let pollRunningDrawn = '';
@@ -3524,7 +3658,7 @@ function renderRunningPoll(item) {
   // is hidden rather than left to fail silently or confusingly.
   const lost = !!item.lost;
   $('#poll-running-question').textContent = item.question;
-  $('#poll-running-code').textContent = item.pollId;
+  $('#poll-running-code').textContent = formatPollCode(item.pollId);
   const link = (archived || lost) ? null : pollJoinUrl(cfg, item.pollId);
   $('#poll-copy-link').disabled = !link;
   $('#poll-copy-link').hidden = archived || lost;
@@ -3682,6 +3816,7 @@ function renderPollsPanel() {
     renderPollBuilder();
   }
   renderPollHistory();
+  renderPollLinks();
 }
 
 function renderAll() {
@@ -6072,6 +6207,10 @@ $('#poll-option-add').addEventListener('click', () => {
   renderPollsPanel();
 });
 $('#poll-build').addEventListener('submit', (ev) => { ev.preventDefault(); startPoll(); });
+// Typing into a draft that has a link keeps it (savePollDraft).
+$('#poll-build').addEventListener('input', savePollDraft);
+$('#poll-build').addEventListener('change', savePollDraft);
+resolvePollBase(cfg).then((base) => { pollLinkBase = base; renderPollLinks(); });
 $('#poll-copy-link').addEventListener('click', async () => {
   const item = findPollItem();
   const link = item && pollJoinUrl(cfg, item.pollId);
@@ -8631,6 +8770,9 @@ $('#plan-server-open').addEventListener('click', async () => {
     if (!res.ok) throw new Error(body.error || 'that did not open');
     const doc = body.plan.doc;
     const { plan, warnings } = readPlan(typeof doc === 'string' ? doc : JSON.stringify(doc));
+    // Which lecture on the server this is, so links made here for its polls
+    // can be saved back to it (keepPlanPollLinks).
+    plan.server = { id: String(body.plan.id), updatedAt: body.plan.updatedAt };
     await adoptPlan(plan);
     await loadLibrary();
     tab('library');

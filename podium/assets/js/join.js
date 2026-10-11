@@ -44,6 +44,13 @@ let code = '';
 let current = { seq: -1, open: false, kind: 'choice', question: '', options: [], askName: false, namePrompt: 'Name:' };
 let answered = null;      // what this phone last sent for the current seq
 let stream = null;
+let waitTimer = null;
+
+// A link handed out before class (assets/js/poll-link.js) has a ten-character
+// code, and may well be opened before the poll exists. That is not a wrong
+// code: the page says so, and keeps asking until the poll starts.
+const isLinkCode = (c) => c.length === 10;
+const WAIT_MS = 8000;
 
 function say(text, tone = '') {
   const note = $('#note');
@@ -181,6 +188,7 @@ function tick() {
 let everConnected = false;
 
 function backToCode(why) {
+  clearTimeout(waitTimer);
   stream?.close();
   stream = null;
   code = '';
@@ -190,7 +198,18 @@ function backToCode(why) {
   history.replaceState(null, '', location.pathname);
 }
 
+function waitForStart() {
+  stream?.close();
+  stream = null;
+  $('#question').textContent = 'This poll hasn\u2019t started yet.';
+  say('Keep this page open: the question appears here as soon as it starts.');
+  clearTimeout(waitTimer);
+  // A little jitter, so a room that opened the link together does not ask in step.
+  waitTimer = setTimeout(listen, WAIT_MS + Math.random() * 4000);
+}
+
 function listen() {
+  clearTimeout(waitTimer);
   stream?.close();
   everConnected = false;
   stream = new EventSource(`poll/${encodeURIComponent(code)}/stream`);
@@ -218,12 +237,15 @@ function listen() {
   stream.addEventListener('error', () => {
     if (stream?.readyState !== EventSource.CLOSED) { say('Lost the signal — trying again…', 'bad'); return; }
     if (everConnected) say('The room closed this poll.', '');
+    else if (isLinkCode(code)) waitForStart();
     else backToCode('No question is running under that code. Check the screen?');
   });
 }
 
 function join(wanted) {
-  const clean = String(wanted || '').trim().toUpperCase().slice(0, 8);
+  // "ABCDE-FGHJK", as a handout prints a link's code, is typed with or
+  // without the dash.
+  const clean = String(wanted || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
   if (!clean) return;
   code = clean;
   current = { seq: -1, open: false, kind: 'choice', question: '', options: [] };

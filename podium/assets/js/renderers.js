@@ -25,6 +25,7 @@ import { ASSET_REF } from './deck-source.js';
 import { renderDoc, measureDoc, DOC_WIDTH, DOC_VIEW } from './doc.js';
 import { BLANK_PIXEL } from './assets.js';
 import { contentRect, isZoomed } from './zoom.js';
+import { formatPollCode } from './poll-link.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -906,7 +907,7 @@ function extractWordFrequencies(answers) {
 function renderPoll(item, opts) {
   const question = el('div', { class: 'r-poll-question' }, item.question || '');
   const qrHolder = el('div', { class: 'r-poll-qr' });
-  const code = el('div', { class: 'r-poll-code' }, item.pollId || '');
+  const code = el('div', { class: 'r-poll-code' }, formatPollCode(item.pollId));
   // Off by default is not an option here - the QR and the code are always
   // shown; showUrl (a controller-local presentation preference, decided once
   // by whoever composed the poll - see protocol.js's normalizeItem) only
@@ -1063,7 +1064,7 @@ function renderPoll(item, opts) {
     const archived = !it.token && !it.viewerLive && !!it.pollId;
     const joinUrl = it.pollId ? (opts.getPollJoinUrl?.(it.pollId) || '') : '';
     question.textContent = it.question || '';
-    code.textContent = it.pollId || '';
+    code.textContent = formatPollCode(it.pollId);
     joinCard.classList.toggle('is-archived', archived);
     node.classList.toggle('is-lost', !!it.lost);
     if (it.lost) {

@@ -158,7 +158,7 @@ const KIOSK_OPEN_PATHS = new Set([
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/screen-record.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
-  '/assets/js/zoom.js',
+  '/assets/js/zoom.js', '/assets/js/poll-link.js',
 ]);
 
 // What view.html (Guest View, Issue #150) needs to load, open to everyone
@@ -174,7 +174,7 @@ const VIEW_OPEN_PATHS = new Set([
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/screen-record.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
-  '/assets/js/zoom.js',
+  '/assets/js/zoom.js', '/assets/js/poll-link.js',
 ]);
 for (const openPath of VIEW_OPEN_PATHS) AUTH_OPEN_PATHS.add(openPath);
 
@@ -306,6 +306,33 @@ function makePollCode() {
   return null;
 }
 
+// A poll planned with a link (assets/js/poll-link.js): its code is worked out
+// from a secret key the plan keeps, so the link can be handed out before the
+// poll exists, and only whoever holds the key can open a poll under it. Must
+// match pollCodeForKey there; test/poll-link.test.mjs checks that it does.
+const POLL_KEY_RE = /^[A-Za-z0-9_-]{16,64}$/;
+const LINK_CODE_LENGTH = 10;
+
+function pollCodeForKey(key) {
+  const digest = crypto.createHash('sha256').update(`podium-poll-link\n${key}`).digest();
+  let code = '';
+  let acc = 0;
+  let bits = 0;
+  for (const byte of digest) {
+    acc = (acc << 8) | byte;
+    bits += 8;
+    while (bits >= 5 && code.length < LINK_CODE_LENGTH) {
+      bits -= 5;
+      code += POLL_ALPHABET[(acc >> bits) & 31];
+    }
+    acc &= (1 << bits) - 1;
+    if (code.length === LINK_CODE_LENGTH) break;
+  }
+  return code;
+}
+
+const keyHash = (key) => crypto.createHash('sha256').update(`podium-poll-host\n${key}`).digest('base64url');
+
 function pollJson(res, status, body) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -369,6 +396,39 @@ async function handlePoll(req, res, url) {
 
   if (req.method === 'POST' && !code) {
     reapPolls();
+    let body;
+    try { body = await readJson(req, 1024); } catch { pollJson(res, 400, { error: 'bad body' }); return; }
+    // A planned link's key (see pollCodeForKey). Starting it again - the next
+    // run of the lecture, or the same question a second time - is a fresh
+    // question under the same code: no answers carried over, and any phone
+    // already waiting on the link stays connected and gets it.
+    if (body.key !== undefined) {
+      const key = String(body.key);
+      if (!POLL_KEY_RE.test(key)) { pollJson(res, 400, { error: 'not a poll link key' }); return; }
+      const linked = pollCodeForKey(key);
+      const existing = polls.get(linked);
+      if (existing) {
+        if (existing.keyHash !== keyHash(key)) { pollJson(res, 409, { error: 'that code is in use' }); return; }
+        existing.votes.clear();
+        existing.qnaFeed = [];
+        existing.seq += 1;
+        existing.open = false;
+        existing.closesAt = null;
+        existing.touched = Date.now();
+        pushQuestion(existing);
+        pollJson(res, 200, { code: linked, token: existing.token });
+        return;
+      }
+      if (polls.size >= MAX_POLLS) { pollJson(res, 503, { error: 'too many polls open' }); return; }
+      const token = crypto.randomBytes(24).toString('base64url');
+      polls.set(linked, {
+        token, keyHash: keyHash(key), seq: 0, open: false, kind: 'choice', question: '', options: [],
+        askName: false, namePrompt: 'Name:',
+        votes: new Map(), qnaFeed: [], listeners: new Set(), touched: Date.now(),
+      });
+      pollJson(res, 200, { code: linked, token });
+      return;
+    }
     if (polls.size >= MAX_POLLS) { pollJson(res, 503, { error: 'too many polls open' }); return; }
     const fresh = makePollCode();
     if (!fresh) { pollJson(res, 503, { error: 'no code available' }); return; }

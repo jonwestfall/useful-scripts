@@ -4,6 +4,8 @@ Podium can keep and replay a lecture by itself (see [Replaying a Lecture](featur
 
 A web page cannot send a live stream to YouTube or Twitch by itself. Those services take video over RTMP, which browsers do not speak. So streaming goes through **[OBS Studio](https://obsproject.com/)**, which is free, open source, and runs on Windows, macOS and Linux. Podium needs no setup for it: OBS captures what Podium already shows.
 
+Presenting inside a Zoom or Teams call instead? No OBS needed: go live in a window and share that window in the call. See [Presenting over Zoom or Teams](features.md#presenting-over-zoom-or-teams), and give your polls [links to share in advance](features.md#audience-polls-quizzes--qa) for the invitation or handout.
+
 There are two ways to set it up. Pick the one that matches where you can run OBS.
 
 | | **A. OBS on the classroom PC** | **B. OBS anywhere, from Guest View** |

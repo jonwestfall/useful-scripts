@@ -1578,6 +1578,38 @@ ok('and does nothing once the room is already live',
 await c.close();
 }
 
+if (want('going live in a window, for Zoom or Teams')) {
+console.log('\n-- going live in a window, for Zoom or Teams --');
+// A display shared into a video call as a window never goes fullscreen, and
+// the room it shows is whatever size that window is.
+const c = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+await c.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'window-room', passphrase: 'pw' }));
+const win = await c.newPage();
+trap(win, 'windowed display');
+await win.addInitScript(() => {
+  window.__fsCalls = 0;
+  const real = Element.prototype.requestFullscreen;
+  Element.prototype.requestFullscreen = function patched(...args) { window.__fsCalls++; return real.apply(this, args); };
+});
+await win.goto(`${BASE}/display.html`);
+await win.waitForSelector('#arm:not([hidden])');
+ok('the Go live screen offers going live in a window', await win.isVisible('#arm-window'));
+await win.click('#arm-window');
+await win.waitForSelector('#hud[data-status="online"]');
+ok('it goes live', await win.evaluate(() => document.body.classList.contains('is-live') && document.querySelector('#arm').hidden));
+ok('without asking for fullscreen', await win.evaluate(() => window.__fsCalls === 0 && !document.fullscreenElement));
+const box = () => win.evaluate(() => { const r = document.querySelector('#stage').getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; });
+ok('the stage fills the window', (await box()).join('x') === '1280x720');
+await win.setViewportSize({ width: 960, height: 540 });
+await win.waitForFunction(() => Math.round(document.querySelector('#stage').getBoundingClientRect().width) === 960, null, { timeout: 5000 });
+ok('and follows it when the window is made smaller', (await box()).join('x') === '960x540');
+await win.keyboard.press('f');
+await win.waitForFunction(() => window.__fsCalls === 1, null, { timeout: 5000 });
+ok('F still goes fullscreen later, if wanted', true);
+await c.close();
+}
+
 if (want('the controller\'s own keyboard')) {
 console.log('\n-- the controller\'s own keyboard --');
 // Issue #138: the same bottom-dock action vocabulary (Take, Clear, Quick

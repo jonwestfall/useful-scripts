@@ -976,6 +976,127 @@ ok('and starting it from there really does create a live poll on the relay', tru
 await room.close();
 }
 
+if (want('poll links made in advance, for a handout')) {
+console.log('\n-- poll links made in advance, for a handout --');
+// A link to each planned poll that can go in a handout before class
+// (poll-link.js): made in the planner, opened early on a phone (which waits),
+// and live the moment the controller starts the poll - under the code the
+// link already named, not a fresh one.
+const planFile = path.join(HERE, 'fixtures', 'e2e-poll-link-plan.podium.json');
+const office = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+const desk = await office.newPage();
+trap(desk, 'poll link planner');
+await desk.goto(`${BASE}/plan.html`);
+await desk.waitForSelector('#type-picker .type-btn');
+await desk.fill('#plan-title', 'Zoom talk');
+await desk.click('#type-picker .type-btn:has-text("Poll")');
+await desk.fill('#item-fields textarea >> nth=0', 'Which would you pick?');
+await desk.fill('#item-fields .poll-option-row:nth-child(1) input', 'This');
+await desk.fill('#item-fields .poll-option-row:nth-child(2) input', 'That');
+await desk.waitForSelector('#item-fields .poll-link-make', { timeout: 10000 });
+ok('a planned poll offers a link to share in advance', true);
+await desk.click('#item-fields .poll-link-make');
+const linkUrl = (await desk.textContent('#item-fields .poll-link-url')).trim();
+const linkCode = new URL(linkUrl).searchParams.get('c');
+ok(`the link is this server's join page with a ten-character code (${linkUrl})`,
+  linkUrl.startsWith(`${BASE}/join.html?c=`) && /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{10}$/.test(linkCode));
+ok('with its QR code beside it', await desk.evaluate(() => !!document.querySelector('#item-fields .poll-link-qr svg')));
+await desk.waitForFunction(() => /^Saved/.test(document.querySelector('#save-state').textContent), null, { timeout: 10000 });
+const planJson = await desk.evaluate(async () => {
+  const file = await import('./assets/js/planfile.js');
+  const store = await import('./assets/js/store.js');
+  const rows = await store.allPlans();
+  return file.planToJson(rows.find((r) => r.title === 'Zoom talk'));
+});
+ok('the plan keeps the link\'s key, which opens under that code',
+  await desk.evaluate(async ({ json, code }) => {
+    const { pollCodeForKey } = await import('./assets/js/poll-link.js');
+    const poll = JSON.parse(json).items.find((i) => i.type === 'poll');
+    return pollCodeForKey(poll.link) === code;
+  }, { json: planJson, code: linkCode }));
+fs.writeFileSync(planFile, planJson);
+
+// The whole lecture's links, under Lecture settings.
+await desk.click('#order-settings');
+await desk.waitForSelector('#plan-poll-links-box:not([hidden])');
+ok('Lecture settings lists the lecture\'s poll links', /All 1 poll has a link/.test(await desk.textContent('#plan-poll-links')));
+const [sheet] = await Promise.all([
+  office.waitForEvent('page'),
+  desk.click('#plan-poll-links button:has-text("Sheet to print")'),
+]);
+await sheet.waitForLoadState();
+ok('the sheet to print or save as a PDF has the question, its clickable link and its QR code',
+  await sheet.evaluate((url) => document.body.textContent.includes('Which would you pick?')
+    && !!document.querySelector(`a[href="${url}"]`) && !!document.querySelector('section svg'), linkUrl));
+await office.close();
+
+// A phone opens the link before class. Untrapped: the 404 it gets while the
+// poll does not exist yet is how it knows to wait.
+const phoneCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+const phone = await phoneCtx.newPage();
+await phone.goto(linkUrl);
+await phone.waitForFunction(() => /hasn.t started yet/.test(document.querySelector('#question')?.textContent || ''), null, { timeout: 8000 });
+ok('opened early, the link says the poll has not started and waits (not "wrong code")',
+  await phone.evaluate(() => document.querySelector('#enter').hidden));
+
+const room = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await room.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-link-room', passphrase: 'handed out early' }));
+const screen = await room.newPage();
+trap(screen, 'poll link display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await room.newPage();
+trap(pad, 'poll link pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.setInputFiles('#plan-file', planFile);
+await pad.waitForFunction(() => document.querySelector('#library h3.group')?.textContent === 'Zoom talk', null, { timeout: 20000 });
+await pad.click('#library .tile:has(.tile-title:text-is("Which would you pick?"))');
+await pad.waitForFunction((url) => document.querySelector('#poll-link-box .poll-link-url')?.textContent === url, linkUrl, { timeout: 8000 });
+ok('the controller\'s composer shows the same link', true);
+ok('and lists the lecture\'s poll links for a handout',
+  await pad.evaluate(() => !document.querySelector('#poll-links-planned').hidden));
+
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+const shown = `${linkCode.slice(0, 5)}-${linkCode.slice(5)}`;
+ok(`starting it opens the poll under the link's code (${shown})`, (await pad.textContent('#poll-running-code')).trim() === shown);
+await screen.waitForFunction((c) => document.querySelector('.r-poll-code')?.textContent === c, shown, { timeout: 5000 });
+ok('and the projector shows that code, in two groups of five', true);
+await phone.waitForFunction(() => document.querySelector('#question')?.textContent === 'Which would you pick?', null, { timeout: 20000 });
+ok('the phone that opened the link early picks the question up by itself', true);
+await phone.click('#choices button >> nth=1');
+await pad.waitForFunction(() => /1 response/.test(document.querySelector('#poll-running')?.textContent || ''), null, { timeout: 8000 });
+ok('and its answer counts', true);
+await phoneCtx.close();
+await room.close();
+
+// A link made on the controller, for a poll written there, survives a reload.
+const solo = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await solo.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-link-solo', passphrase: 'written at the lectern' }));
+const lectern = await solo.newPage();
+trap(lectern, 'poll link controller draft');
+await lectern.goto(`${BASE}/control.html`);
+await lectern.waitForSelector('.tile');
+await lectern.click('.tab[data-tab="polls"]');
+await lectern.fill('#poll-question', 'Ready to start?');
+await lectern.waitForSelector('#poll-link-box .poll-link-make');
+await lectern.click('#poll-link-box .poll-link-make');
+const soloUrl = (await lectern.textContent('#poll-link-box .poll-link-url')).trim();
+ok('the controller makes a link for a poll written there', /join\.html\?c=[A-Z2-9]{10}$/.test(soloUrl));
+await lectern.reload();
+await lectern.waitForSelector('.tab[data-tab="polls"]');
+await lectern.click('.tab[data-tab="polls"]');
+await lectern.waitForSelector('#poll-question', { state: 'visible' });
+await lectern.waitForFunction((url) => document.querySelector('#poll-link-box .poll-link-url')?.textContent === url, soloUrl, { timeout: 8000 });
+ok('and after a reload the draft is still there with the same link',
+  (await lectern.inputValue('#poll-question')) === 'Ready to start?');
+await solo.close();
+}
+
 if (want('exporting a session includes its polls')) {
 console.log('\n-- exporting a session includes its polls --');
 // The full "photos, ink, boards" export is covered elsewhere; this only has
