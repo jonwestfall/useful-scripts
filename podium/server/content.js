@@ -80,6 +80,38 @@ function safePath(baseDir, relativePath) {
 }
 
 // --- Marp Themes -------------------------------------------------------------
+//
+// Two layers:
+//
+//   shipped  marp-themes/ in the release - the themes that come with Podium,
+//            listed in its themes.json. Read-only: an update replaces the
+//            release, and a deployed release is not writable anyway.
+//   custom   what administrators make: THEMES_DIR if set, else DATA_DIR/themes
+//            on a server with a data directory, so it survives updates. With
+//            neither (a checkout run by hand), the two are the same folder, as
+//            they always were.
+//
+// A custom file with a shipped file's name overrides it - that is how a
+// shipped theme is edited, and removing the override restores the original.
+// A shipped theme cannot be deleted, only hidden (listed in the custom
+// layer's themes.json under "hidden"). Marp's own three (default, gaia,
+// uncover) live inside Marp and are not files at all; "customizing" one makes
+// a new theme that imports it.
+//
+// What decks see is servedThemes(): marp-themes/themes.json and each file,
+// merged from both layers (see serveTheme, used by podium-server.js).
+
+const MARP_BUILT_IN = ['default', 'gaia', 'uncover'];
+const THEME_NAME_RE = /@theme\s+([A-Za-z0-9_-]+)/;
+
+function themeLayers(ctx) {
+  const { staticRoot, themesDir } = resolveRoots(ctx);
+  const shipped = path.join(staticRoot, 'marp-themes');
+  let custom = shipped;
+  if (process.env.THEMES_DIR) custom = themesDir;
+  else if (ctx?.dataDir) custom = path.join(ctx.dataDir, 'themes');
+  return { shipped, custom, layered: path.resolve(custom) !== path.resolve(shipped) };
+}
 
 function getThemesManifestPath(themesDir) {
   return path.join(themesDir, 'themes.json');
@@ -103,105 +135,199 @@ function writeThemesManifest(themesDir, data) {
   fs.writeFileSync(p, jsonStr, 'utf8');
 }
 
-function listThemes(ctx) {
-  const { themesDir } = resolveRoots(ctx);
-  fs.mkdirSync(themesDir, { recursive: true });
-  const manifest = readThemesManifest(themesDir);
-  const manifestSet = new Set(Array.isArray(manifest.themes) ? manifest.themes : []);
+const listOf = (manifest, key = 'themes') => (Array.isArray(manifest?.[key]) ? manifest[key].filter((f) => typeof f === 'string') : []);
+const themeNameOf = (css) => THEME_NAME_RE.exec(String(css || ''))?.[1] || '';
 
-  const filesOnDisk = fs.readdirSync(themesDir, { withFileTypes: true });
-  const list = [];
-  const seen = new Set();
-
-  for (const entry of filesOnDisk) {
-    if (!entry.isFile() || !entry.name.endsWith('.css')) continue;
-    seen.add(entry.name);
-    try {
-      const st = fs.statSync(path.join(themesDir, entry.name));
-      list.push({
-        filename: entry.name,
-        inManifest: manifestSet.has(entry.name),
-        size: st.size,
-        mtime: st.mtimeMs,
-      });
-    } catch { /* file removed mid-scan */ }
-  }
-
-  // Include any listed in manifest that might be missing on disk
-  for (const name of manifestSet) {
-    if (!seen.has(name)) {
-      list.push({
-        filename: name,
-        inManifest: true,
-        size: 0,
-        mtime: 0,
-        missing: true,
-      });
-    }
-  }
-
-  list.sort((a, b) => a.filename.localeCompare(b.filename));
-  return { themes: list };
+function readCss(dir, filename) {
+  try { return fs.readFileSync(path.join(dir, filename), 'utf8'); } catch { return null; }
 }
 
-function getTheme(ctx, filename) {
-  const { themesDir } = resolveRoots(ctx);
-  if (!filename.endsWith('.css')) {
-    throw Object.assign(new Error('only .css theme files are supported'), { status: 400 });
+function cssFilename(filename) {
+  if (typeof filename !== 'string' || !filename.endsWith('.css')) {
+    throw Object.assign(new Error('theme file must have .css extension'), { status: 400 });
   }
-  const { full, filename: cleanName } = safePath(themesDir, filename);
-  try {
-    const css = fs.readFileSync(full, 'utf8');
-    return { filename: cleanName, css };
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      throw Object.assign(new Error(`theme ${cleanName} not found`), { status: 404 });
-    }
-    throw err;
+  return filename;
+}
+
+/** Every theme: Marp's own, the shipped ones (overridden or hidden or not), and custom ones. */
+function listThemes(ctx) {
+  const { shipped, custom, layered } = themeLayers(ctx);
+  const shippedManifest = readThemesManifest(shipped);
+  const customManifest = layered ? readThemesManifest(custom) : shippedManifest;
+  const shippedFiles = layered ? listOf(shippedManifest) : [];
+  const hidden = new Set(listOf(customManifest, 'hidden'));
+  const list = MARP_BUILT_IN.map((name) => ({ filename: null, name, source: 'marp', editable: false }));
+  const seen = new Set();
+
+  const entry = (dir, filename, extra) => {
+    let st = null;
+    try { st = fs.statSync(path.join(dir, filename)); } catch { /* missing */ }
+    return {
+      filename,
+      name: themeNameOf(readCss(dir, filename)) || filename.replace(/\.css$/, ''),
+      size: st?.size || 0,
+      mtime: st?.mtimeMs || 0,
+      missing: !st,
+      inManifest: true,
+      editable: true,
+      ...extra,
+    };
+  };
+
+  for (const filename of shippedFiles) {
+    seen.add(filename);
+    const overridden = fs.existsSync(path.join(custom, filename));
+    list.push(entry(overridden ? custom : shipped, filename, { source: 'shipped', overridden, hidden: hidden.has(filename) }));
   }
+  fs.mkdirSync(custom, { recursive: true });
+  const registered = new Set(listOf(customManifest));
+  const onDisk = fs.readdirSync(custom, { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.css')).map((e) => e.name);
+  for (const filename of [...new Set([...registered, ...onDisk])].sort((a, b) => a.localeCompare(b))) {
+    if (seen.has(filename)) continue;
+    list.push(entry(custom, filename, { source: 'custom', inManifest: registered.has(filename) }));
+  }
+  return { themes: list, layered };
+}
+
+/** A theme's CSS as decks get it (an override if there is one), or the shipped original. */
+function getTheme(ctx, filename, { original = false } = {}) {
+  cssFilename(filename);
+  const { shipped, custom, layered } = themeLayers(ctx);
+  safePath(custom, filename);
+  let css = original ? null : readCss(custom, filename);
+  if (css === null && layered) css = readCss(shipped, filename);
+  if (css === null) {
+    throw Object.assign(new Error(`theme ${filename} not found`), { status: 404 });
+  }
+  return { filename: path.basename(filename), css };
 }
 
 function saveTheme(ctx, filename, css) {
-  const { themesDir } = resolveRoots(ctx);
-  if (!filename.endsWith('.css')) {
-    throw Object.assign(new Error('theme file must have .css extension'), { status: 400 });
-  }
+  cssFilename(filename);
   if (typeof css !== 'string') {
     throw Object.assign(new Error('css content required'), { status: 400 });
   }
-  fs.mkdirSync(themesDir, { recursive: true });
-  const { full, filename: cleanName } = safePath(themesDir, filename);
-  fs.writeFileSync(full, css, 'utf8');
-
-  // Ensure it is registered in themes.json
-  const manifest = readThemesManifest(themesDir);
-  if (!Array.isArray(manifest.themes)) manifest.themes = [];
-  if (!manifest.themes.includes(cleanName)) {
-    manifest.themes.push(cleanName);
-    writeThemesManifest(themesDir, manifest);
+  const { custom } = themeLayers(ctx);
+  const { full, filename: cleanName } = safePath(custom, filename);
+  // A theme is known to Marp by its @theme name, not its file name: one that
+  // takes a name already in use would silently replace that theme in every deck.
+  const name = themeNameOf(css);
+  if (!name) throw Object.assign(new Error('a theme needs a name: start it with /* @theme your-name */'), { status: 400 });
+  if (MARP_BUILT_IN.includes(name)) {
+    throw Object.assign(new Error(`"${name}" is one of Marp's own themes; give this one a name of its own (to change ${name}, make a customized copy)`), { status: 400 });
   }
+  const clash = listThemes(ctx).themes.find((t) => t.filename && t.filename !== cleanName && t.name === name);
+  if (clash) throw Object.assign(new Error(`the name "${name}" is already used by ${clash.filename}`), { status: 409 });
 
+  fs.mkdirSync(custom, { recursive: true });
+  fs.writeFileSync(full, css, 'utf8');
+  const manifest = readThemesManifest(custom);
+  if (!Array.isArray(manifest.themes)) manifest.themes = [];
+  if (!manifest.themes.includes(cleanName) && !isShipped(ctx, cleanName)) {
+    manifest.themes.push(cleanName);
+    writeThemesManifest(custom, manifest);
+  }
   const st = fs.statSync(full);
-  return { ok: true, filename: cleanName, size: st.size, mtime: st.mtimeMs };
+  return { ok: true, filename: cleanName, name, size: st.size, mtime: st.mtimeMs };
 }
 
+function isShipped(ctx, filename) {
+  const { shipped, layered } = themeLayers(ctx);
+  return layered && listOf(readThemesManifest(shipped)).includes(filename);
+}
+
+/**
+ * Remove a theme: a custom one is deleted; a shipped one's override is
+ * dropped, putting the original back. A shipped original stays - hide it.
+ */
 function deleteTheme(ctx, filename) {
-  const { themesDir } = resolveRoots(ctx);
-  const { full, filename: cleanName } = safePath(themesDir, filename);
+  const { custom } = themeLayers(ctx);
+  const { full, filename: cleanName } = safePath(custom, filename);
+  const shipped = isShipped(ctx, cleanName);
+  if (shipped && !fs.existsSync(full)) {
+    throw Object.assign(new Error(`${cleanName} comes with Podium and cannot be deleted; hide it instead`), { status: 400 });
+  }
   try {
     if (fs.existsSync(full)) fs.unlinkSync(full);
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
   }
-
-  // Remove from themes.json
-  const manifest = readThemesManifest(themesDir);
-  if (Array.isArray(manifest.themes)) {
+  const manifest = readThemesManifest(custom);
+  if (Array.isArray(manifest.themes) && !shipped) {
     manifest.themes = manifest.themes.filter((t) => t !== cleanName);
-    writeThemesManifest(themesDir, manifest);
+    writeThemesManifest(custom, manifest);
   }
+  return { ok: true, removed: cleanName, restored: shipped };
+}
 
-  return { ok: true, removed: cleanName };
+/** Hide a shipped theme from decks, or show it again. */
+function setThemeHidden(ctx, filename, hide) {
+  if (!isShipped(ctx, filename)) {
+    throw Object.assign(new Error('only a theme that comes with Podium can be hidden; delete a theme you added instead'), { status: 400 });
+  }
+  const { custom } = themeLayers(ctx);
+  const manifest = readThemesManifest(custom);
+  const hidden = new Set(listOf(manifest, 'hidden'));
+  if (hide) hidden.add(filename); else hidden.delete(filename);
+  manifest.themes = listOf(manifest);
+  manifest.hidden = [...hidden].sort();
+  writeThemesManifest(custom, manifest);
+  return { ok: true, filename, hidden: !!hide };
+}
+
+/**
+ * A new theme built on one of Marp's own (or any other theme by name): it
+ * imports the original, so it starts out looking the same, ready to change.
+ */
+function customizeTheme(ctx, base) {
+  const known = listThemes(ctx).themes;
+  const from = known.find((t) => t.name === base);
+  if (!from) throw Object.assign(new Error(`no theme called ${base}`), { status: 404 });
+  const taken = new Set(known.map((t) => t.name));
+  let name = `${base}-custom`;
+  for (let i = 2; taken.has(name); i++) name = `${base}-custom-${i}`;
+  const css = `/* @theme ${name} */
+/* A customized copy of ${base}: everything not changed below comes from it. */
+@import '${base}';
+
+section {
+  /* background-color: #ffffff; */
+  /* color: #222222; */
+}
+
+h1, h2 {
+  /* color: #0b3954; */
+}
+`;
+  return saveTheme(ctx, `${name}.css`, css);
+}
+
+/** marp-themes/themes.json as decks read it: both layers, less the hidden. */
+function servedThemesManifest(ctx) {
+  const { themes } = listThemes(ctx);
+  return { themes: themes.filter((t) => t.filename && !t.hidden && !t.missing && t.inManifest).map((t) => t.filename) };
+}
+
+/**
+ * Answer a GET for something under /marp-themes/ - the merged manifest, or a
+ * theme's CSS from whichever layer has it. Returns false for anything else,
+ * so the static file server carries on.
+ */
+function serveTheme(ctx, pathname, res) {
+  const rest = pathname.replace(/^\/marp-themes\//, '');
+  if (!rest || rest.includes('/')) return false;
+  const send = (status, type, body) => {
+    res.writeHead(status, { 'content-type': type, 'cache-control': 'no-cache' });
+    res.end(body);
+    return true;
+  };
+  if (rest === 'themes.json') return send(200, 'application/json; charset=utf-8', JSON.stringify(servedThemesManifest(ctx)));
+  if (!rest.endsWith('.css')) return false;
+  try {
+    return send(200, 'text/css; charset=utf-8', getTheme(ctx, decodeURIComponent(rest)).css);
+  } catch {
+    return send(404, 'text/plain; charset=utf-8', 'not found');
+  }
 }
 
 // --- Content Pre-load Files --------------------------------------------------
@@ -466,6 +592,11 @@ module.exports = {
   getTheme,
   saveTheme,
   deleteTheme,
+  setThemeHidden,
+  customizeTheme,
+  servedThemesManifest,
+  serveTheme,
+  MARP_BUILT_IN,
   listFiles,
   getContentFile,
   saveContentFile,

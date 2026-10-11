@@ -515,6 +515,8 @@ const expecting = {
   marpRetry: false,
   // My Files (Issue #243): a wrong current password, refused on purpose.
   passwordRefused: false,
+  // Admin's Marp themes: a theme saved under a name another one has, refused on purpose.
+  themeNameTaken: false,
   // Replay (Issue #132): a lecture somebody else may not open, refused on purpose.
   lectureNotFound: false,
   // Issue #258: a raw Word file refused without a choice (415), and a PDF
@@ -573,6 +575,7 @@ const trap = (page, tag) => {
     if (expecting.recoveryConflict && RECOVERY_CONFLICT.test(where)) return;
     if (expecting.templateWriteForbidden && TEMPLATE_WRITE_FORBIDDEN.test(where)) return;
     if (expecting.planConflict && /responded with a status of 409/.test(text)) return;
+    if (expecting.themeNameTaken && /responded with a status of 409/.test(text)) return;
     // The deck editor (Issue #226): a save over a version someone else
     // replaced is a 412 on purpose, and a TA's save a 403.
     if (expecting.deckConflict && /responded with a status of 412/.test(text)) return;

@@ -129,6 +129,10 @@ if [[ -d "$inner/media" ]]; then
   echo "==> restoring media"
   cp -a "$inner/media" "$DATA_DIR/media"
 fi
+if [[ -d "$inner/themes" ]]; then
+  echo "==> restoring themes"
+  cp -a "$inner/themes" "$DATA_DIR/themes"
+fi
 
 # The env file is configuration, not data, and the box you are restoring ONTO
 # may legitimately have a different port or origin. Off unless asked for.

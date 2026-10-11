@@ -1265,9 +1265,24 @@ async function handleApi(req, res, url, ctx) {
           return true;
         }
 
+        // A customized copy of a theme - Marp's own three, usually (see content.customizeTheme).
+        if (rest.length === 2 && rest[1] === 'customize' && req.method === 'POST') {
+          const body = await readJson(req, 4096);
+          json(res, 200, { saved: content.customizeTheme(ctx, String(body.base || '')) });
+          return true;
+        }
+
+        // Hide a shipped theme from decks, or show it again.
+        if (rest.length === 3 && rest[2] === 'hide' && req.method === 'POST') {
+          const body = await readJson(req, 4096);
+          json(res, 200, content.setThemeHidden(ctx, decodeURIComponent(rest[1]), body.hidden !== false));
+          return true;
+        }
+
         if (rest.length === 2 && req.method === 'GET') {
           const themeName = decodeURIComponent(rest[1]);
-          const theme = content.getTheme(ctx, themeName);
+          // ?original=1: a shipped theme as it came, under any override.
+          const theme = content.getTheme(ctx, themeName, { original: url.searchParams.get('original') === '1' });
           if (url.searchParams.get('download') === '1') {
             res.writeHead(200, {
               'content-disposition': `attachment; filename="${encodeURIComponent(theme.filename)}"`,

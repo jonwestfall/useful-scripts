@@ -2228,54 +2228,77 @@ function updateThemePreview() {
   }, 200);
 }
 
+let themesLayered = false;
+
 async function refreshThemes() {
   try {
     const res = await fetch('/api/content/themes', { credentials: 'same-origin' });
     if (!res.ok) return;
     const body = await res.json();
     themesData = body.themes || [];
+    themesLayered = !!body.layered;
     renderThemes();
   } catch (err) {
     sayContent(`Could not load themes: ${err.message}`, true);
   }
 }
 
+const themeButton = (label, onclick, cls = 'admin-small') => el('button', { type: 'button', class: cls, onclick }, label);
+
+async function themeAction(url, body, done) {
+  try {
+    const res = await fetch(url, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out.error || 'that did not work');
+    await refreshThemes();
+    done?.(out);
+  } catch (err) {
+    sayContent(err.message, true);
+  }
+}
+
+// Three groups (see server/content.js): Marp's own, which can only be
+// customized as a copy; the themes that come with Podium, edited as an
+// override that survives updates, restored, or hidden; and those added here.
 function renderThemes() {
   const list = $('#themes-list');
   list.replaceChildren();
+  $('#themes-where').textContent = themesLayered
+    ? 'Themes you add or edit are kept in the server\u2019s data directory, so updating Podium keeps them. The ones that come with Podium are never changed in place: editing one keeps your version beside the original.'
+    : 'Themes are kept in marp-themes/ next to the pages (this Podium has no data directory).';
 
-  if (!themesData.length) {
-    list.append(el('p', { class: 'hint' }, 'No Marp themes in marp-themes/.'));
-    return;
-  }
+  const group = (title, hint, rows) => {
+    if (!rows.length) return;
+    list.append(el('h4', { class: 'themes-group' }, title), hint ? el('p', { class: 'hint' }, hint) : null, ...rows);
+  };
+  const meta = (...parts) => el('span', { class: 'admin-meta', style: 'margin-left:8px;' }, parts.filter(Boolean).join(' \u00b7 '));
+  const download = (theme) => themeButton('Download', () => { location.href = `/api/content/themes/${encodeURIComponent(theme.filename)}?download=1`; });
 
-  themesData.forEach((theme) => {
-    const row = el('div', { class: 'admin-row' },
-      el('span', { class: 'admin-title' },
-        el('strong', {}, theme.filename),
-        el('span', { class: 'admin-meta', style: 'margin-left:8px;' },
-          [bytes(theme.size), theme.inManifest ? 'registered in themes.json' : 'not in themes.json'].join(' · '))
-      ),
-      el('button', {
-        type: 'button',
-        class: 'admin-small',
-        onclick: () => openThemeEditor(theme.filename),
-      }, 'Edit & Preview'),
-      el('button', {
-        type: 'button',
-        class: 'admin-small',
-        onclick: () => {
-          location.href = `/api/content/themes/${encodeURIComponent(theme.filename)}?download=1`;
-        },
-      }, 'Download'),
-      el('button', {
-        type: 'button',
-        class: 'admin-del',
-        onclick: (e) => removeTheme(theme.filename, e.currentTarget),
-      }, 'Remove')
-    );
-    list.append(row);
-  });
+  group('Marp\u2019s own', 'Built into Marp. To change one, make a customized copy: a new theme that starts out the same.',
+    themesData.filter((t) => t.source === 'marp').map((theme) => el('div', { class: 'admin-row' },
+      el('span', { class: 'admin-title' }, el('strong', {}, theme.name)),
+      themeButton('Make a customized copy', () => themeAction('/api/content/themes/customize', { base: theme.name },
+        (out) => openThemeEditor(out.saved.filename))))));
+
+  group('Come with Podium', 'Edit one and your version is used instead, until you restore the original. Hide one to take it off the list decks can use.',
+    themesData.filter((t) => t.source === 'shipped').map((theme) => el('div', { class: `admin-row${theme.hidden ? ' is-muted' : ''}` },
+      el('span', { class: 'admin-title' }, el('strong', {}, theme.name),
+        meta(theme.filename, theme.overridden && 'edited here', theme.hidden && 'hidden from decks')),
+      themeButton('Edit & preview', () => openThemeEditor(theme.filename)),
+      theme.overridden ? themeButton('Restore original', (e) => removeTheme(theme.filename, e.currentTarget, 'Restore original'), 'admin-del') : null,
+      themeButton(theme.hidden ? 'Show' : 'Hide', () => themeAction(`/api/content/themes/${encodeURIComponent(theme.filename)}/hide`, { hidden: !theme.hidden })),
+      download(theme))));
+
+  group('Added here', '',
+    themesData.filter((t) => t.source === 'custom').map((theme) => el('div', { class: 'admin-row' },
+      el('span', { class: 'admin-title' }, el('strong', {}, theme.name),
+        meta(theme.filename, bytes(theme.size), theme.inManifest ? '' : 'not listed for decks')),
+      themeButton('Edit & preview', () => openThemeEditor(theme.filename)),
+      download(theme),
+      themeButton('Remove', (e) => removeTheme(theme.filename, e.currentTarget, 'Remove'), 'admin-del'))));
 }
 
 async function openThemeEditor(filename = null) {
@@ -2336,14 +2359,14 @@ async function saveTheme() {
   }
 }
 
-function removeTheme(filename, button) {
+function removeTheme(filename, button, label = 'Remove') {
   if (button.dataset.armed !== 'yes') {
     button.dataset.armed = 'yes';
     button.textContent = 'Really?';
     setTimeout(() => {
       if (button.isConnected) {
         button.dataset.armed = '';
-        button.textContent = 'Remove';
+        button.textContent = label;
       }
     }, 4000);
     return;
@@ -2359,7 +2382,7 @@ function removeTheme(filename, button) {
     }))
     .catch((err) => {
       button.disabled = false;
-      button.textContent = 'Remove';
+      button.textContent = label;
       alert(err.message);
     });
 }

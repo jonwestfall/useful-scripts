@@ -1271,6 +1271,76 @@ ok('a code holding something other than a web address is drawn, but is not a lin
 await ctx.close();
 }
 
+if (want('Marp themes on Admin: edit Podium\'s own, customize Marp\'s, hide and restore')) {
+console.log('\n-- Marp themes on Admin: edit Podium\'s own, customize Marp\'s, hide and restore --');
+// This server has a data directory, as a deployed one does: themes made or
+// edited here go there, and the release's own marp-themes/ is never written.
+const shippedCss = fs.readFileSync(path.join(ROOT, 'marp-themes', 'psy415-dsu.css'), 'utf8');
+const rootCtx = await signedIn('root');
+const page = await rootCtx.newPage();
+trap(page, 'admin themes');
+await page.goto(`${base}/admin.html`);
+await page.click('#tab-content');
+await page.click('.content-subtab[data-pane="tab-pane-themes"]');
+await page.waitForSelector('#themes-list .admin-row');
+const groups = await page.$$eval('#themes-list .themes-group', (h) => h.map((x) => x.textContent));
+ok(`themes are grouped: Marp's own, Podium's, added here (${groups.join(' / ')})`, groups[0] === 'Marp’s own' && groups[1] === 'Come with Podium');
+ok('and it says where edits are kept', /data directory/.test(await page.textContent('#themes-where')));
+const served = () => page.evaluate(() => fetch('/marp-themes/themes.json', { cache: 'no-cache' }).then((r) => r.json()).then((b) => b.themes));
+ok('decks are served the shipped theme', (await served()).includes('psy415-dsu.css'));
+
+// Edit the shipped theme: an override, kept in the data directory.
+const dsuRow = page.locator('#themes-list .admin-row', { hasText: 'psy415-dsu' });
+await dsuRow.locator('button', { hasText: 'Edit & preview' }).click();
+await page.waitForFunction(() => document.querySelector('#theme-css-editor').value.includes('@theme psy415-dsu'));
+await page.evaluate(() => { const e = document.querySelector('#theme-css-editor'); e.value += '\n/* edited on Admin */\n'; });
+await page.click('#theme-save-btn');
+await page.waitForFunction(() => /successfully/.test(document.querySelector('#theme-status').textContent), null, { timeout: 8000 });
+const servedCss = () => page.evaluate(() => fetch('/marp-themes/psy415-dsu.css', { cache: 'no-cache' }).then((r) => r.text()));
+ok('saving a shipped theme serves the edited version', (await servedCss()).includes('edited on Admin'));
+ok('kept in the data directory, with the release untouched',
+  fs.existsSync(path.join(data, 'themes', 'psy415-dsu.css')) && fs.readFileSync(path.join(ROOT, 'marp-themes', 'psy415-dsu.css'), 'utf8') === shippedCss);
+await page.waitForFunction(() => /edited here/.test(document.querySelector('#themes-list').textContent));
+ok('the list says it is edited here', true);
+
+// Restore the original.
+const restoreButton = page.locator('#themes-list .admin-row', { hasText: 'psy415-dsu' }).locator('button.admin-del');
+await restoreButton.click();
+await page.waitForFunction(() => /Really/.test(document.querySelector('#themes-list button.admin-del')?.textContent || ''), null, { timeout: 5000 });
+await restoreButton.click();
+await page.waitForFunction(() => !/edited here/.test(document.querySelector('#themes-list').textContent), null, { timeout: 8000 });
+ok('Restore original puts the shipped theme back', !(await servedCss()).includes('edited on Admin'));
+
+// Hide it, and show it again.
+await page.locator('#themes-list .admin-row', { hasText: 'psy415-dsu' }).locator('button', { hasText: 'Hide' }).click();
+await page.waitForFunction(() => /hidden from decks/.test(document.querySelector('#themes-list').textContent), null, { timeout: 8000 });
+ok('Hide takes it off the list decks can use', !(await served()).includes('psy415-dsu.css'));
+await page.locator('#themes-list .admin-row', { hasText: 'psy415-dsu' }).locator('button', { hasText: 'Show' }).click();
+await page.waitForFunction(() => !/hidden from decks/.test(document.querySelector('#themes-list').textContent), null, { timeout: 8000 });
+ok('and Show puts it back', (await served()).includes('psy415-dsu.css'));
+
+// Customize one of Marp's own.
+await page.locator('#themes-list .admin-row', { hasText: 'gaia' }).first().locator('button', { hasText: 'Make a customized copy' }).click();
+await page.waitForFunction(() => document.querySelector('#theme-css-editor').value.includes('@theme gaia-custom'), null, { timeout: 8000 });
+ok('a customized copy of gaia opens in the editor, importing gaia', (await page.inputValue('#theme-css-editor')).includes("@import 'gaia'"));
+ok('and decks can use it at once', (await served()).includes('gaia-custom.css'));
+const deck = await rootCtx.newPage();
+trap(deck, 'deck in a customized theme');
+await deck.goto(`${base}/deck.html`);
+await deck.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) >= 1, null, { timeout: 20000 });
+ok('the deck editor offers it as a theme', await deck.evaluate(() => [...document.querySelectorAll('#deck-theme option')].some((o) => o.value === 'gaia-custom')));
+await deck.close();
+
+// A theme cannot take a name already in use.
+await page.evaluate(() => { const e = document.querySelector('#theme-css-editor'); e.value = e.value.replace('@theme gaia-custom', '@theme psy415-dsu'); });
+expecting.themeNameTaken = true;
+await page.click('#theme-save-btn');
+await page.waitForFunction(() => /already used/.test(document.querySelector('#theme-status').textContent), null, { timeout: 8000 });
+expecting.themeNameTaken = false;
+ok('saving under a name another theme has is refused, and says which', /psy415-dsu\.css/.test(await page.textContent('#theme-status')));
+await rootCtx.close();
+}
+
 if (want('the planner: archiving lectures from your own list (#239)')) {
 console.log('\n-- the planner: archiving lectures from your own list (#239) --');
 // A class of its own, so the other sections' lectures never get in the count.

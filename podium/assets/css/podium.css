@@ -3022,3 +3022,7 @@ body.replay { display: flex; flex-direction: column; min-height: 100vh; backgrou
 .poll-look-swatch[hidden] { display: none; }
 .poll-look-swatch-text { grid-row: span 7; font-weight: 700; font-size: 22px; }
 .poll-look-swatch-bar { display: block; height: 7px; border-radius: 999px; }
+
+/* Admin › Content › Marp Themes: Marp's own, Podium's, and those added here. */
+.themes-group { margin: 16px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); }
+.admin-row.is-muted .admin-title { opacity: .6; }
