@@ -109,6 +109,13 @@ else
   echo 'backup: nothing under media/ yet' >&2
 fi
 
+# Marp themes administrators made or edited (Admin › Global Content › Marp
+# Themes). Small, and nothing else refers to them, so the order is not critical.
+if [[ -d "$DATA_DIR/themes" ]]; then
+  echo "==> copying themes"
+  tar -C "$DATA_DIR" -cf - themes | tar -C "$out" -xf -
+fi
+
 echo "==> snapshotting the database"
 if [[ -f "$DATA_DIR/podium.db" ]]; then
   if [[ -z "${node_sqlite:-}" ]]; then

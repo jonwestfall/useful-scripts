@@ -28,6 +28,10 @@ import {
   saveManifest,
   getMusic,
   saveMusic,
+  setThemeHidden,
+  customizeTheme,
+  servedThemesManifest,
+  serveTheme,
 } from '../server/content.js';
 
 import { itemForStage, itemLabel, PLAN_TYPES } from '../assets/js/planfile.js';
@@ -71,7 +75,8 @@ try {
   })());
 
   console.log('-- marp themes management --');
-  chk('initial themes list is empty', listThemes(testCtx).themes.length === 0);
+  chk('initial themes list holds only Marp\'s own three', listThemes(testCtx).themes.filter((t) => t.filename).length === 0
+    && listThemes(testCtx).themes.map((t) => t.name).join() === 'default,gaia,uncover');
 
   const saveRes = saveTheme(testCtx, 'ocean.css', '/* @theme ocean */\nsection { background: blue; }');
   chk('saving theme succeeds', saveRes.ok && saveRes.filename === 'ocean.css');
@@ -94,6 +99,68 @@ try {
     const updatedManifest = JSON.parse(fs.readFileSync(path.join(themesDir, 'themes.json'), 'utf8'));
     return !fs.existsSync(path.join(themesDir, 'ocean.css')) && !updatedManifest.themes.includes('ocean.css');
   })());
+
+  console.log('-- marp themes on a server with a data directory --');
+  {
+    // The release (read-only in real life) ships one theme; admins work in DATA_DIR/themes.
+    const shipDir = path.join(tmpDir, 'release');
+    const shipThemes = path.join(shipDir, 'marp-themes');
+    const dataDir = path.join(tmpDir, 'data');
+    fs.mkdirSync(shipThemes, { recursive: true });
+    fs.writeFileSync(path.join(shipThemes, 'campus.css'), '/* @theme campus */\n@import "gaia";\nsection { color: green; }');
+    fs.writeFileSync(path.join(shipThemes, 'themes.json'), JSON.stringify({ themes: ['campus.css'] }));
+    const ctx = { staticDir: shipDir, dataDir };
+    const listed = () => listThemes(ctx).themes;
+    const served = () => servedThemesManifest(ctx).themes;
+
+    const campus = listed().find((t) => t.filename === 'campus.css');
+    chk('a shipped theme is listed as shipped, by its @theme name', campus?.source === 'shipped' && campus.name === 'campus' && !campus.overridden);
+    chk('decks are served it', served().join() === 'campus.css');
+
+    saveTheme(ctx, 'campus.css', '/* @theme campus */\nsection { color: purple; }');
+    chk('editing a shipped theme writes an override in the data directory, not the release',
+      fs.readFileSync(path.join(dataDir, 'themes', 'campus.css'), 'utf8').includes('purple')
+      && fs.readFileSync(path.join(shipThemes, 'campus.css'), 'utf8').includes('green'));
+    chk('the override is what decks get, and is marked as one', getTheme(ctx, 'campus.css').css.includes('purple') && listed().find((t) => t.filename === 'campus.css').overridden);
+    chk('the original can still be read', getTheme(ctx, 'campus.css', { original: true }).css.includes('green'));
+    chk('it is still served once, not twice', served().join() === 'campus.css');
+
+    const restored = deleteTheme(ctx, 'campus.css');
+    chk('removing the override restores the original', restored.restored && getTheme(ctx, 'campus.css').css.includes('green'));
+    chk('a shipped original cannot be deleted', (() => { try { deleteTheme(ctx, 'campus.css'); return false; } catch (e) { return e.status === 400; } })());
+
+    setThemeHidden(ctx, 'campus.css', true);
+    chk('hiding a shipped theme takes it off what decks are served', served().length === 0 && listed().find((t) => t.filename === 'campus.css').hidden);
+    setThemeHidden(ctx, 'campus.css', false);
+    chk('and showing it puts it back', served().join() === 'campus.css');
+
+    const copy = customizeTheme(ctx, 'gaia');
+    chk(`customizing a Marp theme makes a new one that imports it (${copy.filename})`,
+      copy.filename === 'gaia-custom.css' && getTheme(ctx, 'gaia-custom.css').css.includes("@import 'gaia'") && served().includes('gaia-custom.css'));
+    chk('a second copy gets a name of its own', customizeTheme(ctx, 'gaia').filename === 'gaia-custom-2.css');
+    chk('a custom theme is listed as custom', listed().find((t) => t.filename === 'gaia-custom.css')?.source === 'custom');
+
+    chk('a theme cannot take one of Marp\'s own names', (() => { try { saveTheme(ctx, 'x.css', '/* @theme gaia */'); return false; } catch (e) { return e.status === 400; } })());
+    chk('nor another theme\'s name', (() => { try { saveTheme(ctx, 'y.css', '/* @theme campus */'); return false; } catch (e) { return e.status === 409; } })());
+    chk('nor have none', (() => { try { saveTheme(ctx, 'z.css', 'section {}'); return false; } catch (e) { return e.status === 400; } })());
+    chk('only a shipped theme can be hidden', (() => { try { setThemeHidden(ctx, 'gaia-custom.css', true); return false; } catch (e) { return e.status === 400; } })());
+
+    deleteTheme(ctx, 'gaia-custom-2.css');
+    chk('deleting a custom theme removes it', !served().includes('gaia-custom-2.css') && !fs.existsSync(path.join(dataDir, 'themes', 'gaia-custom-2.css')));
+
+    // What /marp-themes/ answers.
+    const fake = () => { const r = { status: 0, headers: {}, body: '' }; return [r, { writeHead(s, h) { r.status = s; r.headers = h; }, end(b) { r.body = b; } }]; };
+    const [m, mres] = fake();
+    serveTheme(ctx, '/marp-themes/themes.json', mres);
+    chk('/marp-themes/themes.json is the merged list', JSON.parse(m.body).themes.join() === 'campus.css,gaia-custom.css');
+    const [c, cres] = fake();
+    serveTheme(ctx, '/marp-themes/gaia-custom.css', cres);
+    chk('and a custom theme is served from the data directory', c.status === 200 && /text\/css/.test(c.headers['content-type']) && c.body.includes('gaia-custom'));
+    const [n, nres] = fake();
+    serveTheme(ctx, '/marp-themes/..%2Fsecret.css', nres);
+    chk('a path out of the folder is not served', n.status === 404);
+    chk('anything else is left to the static server', serveTheme(ctx, '/marp-themes/sub/dir.css', fake()[1]) === false);
+  }
 
   console.log('-- pre-load content files management --');
   chk('support all 5 categories',

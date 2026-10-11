@@ -147,6 +147,23 @@ They appear on the controller's Library tab beside the examples that ship in
 `content/manifest.json`, filed under their course. Typing a course code into
 the filter box narrows the library to that course.
 
+## Slide themes
+
+**Admin › Global Content › Marp Themes** is where the Marp themes decks can use
+are managed. Themes an administrator adds or edits are kept in
+`$DATA_DIR/themes/` (or `THEMES_DIR` if you set one), never in the release, so
+an update keeps them. The release's own `marp-themes/` is read-only:
+
+- **Marp's own** (`default`, `gaia`, `uncover`) are built into Marp. *Make a
+  customized copy* starts a new theme that imports one, to change from there.
+- **Themes that come with Podium** can be edited: your version is kept beside
+  the original and used instead, until *Restore original*. *Hide* takes one off
+  the list decks are offered without deleting it.
+- **Themes added here** can be edited, downloaded and removed.
+
+A theme is known to decks by its `/* @theme name */` line, so two themes cannot
+share a name, and none can take one of Marp's.
+
 ## Setting a course up so a new device is just a login
 
 Give a course a room and a passphrase and its members' devices configure
@@ -187,6 +204,8 @@ Three things go in, and all three are needed: a **snapshot of the database**
 (`VACUUM INTO`, not `cp` — SQLite in WAL mode is several files, and a copy taken
 mid-write restores, opens, and is quietly wrong), the **`media/` tree** (the
 bytes every library entry and session photo points at), and **`podium.env`**.
+The **`themes/`** folder of slide themes made on the Admin page goes in too, when
+there is one.
 The archive is written `0600` because it holds password hashes, every room's
 passphrase, and possibly `AUTH_PASSWORD`. It keeps the last `KEEP_BACKUPS`
 (default 14) and reads the archive back before pruning, because a backup nobody

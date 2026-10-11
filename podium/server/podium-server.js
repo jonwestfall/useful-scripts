@@ -48,6 +48,7 @@ const { WebSocketServer } = require('ws');
 const store = require('./store.js');
 const accounts = require('./accounts.js');
 const kiosks = require('./kiosks.js');
+const content = require('./content.js');
 const api = require('./api.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
@@ -824,6 +825,10 @@ const server = http.createServer((req, res) => {
 
   const requested = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   if (!api.gate(req, res, requested, authContext)) return;
+  // Themes are two folders merged - the release's and the administrators'
+  // own in the data directory (see content.js) - not one on disk.
+  if (requested.startsWith('/marp-themes/') && (req.method === 'GET' || req.method === 'HEAD')
+    && content.serveTheme(authContext, requested, res)) return;
   const resolved = path.resolve(STATIC, `.${requested === '/' ? '/index.html' : requested}`);
   // Never serve outside the static root, whatever the request says.
   if (resolved !== STATIC && !resolved.startsWith(STATIC + path.sep)) {
