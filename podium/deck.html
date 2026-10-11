@@ -87,6 +87,37 @@
   </div>
 </div>
 
+<!-- A link, and the QR code for it (deck-qr.js): a ```qr block the
+     projector draws as the code, so changing the link changes the code. -->
+<div id="deck-link-dialog" class="deck-dialog" hidden>
+  <div class="deck-dialog-card" role="dialog" aria-modal="true" aria-labelledby="deck-link-heading">
+    <h2 id="deck-link-heading">Add a link</h2>
+    <form id="deck-link-form" class="stack">
+      <label for="deck-link-url">Address</label>
+      <input id="deck-link-url" type="url" placeholder="https://example.edu/survey" autocomplete="off" required>
+      <label for="deck-link-label">Text to show (optional)</label>
+      <input id="deck-link-label" type="text" placeholder="Course survey" autocomplete="off">
+      <label class="check"><input id="deck-link-text" type="checkbox" checked> Show the link as text</label>
+      <label class="check"><input id="deck-link-qr" type="checkbox" checked> Add a QR code the room can scan</label>
+      <div class="inline" id="deck-link-size-row">
+        <label for="deck-link-size">Size</label>
+        <select id="deck-link-size">
+          <option value="small">Small</option>
+          <option value="medium" selected>Medium</option>
+          <option value="large">Large</option>
+        </select>
+      </div>
+      <div id="deck-link-preview" class="deck-link-preview" aria-hidden="true"></div>
+      <p class="hint" id="deck-link-note" role="status"></p>
+      <div class="inline">
+        <button id="deck-link-insert" type="submit" class="primary">Add</button>
+        <button id="deck-link-cancel" type="button">Cancel</button>
+      </div>
+      <p class="hint">The QR code is drawn from the link wherever the slide is shown, so editing the address later changes the code too.</p>
+    </form>
+  </div>
+</div>
+
 <!-- A picture for a slide (Issue #226): uploaded from this device (or pasted,
      or dropped anywhere on the page) into the library, picked from the
      library, or from an address. See assets/js/deck-media.js. -->
@@ -267,6 +298,7 @@
       <button type="button" data-cmd="numbered" title="Numbered list">1. List</button>
       <button type="button" class="deck-only" data-cmd="build" title="Reveal this slide's bullets one at a time" aria-pressed="false">▶ Build</button>
       <button type="button" data-cmd="image" title="Add a picture">🖼 Picture</button>
+      <button type="button" data-cmd="link" title="Add a link, with a QR code the room can scan">🔗 Link</button>
       <button type="button" class="deck-only" data-cmd="video" title="Make this a video slide">🎬 Video</button>
       <button type="button" class="deck-only" data-cmd="template" title="Add a slide from a template, or manage templates">⧉ Template</button>
       <div class="deck-menu-wrap deck-diagram-wrap">
