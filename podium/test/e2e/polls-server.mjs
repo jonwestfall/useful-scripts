@@ -3615,6 +3615,152 @@ gvServer.kill();
 fs.rmSync(gvData, { recursive: true, force: true });
 }
 
+if (want('guest view: a viewer link planned in advance')) {
+console.log('\n-- guest view: a viewer link planned in advance --');
+// The planner makes a short link for a lecture; it goes in an invitation
+// days before. Opened early it waits; the lecture loaded on the controller
+// hands the display its key, and the display opens the link when it is live.
+const pvPort = await freePort();
+const pvBase = `http://127.0.0.1:${pvPort}`;
+const pvData = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-viewlink-'));
+execFileSync(process.execPath, ['podium-admin.js', 'user', 'add', 'pv', '--admin', '--name', 'PV', '--password-stdin'], {
+  cwd: path.join(ROOT, 'server'), env: { ...process.env, DATA_DIR: pvData }, input: 'a planned view password\n',
+});
+const pvServer = spawn(process.execPath, ['podium-server.js'], {
+  cwd: path.join(ROOT, 'server'),
+  env: { ...process.env, PORT: String(pvPort), STATIC: '../', DATA_DIR: pvData },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+pvServer.stderr.on('data', (d) => process.stderr.write(`[view-link-server] ${d}`));
+await new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('view link relay did not start')), 10000);
+  let log = '';
+  pvServer.stdout.on('data', (d) => { log += String(d); if (log.includes('podium auth:')) { clearTimeout(timer); resolve(); } });
+  pvServer.on('exit', (code) => reject(new Error(`view link relay exited with ${code}`)));
+});
+
+const pvPresenter = await browser.newContext();
+await pvPresenter.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${pvPort}/podium`, room: 'pv-seminar', passphrase: 'a room key nobody outside sees' }));
+const pvCtrl = await pvPresenter.newPage();
+trap(pvCtrl, 'view link controller');
+await pvCtrl.goto(`${pvBase}/control.html`);
+await pvCtrl.waitForSelector('#form');
+await pvCtrl.fill('#username', 'pv');
+await pvCtrl.fill('#password', 'a planned view password');
+await Promise.all([pvCtrl.waitForURL(/control\.html/), pvCtrl.click('#go')]);
+await pvCtrl.waitForSelector('#app:not([hidden])');
+
+// At the desk, days before.
+const pvPlanner = await pvPresenter.newPage();
+trap(pvPlanner, 'view link planner');
+await pvPlanner.goto(`${pvBase}/plan.html`);
+await pvPlanner.waitForSelector('#plan-new.is-primary');
+await pvPlanner.click('#plan-new');
+await pvPlanner.waitForFunction(() => !document.querySelector('#order .order-row'), null, { timeout: 5000 });
+await pvPlanner.fill('#plan-title', 'Remote seminar');
+await pvPlanner.waitForFunction(() => /yours alone/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
+await pvPlanner.click('.view-link-make');
+await pvPlanner.waitForSelector('.view-link-url');
+const plannedUrl = await pvPlanner.textContent('.view-link-url');
+const plannedCode = new URL(plannedUrl).searchParams.get('c');
+ok(`the planner makes a short viewer link for the lecture (${plannedUrl})`,
+  plannedUrl.startsWith(`${pvBase}/view.html?c=`) && /^[A-HJ-NP-Z2-9]{10}$/.test(plannedCode)
+  && !plannedUrl.includes('pv-seminar') && !plannedUrl.includes('#'));
+ok('with its QR code and typed code beside it', await pvPlanner.isVisible('#plan-view-link .poll-link-qr svg')
+  && (await pvPlanner.textContent('#plan-view-link')).includes(`${plannedCode.slice(0, 5)}-${plannedCode.slice(5)}`));
+await pvPlanner.waitForFunction(async (code) => {
+  const list = await (await fetch('/api/plans', { credentials: 'same-origin' })).json();
+  const row = list.plans.find((p) => p.title === 'Remote seminar');
+  if (!row) return false;
+  const { plan } = await (await fetch(`/api/plans/${row.id}`, { credentials: 'same-origin' })).json();
+  return JSON.stringify(plan.doc).includes('viewLink') && !!code;
+}, plannedCode, { timeout: 10000, polling: 500 })
+  .then(() => ok('and the link is saved with the lecture on the server', true))
+  .catch(() => ok('and the link is saved with the lecture on the server', false));
+
+// Someone opens the invitation early, on their own phone, with no account.
+const pvGuest = await browser.newContext({ viewport: { width: 390, height: 844 } });
+const pvViewer = await pvGuest.newPage();
+trap(pvViewer, 'planned link viewer');
+expecting.viewLinkWaiting = true;
+await pvViewer.goto(plannedUrl);
+await pvViewer.waitForFunction(() => /not started yet/.test(document.querySelector('#viewer-status')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('opened before class, the link says the class has not started and waits', true))
+  .catch(async () => ok(`opened before class, the link says the class has not started and waits ("${await pvViewer.textContent('#viewer-status')}")`, false));
+
+// Class time: the display goes live and the controller opens the lecture.
+const pvDisplay = await pvPresenter.newPage();
+trap(pvDisplay, 'view link display');
+await pvDisplay.goto(`${pvBase}/display.html`);
+await pvDisplay.click('#arm-button');
+await pvDisplay.waitForSelector('#hud[data-status="online"]');
+await pvCtrl.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'), null, { timeout: 10000 });
+await pvCtrl.waitForTimeout(800);
+await pvCtrl.click('#blank');
+await pvCtrl.click('.tab[data-tab="library"]');
+await pvCtrl.waitForFunction(() => [...document.querySelectorAll('#plan-server-pick option')].some((o) => o.textContent.includes('Remote seminar')), null, { timeout: 10000 });
+await pvCtrl.evaluate(() => {
+  const pick = document.querySelector('#plan-server-pick');
+  pick.value = [...pick.options].find((o) => o.textContent.includes('Remote seminar')).value;
+});
+await pvCtrl.click('#plan-server-open');
+await pvCtrl.waitForFunction(() => /Loaded/.test(document.querySelector('#plan-note')?.textContent || ''), null, { timeout: 10000 });
+await pvCtrl.click('.tab[data-tab="setup"]');
+await pvCtrl.waitForFunction(() => /open now/.test(document.querySelector('#guest-view-planned')?.textContent || ''), null, { timeout: 15000 })
+  .then(() => ok('the lecture hands the display its link, and the controller says it is open', true))
+  .catch(async () => ok(`the lecture hands the display its link, and the controller says it is open ("${await pvCtrl.textContent('#guest-view-planned')}")`, false));
+const answered = await fetch(`${pvBase}/view-code/${plannedCode}`);
+const answeredLink = (await answered.json()).link || '';
+ok('the planned code now answers with the display\'s viewer link, never the room\'s',
+  answered.status === 200 && /r=view\./.test(answeredLink) && !answeredLink.includes('pv-seminar'));
+
+// The early phone picks the class up by itself.
+await pvViewer.waitForSelector('#viewer-start-row:not([hidden])', { timeout: 25000 })
+  .then(() => ok('and the phone that opened it early joins by itself', true))
+  .catch(() => ok('and the phone that opened it early joins by itself', false));
+expecting.viewLinkWaiting = false;
+await pvViewer.click('#viewer-start');
+await pvCtrl.click('.tab[data-tab="say"]');
+await pvCtrl.click('#text-open-editor');
+await pvCtrl.fill('#msg-body', 'Welcome to the remote seminar');
+await pvCtrl.click('#message-editor-show');
+await pvViewer.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-text')?.textContent.includes('Welcome to the remote seminar'),
+  null, { timeout: 10000 })
+  .then(() => ok('and watches what is on the classroom screen', true))
+  .catch(() => ok('and watches what is on the classroom screen', false));
+
+// The QR the room scans is the same link as the invitation.
+await pvCtrl.click('.tab[data-tab="setup"]');
+await pvCtrl.click('#guest-view-show');
+await pvDisplay.waitForFunction((code) => (document.querySelector('.layer[data-role="program"] .r-qr-caption')?.textContent || '').includes(`${code.slice(0, 5)}-${code.slice(5)}`),
+  plannedCode, { timeout: 10000 })
+  .then(() => ok('"Put the viewer QR on screen" shows the lecture\'s planned link and code', true))
+  .catch(() => ok('"Put the viewer QR on screen" shows the lecture\'s planned link and code', false));
+
+// Standing down closes it again; the next Go live reopens the same link.
+await pvDisplay.keyboard.press('e');
+await pvViewer.waitForSelector('#viewer-offair:not([hidden])', { timeout: 15000 });
+const closed = await fetch(`${pvBase}/view-code/${plannedCode}`);
+ok('when the class stands down, the planned code stops answering', closed.status === 404 && (await closed.json()).waiting === true);
+await pvDisplay.click('#arm-button');
+await pvDisplay.waitForFunction(async (code) => (await fetch(`view-code/${code}`)).ok, plannedCode, { timeout: 10000, polling: 500 })
+  .then(() => ok('and the next Go live of the same lecture opens the same link again', true))
+  .catch(() => ok('and the next Go live of the same lecture opens the same link again', false));
+
+// Clearing the lecture takes its link off the display.
+await pvCtrl.click('.tab[data-tab="library"]');
+await pvCtrl.click('#plan-clear');
+await pvDisplay.waitForFunction(() => !localStorage.getItem('podium.view-plan'), null, { timeout: 10000 })
+  .then(() => ok('closing the lecture on the controller takes its link off the display', true))
+  .catch(() => ok('closing the lecture on the controller takes its link off the display', false));
+
+await pvGuest.close();
+await pvPresenter.close();
+pvServer.kill();
+fs.rmSync(pvData, { recursive: true, force: true });
+}
+
 reportErrors();
 } finally {
   await teardown();

@@ -55,7 +55,7 @@ const lectures = require('./lectures.js');
 const attendance = require('./attendance.js');
 const mail = require('./mail.js');
 const zipStaging = require('./zip-staging.js');
-const { createViewCodes, VIEW_ROOM_RE } = require('./view-codes.js');
+const { createViewCodes, linkCodeForKey, VIEW_ROOM_RE } = require('./view-codes.js');
 
 const PORT = Number(process.env.PORT || 8080);
 // Unset means every interface, which is what running this on a laptop for a
@@ -159,7 +159,7 @@ const KIOSK_OPEN_PATHS = new Set([
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/screen-record.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-qr.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
-  '/assets/js/zoom.js', '/assets/js/poll-link.js', '/assets/js/poll-look.js',
+  '/assets/js/zoom.js', '/assets/js/poll-link.js', '/assets/js/poll-look.js', '/assets/js/view-link.js',
 ]);
 
 // What view.html (Guest View, Issue #150) needs to load, open to everyone
@@ -175,7 +175,7 @@ const VIEW_OPEN_PATHS = new Set([
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/screen-record.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-qr.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
-  '/assets/js/zoom.js', '/assets/js/poll-link.js', '/assets/js/poll-look.js',
+  '/assets/js/zoom.js', '/assets/js/poll-link.js', '/assets/js/poll-look.js', '/assets/js/view-link.js',
 ]);
 for (const openPath of VIEW_OPEN_PATHS) AUTH_OPEN_PATHS.add(openPath);
 
@@ -312,25 +312,8 @@ function makePollCode() {
 // poll exists, and only whoever holds the key can open a poll under it. Must
 // match pollCodeForKey there; test/poll-link.test.mjs checks that it does.
 const POLL_KEY_RE = /^[A-Za-z0-9_-]{16,64}$/;
-const LINK_CODE_LENGTH = 10;
 
-function pollCodeForKey(key) {
-  const digest = crypto.createHash('sha256').update(`podium-poll-link\n${key}`).digest();
-  let code = '';
-  let acc = 0;
-  let bits = 0;
-  for (const byte of digest) {
-    acc = (acc << 8) | byte;
-    bits += 8;
-    while (bits >= 5 && code.length < LINK_CODE_LENGTH) {
-      bits -= 5;
-      code += POLL_ALPHABET[(acc >> bits) & 31];
-    }
-    acc &= (1 << bits) - 1;
-    if (code.length === LINK_CODE_LENGTH) break;
-  }
-  return code;
-}
+const pollCodeForKey = (key) => linkCodeForKey('podium-poll-link', key);
 
 const keyHash = (key) => crypto.createHash('sha256').update(`podium-poll-host\n${key}`).digest('base64url');
 
@@ -742,7 +725,7 @@ async function handleViewCode(req, res, url) {
   }
   if (req.method === 'GET' && rawCode) {
     const found = viewCodes.lookup(rawCode, api.clientIp(req));
-    pollJson(res, found.error ? found.status : 200, found.error ? { error: found.error } : { link: found.link });
+    pollJson(res, found.error ? found.status : 200, found.error ? { error: found.error, ...(found.waiting ? { waiting: true } : {}) } : { link: found.link });
     return;
   }
   const signedIn = !hasAccounts() || accounts.sessionUser(db, api.cookieToken(req)) || kiosks.sessionKiosk(db, api.kioskCookieToken(req));
@@ -751,7 +734,7 @@ async function handleViewCode(req, res, url) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (req.method === 'POST' && !rawCode) {
     const body = await readJson(req, 4 * 1024);
-    const made = viewCodes.register({ want: body.want, token, link: body.link });
+    const made = viewCodes.register({ want: body.want, token, link: body.link, key: body.key });
     pollJson(res, made.error ? made.status : 200, made.error ? { error: made.error } : made);
     return;
   }

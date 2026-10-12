@@ -89,3 +89,78 @@ test('guessing is rate-limited per address, and every kind of miss counts the sa
   advance(60 * 1000 + 1); codes.touch(code, token);
   assert.equal(codes.lookup(code, ip).link, LINK, 'and the window passes');
 });
+
+// --- a viewer link planned in advance (assets/js/view-link.js) ---------------
+
+const { viewCodeForKey: serverViewCode, linkCodeForKey } = require('../server/view-codes.js');
+const viewLink = await import('../assets/js/view-link.js');
+const pollLink = await import('../assets/js/poll-link.js');
+const { readPlan, emptyPlan, planToJson, withoutPollLinks } = await import('../assets/js/planfile.js');
+
+test('a planned link\'s code is worked out the same way here as in the browser, and differs from a poll\'s', () => {
+  for (let i = 0; i < 20; i++) {
+    const key = viewLink.newViewLinkKey();
+    const code = viewLink.viewCodeForKey(key);
+    assert.match(code, /^[A-HJ-NP-Z2-9]{10}$/);
+    assert.equal(serverViewCode(key), code);
+    assert.notEqual(pollLink.pollCodeForKey(key), code, 'one key never opens a poll and a viewer link alike');
+    assert.equal(linkCodeForKey('podium-poll-link', key), pollLink.pollCodeForKey(key));
+  }
+  assert.equal(viewLink.viewCodeForKey('short'), '');
+  assert.equal(viewLink.viewLinkUrl('https://podium.example.com/', 'x'), '');
+  const key = viewLink.newViewLinkKey();
+  assert.equal(viewLink.viewLinkUrl('https://podium.example.com/', key), `https://podium.example.com/view.html?c=${viewLink.viewCodeForKey(key)}`);
+});
+
+test('a planned code is claimed with its key, answers only while live, and an early visitor is told to wait', () => {
+  const { codes, advance } = clockedCodes();
+  const key = viewLink.newViewLinkKey();
+  const code = viewLink.viewCodeForKey(key);
+  const early = codes.lookup(code, '3.3.3.3');
+  assert.equal(early.status, 404);
+  assert.equal(early.waiting, true);
+  const made = codes.register({ key, link: LINK });
+  assert.equal(made.code, code);
+  assert.equal(codes.lookup(viewLink.formatViewCode(code).toLowerCase(), '3.3.3.3').link, LINK, 'typed as shown, any case');
+  assert.equal(codes.touch(code, made.token), true);
+  assert.equal(codes.release(code, made.token), true);
+  assert.equal(codes.lookup(code, '3.3.3.3').waiting, true);
+  const again = codes.register({ key, link: LINK });
+  advance(LIVE_MS + 1000);
+  assert.equal(codes.lookup(code, '3.3.3.3').waiting, true, 'not touched: gone again');
+  assert.equal(codes.touch(code, again.token), false);
+  assert.equal(codes.register({ key: 'not a key', link: LINK }).status, 400);
+});
+
+test('waiting on a planned code never locks the visitor out, but walking six-character codes still does', () => {
+  const { codes } = clockedCodes();
+  const key = viewLink.newViewLinkKey();
+  for (let i = 0; i < MAX_MISSES_PER_WINDOW * 3; i++) assert.equal(codes.lookup(viewLink.viewCodeForKey(key), '4.4.4.4').status, 404);
+  codes.register({ key, link: LINK });
+  assert.equal(codes.lookup(viewLink.viewCodeForKey(key), '4.4.4.4').link, LINK);
+});
+
+test('the key is the proof: a display that lost its token takes its planned code back, a stranger with only the code cannot', () => {
+  const { codes } = clockedCodes();
+  const key = viewLink.newViewLinkKey();
+  const first = codes.register({ key, link: LINK });
+  const other = 't=ws&r=view.Other123xyz&p=k2';
+  const second = codes.register({ key, link: other });
+  assert.notEqual(second.token, first.token);
+  assert.equal(codes.lookup(first.code, '5.5.5.5').link, other);
+  assert.equal(codes.touch(first.code, first.token), false, 'the old token is out');
+  // Knowing the code (everyone with the handout does) is not a way in.
+  const stranger = codes.register({ want: first.code, link: 't=ws&r=view.Evil1234567&p=k3' });
+  assert.notEqual(stranger.code, first.code);
+  assert.equal(codes.lookup(first.code, '5.5.5.5').link, other);
+});
+
+test('a lecture plan keeps its viewer link key, and drops anything that is not one', () => {
+  const plan = emptyPlan('Week 3');
+  assert.equal(plan.viewLink, '');
+  plan.viewLink = viewLink.newViewLinkKey();
+  assert.equal(readPlan(planToJson(plan)).plan.viewLink, plan.viewLink);
+  assert.equal(readPlan(planToJson({ ...plan, viewLink: '<script>' })).plan.viewLink, '');
+  assert.equal(readPlan(JSON.stringify({ podium: 'plan', v: 1, title: 'Old', items: [] })).plan.viewLink, '');
+  assert.equal(withoutPollLinks(readPlan(planToJson(plan)).plan).viewLink, '', 'a copy of the lecture gets a link of its own');
+});

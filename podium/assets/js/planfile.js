@@ -16,6 +16,7 @@ import { uid } from './util.js';
 import { MAX_TIMERS } from './protocol.js';
 import { assetRefsIn } from './deck-source.js';
 import { isPollKey } from './poll-link.js';
+import { isViewLinkKey } from './view-link.js';
 import { normalizeLook } from './poll-look.js';
 
 export const PLAN_VERSION = 1;
@@ -308,6 +309,9 @@ export function emptyPlan(title = 'Untitled lecture') {
     timers: [],
     assets: {},
     autoLaunch: emptyAutoLaunch(),
+    // A Guest View link made in advance (view-link.js): the secret key its
+    // code is worked out from, or '' for none.
+    viewLink: '',
   };
 }
 
@@ -323,11 +327,13 @@ export function newItem(type) {
   return item;
 }
 
-// A copy of a lecture is a different lecture: its polls get links of their
-// own when asked for, rather than sharing (and restarting) the original's.
-// Opening or importing a plan keeps them - that is the same lecture.
+// A copy of a lecture is a different lecture: its polls, and its Guest View
+// link, get links of their own when asked for, rather than sharing (and
+// restarting) the original's. Opening or importing a plan keeps them - that
+// is the same lecture.
 export function withoutPollLinks(plan) {
   for (const item of plan.items || []) if (item.type === 'poll') item.link = '';
+  if (plan.viewLink !== undefined) plan.viewLink = '';
   return plan;
 }
 
@@ -631,6 +637,7 @@ export function readPlan(raw) {
     timers,
     assets,
     autoLaunch,
+    viewLink: isViewLinkKey(data.viewLink) ? data.viewLink : '',
   };
   return { plan: pruneAssets(plan), warnings };
 }

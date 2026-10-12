@@ -38,6 +38,7 @@ import { canRecordScreen, requestScreen, createScreenRecorder } from './screen-r
 import { createDocReader } from './doc-reader.js';
 import { createDurationProber } from './duration-probe.js';
 import { makeSigningKey, importSigningKey, importVerifyKey, signText, verifyText } from './crypto.js';
+import { isViewLinkKey, viewCodeForKey } from './view-link.js';
 
 const HEARTBEAT_MS = 2000;
 const TELEMETRY_MS = 400;
@@ -2113,6 +2114,11 @@ function wireState() {
     viewers: viewerCount,
     viewerLink: viewChannel(cfg) && cfg.viewPub ? viewerUrl(cfg, viewChannel(cfg)) : '',
     viewerCode: viewCodeLive ? cfg.viewCode : '',
+    // The planned link this display holds (view-link.js), as its code - so
+    // a controller can tell whether it still needs handing the lecture's key
+    // - and whether that code answers right now.
+    viewerPlanned: viewPlan.key ? viewCodeForKey(viewPlan.key) : '',
+    viewerPlannedLive: viewPlanLive,
     // Where the music has got to, and whether something on screen is currently
     // talking over it - both things a controller can only learn from here.
     musicNow: {
@@ -2333,6 +2339,85 @@ function releaseViewCode() {
   }).catch(() => { /* it lapses on its own within minutes */ });
 }
 
+// A viewer link planned in advance (view-link.js): the lecture plan's key,
+// handed over by the controller that loaded it ('view-plan'), and kept here
+// with the token the relay gave for it - in this browser only, so a display
+// reloaded mid-lecture claims the same code straight back. Registered at Go
+// live for this display's own viewer link, kept alive while live, released
+// at stand-down; the key stays until a controller replaces or clears it, so
+// the next Go live of the same lecture opens the same link again.
+const VIEW_PLAN_KEY = 'podium.view-plan';
+// How often a viewer that opened a planned link early asks whether class has started.
+const VIEW_PLAN_RETRY_MS = 15 * 1000;
+let viewPlan = (() => {
+  if (VIEWER) return { key: '', token: '' };
+  try {
+    const saved = JSON.parse(localStorage.getItem(VIEW_PLAN_KEY) || '{}');
+    return { key: isViewLinkKey(saved.key) ? saved.key : '', token: String(saved.token || '') };
+  } catch { return { key: '', token: '' }; }
+})();
+let viewPlanTimer = null;
+let viewPlanLive = false;
+
+function keepViewPlan() {
+  try {
+    if (viewPlan.key) localStorage.setItem(VIEW_PLAN_KEY, JSON.stringify(viewPlan));
+    else localStorage.removeItem(VIEW_PLAN_KEY);
+  } catch { /* private mode: a reload claims the code again with the key */ }
+}
+
+async function registerPlannedViewCode() {
+  const base = pollBaseUrl(cfg);
+  if (VIEWER || !base || !viewPlan.key || !state.armed) return;
+  try {
+    const channel = await ensureViewChannel();
+    await connectView();
+    const res = await fetch(`${base}view-code`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(viewPlan.token ? { authorization: `Bearer ${viewPlan.token}` } : {}) },
+      body: JSON.stringify({ key: viewPlan.key, link: new URL(viewerUrl(cfg, channel)).hash }),
+    });
+    if (!res.ok) return;
+    const { token } = await res.json();
+    viewPlan.token = token;
+    keepViewPlan();
+    viewPlanLive = true;
+    broadcastSoon();
+  } catch { return; }
+  clearInterval(viewPlanTimer);
+  viewPlanTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`${base}view-code/${viewCodeForKey(viewPlan.key)}`, {
+        method: 'PUT', headers: { authorization: `Bearer ${viewPlan.token}` },
+      });
+      if (res.status === 404) { viewPlan.token = ''; registerPlannedViewCode(); }
+    } catch { /* try again next minute */ }
+  }, VIEW_CODE_TOUCH_MS);
+}
+
+function releasePlannedViewCode() {
+  clearInterval(viewPlanTimer);
+  viewPlanTimer = null;
+  const wasLive = viewPlanLive;
+  viewPlanLive = false;
+  const base = pollBaseUrl(cfg);
+  if (!wasLive || !base || !viewPlan.key || !viewPlan.token) return;
+  fetch(`${base}view-code/${viewCodeForKey(viewPlan.key)}`, {
+    method: 'DELETE', headers: { authorization: `Bearer ${viewPlan.token}` },
+  }).catch(() => { /* it lapses on its own within minutes */ });
+}
+
+/** A controller handing over (or clearing, with '') the loaded lecture's planned viewer key. */
+function adoptViewPlan(key) {
+  const next = isViewLinkKey(key) ? key : '';
+  if (next === viewPlan.key) { if (next && state.armed && !viewPlanLive) registerPlannedViewCode(); return; }
+  releasePlannedViewCode();
+  viewPlan = { key: next, token: '' };
+  keepViewPlan();
+  registerPlannedViewCode();
+  broadcastSoon();
+}
+
 /** A new viewer link: everyone holding the old one is out, from now. */
 async function rotateViewerLink() {
   releaseViewCode();
@@ -2348,6 +2433,8 @@ async function rotateViewerLink() {
   await ensureViewChannel();
   await connectView();
   registerViewCode();
+  // The planned code follows: same code, pointed at the new link.
+  if (viewPlanLive) registerPlannedViewCode();
   showPairing('view');
 }
 
@@ -2642,6 +2729,7 @@ async function connect() {
           .catch(() => { /* the controller says the display did not answer */ });
         return;
       }
+      if (msg.t === 'view-plan') { adoptViewPlan(msg.key); return; }
       if (msg.t === 'sync') { broadcast(); return; }
       // The manual, controller-driven way to end class - "Finish session &
       // save" on the Photos tab - alongside the local 'e' key and the
@@ -3063,6 +3151,7 @@ function goLive({ windowed = false } = {}) {
   commit();
   queueRecordingTransition(startRecording);
   registerViewCode();
+  registerPlannedViewCode();
   return finishGoLive([audio, context, fullscreen]);
 }
 
@@ -3104,6 +3193,7 @@ async function standDown() {
   commit();
   queueRecordingTransition(stopRecording);
   releaseViewCode();
+  releasePlannedViewCode();
   try { await exitFullscreen(); } catch { /* already windowed */ }
 }
 
@@ -3375,13 +3465,29 @@ function takeViewerInk(part) {
 async function viewerFromCode(code) {
   const res = await fetch(`view-code/${encodeURIComponent(code.trim().toUpperCase())}`, { cache: 'no-store' });
   const answer = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(answer.error || 'That code did not work.');
+  if (!res.ok) throw Object.assign(new Error(answer.error || 'That code did not work.'), { waiting: !!answer.waiting });
   history.replaceState(null, '', `${location.pathname}#${answer.link}`);
   cfg = viewerConfig();
 }
 
 async function startViewer() {
   sizeInk();
+  const planned = new URLSearchParams(location.search).get('c');
+  if (!viewChannelLink() && planned) {
+    // A link planned in advance (view-link.js): its code answers only once
+    // the class is live, so a phone that opens it early waits here and joins
+    // by itself when it does.
+    for (;;) {
+      try {
+        await viewerFromCode(planned);
+        break;
+      } catch (err) {
+        if (!err.waiting) { viewerSay(err.message); break; }
+        viewerSay('This class has not started yet. Keep this page open - it starts by itself when the class goes live.');
+        await new Promise((resolve) => setTimeout(resolve, VIEW_PLAN_RETRY_MS));
+      }
+    }
+  }
   if (!viewChannelLink()) {
     // No link: the typed-code fallback, on the server that issued the code.
     viewerSay('');

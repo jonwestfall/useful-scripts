@@ -31,6 +31,8 @@ import { createAttendancePanel } from './attendance-panel.js';
 import { clampView, fitView, zoomAround, panBy, isZoomed, visibleWindow, viewKeeping, contentPointAt, panelPointOf, zoomToSlider, sliderToZoom } from './zoom.js';
 import { attachGestures } from './gestures.js';
 import { resolvePollBase, pollLinkBlock, pollLinksSummary, newPollKey, isPollKey } from './poll-link-ui.js';
+import { viewLinkBlock, isViewLinkKey } from './view-link-ui.js';
+import { viewCodeForKey, viewLinkUrl, formatViewCode } from './view-link.js';
 import { formatPollCode } from './poll-link.js';
 import { pollLookPicker } from './poll-look-ui.js';
 import { normalizeLook } from './poll-look.js';
@@ -817,11 +819,13 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
   }
   renderPlanBar();
   renderTimerPresets();
+  renderPlannedViewLink();
   // A plan that lays the screen out, or names this lecture's countdowns, says
   // so - but only when you deliberately load it. Doing either on every page
   // restore would yank the projector around, and reset a running clock, every
   // time the tablet woke up mid-lecture.
   if (!applyToDisplay) return;
+  resetViewPlan();
   if (plan.autoLaunch?.enabled) {
     send({ op: 'layout', mode: plan.layout || 'single' });
   } else if (plan.layout && plan.layout !== 'single') {
@@ -5860,7 +5864,9 @@ async function connect() {
         telemetryAt = Date.now();
         trackRecent();
         syncInkFromState();
+        syncViewPlan();
         renderAll();
+        renderPlannedViewLink();
         renderConnection();
         return;
       }
@@ -6239,7 +6245,7 @@ $('#poll-build').addEventListener('submit', (ev) => { ev.preventDefault(); start
 // Typing into a draft that has a link keeps it (savePollDraft).
 $('#poll-build').addEventListener('input', savePollDraft);
 $('#poll-build').addEventListener('change', savePollDraft);
-resolvePollBase(cfg).then((base) => { pollLinkBase = base; renderPollLinks(); });
+resolvePollBase(cfg).then((base) => { pollLinkBase = base; renderPollLinks(); renderPlannedViewLink(); });
 $('#poll-copy-link').addEventListener('click', async () => {
   const item = findPollItem();
   const link = item && pollJoinUrl(cfg, item.pollId);
@@ -6978,8 +6984,67 @@ $('#qr-form').addEventListener('submit', (ev) => {
 // Guest View (Issue #150). The link and code belong to the display - only it
 // holds the view channel's keys - so this asks it to make one if it has none
 // yet, then stages the QR as soon as the link arrives in its next heartbeat.
+//
+// A lecture planned with a viewer link of its own (view-link.js) hands its
+// key to the display, which claims the link's code when it goes live - so the
+// link in the invitation opens this screen. The display reports which planned
+// code it holds (viewerPlanned); this hands it the loaded lecture's key
+// whenever that differs, so a display that reloaded, or a second display,
+// picks it up without anyone asking. A display too old to report it is left
+// alone. A lecture merely restored when this page reloads only fills a
+// display holding none: replacing another lecture's link is for the
+// controller that opened its lecture on purpose, so two controllers with
+// different lectures never take turns at it.
+let viewPlanSentAt = 0;
+let viewPlanMine = false;
+function syncViewPlan() {
+  if (!stateHeard || !('viewerPlanned' in state)) return;
+  const key = isViewLinkKey(currentPlan?.viewLink) ? currentPlan.viewLink : '';
+  if (!key || state.viewerPlanned === viewCodeForKey(key)) return;
+  if (state.viewerPlanned && !viewPlanMine) return;
+  if (Date.now() - viewPlanSentAt < 5000) return;
+  viewPlanSentAt = Date.now();
+  bus?.send({ t: 'view-plan', key });
+}
+
+/** A lecture loaded on purpose, or cleared: the display drops a planned link that is not this lecture's. */
+function resetViewPlan() {
+  viewPlanSentAt = 0;
+  viewPlanMine = true;
+  if (isViewLinkKey(currentPlan?.viewLink)) { syncViewPlan(); return; }
+  if (state.viewerPlanned) bus?.send({ t: 'view-plan', key: '' });
+}
+
+let plannedViewShown = null;
+function renderPlannedViewLink() {
+  const box = $('#guest-view-planned');
+  if (!box) return;
+  const key = isViewLinkKey(currentPlan?.viewLink) ? currentPlan.viewLink : '';
+  // Drawn again only when something in it changes, not on every heartbeat.
+  const shown = `${key}|${pollLinkBase}|${!!state.viewerPlannedLive}|${currentPlan?.title || ''}`;
+  if (shown === plannedViewShown) return;
+  plannedViewShown = shown;
+  box.hidden = !key;
+  if (!key) { box.replaceChildren(); return; }
+  box.replaceChildren(
+    el('p', { class: 'hint' }, `“${currentPlan.title || 'This lecture'}” has a viewer link made in advance. ${state.viewerPlannedLive ? 'It is open now.' : 'It opens when the display goes live.'}`),
+    viewLinkBlock({ base: pollLinkBase, key, title: currentPlan.title }),
+  );
+}
+
 $('#guest-view-show').addEventListener('click', async () => {
   const note = $('#guest-view-note');
+  // The lecture's planned link, when it has one: the same link and code as
+  // the invitation, so the room and the people joining from elsewhere match.
+  const plannedKey = isViewLinkKey(currentPlan?.viewLink) ? currentPlan.viewLink : '';
+  if (plannedKey && pollLinkBase) {
+    stage({
+      type: 'qr', title: 'Watch on your own device', data: viewLinkUrl(pollLinkBase, plannedKey),
+      caption: `Watch on your own device — scan, or go to ${new URL(pollLinkBase).host}/view.html and type ${formatViewCode(viewCodeForKey(plannedKey))}`,
+    });
+    note.textContent = state.viewerPlannedLive ? '' : 'This lecture\u2019s planned link opens when the display goes live.';
+    return;
+  }
   if (!state.viewerLink) {
     note.textContent = 'Asking the display for its viewer link…';
     bus?.send({ t: 'view-link-need' });
@@ -8844,6 +8909,8 @@ $('#plan-clear').addEventListener('click', async () => {
   currentPlan = null;
   forgetPlanAssets();
   try { await clearCurrentPlan(); } catch { /* nothing was stored */ }
+  resetViewPlan();
+  renderPlannedViewLink();
   renderPlanBar();
   renderTimerPresets();
   await loadLibrary();
