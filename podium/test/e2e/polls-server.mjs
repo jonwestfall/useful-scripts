@@ -3669,15 +3669,19 @@ ok(`the planner makes a short viewer link for the lecture (${plannedUrl})`,
   && !plannedUrl.includes('pv-seminar') && !plannedUrl.includes('#'));
 ok('with its QR code and typed code beside it', await pvPlanner.isVisible('#plan-view-link .poll-link-qr svg')
   && (await pvPlanner.textContent('#plan-view-link')).includes(`${plannedCode.slice(0, 5)}-${plannedCode.slice(5)}`));
-await pvPlanner.waitForFunction(async (code) => {
+// The planner saves to the server a few seconds after the last edit.
+const pvSavedKey = async () => pvPlanner.evaluate(async () => {
   const list = await (await fetch('/api/plans', { credentials: 'same-origin' })).json();
   const row = list.plans.find((p) => p.title === 'Remote seminar');
-  if (!row) return false;
+  if (!row) return '';
   const { plan } = await (await fetch(`/api/plans/${row.id}`, { credentials: 'same-origin' })).json();
-  return JSON.stringify(plan.doc).includes('viewLink') && !!code;
-}, plannedCode, { timeout: 10000, polling: 500 })
-  .then(() => ok('and the link is saved with the lecture on the server', true))
-  .catch(() => ok('and the link is saved with the lecture on the server', false));
+  const doc = typeof plan.doc === 'string' ? JSON.parse(plan.doc) : plan.doc;
+  return doc.viewLink || '';
+});
+let pvKeySaved = '';
+for (let i = 0; i < 40 && !pvKeySaved; i++) { pvKeySaved = await pvSavedKey(); if (!pvKeySaved) await pvPlanner.waitForTimeout(500); }
+ok('and the link is saved with the lecture on the server', /^[A-Za-z0-9_-]{16,64}$/.test(pvKeySaved));
+
 
 // Someone opens the invitation early, on their own phone, with no account.
 const pvGuest = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -3744,9 +3748,9 @@ await pvViewer.waitForSelector('#viewer-offair:not([hidden])', { timeout: 15000 
 const closed = await fetch(`${pvBase}/view-code/${plannedCode}`);
 ok('when the class stands down, the planned code stops answering', closed.status === 404 && (await closed.json()).waiting === true);
 await pvDisplay.click('#arm-button');
-await pvDisplay.waitForFunction(async (code) => (await fetch(`view-code/${code}`)).ok, plannedCode, { timeout: 10000, polling: 500 })
-  .then(() => ok('and the next Go live of the same lecture opens the same link again', true))
-  .catch(() => ok('and the next Go live of the same lecture opens the same link again', false));
+let reopened = false;
+for (let i = 0; i < 20 && !reopened; i++) { reopened = (await fetch(`${pvBase}/view-code/${plannedCode}`)).ok; if (!reopened) await pvDisplay.waitForTimeout(500); }
+ok('and the next Go live of the same lecture opens the same link again', reopened);
 
 // Clearing the lecture takes its link off the display.
 await pvCtrl.click('.tab[data-tab="library"]');
