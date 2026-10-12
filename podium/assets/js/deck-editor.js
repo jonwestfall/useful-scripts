@@ -35,6 +35,7 @@ import { deckProblems, docProblems, checkServerMedia } from './deck-checks.js';
 import { renderDoc, forgetDoc, headingAt, docMaxAt, DOC_VIEW, DOC_STEP } from './doc.js';
 import { openQuickLook } from './quicklook-open.js';
 import { linkMarkdown, qrPreview } from './deck-qr.js';
+import { openThemeSheet } from './theme-sheet-ui.js';
 import { createTemplatesPanel, findTemplate, slidesOf } from './deck-templates.js';
 import {
   STARTERS, starterFence, isMermaidLiveLink, readMermaidLiveLink, fenceFromLink, mermaidLiveLink, fenceAt,
@@ -973,6 +974,15 @@ function wireDeckSettings() {
   $('#deck-mode-switch').addEventListener('click', switchMode);
   $('#deck-title').addEventListener('change', (ev) => set('title', ev.target.value.trim() || null));
   $('#deck-theme').addEventListener('change', (ev) => set('theme', ev.target.value || null));
+  // The theme's cheat sheet; a class chosen there goes on the current slide,
+  // keeping a build if it has one.
+  $('#deck-theme-guide').addEventListener('click', () => openThemeSheet($('#deck-theme').value || 'default', {
+    onUseClass: (cls) => {
+      const keep = $('#deck-slide-class').value.split(/\s+/).filter((c) => c === 'build');
+      applyText(DS.setSlideDirective(text(), current, 'class', [cls, ...keep].join(' ')));
+      view.focus();
+    },
+  }));
   $('#deck-size').addEventListener('change', (ev) => set('size', ev.target.value || null));
   $('#deck-paginate').addEventListener('change', (ev) => set('paginate', ev.target.value || null));
   $('#deck-header').addEventListener('change', (ev) => set('header', ev.target.value.trim() || null));

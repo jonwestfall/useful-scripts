@@ -436,6 +436,22 @@
           </label>
         </div>
 
+        <!-- Quick settings: the theme's main colours and font, written as a
+             marked block at the end of its CSS (theme-sheet.js). -->
+        <details id="theme-quick" class="theme-quick" open>
+          <summary>Quick settings</summary>
+          <p class="hint">Tick what you want to set. They are written at the end of the CSS below, so they win over the rest; untick one to leave it as the theme has it.</p>
+          <div class="theme-quick-grid">
+            <label class="check"><input type="checkbox" data-quick-on="bg"> Background</label><input type="color" data-quick="bg" aria-label="Background colour">
+            <label class="check"><input type="checkbox" data-quick-on="fg"> Text</label><input type="color" data-quick="fg" aria-label="Text colour">
+            <label class="check"><input type="checkbox" data-quick-on="heading"> Headings</label><input type="color" data-quick="heading" aria-label="Heading colour">
+            <label class="check"><input type="checkbox" data-quick-on="accent"> Links &amp; bold</label><input type="color" data-quick="accent" aria-label="Link and bold colour">
+            <label for="theme-quick-font">Font</label>
+            <span class="theme-quick-font"><select id="theme-quick-font"></select><input id="theme-quick-font-other" type="text" placeholder="or type a font list" aria-label="Font list"></span>
+          </div>
+          <p class="hint" id="theme-quick-contrast" role="status"></p>
+        </details>
+
         <div class="theme-editor-split">
           <div class="theme-code-pane">
             <span class="sub-label">CSS Theme Stylesheet:</span>

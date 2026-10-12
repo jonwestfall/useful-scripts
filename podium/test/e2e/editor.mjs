@@ -1341,6 +1341,99 @@ ok('saving under a name another theme has is refused, and says which', /psy415-d
 await rootCtx.close();
 }
 
+if (want('theme cheat sheets and quick settings')) {
+console.log('\n-- theme cheat sheets and quick settings --');
+const rootCtx = await signedIn('root');
+const page = await rootCtx.newPage();
+trap(page, 'theme cheat sheets');
+await page.goto(`${base}/admin.html`);
+await page.click('#tab-content');
+await page.click('.content-subtab[data-pane="tab-pane-themes"]');
+await page.waitForSelector('#themes-list .admin-row');
+
+// The cheat sheet for Podium's own theme.
+await page.locator('#themes-list .admin-row', { hasText: 'psy415-dsu' }).locator('button', { hasText: 'Cheat sheet' }).click();
+await page.waitForSelector('.theme-sheet-dialog .theme-sheet-grid', { timeout: 20000 });
+const sheet = await page.evaluate(() => {
+  const d = document.querySelector('.theme-sheet-dialog');
+  return {
+    cards: [...d.querySelectorAll('.theme-sheet-card figcaption strong')].map((s) => s.textContent),
+    drawn: [...d.querySelectorAll('.theme-sheet-slide')].filter((f) => f.shadowRoot?.querySelector('svg[data-marpit-svg] section')).length,
+    colours: d.querySelectorAll('.theme-sheet-chip').length,
+    directives: d.querySelectorAll('.theme-sheet-directives tr').length,
+    about: d.querySelector('.theme-sheet-about')?.textContent || '',
+    use: d.querySelectorAll('.theme-sheet-use').length,
+  };
+});
+ok(`Admin's cheat sheet shows a sample slide for the theme and each class (${sheet.cards.join(', ')})`,
+  ['No class', 'lead', 'big-idea', 'green', 'invert'].every((c) => sheet.cards.includes(c)) && sheet.drawn === sheet.cards.length);
+ok('with what the theme says about itself, its colours and the directives', /Delta State/.test(sheet.about) && sheet.colours >= 5 && sheet.directives >= 8);
+ok('and on Admin, no "Use on this slide" - there is no slide', sheet.use === 0);
+const greenSlide = await page.evaluate(() => {
+  const card = [...document.querySelectorAll('.theme-sheet-card')].find((c) => c.querySelector('strong')?.textContent === 'green');
+  const section = card.querySelector('.theme-sheet-slide').shadowRoot.querySelector('section');
+  return { cls: section.className, bg: getComputedStyle(section).backgroundColor };
+});
+ok(`the green class's sample really is drawn in that class (${greenSlide.bg})`, /\bgreen\b/.test(greenSlide.cls) && greenSlide.bg !== 'rgba(0, 0, 0, 0)');
+ok('an inherited class this theme overrides is said to look the same here', await page.evaluate(() =>
+  /looks the same as no class/.test([...document.querySelectorAll('.theme-sheet-card')].find((c) => c.querySelector('strong')?.textContent === 'invert').textContent)));
+await page.keyboard.press('Escape');
+await page.waitForFunction(() => !document.querySelector('.theme-sheet-dialog'));
+ok('Escape closes it', true);
+
+// Marp's own have sheets too.
+await page.locator('#themes-list .admin-row', { hasText: 'gaia' }).first().locator('button', { hasText: 'Cheat sheet' }).click();
+await page.waitForSelector('.theme-sheet-dialog .theme-sheet-grid', { timeout: 20000 });
+ok('so do Marp\'s own themes (gaia: lead, invert, gaia)',
+  await page.evaluate(() => ['lead', 'invert', 'gaia'].every((c) => [...document.querySelectorAll('.theme-sheet-card strong')].some((s) => s.textContent === c))));
+await page.click('.theme-sheet-close');
+
+// Quick settings on a customized copy of uncover.
+await page.locator('#themes-list .admin-row', { hasText: 'uncover' }).first().locator('button', { hasText: 'Make a customized copy' }).click();
+await page.waitForFunction(() => document.querySelector('#theme-css-editor').value.includes('@theme uncover-custom'), null, { timeout: 8000 });
+await page.waitForSelector('#theme-quick[open]');
+ok('the editor opens with quick settings, nothing ticked yet', await page.evaluate(() => [...document.querySelectorAll('[data-quick-on]')].every((c) => !c.checked)));
+await page.evaluate(() => {
+  const set = (key, value) => { const i = document.querySelector(`[data-quick="${key}"]`); i.value = value; i.dispatchEvent(new Event('input', { bubbles: true })); };
+  set('bg', '#102030');
+  set('fg', '#203040');
+});
+ok('picking a colour ticks it and writes it into the CSS', await page.evaluate(() => document.querySelector('[data-quick-on="bg"]').checked
+  && /podium:quick-settings[\s\S]*background-color: #102030/.test(document.querySelector('#theme-css-editor').value)));
+ok('dark text on a dark background is called out', /hard to read/.test(await page.textContent('#theme-quick-contrast')));
+await page.selectOption('#theme-quick-font', { label: 'Serif (Georgia)' });
+ok('a font goes in too', /font-family: Georgia/.test(await page.inputValue('#theme-css-editor')));
+await page.click('#theme-save-btn');
+await page.waitForFunction(() => /successfully/.test(document.querySelector('#theme-status').textContent), null, { timeout: 8000 });
+const servedCss = await page.evaluate(() => fetch('/marp-themes/uncover-custom.css', { cache: 'no-cache' }).then((r) => r.text()));
+ok('saved, decks get the quick settings', /background-color: #102030/.test(servedCss) && /font-family: Georgia/.test(servedCss));
+await page.click('#theme-close-btn');
+await page.locator('#themes-list .admin-row', { hasText: 'uncover-custom' }).locator('button', { hasText: 'Edit & preview' }).click();
+await page.waitForFunction(() => document.querySelector('#theme-css-editor').value.includes('#102030'), null, { timeout: 8000 });
+ok('opening it again reads them back: ticked, with their colours and font', await page.evaluate(() =>
+  document.querySelector('[data-quick-on="bg"]').checked && document.querySelector('[data-quick="bg"]').value === '#102030'
+  && !document.querySelector('[data-quick-on="heading"]').checked && document.querySelector('#theme-quick-font').value.startsWith('Georgia')));
+
+// The deck editor: the guide for the deck's theme, and a class put on the slide.
+const deck = await rootCtx.newPage();
+trap(deck, 'theme guide in the deck editor');
+await deck.goto(`${base}/deck.html`);
+await deck.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) >= 1, null, { timeout: 20000 });
+await deck.waitForFunction(() => [...document.querySelectorAll('#deck-theme option')].some((o) => o.value === 'psy415-dsu'), null, { timeout: 10000 });
+await deck.selectOption('#deck-theme', 'psy415-dsu');
+await deck.click('#deck-theme-guide');
+await deck.waitForSelector('.theme-sheet-dialog .theme-sheet-use', { timeout: 20000 });
+ok('the deck editor\'s Theme guide is for the deck\'s theme', /psy415-dsu/.test(await deck.textContent('.theme-sheet-head h2')));
+await deck.evaluate(() => [...document.querySelectorAll('.theme-sheet-card')].find((c) => c.querySelector('strong')?.textContent === 'big-idea').querySelector('.theme-sheet-use').click());
+await deck.waitForFunction(() => !document.querySelector('.theme-sheet-dialog'));
+const md = await deck.evaluate(async () => {
+  const CM = await import('/assets/vendor/codemirror.esm.js');
+  return CM.EditorView.findFromDOM(document.querySelector('.cm-editor')).state.doc.toString();
+});
+ok('"Use on this slide" puts the class on the current slide, and closes the guide', /<!-- _class: big-idea -->/.test(md));
+await rootCtx.close();
+}
+
 if (want('the planner: archiving lectures from your own list (#239)')) {
 console.log('\n-- the planner: archiving lectures from your own list (#239) --');
 // A class of its own, so the other sections' lectures never get in the count.

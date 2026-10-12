@@ -16,6 +16,9 @@ import { mountZipImport } from './zip-review.js';
 import { downscaleImage } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
 import { startPageTheme } from './theme.js';
+import { openThemeSheet } from './theme-sheet-ui.js';
+import { readQuickSettings, writeQuickSettings, QUICK_FONTS } from './theme-sheet.js';
+import { parseColor, contrast } from './poll-look.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
 import { mountSessionSearch } from './session-search.js';
 import { replayUrl } from './replay-model.js';
@@ -2218,6 +2221,7 @@ function updateThemePreview() {
 
       if (chosenSvg) {
         mount.innerHTML = `<style>${css}</style>${chosenSvg.outerHTML}`;
+        quickPickersFrom(mount);
         if (statusEl && !statusEl.textContent.startsWith('Theme notice:')) {
           statusEl.textContent = 'Preview updated.';
         }
@@ -2226,6 +2230,79 @@ function updateThemePreview() {
       if (statusEl) statusEl.textContent = `Preview error: ${err.message}`;
     }
   }, 200);
+}
+
+// --- quick settings (theme-sheet.js) ----------------------------------------------
+//
+// Ticked settings are written as a marked block at the end of the CSS, live,
+// as they change; the preview follows. The colour pickers start from what
+// the preview shows when the theme has no block yet.
+
+const QUICK_KEYS = ['bg', 'fg', 'heading', 'accent'];
+
+function quickFontValue() {
+  return $('#theme-quick-font-other').value.trim() || $('#theme-quick-font').value;
+}
+
+function loadQuickSettings(css) {
+  const saved = readQuickSettings(css) || {};
+  for (const key of QUICK_KEYS) {
+    $(`[data-quick-on="${key}"]`).checked = !!saved[key];
+    if (/^#[0-9a-f]{6}$/i.test(saved[key] || '')) $(`[data-quick="${key}"]`).value = saved[key];
+  }
+  const known = QUICK_FONTS.some(([v]) => v === saved.font);
+  $('#theme-quick-font').value = known ? saved.font || '' : '';
+  $('#theme-quick-font-other').value = known ? '' : saved.font || '';
+  quickPickersFromPreview = !readQuickSettings(css);
+  checkQuickContrast();
+}
+
+let quickPickersFromPreview = true;
+
+function applyQuickSettings() {
+  const values = { font: quickFontValue() };
+  for (const key of QUICK_KEYS) if ($(`[data-quick-on="${key}"]`).checked) values[key] = $(`[data-quick="${key}"]`).value;
+  const editor = $('#theme-css-editor');
+  editor.value = writeQuickSettings(editor.value, values);
+  quickPickersFromPreview = false;
+  checkQuickContrast();
+  updateThemePreview();
+}
+
+// Says so when the chosen text or heading colour would be hard to read on the background.
+function checkQuickContrast() {
+  const bg = parseColor($('[data-quick="bg"]').value);
+  const problems = [['fg', 'Text', 4.5], ['heading', 'Headings', 3], ['accent', 'Links & bold', 4.5]]
+    .filter(([key, , need]) => contrast(parseColor($(`[data-quick="${key}"]`).value), bg) < need)
+    .map(([, label]) => label);
+  $('#theme-quick-contrast').textContent = problems.length
+    ? `${problems.join(' and ')} may be hard to read on that background from the back of a room.` : '';
+}
+
+// The pickers start from the colours the theme has, read off the preview.
+function quickPickersFrom(mount) {
+  if (!quickPickersFromPreview) return;
+  const section = mount.querySelector('section');
+  if (!section) return;
+  const hex = (text) => { const c = parseColor(text); return c && c.a > 0.5 ? `#${[c.r, c.g, c.b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}` : ''; };
+  const read = {
+    bg: hex(getComputedStyle(section).backgroundColor),
+    fg: hex(getComputedStyle(section).color),
+    heading: hex(section.querySelector('h1, h2') ? getComputedStyle(section.querySelector('h1, h2')).color : ''),
+    accent: hex(section.querySelector('a, strong') ? getComputedStyle(section.querySelector('a, strong')).color : ''),
+  };
+  for (const key of QUICK_KEYS) if (read[key] && !$(`[data-quick-on="${key}"]`).checked) $(`[data-quick="${key}"]`).value = read[key];
+  checkQuickContrast();
+}
+
+function wireQuickSettings() {
+  $('#theme-quick-font').replaceChildren(...QUICK_FONTS.map(([value, label]) => el('option', { value }, label)));
+  for (const key of QUICK_KEYS) {
+    $(`[data-quick="${key}"]`).addEventListener('input', () => { $(`[data-quick-on="${key}"]`).checked = true; applyQuickSettings(); });
+    $(`[data-quick-on="${key}"]`).addEventListener('change', applyQuickSettings);
+  }
+  $('#theme-quick-font').addEventListener('change', () => { $('#theme-quick-font-other').value = ''; applyQuickSettings(); });
+  $('#theme-quick-font-other').addEventListener('change', applyQuickSettings);
 }
 
 let themesLayered = false;
@@ -2280,6 +2357,7 @@ function renderThemes() {
   group('Marp\u2019s own', 'Built into Marp. To change one, make a customized copy: a new theme that starts out the same.',
     themesData.filter((t) => t.source === 'marp').map((theme) => el('div', { class: 'admin-row' },
       el('span', { class: 'admin-title' }, el('strong', {}, theme.name)),
+      themeButton('Cheat sheet', () => openThemeSheet(theme.name)),
       themeButton('Make a customized copy', () => themeAction('/api/content/themes/customize', { base: theme.name },
         (out) => openThemeEditor(out.saved.filename))))));
 
@@ -2287,6 +2365,7 @@ function renderThemes() {
     themesData.filter((t) => t.source === 'shipped').map((theme) => el('div', { class: `admin-row${theme.hidden ? ' is-muted' : ''}` },
       el('span', { class: 'admin-title' }, el('strong', {}, theme.name),
         meta(theme.filename, theme.overridden && 'edited here', theme.hidden && 'hidden from decks')),
+      themeButton('Cheat sheet', () => openThemeSheet(theme.name)),
       themeButton('Edit & preview', () => openThemeEditor(theme.filename)),
       theme.overridden ? themeButton('Restore original', (e) => removeTheme(theme.filename, e.currentTarget, 'Restore original'), 'admin-del') : null,
       themeButton(theme.hidden ? 'Show' : 'Hide', () => themeAction(`/api/content/themes/${encodeURIComponent(theme.filename)}/hide`, { hidden: !theme.hidden })),
@@ -2296,6 +2375,7 @@ function renderThemes() {
     themesData.filter((t) => t.source === 'custom').map((theme) => el('div', { class: 'admin-row' },
       el('span', { class: 'admin-title' }, el('strong', {}, theme.name),
         meta(theme.filename, bytes(theme.size), theme.inManifest ? '' : 'not listed for decks')),
+      themeButton('Cheat sheet', () => openThemeSheet(theme.name)),
       themeButton('Edit & preview', () => openThemeEditor(theme.filename)),
       download(theme),
       themeButton('Remove', (e) => removeTheme(theme.filename, e.currentTarget, 'Remove'), 'admin-del'))));
@@ -2317,6 +2397,7 @@ async function openThemeEditor(filename = null) {
       if (!res.ok) throw new Error('could not read theme');
       const data = await res.json();
       cssEditor.value = data.theme?.css || '';
+      loadQuickSettings(cssEditor.value);
       updateThemePreview();
     } catch (err) {
       $('#theme-status').textContent = err.message;
@@ -2326,6 +2407,7 @@ async function openThemeEditor(filename = null) {
     filenameInput.value = 'custom.css';
     filenameInput.disabled = false;
     cssEditor.value = `/* @theme custom */\n@import 'default';\n\nsection {\n  background-color: #f7f9fc;\n  color: #1a202c;\n  font-family: system-ui, -apple-system, sans-serif;\n}\n\nh1, h2 {\n  color: #0b3954;\n}\n`;
+    loadQuickSettings(cssEditor.value);
     updateThemePreview();
   }
 }
@@ -2800,6 +2882,7 @@ function setupContentManagement() {
   });
   $('#theme-close-btn').addEventListener('click', () => { $('#theme-editor-box').hidden = true; });
   $('#theme-css-editor').addEventListener('input', updateThemePreview);
+  wireQuickSettings();
   $('#theme-preview-slide-select').addEventListener('change', updateThemePreview);
 
   // 3. Pre-load Files
