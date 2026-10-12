@@ -99,27 +99,119 @@ function drawFitted(ctx, rect, source, sw, sh, fit) {
 
 const objectFitOf = (node) => getComputedStyle(node).objectFit || 'fill';
 
+/**
+ * Take the SVG's own scaling out of an <svg> holding HTML (Marp's slides, a
+ * document page), so it draws the same in every browser: its viewBox becomes
+ * the output size, each <foreignObject> fills it, and the HTML inside is
+ * scaled and moved by a CSS transform instead.
+ *
+ * WebKit (Safari, and every browser on an iPad) does not apply a viewBox's
+ * scale or offset to the HTML in a <foreignObject>: on screen Marp's polyfill
+ * (applyPolyfill) makes up for it with exactly this kind of transform, but
+ * nothing runs inside an SVG drawn as an image, so a 1280-wide slide drawn at
+ * 1920 sat in the top-left two-thirds of the page. With no SVG scaling left
+ * there is nothing for it to miss. Other browsers draw it identically.
+ */
+export function flattenSvgScaling(svg, width, height) {
+  const fos = [...svg.querySelectorAll('foreignObject')];
+  const box = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+  if (!fos.length || box.length !== 4 || !(box[2] > 0) || !(box[3] > 0)) return;
+  const [vx, vy, vw, vh] = box;
+  const rx = width / vw;
+  const ry = height / vh;
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.removeAttribute('preserveAspectRatio');
+  for (const fo of fos) {
+    const num = (name) => Number(fo.getAttribute(name)) || 0;
+    const fx = num('x');
+    const fy = num('y');
+    const fw = num('width') || vw;
+    fo.setAttribute('x', '0');
+    fo.setAttribute('y', '0');
+    fo.setAttribute('width', String(width));
+    fo.setAttribute('height', String(height));
+    for (const child of fo.children) {
+      if (!child.style) continue;
+      // Laid out at the width it had, then scaled to where it belongs.
+      if (!child.style.width) child.style.width = `${fw}px`;
+      child.style.transformOrigin = '0 0';
+      child.style.transform = `translate(${(fx - vx) * rx}px, ${(fy - vy) * ry}px) scale(${rx}, ${ry})`;
+    }
+  }
+}
+
 /** An <svg> element, standalone, as a decoded image - the deck and QR route. */
 export function svgToImage(svg, css, width, height) {
   const clone = svg.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.setAttribute('width', String(width));
   clone.setAttribute('height', String(height));
+  flattenSvgScaling(clone, width, height);
   if (css) {
     const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
     style.textContent = css;
     clone.insertBefore(style, clone.firstChild);
   }
-  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(clone))}`;
+  const xml = new XMLSerializer().serializeToString(clone);
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
   return new Promise((resolve, reject) => {
     const img = new Image();
     // A slide whose fonts or images never arrive would otherwise hang the
     // whole photo; one that fails is reported as a failure to photograph.
     const timer = setTimeout(() => reject(new Error('timed out rendering it')), 8000);
-    img.onload = () => { clearTimeout(timer); resolve(img); };
+    img.onload = () => {
+      clearTimeout(timer);
+      // Pictures inside it are decoded on their own time in WebKit; see drawSvgImage.
+      img.dataset.pictures = /<img\b|url\(/i.test(xml) ? '1' : '';
+      Promise.resolve(img.decode?.()).catch(() => {}).then(() => resolve(img));
+    };
     img.onerror = () => { clearTimeout(timer); reject(new Error('the browser could not render it')); };
     img.src = url;
   });
+}
+
+/**
+ * Draw an image from svgToImage onto a canvas, over `fill` if given (each
+ * draw repaints it first, so redrawing does not build up soft edges).
+ * Safari leaves out the pictures inside an SVG image's <foreignObject> the
+ * first time it is drawn (it only starts decoding them, from their data:
+ * URLs, then) - so one with pictures is drawn again, a frame or so apart, at
+ * least twice and until two draws in a row come out the same.
+ */
+export async function drawSvgImage(ctx, img, x, y, w, h, fill = null) {
+  const draw = () => {
+    if (fill) { ctx.fillStyle = fill; ctx.fillRect(x, y, w, h); }
+    ctx.drawImage(img, x, y, w, h);
+  };
+  draw();
+  if (!img.dataset?.pictures) return;
+  // A small copy is plenty to tell a picture arriving from one that has not.
+  const probe = document.createElement('canvas');
+  probe.width = 96;
+  probe.height = 54;
+  const pctx = probe.getContext('2d', { willReadFrequently: true });
+  const sample = () => {
+    try {
+      pctx.clearRect(0, 0, 96, 54);
+      pctx.drawImage(ctx.canvas, x, y, w, h, 0, 0, 96, 54);
+      return pctx.getImageData(0, 0, 96, 54).data;
+    } catch { return null; }
+  };
+  const settle = () => new Promise((done) => requestAnimationFrame(() => setTimeout(done, 60)));
+  let last = sample();
+  for (let i = 0; i < 6; i += 1) {
+    await settle();
+    draw();
+    const now = sample();
+    if (i >= 1 && (!now || !last || sameish(now, last))) return;
+    last = now;
+  }
+}
+
+function sameish(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (Math.abs(a[i] - b[i]) > 2) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1741,7 +1833,7 @@ function renderDeck(item, opts) {
       ctx.fillStyle = '#000';
       ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
       const slideRect = { x: rect.x + (rect.w - width) / 2, y: rect.y + (rect.h - height) / 2, w: width, h: height };
-      ctx.drawImage(img, slideRect.x, slideRect.y, width, height);
+      await drawSvgImage(ctx, img, slideRect.x, slideRect.y, width, height, '#000');
       // The frame the video is on, over its poster - what the room is
       // actually looking at, paused mid-clip with marks on it (#182).
       if (videoSlide >= 0 && video.classList.contains('has-frame') && video.readyState >= 2) {
@@ -2109,9 +2201,10 @@ function renderDocument(item, opts) {
       svg.append(fo);
       const width = Math.round(DOC_WIDTH * s);
       const img = await svgToImage(svg, rendered.css, width, Math.round(rect.h));
-      ctx.fillStyle = rendered.look === 'dark' ? '#14181d' : '#ffffff';
+      const paper = rendered.look === 'dark' ? '#14181d' : '#ffffff';
+      ctx.fillStyle = paper;
       ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-      ctx.drawImage(img, rect.x + Math.max(0, (rect.w - width) / 2), rect.y, width, Math.round(rect.h));
+      await drawSvgImage(ctx, img, rect.x + Math.max(0, (rect.w - width) / 2), rect.y, width, Math.round(rect.h), paper);
       return true;
     },
     /**

@@ -8,7 +8,7 @@ import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, workingItem, PANEL_COUNT, panelOnScreen, deckStep,
   inkDigest, inkDigestsAgree, inkSurfaceKey, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse, isPlayable, deckVideoHere } from './protocol.js';
-import { createRenderer, itemTitle, TYPES, pdfAspectFor } from './renderers.js';
+import { createRenderer, itemTitle, TYPES, pdfAspectFor, svgToImage, drawSvgImage } from './renderers.js';
 import { createCameraSender, createMicSender } from './rtc.js';
 import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill, videoSlides, deckLocation } from './deck.js';
 import { createZip } from './zip.js';
@@ -2116,28 +2116,19 @@ async function rasterizeSlide(svgLive, css, aspect, strokes, height = RASTER_HEI
 
   const clone = svgLive.cloneNode(true);
   clone.classList.remove('podium-on');
-  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  const box = (clone.getAttribute('viewBox') || '').trim().split(/\s+/).map(Number);
-  if (box.length === 4) { clone.setAttribute('width', String(box[2])); clone.setAttribute('height', String(box[3])); }
+  clone.querySelectorAll('.podium-fragment').forEach((n) => n.classList.add('is-shown'));
   // The theme's CSS lives on a sibling <style> in the grid's shadow root; a
   // standalone SVG document has no access to that, so it travels inside the
   // clone instead - re-scoped, because the .marpit wrapper its selectors are
   // written against does not come with it (see cssForStandaloneSlide).
-  const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-  style.textContent = cssForStandaloneSlide(css);
-  clone.insertBefore(style, clone.firstChild);
-  clone.querySelectorAll('.podium-fragment').forEach((n) => n.classList.add('is-shown'));
-
-  const xml = new XMLSerializer().serializeToString(clone);
-  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
-
-  const img = new Image();
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timed out (a remote font or image may be blocking it)')), 8000);
-    img.onload = () => { clearTimeout(timer); resolve(); };
-    img.onerror = () => { clearTimeout(timer); reject(new Error('the browser could not rasterize this slide')); };
-    img.src = url;
-  });
+  // Drawn at the size it is wanted, so Safari has no SVG scaling to get
+  // wrong (see flattenSvgScaling).
+  let img;
+  try {
+    img = await svgToImage(clone, cssForStandaloneSlide(css), w, h);
+  } catch (err) {
+    throw new Error(/timed out/.test(err.message) ? 'timed out (a remote font or image may be blocking it)' : 'the browser could not rasterize this slide', { cause: err });
+  }
 
   const canvas = document.createElement('canvas');
   canvas.width = w;
@@ -2145,7 +2136,7 @@ async function rasterizeSlide(svgLive, css, aspect, strokes, height = RASTER_HEI
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, w, h);
-  ctx.drawImage(img, 0, 0, w, h);
+  await drawSvgImage(ctx, img, 0, 0, w, h, '#fff');
 
   paintStrokes(ctx, strokes, w, h);
 

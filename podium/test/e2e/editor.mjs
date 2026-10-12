@@ -814,6 +814,53 @@ const pdf = fs.readFileSync(await pdfDownload.path()).toString('latin1');
 const pages = (pdf.match(/\/Type \/Page\b/g) || []).length;
 const slideCount = await stripCount(desk);
 ok(`"Download as a PDF" makes one page a slide (${pages} pages for ${slideCount} slides, ${pdfDownload.suggestedFilename()})`, pdf.startsWith('%PDF') && pages === slideCount && slideCount === 3 && /\.pdf$/.test(pdfDownload.suggestedFilename()));
+
+// Each page filled to its edges - a fitted slide too - with its library
+// picture in it. Safari drew HTML in an SVG at the size it was written
+// (1280 wide on a 1920 page, the rest blank) and left the pictures out, so
+// the SVG's own scaling is taken out before it is drawn (flattenSvgScaling).
+const picture = /\/media\/[0-9a-f]{64}\/green\.png/.exec(reopened)?.[0];
+await desk.addScriptTag({ url: '/assets/vendor/pdf.min.js' });
+const filled = await desk.evaluate(async (picture) => {
+  const { render } = await import('/assets/js/deck.js');
+  const { exportPdf } = await import('/assets/js/deck-export.js');
+  const { flattenSvgScaling } = await import('/assets/js/renderers.js');
+  const md = `---\nmarp: true\n---\n\n<!-- _backgroundColor: #123456 -->\n\n# Short\n\n---\n\n<!-- _backgroundColor: #123456 -->\n\n# Long\n\n${Array.from({ length: 18 }, (_, i) => `- Point ${i + 1} with enough words to need fitting`).join('\n')}\n\n---\n\n![bg](${picture})\n`;
+  const rendered = await render(md, `fill-${Date.now()}`);
+  const blob = await exportPdf(rendered, { title: 'fill' });
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/assets/vendor/pdf.worker.min.js';
+  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+  const pixels = [];
+  for (let i = 1; i <= doc.numPages; i += 1) {
+    const page = await doc.getPage(i);
+    const vp = page.getViewport({ scale: 0.25 });
+    const c = document.createElement('canvas');
+    c.width = Math.round(vp.width);
+    c.height = Math.round(vp.height);
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    const at = (fx, fy) => [...ctx.getImageData(Math.round(c.width * fx), Math.round(c.height * fy), 1, 1).data.slice(0, 3)];
+    pixels.push({ corner: at(0.97, 0.95), middle: at(0.5, 0.5) });
+  }
+  // The rewrite itself: no viewBox scaling left, the HTML scaled by CSS instead.
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 100 1280 720');
+  const fo = document.createElementNS(ns, 'foreignObject');
+  fo.setAttribute('width', '1280');
+  fo.setAttribute('height', '2000');
+  fo.append(document.createElement('section'));
+  svg.append(fo);
+  flattenSvgScaling(svg, 1920, 1080);
+  return { fits: rendered.fits, pixels, viewBox: svg.getAttribute('viewBox'), fo: `${fo.getAttribute('width')}x${fo.getAttribute('height')}`, transform: fo.firstChild.style.transform, width: fo.firstChild.style.width };
+}, picture);
+const near = (rgb, want) => rgb.every((v, i) => Math.abs(v - want[i]) < 24);
+ok(`a PDF page is the slide to its edges (${JSON.stringify(filled.pixels.map((p) => p.corner))})`,
+  near(filled.pixels[0].corner, [0x12, 0x34, 0x56]) && near(filled.pixels[1].corner, [0x12, 0x34, 0x56]));
+ok(`a slide shrunk to fit fills its page too (fit ${filled.fits[1]?.toFixed(2)})`, filled.fits[1] < 1 && near(filled.pixels[1].corner, [0x12, 0x34, 0x56]));
+ok(`a library picture is in its page (${JSON.stringify(filled.pixels[2]?.middle)})`, !!picture && filled.pixels[2] && filled.pixels[2].middle[1] > 120 && filled.pixels[2].middle[0] < 100);
+ok(`the SVG's own scaling is taken out before it is drawn (${filled.viewBox}, ${filled.fo}, ${filled.transform})`,
+  filled.viewBox === '0 0 1920 1080' && filled.fo === '1920x1080' && /translate\(0px, -150px\) scale\(1\.5(, 1\.5)?\)/.test(filled.transform) && filled.width === '1280px');
 await owen.close();
 }
 

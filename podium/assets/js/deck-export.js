@@ -21,7 +21,7 @@
 import { createZip, readZip } from './zip.js';
 import { createPdf } from './pdf-writer.js';
 import { applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
-import { svgToImage } from './renderers.js';
+import { svgToImage, drawSvgImage } from './renderers.js';
 import { parseDeck, mermaidFences } from './deck-source.js';
 
 const DIAGRAM_DIR = 'media/diagrams/';
@@ -265,7 +265,7 @@ export async function exportPdf(rendered, { title = 'Deck', onProgress = () => {
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
+    await drawSvgImage(ctx, img, 0, 0, width, height, '#fff');
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
     pages.push({ width, height, data: new Uint8Array(await blob.arrayBuffer()) });
     onProgress(i + 1, slides.length);
@@ -348,7 +348,7 @@ export async function exportDocPdf(rendered, { title = 'Document', onProgress = 
       const ctx = canvas.getContext('2d');
       ctx.fillStyle = background;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, Math.round(DOC_MARGIN * scale), width, sliceHeight);
+      await drawSvgImage(ctx, img, 0, Math.round(DOC_MARGIN * scale), width, sliceHeight, background);
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
       pages.push({ width: canvas.width, height: canvas.height, data: new Uint8Array(await blob.arrayBuffer()) });
       onProgress(i + 1, breaks.length);
