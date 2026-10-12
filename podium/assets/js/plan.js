@@ -31,6 +31,7 @@ import { startPageTheme } from './theme.js';
 import { wordKind, askWordChoice, wordToDocument, wordToLibraryPdf, reportLine } from './word-upload.js';
 import { loadConfig } from './config.js';
 import { resolvePollBase, pollLinkBlock, pollLinksSummary, newPollKey, isPollKey } from './poll-link-ui.js';
+import { viewLinkBlock } from './view-link-ui.js';
 import { pollLookPicker } from './poll-look-ui.js';
 
 // Light or dark, as chosen for every page (see theme.js).
@@ -709,6 +710,7 @@ function renderEditor() {
   $('#order-settings').setAttribute('aria-pressed', String(!item));
   if (!item) {
     renderPollLinks();
+    renderViewLink();
     $('#item-heading').textContent = 'Lecture settings';
     $('#item-blurb').textContent = 'For the whole lecture. Pick something in the running order to edit it instead.';
     $('#item-preview-wrap').hidden = true;
@@ -957,6 +959,18 @@ function renderPollLinks() {
       touch();
       renderPollLinks();
     },
+  }));
+}
+
+// The lecture's Guest View link made in advance (view-link-ui.js), under
+// Lecture settings: kept in the plan, so whichever controller loads this
+// lecture hands it to the display.
+function renderViewLink() {
+  $('#plan-view-link').replaceChildren(viewLinkBlock({
+    base: pollBase,
+    key: plan?.viewLink || '',
+    title: plan?.title || 'Lecture',
+    onChange: (key) => { plan.viewLink = key; touch(); renderViewLink(); },
   }));
 }
 

@@ -61,13 +61,13 @@ export function qrPng(url, size = 600) {
 
 const fileSafe = (text) => String(text || 'poll').replace(/[^\w\s-]+/g, '').trim().replace(/\s+/g, '-').slice(0, 40) || 'poll';
 
-export function downloadQr(url, question) {
+export function downloadQr(url, question, prefix = 'poll') {
   const png = qrPng(url);
   if (!png) return;
-  el('a', { href: png, download: `poll-${fileSafe(question)}-qr.png` }).click();
+  el('a', { href: png, download: `${prefix}-${fileSafe(question)}-qr.png` }).click();
 }
 
-async function copyText(text, button, done = 'Copied!') {
+export async function copyText(text, button, done = 'Copied!') {
   const was = button.textContent;
   try {
     await navigator.clipboard.writeText(text);

@@ -42,10 +42,14 @@ export function newPollKey() {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** The poll code a key opens under, or '' for something that is not a key. */
-export function pollCodeForKey(key) {
+/**
+ * The ten-character code `label` gives a key: SHA-256 of label, a newline and
+ * the key, in the relay's alphabet. Polls use one label, viewer links
+ * (view-link.js) another, so one key can never open both.
+ */
+export function linkCodeForKey(label, key) {
   if (!isPollKey(key)) return '';
-  const digest = sha256(new TextEncoder().encode(`podium-poll-link\n${key}`));
+  const digest = sha256(new TextEncoder().encode(`${label}\n${key}`));
   let code = '';
   let acc = 0;
   let bits = 0;
@@ -61,6 +65,9 @@ export function pollCodeForKey(key) {
   }
   return code;
 }
+
+/** The poll code a key opens under, or '' for something that is not a key. */
+export const pollCodeForKey = (key) => linkCodeForKey('podium-poll-link', key);
 
 /** "ABCDEFGHJK" as "ABCDE-FGHJK", easier to read off a screen or a page. */
 export const formatPollCode = (code) => (isLinkCode(code) ? `${code.slice(0, 5)}-${code.slice(5)}` : String(code || ''));

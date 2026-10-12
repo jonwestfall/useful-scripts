@@ -507,9 +507,18 @@ Guest View (Issue #150) lets someone watch the live display on their own phone o
 
 **Handing it out**
 - On the display, open **Pair a device** and choose **Guest view (watch only)**. Unlike the two control modes, this QR code stays up until you close it.
-- Or, from any controller's **Say** tab, choose **Put the viewer QR on screen** to show the QR code (and the typed code) on the projector as content.
+- Or, from any controller's **Setup** tab, choose **Put the viewer QR on screen** to show the QR code (and the typed code) on the projector as content.
 - On a server running Podium's own relay, there is also a **six-character code** for anyone who can't scan: they go to `…/view.html` and type it. The code stays the same from lecture to lecture, but it only works while the display is live. Guessing is rate-limited.
 - The link and the code stay valid until you replace them. **New viewer link**, on the display's Guest view sheet, cuts off everyone holding the old link or code at once.
+
+**A link to share in advance** 🖥️
+For an invitation, a handout or a chat message sent days before a meeting, give the lecture a viewer link of its own:
+- In the planner, **Lecture settings → Guest View link → Make a viewer link to share in advance**. It shows the link, its QR code and a ten-character code (`ABCDE-FGHJK`), with **Copy link**, **Save QR picture**, **New link** (the old one stops working) and **Remove**. The link is short (`…/view.html?c=…`) and is saved with the lecture.
+- In class, open the lecture on the controller. The controller hands the link's key to the display, and the link opens as soon as the display is live. The Setup tab shows the lecture's link and says whether it is open, and **Put the viewer QR on screen** shows that same link and code, so the room and the people joining from elsewhere use one link.
+- Someone who opens the link early is told the class hasn't started and joins by themselves when it does. Typing the code at `…/view.html` works too, while the class is live.
+- It closes when the display stands down and opens again at the next Go live of the same lecture. Closing the lecture on the controller takes it off the display.
+- Only whoever has the lecture can open its link: the code is worked out from a secret kept with the lecture, and the display proves it holds that secret. Knowing the link or code is not enough. Copying a lecture, or starting one from a template, gives the copy no link.
+- It needs Podium's own server, which is what connects the link to the display on the day.
 
 **What viewers see and hear**
 - Exactly what is on the projector:
@@ -815,7 +824,7 @@ A lecture nobody has heard from in 15 minutes closes itself. Retention is config
 
 ### Presenting over Zoom or Teams
 
-The display can run in an ordinary window rather than fullscreen. On the Go live screen choose **Go live in a window (for Zoom or Teams)**, size the window (16:9 suits most calls), and share that window in the call; turn on the call's **share sound** option if you play video or music. The stage fills whatever size the window is. **F** goes fullscreen at any point and **Esc** or **F** comes back out, and either way the display stays live. Your controller works exactly as in a room, and [poll links made in advance](#audience-polls-quizzes--qa) can go out with the invitation or the handout.
+The display can run in an ordinary window rather than fullscreen. On the Go live screen choose **Go live in a window (for Zoom or Teams)**, size the window (16:9 suits most calls), and share that window in the call; turn on the call's **share sound** option if you play video or music. The stage fills whatever size the window is. **F** goes fullscreen at any point and **Esc** or **F** comes back out, and either way the display stays live. Your controller works exactly as in a room, and [poll links made in advance](#audience-polls-quizzes--qa) can go out with the invitation or the handout, as can a [Guest View link](#guest-view-watching-on-your-own-device) for anyone who wants to watch the slides on their own screen.
 
 ### Streaming a Lecture
 

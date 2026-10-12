@@ -34,6 +34,36 @@ const crypto = require('node:crypto');
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // no O/0, no I/1 - read off a projector
 const CODE_LENGTH = 6;
 const CODE_RE = new RegExp(`^[${ALPHABET}]{${CODE_LENGTH}}$`);
+const LINK_CODE_LENGTH = 10;
+const LINK_CODE_RE = new RegExp(`^[${ALPHABET}]{${LINK_CODE_LENGTH}}$`);
+const KEY_RE = /^[A-Za-z0-9_-]{16,64}$/;
+
+/**
+ * The ten-character code `label` gives a key - SHA-256 of the label, a newline
+ * and the key, in ALPHABET. Must match linkCodeForKey in
+ * assets/js/poll-link.js; the tests check that it does. Polls and viewer links
+ * use different labels, so one key never opens both.
+ */
+function linkCodeForKey(label, key) {
+  if (!KEY_RE.test(String(key || ''))) return '';
+  const digest = crypto.createHash('sha256').update(`${label}\n${key}`).digest();
+  let code = '';
+  let acc = 0;
+  let bits = 0;
+  for (const byte of digest) {
+    acc = (acc << 8) | byte;
+    bits += 8;
+    while (bits >= 5 && code.length < LINK_CODE_LENGTH) {
+      bits -= 5;
+      code += ALPHABET[(acc >> bits) & 31];
+    }
+    acc &= (1 << bits) - 1;
+    if (code.length === LINK_CODE_LENGTH) break;
+  }
+  return code;
+}
+
+const viewCodeForKey = (key) => linkCodeForKey('podium-view-link', key);
 const LIVE_MS = 3 * 60 * 1000;
 const MAX_CODES = 500;
 const MAX_LINK_CHARS = 1500;
@@ -88,10 +118,11 @@ function createViewCodes({ now = () => Date.now() } = {}) {
    * instead. Re-registering a code it already holds (same token) just keeps
    * it - that is what a display that reloaded mid-lecture does.
    */
-  function register({ want, token, link }) {
+  function register({ want, token, link, key }) {
     sweep();
     const clean = cleanLink(link);
     if (!clean) return { error: 'that is not a viewer link', status: 400 };
+    if (key !== undefined) return registerPlanned({ key, token, link: clean });
     const asked = String(want || '').toUpperCase();
     const held = CODE_RE.test(asked) ? codes.get(asked) : null;
     if (held && token && tokenMatches(held, token)) {
@@ -103,6 +134,26 @@ function createViewCodes({ now = () => Date.now() } = {}) {
     const code = CODE_RE.test(asked) && !held ? asked : fresh();
     if (!code) return { error: 'no code available', status: 503 };
     const entry = { token: crypto.randomBytes(24).toString('base64url'), link: clean, touched: now() };
+    codes.set(code, entry);
+    return { code, token: entry.token };
+  }
+
+  /**
+   * A planned link's code, claimed with its key. The key is the proof: a
+   * display that lost its token (a reload in a private window) or a second
+   * display given the same plan takes the code over, with a new token.
+   */
+  function registerPlanned({ key, token, link }) {
+    const code = viewCodeForKey(key);
+    if (!code) return { error: 'that is not a viewer link key', status: 400 };
+    const held = codes.get(code);
+    if (held && token && tokenMatches(held, token)) {
+      held.link = link;
+      held.touched = now();
+      return { code, token: held.token };
+    }
+    if (!held && codes.size >= MAX_CODES) return { error: 'too many viewer codes in use', status: 503 };
+    const entry = { token: crypto.randomBytes(24).toString('base64url'), link, touched: now() };
     codes.set(code, entry);
     return { code, token: entry.token };
   }
@@ -148,8 +199,10 @@ function createViewCodes({ now = () => Date.now() } = {}) {
   function lookup(code, ip) {
     if (throttled(ip)) return { error: 'too many tries - wait a few minutes', status: 429 };
     const key = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const entry = CODE_RE.test(key) ? codes.get(key) : null;
+    const planned = LINK_CODE_RE.test(key);
+    const entry = CODE_RE.test(key) || planned ? codes.get(key) : null;
     if (!entry || entry.touched < now() - LIVE_MS) {
+      if (planned) return { error: 'that class has not started yet', status: 404, waiting: true };
       noteMiss(ip);
       return { error: 'no class is live with that code right now', status: 404 };
     }
@@ -159,4 +212,4 @@ function createViewCodes({ now = () => Date.now() } = {}) {
   return { register, touch, release, lookup, size: () => codes.size };
 }
 
-module.exports = { createViewCodes, cleanLink, CODE_LENGTH, LIVE_MS, MAX_MISSES_PER_WINDOW, VIEW_ROOM_RE };
+module.exports = { createViewCodes, cleanLink, linkCodeForKey, viewCodeForKey, CODE_LENGTH, LINK_CODE_LENGTH, LIVE_MS, MAX_MISSES_PER_WINDOW, VIEW_ROOM_RE };
