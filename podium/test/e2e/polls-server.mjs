@@ -3654,12 +3654,28 @@ await pvCtrl.waitForSelector('#app:not([hidden])');
 // At the desk, days before.
 const pvPlanner = await pvPresenter.newPage();
 trap(pvPlanner, 'view link planner');
+// This browser's storage answering after the server does - as it can on a
+// fresh browser - is when New lecture used to be overwritten by the page's
+// own start-up (it lights up when the server answers). Made certain here.
+await pvPlanner.addInitScript(() => {
+  const open = indexedDB.open.bind(indexedDB);
+  indexedDB.open = (...args) => new Proxy(open(...args), {
+    set(req, key, value) {
+      req[key] = key === 'onsuccess' ? (ev) => setTimeout(() => value.call(req, ev), 1500) : value;
+      return true;
+    },
+    get(req, key) { const v = req[key]; return typeof v === 'function' ? v.bind(req) : v; },
+  });
+});
 await pvPlanner.goto(`${pvBase}/plan.html`);
 await pvPlanner.waitForSelector('#plan-new.is-primary');
 await pvPlanner.click('#plan-new');
 await pvPlanner.waitForFunction(() => !document.querySelector('#order .order-row'), null, { timeout: 5000 });
 await pvPlanner.fill('#plan-title', 'Remote seminar');
-await pvPlanner.waitForFunction(() => /yours alone/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
+await pvPlanner.waitForFunction(() => /yours alone/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 })
+  .catch(async (err) => {
+    throw new Error(`the lecture never saved to the server - "${await pvPlanner.inputValue('#plan-title')}": ${await pvPlanner.textContent('#plan-sync')} (${err.message})`);
+  });
 await pvPlanner.click('.view-link-make');
 await pvPlanner.waitForSelector('.view-link-url');
 const plannedUrl = await pvPlanner.textContent('.view-link-url');
