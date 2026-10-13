@@ -16,7 +16,7 @@
 import { $, el, fmtTime } from './util.js';
 import { createRenderer, TYPES } from './renderers.js';
 import { render as renderDeckSource, deckId, forgetDeck, applyFits, applyPolyfill, deckLocation } from './deck.js';
-import { deckStep, clampDocAt, docMaxAt, DOC_VIEW, DOC_STEP } from './protocol.js';
+import { deckStep, DOC_VIEW, DOC_STEP } from './protocol.js';
 import { notesInView, headingAt, headingAtTop } from './doc.js';
 import { deckProblems, checkServerMedia } from './deck-checks.js';
 import { parseDeck } from './deck-source.js';
@@ -246,18 +246,29 @@ async function showDocument(pkg) {
   let at = 0;
   let metrics = null;
   let height = DOC_VIEW;
-  const box = el('div', { class: 'ql-slide' });
-  box.style.setProperty('--aspect', String(16 / 9));
+  // The whole stage, not the projector's 16:9: this is one person reading,
+  // and a tall screen should show a tall piece of the page (see fitWidth).
+  const box = el('div', { class: 'ql-slide ql-doc-fill' });
   stage.replaceChildren(box);
+  // How much of the page shows, in page units; the room's DOC_VIEW until drawn.
+  const viewH = () => Math.max(1, Math.round(renderer?.viewHeight?.() || DOC_VIEW));
+  const maxAt = () => Math.max(0, Math.round(height - viewH()));
+  const clamp = (next) => Math.min(maxAt(), Math.max(0, Math.round(Number(next) || 0)));
+  const stride = () => Math.round(viewH() * DOC_STEP);
+  let renderer = null;
   let glide = true;
   const item = () => ({ type: 'document', deckId: id, look: pkg.item.look || '', at, height, glide });
-  const renderer = createRenderer(item(), {
+  renderer = createRenderer(item(), {
     getDeckSource: () => source,
+    fitWidth: true,
+    // A turned iPad or a resized window shows more or less of the page:
+    // the end of the document moves, and so does where Next goes.
+    onFit: () => { if (renderer) { at = clamp(at); draw(); } },
     onMeasure: (m) => {
       metrics = m;
       height = m.height;
-      at = clampDocAt(at, height);
-      setOutline((m.headings || []).map((h) => ({ text: h.text, level: h.level, go: () => go(headingAt(h, height)) })));
+      at = clamp(at);
+      setOutline((m.headings || []).map((h) => ({ text: h.text, level: h.level, go: () => go(headingAt(h, Number.MAX_SAFE_INTEGER)) })));
       draw();
     },
   });
@@ -265,25 +276,30 @@ async function showDocument(pkg) {
 
   function draw() {
     renderer.update(item());
-    const stride = Math.round(DOC_VIEW * DOC_STEP);
-    const screens = Math.max(1, Math.ceil(docMaxAt(height) / stride) + 1);
-    const heading = headingAtTop(metrics?.headings, at);
+    const step = stride();
+    const screens = Math.max(1, Math.ceil(maxAt() / step) + 1);
+    // At the end, a tall screen can show the last headings below its top
+    // with nowhere further to scroll them up to: the last one in view is
+    // where you are.
+    const atEnd = at >= maxAt() && at > 0;
+    const inView = atEnd ? (metrics?.headings || []).filter((h) => h.y >= at && h.y < at + viewH()).pop() : null;
+    const heading = inView || headingAtTop(metrics?.headings, at);
     // Above the first heading, it is still the one in view.
     const first = metrics?.headings?.[0];
-    markOutline(heading ? metrics.headings.indexOf(heading) : (first && first.y < at + DOC_VIEW ? 0 : -1));
-    setWhere(`Screen ${Math.min(screens, Math.round(at / stride) + 1)} of ${screens}${heading ? ` · ${heading.text}` : ''}`);
-    const notes = metrics ? notesInView(metrics.notes, at) : [];
+    markOutline(heading ? metrics.headings.indexOf(heading) : (first && first.y < at + viewH() ? 0 : -1));
+    setWhere(`Screen ${Math.min(screens, Math.round(at / step) + 1)} of ${screens}${heading ? ` · ${heading.text}` : ''}`);
+    const notes = metrics ? notesInView(metrics.notes, at, viewH()) : [];
     $('#ql-notes-text').textContent = notes.length ? notes.map((n) => n.text).join('\n\n') : 'No notes for this part.';
     $('#ql-notes-text').classList.toggle('is-empty', !notes.length);
     $('#ql-notes').hidden = !notesOpen;
     $('#ql-notes-toggle').setAttribute('aria-pressed', String(notesOpen));
   }
   // Any other move (Next, a heading, the wheel) ends a coast first.
-  const go = (next) => { stopFling(); glide = true; at = clampDocAt(next, height); draw(); };
+  const go = (next) => { stopFling(); glide = true; at = clamp(next); draw(); };
   // Straight there, with no glide: for a finger, which the page has to keep up with.
-  const follow = (next) => { glide = false; at = clampDocAt(next, height); draw(); };
+  const follow = (next) => { glide = false; at = clamp(next); draw(); };
   // Page units per screen pixel: the page is drawn scaled to fit the box.
-  const perPixel = () => DOC_VIEW / Math.max(1, box.clientHeight);
+  const perPixel = () => viewH() / Math.max(1, box.clientHeight);
   // The wheel and a trackpad scroll it, as they would any page.
   box.addEventListener('wheel', (ev) => { ev.preventDefault(); go(at + ev.deltaY * perPixel()); }, { passive: false });
 
@@ -339,10 +355,10 @@ async function showDocument(pkg) {
   draw();
   return {
     kind: 'document',
-    next: () => go(at + Math.round(DOC_VIEW * DOC_STEP)),
-    prev: () => go(at - Math.round(DOC_VIEW * DOC_STEP)),
+    next: () => go(at + stride()),
+    prev: () => go(at - stride()),
     first: () => go(0),
-    last: () => go(docMaxAt(height)),
+    last: () => go(maxAt()),
     toggleNotes() { notesOpen = !notesOpen; draw(); },
     destroy() { stopFling(); renderer.destroy?.(); },
   };

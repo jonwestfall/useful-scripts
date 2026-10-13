@@ -2692,6 +2692,9 @@ body.quicklook .topbar { flex: none; }
 /* A document: a finger drag scrolls it (quicklook.js, Issue #257), so the
    browser must not take the drag for itself. Pinching to zoom still works. */
 .ql-slide.ql-doc-page { touch-action: pinch-zoom; }
+/* A document fills the stage: a page is read down a tall screen, not in the
+   projector's 16:9 strip of it (fitWidth in renderDocument). */
+.ql-slide.ql-doc-fill { width: 100cqw; height: 100cqh; aspect-ratio: auto; }
 .ql-stage.is-zoomed { display: block; overflow: auto; }
 .ql-stage.is-zoomed .r-image { width: auto; height: auto; max-width: none; background: transparent; }
 .ql-stage .r-image { cursor: zoom-in; }
