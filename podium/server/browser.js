@@ -144,12 +144,38 @@ function addressToUrl(input, searchUrl = 'https://duckduckgo.com/?q=') {
 }
 
 /**
+ * A name's addresses: the system's own lookup first (getaddrinfo, as every
+ * program on the box resolves names), then - if that fails - the DNS servers
+ * in /etc/resolv.conf asked directly. getaddrinfo goes through the system's
+ * name-service modules, and those can depend on things a service's sandbox
+ * does not give it (systemd-resolved's socket, say), failing with EAI_AGAIN
+ * for every name while the DNS servers themselves would answer. Both reasons
+ * are kept when both fail: together they say where the problem is.
+ */
+async function systemThenDirect(host, opts, {
+  system = dns.promises.lookup,
+  makeResolver = () => new dns.promises.Resolver({ timeout: 3000, tries: 2 }),
+} = {}) {
+  try {
+    return await system(host, opts);
+  } catch (systemErr) {
+    const resolver = makeResolver();
+    const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
+    const found = [...(v4.value || []), ...(v6.value || [])];
+    if (found.length) return found.map((address) => ({ address }));
+    const direct = v4.reason?.code || v6.reason?.code || 'no answer';
+    throw Object.assign(new Error(`${systemErr.code || systemErr.message}; asking its DNS servers directly: ${direct}`),
+      { code: `${systemErr.code || 'lookup failed'}; asking its DNS servers directly: ${direct}`, cause: systemErr });
+  }
+}
+
+/**
  * Where `host` may be reached: { addresses } - every public address it has,
  * in the order its resolver gave them - or { problem, detail } saying why
  * not. A name with any private address is refused outright, not raced: a
  * name that answers with both is exactly the trick.
  */
-async function lookupPublic(host, { isBlocked = isPrivateAddress, lookup = dns.promises.lookup } = {}) {
+async function lookupPublic(host, { isBlocked = isPrivateAddress, lookup = systemThenDirect } = {}) {
   const bare = String(host || '').replace(/^\[|\]$/g, '');
   if (!bare) return { problem: 'name', detail: 'no address was given' };
   if (net.isIP(bare)) {
@@ -242,7 +268,7 @@ function tunnelVia(upstream, host, port) {
  * reached - since otherwise all the person at the controller sees is
  * Chromium's ERR_TUNNEL_CONNECTION_FAILED. `problemFor(host)` is the latest.
  */
-function createGuardProxy({ isBlocked = isPrivateAddress, lookup = dns.promises.lookup, upstream = '', onProblem = () => {} } = {}) {
+function createGuardProxy({ isBlocked = isPrivateAddress, lookup = systemThenDirect, upstream = '', onProblem = () => {} } = {}) {
   const via = upstream ? new URL(/^[a-z]+:\/\//i.test(upstream) ? upstream : `http://${upstream}`) : null;
   const problems = new Map();   // host -> { message, at }
   const REFUSED = 'Podium’s live browser does not open addresses on private networks.';
@@ -548,7 +574,13 @@ function createLiveBrowser(opts = {}) {
       '--no-first-run', '--no-default-browser-check', '--no-pings',
       '--disable-extensions', '--disable-sync', '--disable-default-apps',
       '--disable-background-networking', '--disable-component-update',
-      '--disable-dev-shm-usage', '--disable-features=Translate,MediaRouter',
+      '--disable-dev-shm-usage',
+      // Chrome's own calls home - updates, safe-browsing lists, model
+      // downloads, field trials - which nobody in the room asked for, and
+      // which otherwise fill the log with addresses no page wanted.
+      '--disable-features=Translate,MediaRouter,OptimizationHints,OptimizationGuideModelDownloading,OptimizationHintsFetching,AutofillServerCommunication,CertificateTransparencyComponentUpdater',
+      '--disable-client-side-phishing-detection', '--disable-domain-reliability',
+      '--disable-field-trial-config', '--metrics-recording-only',
       '--password-store=basic', '--use-mock-keychain',
       // Nobody in the room hears this browser - sound comes from Podium's own
       // video and audio items, which the mixer controls.
@@ -661,7 +693,7 @@ function createLiveBrowser(opts = {}) {
       return !!(await publicAddress(bare, { isBlocked }));
     }
     try {
-      const addresses = await dns.promises.lookup(bare, { all: true, verbatim: true });
+      const addresses = await systemThenDirect(bare, { all: true, verbatim: true });
       return addresses.every((a) => !isBlocked(a.address));
     } catch { return true; }
   }
@@ -1126,5 +1158,5 @@ function createLiveBrowser(opts = {}) {
 }
 
 module.exports = {
-  createLiveBrowser, createGuardProxy, publicAddress, lookupPublic, probeReach, findBrowser, isPrivateAddress, addressToUrl, viewFrom, metricsFor, KEYS, SESSION_KEY_RE,
+  createLiveBrowser, createGuardProxy, publicAddress, lookupPublic, systemThenDirect, probeReach, findBrowser, isPrivateAddress, addressToUrl, viewFrom, metricsFor, KEYS, SESSION_KEY_RE,
 };

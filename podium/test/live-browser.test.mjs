@@ -25,7 +25,7 @@ import { initialState, applyCommand, workingItem } from '../assets/js/protocol.j
 const require = createRequire(import.meta.url);
 const doctor = require('../server/doctor.js');
 const {
-  createLiveBrowser, createGuardProxy, publicAddress, lookupPublic, probeReach, findBrowser, isPrivateAddress, addressToUrl, viewFrom, metricsFor, SESSION_KEY_RE,
+  createLiveBrowser, createGuardProxy, publicAddress, lookupPublic, systemThenDirect, probeReach, findBrowser, isPrivateAddress, addressToUrl, viewFrom, metricsFor, SESSION_KEY_RE,
 } = require('../server/browser.js');
 
 const fails = [];
@@ -86,6 +86,24 @@ ok('LIVE_BROWSER=off is a choice, said as one', /turned off/.test(doctor.checkLi
   ok('listening twice is the same port', (await openGuard.listen()) === openPort);
   strictGuard.close();
   openGuard.close();
+
+  // The system's lookup failing (EAI_AGAIN for every name, from a service
+  // whose sandbox its name-service modules cannot work in): the DNS servers
+  // are asked directly, and both reasons are kept if that fails too.
+  const eaiAgain = async () => { throw Object.assign(new Error('getaddrinfo EAI_AGAIN'), { code: 'EAI_AGAIN' }); };
+  const answering = () => ({ resolve4: async () => ['140.82.112.3'], resolve6: async () => { throw Object.assign(new Error('x'), { code: 'ENODATA' }); } });
+  const silent = () => ({
+    resolve4: async () => { throw Object.assign(new Error('x'), { code: 'ECONNREFUSED' }); },
+    resolve6: async () => { throw Object.assign(new Error('x'), { code: 'ECONNREFUSED' }); },
+  });
+  const viaServers = await systemThenDirect('github.com', { all: true }, { system: eaiAgain, makeResolver: answering });
+  ok('when the system lookup fails, the DNS servers are asked directly', viaServers.length === 1 && viaServers[0].address === '140.82.112.3');
+  const neither = await systemThenDirect('github.com', { all: true }, { system: eaiAgain, makeResolver: silent }).catch((err) => err);
+  ok(`and when they do not answer either, both reasons are said (${neither.code})`,
+    neither instanceof Error && /^EAI_AGAIN; asking its DNS servers directly: ECONNREFUSED$/.test(neither.code));
+  ok('which is what the guard then reports', /could not look github\.com up \(EAI_AGAIN; asking its DNS servers directly: ECONNREFUSED\)/.test(
+    (await lookupPublic('github.com', { lookup: (h, o) => systemThenDirect(h, o, { system: eaiAgain, makeResolver: silent }) })).detail));
+  ok('a system lookup that works is all that is asked', (await systemThenDirect('x.example', {}, { system: async () => [{ address: '93.184.216.34' }], makeResolver: () => { throw new Error('not asked'); } }))[0].address === '93.184.216.34');
 
   // Saying why (the ERR_TUNNEL_CONNECTION_FAILED a person sees otherwise).
   ok('a private answer says which address it was',
