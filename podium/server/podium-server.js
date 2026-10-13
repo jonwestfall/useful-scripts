@@ -24,6 +24,8 @@
 //   DATA_DIR=/var/lib/podium   where accounts and uploads live (omit for none)
 //   AUTH_PASSWORD=...    put the pages (not join.html) behind HTTP Basic Auth
 //   AUTH_USER=podium     username to go with it (default: podium)
+//   LIVE_BROWSER=off     never run the live browser, even with Chromium here
+//   BROWSER_PATH=...     the Chromium to run (default: found on PATH)
 
 // node:sqlite is experimental in Node 22 and says so, once, on stderr. It is
 // an accurate warning about a module whose API may change and a useless one in
@@ -56,6 +58,7 @@ const attendance = require('./attendance.js');
 const mail = require('./mail.js');
 const zipStaging = require('./zip-staging.js');
 const { createViewCodes, linkCodeForKey, VIEW_ROOM_RE } = require('./view-codes.js');
+const { createLiveBrowser, findBrowser } = require('./browser.js');
 
 const PORT = Number(process.env.PORT || 8080);
 // Unset means every interface, which is what running this on a laptop for a
@@ -158,7 +161,7 @@ const KIOSK_OPEN_PATHS = new Set([
   '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/screen-record.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-qr.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
-  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
+  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/live-browser.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
   '/assets/js/zoom.js', '/assets/js/poll-link.js', '/assets/js/poll-look.js', '/assets/js/view-link.js',
 ]);
 
@@ -174,7 +177,7 @@ const VIEW_OPEN_PATHS = new Set([
   '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/screen-record.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-qr.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
-  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
+  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/live-browser.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
   '/assets/js/zoom.js', '/assets/js/poll-link.js', '/assets/js/poll-look.js', '/assets/js/view-link.js',
 ]);
 for (const openPath of VIEW_OPEN_PATHS) AUTH_OPEN_PATHS.add(openPath);
@@ -226,6 +229,29 @@ try {
 
 // Deliberately every account, disabled ones included: see countUsers.
 const hasAccounts = () => !!db && accounts.countUsers(db) > 0;
+
+// The live browser (browser.js): a web page the controller can drive, shown
+// on the projector even when the site refuses to be framed. Only for an
+// instance with accounts - an open server running a browser for anybody who
+// asks is a free proxy for the whole internet - and only where Chromium is
+// installed. Asked once; installing Chromium later needs a restart.
+const liveBrowser = createLiveBrowser({
+  executable: /^(off|0|false|no)$/i.test(process.env.LIVE_BROWSER || '') || !db ? null : findBrowser(),
+  allowPrivate: /^(1|true|yes|on)$/i.test(process.env.BROWSER_ALLOW_PRIVATE || ''),
+  maxSessions: Number(process.env.BROWSER_MAX_SESSIONS || 4),
+  idleMs: Number(process.env.BROWSER_IDLE_MINUTES || 10) * 60 * 1000,
+  searchUrl: process.env.BROWSER_SEARCH_URL || undefined,
+  extraArgs: process.env.BROWSER_ARGS || '',
+  sandbox: !/^(off|0|false|no)$/i.test(process.env.BROWSER_SANDBOX || ''),
+});
+const liveBrowserReady = () => liveBrowser.available && hasAccounts();
+// Chromium is a child of this process, and a stopped service should not leave
+// it behind (systemd would reap it with the unit's cgroup; a terminal would not).
+if (liveBrowser.available) {
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, () => { liveBrowser.close(); process.exit(0); });
+  }
+}
 const authContext = {
   db,
   dataDir: DATA_DIR,
@@ -237,6 +263,7 @@ const authContext = {
   publicPaths: AUTH_PUBLIC_WITH_ACCOUNTS,
   kioskOpenPaths: KIOSK_OPEN_PATHS,
   viewerMayRead: (req, pathname) => viewerMayRead(req, pathname),
+  liveBrowser: liveBrowserReady,
 };
 
 function timingSafeEqualString(given, want) {
@@ -1084,6 +1111,7 @@ function upgradeThrottled(ip, now = Date.now()) {
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, 'http://x');
+  if (url.pathname === '/browser') { upgradeLiveBrowser(req, socket, head); return; }
   const room = (url.searchParams.get('room') || '').slice(0, 64);
   const origin = req.headers.origin;
 
@@ -1157,6 +1185,28 @@ server.on('upgrade', (req, socket, head) => {
     ws.on('error', () => ws.terminate());
   });
 });
+
+// The live browser's socket (browser.js). Stricter than the relay's: always
+// a signed-in person or a provisioned kiosk, never an anonymous viewer, and
+// never from a page on another site - this one does not carry sealed
+// messages, it drives a real browser on this machine.
+function upgradeLiveBrowser(req, socket, head) {
+  const refuse = (status) => {
+    socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`);
+    socket.destroy();
+  };
+  if (!liveBrowserReady()) { refuse('404 Not Found'); return; }
+  if (upgradeThrottled(api.clientIp(req))) { socket.destroy(); return; }
+  const origin = req.headers.origin;
+  if (origin) {
+    let host = '';
+    try { host = new URL(origin).host; } catch { /* unparseable: not ours */ }
+    if (host !== String(req.headers.host || '') && !(ORIGINS && ORIGINS.includes(origin))) { refuse('403 Forbidden'); return; }
+  }
+  const signedIn = accounts.sessionUser(db, api.cookieToken(req)) || kiosks.sessionKiosk(db, api.kioskCookieToken(req));
+  if (!signedIn) { refuse('401 Unauthorized'); return; }
+  liveBrowser.handleUpgrade(req, socket, head);
+}
 
 // Campus Wi-Fi drops sockets without closing them; this reaps the dead ones.
 const heartbeat = setInterval(() => {
@@ -1276,6 +1326,7 @@ function describeAuth() {
 
 server.on('close', () => {
   clearInterval(heartbeat);
+  liveBrowser.close();
   if (sessionSweep) clearInterval(sessionSweep);
   if (retentionSweep) clearInterval(retentionSweep);
   if (attendanceSweep) clearInterval(attendanceSweep);
@@ -1283,6 +1334,9 @@ server.on('close', () => {
 server.listen(PORT, HOST || undefined, () => {
   console.log(`podium relay on ${HOST || '*'}:${PORT}${STATIC ? ` (serving ${STATIC})` : ' (relay only)'}`);
   console.log(`podium auth: ${describeAuth()}${db ? `, data in ${store.dataDirFromEnv()}` : ''}`);
+  console.log(`podium live browser: ${liveBrowser.available
+    ? `${liveBrowser.executable}${hasAccounts() ? '' : ' (waiting for the first account)'}`
+    : 'off - web pages are embedded frames (install Chromium to drive them from the controller; see docs/vps.md)'}`);
   if (db) {
     console.log(`podium sessions: ${LECTURE_RETENTION_DAYS > 0
       ? `photos and exported pages are kept for ${LECTURE_RETENTION_DAYS} days; timelines are kept indefinitely`

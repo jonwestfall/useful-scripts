@@ -415,24 +415,42 @@ function wireArchive() {
   }));
 }
 
-async function openPlan(id) {
-  await commit();
-  await flushServerSave();
-  const found = await loadPlan(id);
-  if (!found) return;
-  plan = found;
-  selectedId = plan.items[0]?.id || null;
-  warn('');
-  renderAll();
+// Switching lectures saves the one being left before the next is put in
+// place, and on a slow device that takes a moment. Until it is done the title
+// cannot be typed into: anything typed there in between would go to the
+// lecture being left, and then be covered by the one arriving.
+async function switching(work) {
+  const title = $('#plan-title');
+  title.disabled = true;
+  try { return await work(); } finally { title.disabled = false; }
 }
 
-async function newPlan(seed = null) {
-  await commit();
-  await flushServerSave();
-  plan = seed || emptyPlan();
-  selectedId = plan.items[0]?.id || null;
-  try { await savePlan(plan); } catch (err) { warn(`This lecture could not be saved: ${err.message}`); }
-  renderAll();
+function openPlan(id) {
+  return switching(async () => {
+    await commit();
+    await flushServerSave();
+    const found = await loadPlan(id);
+    if (!found) return;
+    plan = found;
+    selectedId = plan.items[0]?.id || null;
+    warn('');
+    renderAll();
+  });
+}
+
+function newPlan(seed = null) {
+  return switching(async () => {
+    // Not before this page has loaded its own lectures (see boot, below): a
+    // New lecture pressed while that is still reading this browser's storage
+    // would be replaced by whatever it then opens, title and all.
+    await booted;
+    await commit();
+    await flushServerSave();
+    plan = seed || emptyPlan();
+    selectedId = plan.items[0]?.id || null;
+    try { await savePlan(plan); } catch (err) { warn(`This lecture could not be saved: ${err.message}`); }
+    renderAll();
+  });
 }
 
 // --- the running order & pacing ----------------------------------------------
@@ -2175,8 +2193,14 @@ async function openServerPlan(id) {
 // Which one main action the rail offers (Issue #204), and what its footer says.
 function setServerMode(on) {
   serverMode = on;
-  $('#plan-new').classList.toggle('is-primary', on);
-  $('#plan-new-more').classList.toggle('is-primary', on);
+  // Offered as the way in only once this page has its own lectures loaded:
+  // the server can answer before this browser's storage does, and a lecture
+  // started (and titled) before then would be replaced by the one start-up
+  // opens. newPlan waits for it too, whatever lights the button.
+  booted.then(() => {
+    $('#plan-new').classList.toggle('is-primary', serverMode);
+    $('#plan-new-more').classList.toggle('is-primary', serverMode);
+  });
   $('#plan-export').classList.toggle('big-button', !on);
   $('#plan-export').textContent = on ? 'Export plan file' : 'Save a plan file for the iPad';
   $('#plan-where-hint').textContent = on

@@ -530,6 +530,8 @@ const expecting = {
   // Issue #256: a check-in code typed wrong (404), or a phone not in the
   // room (403), refused on purpose.
   attendRefused: false,
+  // The live browser: a page that refuses framing, embedded on purpose.
+  frameRefused: false,
 };
 
 const trap = (page, tag) => {
@@ -592,6 +594,9 @@ const trap = (page, tag) => {
     if (expecting.viewerRefused && /responded with a status of 401/.test(text)) return;
     if (expecting.viewLinkWaiting && /responded with a status of 404/.test(text) && (/\/view-code\//.test(where) || !m.location()?.url)) return;
     if (expecting.marpRetry && /marp\.esm\.js|ERR_FAILED/.test(where)) return;
+    // A page that refuses to be framed, shown embedded on purpose (the live
+    // browser's section): the browser says so, which is the point.
+    if (expecting.frameRefused && /Refused to frame|X-Frame-Options|frame-ancestors/.test(text)) return;
     // Killing and restarting a relay process (Issue #115's e2e section) is
     // its own brief burst of expected noise: a connection-refused while the
     // old process is down and the new one is not up yet, then a 404 once it

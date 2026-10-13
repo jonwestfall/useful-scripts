@@ -8,7 +8,7 @@ Podium is built for real classroom lectures. It gives you complete control of th
 
 ## Contents
 
-1. **[Presenting](#part-1--presenting)**: Freeze is a cue · The library · Marp decks · Markdown documents · The deck editor · Quick Look · Now/Next/Notes · PDFs & photos: zoom · Layouts & PiP
+1. **[Presenting](#part-1--presenting)**: Freeze is a cue · The library · Marp decks · Markdown documents · The deck editor · Quick Look · Now/Next/Notes · PDFs & photos: zoom · Web pages & the live browser 🖥️ · Layouts & PiP
 2. **[Drawing & Pointing](#part-2--drawing--pointing)**: Live ink · Whiteboards · Laser · Spotlight
 3. **[Media & Sound](#part-3--media--sound)**: Transport · Background music · Mixer · Controller microphone
 4. **[On-Screen Tools](#part-4--on-screen-tools)**: Timers · Messages · QR codes · Watermarks · Automated sets
@@ -57,7 +57,7 @@ The **Library** tab is where everything starts: tap a tile and it goes to the pr
 | **YouTube** | Embedded with remote transport, so the room never sees the YouTube site. |
 | **Live stream** | A live Twitch channel or YouTube broadcast, with video and sound, video only, or sound only (see [Live Streams](#live-streams-twitch--youtube-live)). |
 | **Photo / Image** | Any picture. Upload one from the iPad's Photos or Files with **Upload a photo…**. |
-| **Web page** | Any page that allows embedding. |
+| **Web page** | Any page. On a server with the live browser 🖥️, any site at all, clicked, scrolled and typed into from the controller (see [Web Pages and the Live Browser](#web-pages-and-the-live-browser-)); otherwise any page that allows embedding. |
 | **Text sign** | A simple card of text. |
 | **QR code** | A QR code for any link, e.g. the course site. |
 | **Timer** | A countdown panel. |
@@ -220,6 +220,33 @@ PDFs page like a deck. When a PDF or a photo is focused (a photo shown whole, no
   - The Now preview shows the room's own zoomed view, and a photo of the panel shows the zoomed view with its ink.
 
 On a self-hosted server, **Upload/Load a PDF…** on the Library tab uploads straight into the library, and PowerPoint files are converted to PDF on upload (see [PowerPoint Uploads](#powerpoint-uploads)).
+
+### Web Pages and the Live Browser 🖥️
+
+A web page can reach the projector in two ways.
+
+- **Embedded** works on every setup: the page sits in a frame on the display. It plays its own sound, but it can only be clicked or scrolled on the classroom computer itself. Many sites refuse to be framed at all (GitHub, Google, most news sites, most learning-management systems). The browser then shows its own *"… refused to connect"* face, and there is nothing a page can do about it. Podium knows the best-known of these sites and shows a card saying so instead.
+- **The live browser** 🖥️ runs the page in a real browser (Chromium) on your Podium server. The projector is shown the page as a live picture, laid out for exactly the panel it is in. **You drive it from the controller.** Because nothing is framed, nothing refuses: GitHub, Google Docs, a journal behind your library's sign-in, a simulation, a search.
+
+Where the server has the live browser, a page on another site opens there automatically. Change it per item with **Show it as** in the planner, or **Show this page as** on the Now tab: *Automatic*, *Live browser* or *Embedded page*. A page on your own Podium server (in `content/`) always embeds, because the server's browser is not signed in.
+
+**Driving it**, on the **Now** tab:
+- **The page itself** is on the Now tab, and it is live. **Tap** to click: links, buttons, menus and form fields. **Drag** to scroll the way a finger scrolls a phone. With a mouse or trackpad, the **wheel** scrolls and hovering opens hover menus.
+- **The address bar**: ◀ Back, ▶ Forward, ⟳ Reload (✕ stops a page that is still loading), and an address box that takes a web address (`github.com/jonwestfall`) or words to search for.
+- **⌂ Home** goes back to where the item started. **▲ Page up** and **▼ Page down** scroll a screen at a time. So do Next and Previous on a clicker, the keyboard and the guest remote.
+- **A− / A+** make the page smaller or bigger on the projector (50% to 300%), as Ctrl − and Ctrl + do in a desktop browser. The page reflows rather than just magnifying.
+- **Typing**: tap a field on the page, type in **Type into the page…** and press **Type**, then **↵ Enter**, **⌫**, **Tab** or **Esc** as needed. With a keyboard (a laptop as the controller, or a keyboard on the iPad), click the page and type straight into it. None of the controller's own shortcuts fire while you do.
+- **A link that opens a new tab** opens in the same one instead, since the room is watching one tab. Pop-up alerts are answered *OK* so the page never stops waiting for a click nobody can give.
+
+**Freeze holds it.** Frozen, the projector keeps the picture it had while you browse on the iPad: follow a link, scroll to the right paragraph, sign in. Unfreezing or **TAKE** shows the room where you got to. The Now tab's frame turns from red (the room sees this) to your accent colour while you are ahead of the room.
+
+**Everything else works too.** Ink sits on top as it does on any panel. **Photograph this panel** works, unlike an embedded page. The page keeps its place while you go to a photo and come **Back to** it, and through a display reload. Split screen and picture-in-picture each get their own page, laid out for their own panel.
+
+**What it cannot do**:
+- **No sound.** The live browser is silent on purpose. Play a video's sound through Podium's own **Video**, **YouTube** or **Live stream** items, which the mixer controls, or show the page embedded.
+- **Guest View** viewers see a card naming the page, with a link to open it on their own device, rather than the live page.
+- **It needs your own server** with Chromium installed (see [Self-hosting](vps.md#the-live-browser)). On GitHub Pages, Supabase or a public broker, web pages are always embedded.
+- **Every page you open is on the server.** The server opens the page, so it sees what is on it. Each page has its own private cookies and storage, thrown away when the page closes, so one class's sign-in never reaches another. Pages on the server's own network (`localhost`, `10.x`, `192.168.x` and so on) are refused unless an administrator allows them.
 
 ### Screen Layouts, Split Screen & Picture-in-Picture
 

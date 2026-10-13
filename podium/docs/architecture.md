@@ -86,6 +86,11 @@ Podium is built on a **Zero-Trust Relay** model. Because classroom computers and
 - **Receipts by email** go through the SMTP server an administrator configures (`SMTP_URL`), so that mail provider sees each receipt's address and contents. Off unless both the server and the course turn it on.
 - The browser token and network address behind a shared-phone flag are kept only as keyed hashes, and only for the retention period set on the admin page.
 
+### 8. The Live Browser Sees the Pages It Draws
+- On your own server with Chromium (see [vps.md](vps.md#the-live-browser)), a web page can run in the server's browser instead of a frame, so a site that refuses framing still reaches the projector and the controller can drive it. The server is drawing the page, so it necessarily sees it: what was browsed, and anything typed into it.
+- It never learns the room passphrase. Devices find a page's session by a name worked out from the passphrase with PBKDF2 at the room key's own strength (`live-browser.js`), and only a signed-in account or a kiosk may connect.
+- Each page has its own cookies and storage, thrown away when it closes. Every connection the browser makes goes through a guard proxy in the server that refuses private and loopback addresses, unless an administrator allows them.
+
 ## State Machine Protocol (`protocol.js`)
 
 All application state is governed by a pure, deterministic state machine in [`podium/assets/js/protocol.js`](../assets/js/protocol.js):
@@ -135,6 +140,7 @@ podium/
 │       ├── control.js    # Controller UI
 │       ├── display.js    # Projector renderer (and viewer mode for view.html)
 │       ├── renderers.js  # Content renderers (decks, PDFs, media, text, polls, timers)
+│       ├── live-browser.js # Web pages in the server's browser: live or embedded, session names, frames
 │       ├── plan.js       # Planner UI;  planfile.js - the .podium document format
 │       ├── crypto.js     # Web Crypto AES-GCM & PBKDF2
 │       ├── bus.js        # Encrypted message bus over a transport/
@@ -151,6 +157,7 @@ podium/
 │       └── ...
 ├── server/               # Self-hosted relay & storage server
 │   ├── podium-server.js  # HTTP + WebSocket relay, auth gate, static files
+│   ├── browser.js        # The live browser: headless Chromium over the DevTools protocol
 │   ├── api.js            # REST API;  store.js - SQLite schema & persistence
 │   ├── accounts.js, courses.js, library.js, plans.js, lectures.js, kiosks.js, ...
 │   ├── roster.js, attendance.js  # Course rosters and attendance (Issue #256)

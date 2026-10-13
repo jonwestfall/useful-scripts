@@ -450,7 +450,16 @@ function normalizeItem(item) {
     copy.data = String(copy.data || '').slice(0, 2000);
     copy.caption = String(copy.caption || '').slice(0, 200);
   }
-  if (copy.type === 'web') copy.src = String(copy.src || '').slice(0, 2000);
+  if (copy.type === 'web') {
+    copy.src = String(copy.src || '').slice(0, 2000);
+    // How it is shown (live-browser.js): the live browser, an embedded
+    // frame, or (absent) whichever suits the page and the server.
+    if (!['live', 'embed'].includes(copy.browse)) delete copy.browse;
+    // Which live browser session it is (live-browser.js): its first key,
+    // kept by every copy of it - the cue a frozen Next makes, a "Back to" -
+    // so they all show the same page, wherever it has been browsed to.
+    copy.liveId = /^[A-Za-z0-9_-]{1,64}$/.test(item.liveId || '') ? item.liveId : copy.key;
+  }
   if (copy.type === 'whiteboard') copy.bg = String(copy.bg || '').slice(0, 64);
   if (copy.type === 'timer') {
     copy.timerId = String(copy.timerId || '').slice(0, 64);
@@ -1640,6 +1649,17 @@ function applyOp(state, cmd) {
         changed = true;
       }
       return changed;
+    }
+
+    // A web page shown in the live browser or embedded (live-browser.js). The
+    // item being worked on, like the Now tab's other tools; the page itself
+    // is the same either way, so there is nothing for a freeze to hold.
+    case 'web': {
+      const item = state.focus === 0 ? workingItem(state) : state.panels[state.focus - 1];
+      if (item?.type !== 'web') return false;
+      if (cmd.browse === 'live' || cmd.browse === 'embed') item.browse = cmd.browse;
+      else delete item.browse;
+      return true;
     }
 
     case 'fit': {

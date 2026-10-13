@@ -72,6 +72,7 @@ Features marked **🖥️** need Podium's own self-hosted server. Everything els
 - **PDFs and photos that fill the screen when zoomed**: Fit page, Fit width, a zoom slider, or **pinch and drag** on the preview or the ink pad. A portrait page or an upright photo keeps its shape on your iPad, and ink stays on the words at any zoom. PowerPoint uploads are converted to PDF automatically 🖥️.
 - **Quick Look**: open any file privately in a new tab to check it before class, from the controller, planner, library or deck editor.
 - **A library of anything:** decks, picture decks, HTML slides, video, audio, YouTube, live streams, photos, web pages, text signs, QR codes, whiteboards, chalkboards and timers. You can also paste any link or upload a photo.
+- **A live web browser on the projector** 🖥️: any site (GitHub and Google included, which refuse to be embedded) runs in your server's browser, and you click links, scroll, type and go Back from the iPad. Freeze holds the room's view while you browse ahead.
 - **Split screen and picture-in-picture** (single, side-by-side, stacked, 3-up, quad, or a PiP inset). Each panel keeps its own item, zoom and ink.
 - **"Back to" strip:** go look at a photo, then return to the exact slide you left.
 
@@ -153,6 +154,7 @@ The pages are identical everywhere. The only choice is which relay carries their
 | Lecture replay, search and screen video | – | – | ✅ |
 | Attendance, rosters, entry and exit tickets | – | – | ✅ |
 | Guest View typed codes, kiosks, PowerPoint and Word conversion | – | – | ✅ |
+| Live web browser, driven from the controller | – | – | ✅ |
 
 ### Five-minute version
 

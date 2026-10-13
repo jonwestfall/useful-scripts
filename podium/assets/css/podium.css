@@ -379,6 +379,27 @@ dl.keys dd { margin: 0; color: var(--dim); }
 .r-web.is-loaded .r-embed-warn { display: none; }
 .r-embed-url { font-family: ui-monospace, Menlo, monospace; font-size: clamp(6px, 1.2cqw, 12px); opacity: .7; margin-top: 4px; }
 
+/* The live browser (renderLiveWeb): pictures of a page running on the server,
+   letterboxed if a preview is not the projector's shape. */
+.r-live { background: #101418; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.r-live-canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+.r-live:not(.has-frame) .r-live-canvas { visibility: hidden; }
+.r-live-status {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 80%;
+  padding: 1.2cqh 2cqw; border-radius: 10px; color: #dfe6ee; background: rgba(8, 11, 15, .82);
+  font-size: clamp(8px, 1.6cqw, 18px); text-align: center;
+}
+.r-live.has-frame .r-live-status { top: auto; bottom: 3cqh; transform: translateX(-50%); }
+.r-live.is-error .r-live-status { color: #ffd7d2; }
+.r-live-status[hidden] { display: none; }
+/* Said instead of a frame the site would refuse. */
+.r-webcard { display: flex; align-items: center; justify-content: center; background: linear-gradient(160deg, #182130, #0a0d12); color: #eef2f6; text-align: center; }
+.r-webcard-body { max-width: 80%; display: grid; gap: 1.6cqh; justify-items: center; }
+.r-webcard-icon { font-size: clamp(16px, 9cqh, 96px); line-height: 1; }
+.r-webcard-title { font-size: clamp(10px, 4.6cqh, 48px); font-weight: 700; }
+.r-webcard-url { font-family: ui-monospace, Menlo, monospace; font-size: clamp(7px, 2.2cqh, 22px); color: #8fc2ff; word-break: break-all; }
+.r-webcard-note { font-size: clamp(7px, 2.6cqh, 26px); color: #b8c3cf; line-height: 1.35; }
+
 .r-audio {
   display: grid; grid-auto-flow: column; align-items: center; justify-content: center;
   gap: 5cqw; background: linear-gradient(160deg, #182130, #0a0d12);
@@ -2786,6 +2807,33 @@ body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { disp
 
 /* Markdown documents on the controller's Now tab (Issue #240) ---------------- */
 .doc-tools { display: grid; gap: 8px; }
+
+/* A web page in the live browser (Now tab): an address bar, the page itself
+   to tap and drag, and the keys a touch screen has no other way to send. */
+.web-tools { display: grid; gap: 8px; margin-top: 8px; }
+.web-address, .web-type { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.web-address input, .web-type input { flex: 1 1 12em; min-width: 0; }
+.web-address > button:not([type="submit"]) { min-width: 44px; }
+.web-screen {
+  position: relative; width: 100%; max-height: 60vh; aspect-ratio: 16 / 9; margin: 0 auto;
+  border: 2px solid var(--live); border-radius: var(--radius); overflow: hidden;
+  background: #101418; touch-action: none; cursor: pointer; outline-offset: 2px;
+}
+.web-screen canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+.web-screen:not(.has-frame) canvas { visibility: hidden; }
+.web-screen:focus-visible { outline: 3px solid var(--accent); }
+/* Frozen, or a cue: the room is not seeing this yet. */
+.web-screen.is-ahead { border-color: var(--accent); }
+.web-screen-note {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 85%;
+  padding: 8px 12px; border-radius: 8px; color: #dfe6ee; background: rgba(8, 11, 15, .82); text-align: center;
+  pointer-events: none;
+}
+.web-screen-note:empty { display: none; }
+.web-row { flex-wrap: wrap; }
+.web-zoom { display: inline-flex; gap: 4px; align-items: center; margin-left: auto; }
+.web-browse { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+
 .doc-scrub-label { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
 .doc-headings { display: flex; flex-direction: column; gap: 2px; max-height: 14rem; overflow: auto; }
 .doc-heading { text-align: left; min-height: 32px; padding: 0 10px; font-size: 14px; border-radius: 6px; }

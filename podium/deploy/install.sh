@@ -86,6 +86,18 @@ DATA_DIR=$DATA_DIR
 # Percent-encode any special characters in the user or password.
 #SMTP_URL=smtp://user:password@mail.example.edu:587
 #MAIL_FROM="Podium <podium@example.edu>"
+
+# The live browser (optional): web pages run in Chromium on this box and are
+# driven from the controller. On automatically once Chromium is installed
+# (restart the service after installing it). See docs/vps.md.
+#LIVE_BROWSER=off
+#BROWSER_PATH=/usr/bin/google-chrome-stable
+#BROWSER_MAX_SESSIONS=4
+#BROWSER_IDLE_MINUTES=10
+#BROWSER_ALLOW_PRIVATE=1
+#BROWSER_SEARCH_URL=https://www.google.com/search?q=
+#BROWSER_ARGS=--proxy-server=http://proxy.example.edu:3128
+#BROWSER_SANDBOX=off
 EOF
   chmod 0640 "$CONFIG_DIR/podium.env"
   chgrp "$PODIUM_USER" "$CONFIG_DIR/podium.env"

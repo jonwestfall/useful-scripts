@@ -184,7 +184,10 @@ function capabilities(ctx, user) {
   // every request answers 401 - a feature announced before it can be used.
   const allowPollNames = ctx.db ? store.getSystemSetting(ctx.db, 'allow_poll_names', '0') === '1' : false;
   const features = ctx.db && ctx.hasAccounts()
-    ? ['auth', 'library', 'plans', 'templates', 'deckTemplates', 'settings', 'sessions', 'people', 'attendance', ...(user?.isAdmin ? ['content', 'kiosks'] : [])]
+    ? ['auth', 'library', 'plans', 'templates', 'deckTemplates', 'settings', 'sessions', 'people', 'attendance',
+      // A web page the controller drives, on a server with Chromium (browser.js).
+      ...(ctx.liveBrowser?.() ? ['browser'] : []),
+      ...(user?.isAdmin ? ['content', 'kiosks'] : [])]
     : (ctx.db ? ['auth'] : []);
   return {
     podium: true,

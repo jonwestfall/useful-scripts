@@ -3654,12 +3654,28 @@ await pvCtrl.waitForSelector('#app:not([hidden])');
 // At the desk, days before.
 const pvPlanner = await pvPresenter.newPage();
 trap(pvPlanner, 'view link planner');
+// This browser's storage being slow - as it is on a fresh CI browser - is
+// when a lecture started and titled at once used to stay "Untitled lecture":
+// start-up, or New lecture's own save of the lecture it was leaving, put a
+// blank one in its place after the typing. Made certain here: every answer
+// from this page's storage arrives late.
+await pvPlanner.addInitScript(() => {
+  const success = Object.getOwnPropertyDescriptor(IDBRequest.prototype, 'onsuccess');
+  Object.defineProperty(IDBRequest.prototype, 'onsuccess', {
+    configurable: true,
+    get() { return success.get.call(this); },
+    set(fn) { success.set.call(this, fn && ((ev) => setTimeout(() => fn.call(this, ev), 600))); },
+  });
+});
 await pvPlanner.goto(`${pvBase}/plan.html`);
 await pvPlanner.waitForSelector('#plan-new.is-primary');
 await pvPlanner.click('#plan-new');
 await pvPlanner.waitForFunction(() => !document.querySelector('#order .order-row'), null, { timeout: 5000 });
 await pvPlanner.fill('#plan-title', 'Remote seminar');
-await pvPlanner.waitForFunction(() => /yours alone/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 });
+await pvPlanner.waitForFunction(() => /yours alone/.test(document.querySelector('#plan-sync')?.textContent || ''), null, { timeout: 10000 })
+  .catch(async (err) => {
+    throw new Error(`the lecture never saved to the server - "${await pvPlanner.inputValue('#plan-title')}": ${await pvPlanner.textContent('#plan-sync')} (${err.message})`);
+  });
 await pvPlanner.click('.view-link-make');
 await pvPlanner.waitForSelector('.view-link-url');
 const plannedUrl = await pvPlanner.textContent('.view-link-url');

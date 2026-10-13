@@ -10,7 +10,7 @@
 // runs every group.
 
 import {
-  ROOT, fs, path, os, spawn, execFileSync, freePort, BASE, browser, ok, want, trap, expecting,
+  ROOT, fs, path, os, http, spawn, execFileSync, freePort, BASE, browser, ok, want, trap, expecting,
   reportErrors, teardown, exitWithResult, writeImageFixture,
 } from './harness.mjs';
 import { makeDocx, makeRtf } from '../word-fixtures.mjs';
@@ -63,11 +63,16 @@ const smtp = net.createServer((sock) => {
 await new Promise((resolve) => smtp.listen(0, '127.0.0.1', resolve));
 const mailBody = (m) => Buffer.from(m.data.split('\r\n\r\n').slice(1).join('').replace(/\r\n/g, ''), 'base64').toString('utf8');
 
+// The live browser (server/browser.js) runs the same Chromium this suite
+// drives, without its sandbox the way Playwright runs it, and may open pages
+// on this machine - the test site below is on 127.0.0.1.
+const liveBrowserPath = [process.env.BROWSER_PATH, browser.browserType().executablePath()].find((p) => p && fs.existsSync(p));
 const server = spawn(process.execPath, ['podium-server.js'], {
   cwd: path.join(ROOT, 'server'),
   env: {
     ...process.env, PORT: String(acctPort), STATIC: '../', DATA_DIR: data, CONTENT_DIR: content,
     SMTP_URL: `smtp://127.0.0.1:${smtp.address().port}`, MAIL_FROM: 'Podium <podium@example.edu>',
+    ...(liveBrowserPath ? { BROWSER_PATH: liveBrowserPath } : {}), BROWSER_ALLOW_PRIVATE: '1', BROWSER_SANDBOX: 'off',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -3565,6 +3570,145 @@ const [download] = await Promise.all([page.waitForEvent('download'), page.click(
 const body = fs.readFileSync(await download.path(), 'utf8');
 ok(`Save, with nowhere to save to, downloads the .md (${download.suggestedFilename()})`, /\.md$/.test(download.suggestedFilename()) && body.includes('assets/icons/icon-192.png'));
 await ctx.close();
+}
+
+if (want('the live browser: a site that refuses framing, driven from the controller')) {
+console.log('\n-- the live browser: a site that refuses framing, driven from the controller --');
+// A site that, like GitHub, will not be shown inside another page. Embedded,
+// the projector would show the browser's "refused to connect" face; live, it
+// runs in the server's own Chromium and the controller drives it.
+const sitePages = {
+  '/': '<!doctype html><title>Lab home</title><body style="margin:0;font:28px sans-serif;height:3000px;background:#fff">'
+    + '<a href="/two" style="position:absolute;left:0;top:0;width:400px;height:200px;background:#fd0">Page two</a>'
+    + '<form action="/echo"><input name="q" style="position:absolute;left:0;top:300px;width:400px;height:60px;font-size:28px"></form>',
+  '/two': '<!doctype html><title>Page two</title><body style="margin:0;background:#0c0"><h1>Two</h1>',
+};
+const site = http.createServer((req, res) => {
+  const u = new URL(req.url, 'http://x');
+  res.writeHead(200, { 'content-type': 'text/html', 'x-frame-options': 'deny', 'content-security-policy': "frame-ancestors 'none'" });
+  res.end(u.pathname === '/echo' ? `<!doctype html><title>Echo ${u.searchParams.get('q')}</title><body style="background:#00c">` : (sitePages[u.pathname] || 'nope'));
+});
+await new Promise((resolve) => site.listen(0, '127.0.0.1', resolve));
+const siteHome = `http://127.0.0.1:${site.address().port}/`;
+try {
+  const owen = await signedIn('owen');
+  const screen = await owen.newPage();
+  trap(screen, 'live browser display');
+  await screen.goto(`${base}/display.html`);
+  await screen.click('#arm-button');
+  await screen.waitForSelector('#hud[data-status="online"]');
+  const pad = await owen.newPage();
+  trap(pad, 'live browser controller');
+  await pad.goto(`${base}/control.html`);
+  await pad.waitForSelector('.tile');
+  ok('a server with Chromium says it has a live browser',
+    (await pad.evaluate(() => fetch('/api/capabilities').then((r) => r.json()))).features.includes('browser'));
+
+  // The colour in the middle of the projector's picture of the page.
+  const wallColour = () => screen.evaluate(() => {
+    const c = document.querySelector('.layer[data-role="program"] .r-live.has-frame .r-live-canvas');
+    if (!c || !c.width) return null;
+    const [r, g, b] = c.getContext('2d').getImageData(Math.floor(c.width * 0.8), Math.floor(c.height * 0.8), 1, 1).data;
+    return { r, g, b };
+  });
+  const green = (px) => !!px && px.g > 150 && px.r < 80 && px.b < 80;
+  const white = (px) => !!px && px.r > 230 && px.g > 230 && px.b > 230;
+  const blue = (px) => !!px && px.b > 150 && px.r < 80 && px.g < 80;
+
+  if (await pad.isHidden('#url-input')) await pad.click('#lib-add-toggle');
+  await pad.fill('#url-input', siteHome);
+  await pad.click('#url-form button[type="submit"]');
+  await screen.waitForSelector('.layer[data-role="program"] .r-live.has-frame', { timeout: 20000 })
+    .then(() => ok('a page that refuses to be framed is on the projector, live', true))
+    .catch(() => ok('a page that refuses to be framed is on the projector, live', false));
+  ok('with no frame anywhere for it to refuse', await screen.evaluate(() => !document.querySelector('.layer[data-role="program"] iframe')));
+  await until(async () => white(await wallColour())).catch(() => {});
+  ok('and the room sees the page itself', white(await wallColour()));
+
+  await pad.click('.tab[data-tab="now"]');
+  await pad.waitForSelector('#web-screen.has-frame', { timeout: 15000 })
+    .then(() => ok('the Now tab shows the page, to drive', true))
+    .catch(() => ok('the Now tab shows the page, to drive', false));
+  ok(`with its address in the bar (${await pad.inputValue('#web-url')})`, (await pad.inputValue('#web-url')) === siteHome);
+  ok('and one picture of it, not two', await pad.isHidden('#now-preview'));
+
+  // A tap on the link, on the controller's screen, is a click on the page.
+  const at = async (fx, fy) => {
+    const box = await pad.locator('#web-canvas').boundingBox();
+    await pad.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
+  };
+  const shape = await pad.evaluate(() => { const c = document.querySelector('#web-canvas'); return { w: c.width, h: c.height }; });
+  await at(100 / (shape.w || 1280), 100 / (shape.h || 720));
+  await pad.waitForFunction(() => document.querySelector('#web-url').value.endsWith('/two'), null, { timeout: 10000 })
+    .then(() => ok('a tap on a link follows it', true))
+    .catch(() => ok('a tap on a link follows it', false));
+  await until(async () => green(await wallColour())).catch(() => {});
+  ok('and the projector follows', green(await wallColour()));
+
+  // Frozen, the room keeps the page it has while the presenter browses on.
+  await pad.click('#freeze');
+  await pad.waitForFunction(() => document.querySelector('#freeze').classList.contains('is-on'), null, { timeout: 5000 });
+  await pad.click('#web-back');
+  await pad.waitForFunction((u) => document.querySelector('#web-url').value === u, siteHome, { timeout: 10000 })
+    .then(() => ok('Back goes back', true))
+    .catch(() => ok('Back goes back', false));
+  await pad.waitForTimeout(800);
+  ok('while frozen, the projector holds the page it had', green(await wallColour()));
+  await pad.click('#freeze');
+  await until(async () => white(await wallColour())).catch(() => {});
+  ok('and catches up when the freeze lifts', white(await wallColour()));
+
+  // Typing: tap the field on the page, then type in the box under it.
+  await at(200 / (shape.w || 1280), 330 / (shape.h || 720));
+  await pad.fill('#web-text', 'mitochondria');
+  await pad.click('#web-type button[type="submit"]');
+  await pad.click('#web-type [data-key="Enter"]');
+  await pad.waitForFunction(() => /echo\?q=mitochondria$/.test(document.querySelector('#web-url').value), null, { timeout: 10000 })
+    .then(() => ok('a tap on a field, typing and Enter submit a form', true))
+    .catch(() => ok('a tap on a field, typing and Enter submit a form', false));
+  await until(async () => blue(await wallColour())).catch(() => {});
+  ok('and the room sees the answer', blue(await wallColour()));
+
+  // The address bar goes anywhere; Home comes back.
+  await pad.fill('#web-url', `${siteHome}two`);
+  await pad.press('#web-url', 'Enter');
+  await until(async () => green(await wallColour())).catch(() => {});
+  ok('the address bar opens a page', green(await wallColour()));
+  await pad.click('#web-home');
+  await until(async () => white(await wallColour())).catch(() => {});
+  ok('and Home goes back to where the item started', white(await wallColour()));
+
+  await pad.click('#web-zoom-in');
+  await pad.waitForFunction(() => document.querySelector('#web-zoom-level').textContent === '110%', null, { timeout: 5000 })
+    .then(() => ok('the page can be made bigger for the room', true))
+    .catch(() => ok('the page can be made bigger for the room', false));
+
+  // A live page can be photographed: it is pictures already.
+  await pad.click('.tab[data-tab="photos"]');
+  const shotsBefore = (await pad.$$('#photo-strip .shot')).length;
+  await pad.click('#photo-panel');
+  await pad.waitForFunction((n) => document.querySelectorAll('#photo-strip .shot').length > n, shotsBefore, { timeout: 15000 })
+    .then(() => ok('and photographed, unlike an embedded page', true))
+    .catch(() => ok('and photographed, unlike an embedded page', false));
+
+  // Embedded is still a choice - the page plays its own sound that way.
+  await pad.click('.tab[data-tab="now"]');
+  expecting.frameRefused = true;
+  await pad.selectOption('#web-browse', 'embed');
+  await screen.waitForSelector('.layer[data-role="program"] .r-web iframe', { timeout: 10000 })
+    .then(() => ok('"Show as: embedded" puts it in a frame instead', true))
+    .catch(() => ok('"Show as: embedded" puts it in a frame instead', false));
+  ok('and the Now tab says what that costs', /only be clicked or scrolled on the classroom computer/.test(await pad.textContent('#web-embed-note')));
+  await pad.selectOption('#web-browse', 'auto');
+  await screen.waitForSelector('.layer[data-role="program"] .r-live.has-frame', { timeout: 15000 })
+    .then(() => ok('and Automatic brings the live page back, where it was', true))
+    .catch(() => ok('and Automatic brings the live page back, where it was', false));
+  await pad.waitForTimeout(500);
+  expecting.frameRefused = false;
+  await owen.close();
+} finally {
+  site.close();
+}
 }
 
 reportErrors();
