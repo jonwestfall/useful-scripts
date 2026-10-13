@@ -518,6 +518,8 @@ const expecting = {
   marpRetry: false,
   // My Files (Issue #243): a wrong current password, refused on purpose.
   passwordRefused: false,
+  // A sign-in refused on purpose, while its 401 may arrive with no url.
+  loginRefused: false,
   // Admin's Marp themes: a theme saved under a name another one has, refused on purpose.
   themeNameTaken: false,
   // Replay (Issue #132): a lecture somebody else may not open, refused on purpose.
@@ -586,6 +588,10 @@ const trap = (page, tag) => {
     if (expecting.deckConflict && /responded with a status of 412/.test(text)) return;
     if (expecting.deckForbidden && /responded with a status of 403/.test(text)) return;
     if (expecting.passwordRefused && /responded with a status of 403/.test(text)) return;
+    // The wrong password typed on purpose (DELIBERATE covers it by its url,
+    // but the login page asks with fetch(), whose failed-load message does not
+    // always carry one - the same gap expecting.pollLost below describes).
+    if (expecting.loginRefused && /responded with a status of 401/.test(text)) return;
     if (expecting.lectureNotFound && /responded with a status of 404/.test(text)) return;
     if (expecting.wordRefused && /responded with a status of 4(15|22)/.test(text)) return;
     if (expecting.rosterConflict && /responded with a status of 409/.test(text)) return;
