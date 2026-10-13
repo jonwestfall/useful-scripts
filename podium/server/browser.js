@@ -144,19 +144,89 @@ function addressToUrl(input, searchUrl = 'https://duckduckgo.com/?q=') {
 }
 
 /**
- * The public address to connect to for `host`, or null for one that is not
- * public (or does not resolve). A name with any private address is refused
- * outright, not raced: a name that answers with both is exactly the trick.
+ * Where `host` may be reached: { addresses } - every public address it has,
+ * in the order its resolver gave them - or { problem, detail } saying why
+ * not. A name with any private address is refused outright, not raced: a
+ * name that answers with both is exactly the trick.
  */
-async function publicAddress(host, { isBlocked = isPrivateAddress, lookup = dns.promises.lookup } = {}) {
+async function lookupPublic(host, { isBlocked = isPrivateAddress, lookup = dns.promises.lookup } = {}) {
   const bare = String(host || '').replace(/^\[|\]$/g, '');
-  if (!bare) return null;
-  if (net.isIP(bare)) return isBlocked(bare) ? null : bare;
-  if (/^localhost$/i.test(bare) || /\.(localhost|local|internal|lan|home\.arpa)$/i.test(bare)) return null;
-  let addresses;
-  try { addresses = await lookup(bare, { all: true, verbatim: true }); } catch { return null; }
-  if (!addresses.length || addresses.some((a) => isBlocked(a.address))) return null;
-  return addresses[0].address;
+  if (!bare) return { problem: 'name', detail: 'no address was given' };
+  if (net.isIP(bare)) {
+    return isBlocked(bare) ? { problem: 'private', detail: `${bare} is a private or reserved address` } : { addresses: [bare] };
+  }
+  if (/^localhost$/i.test(bare) || /\.(localhost|local|internal|lan|home\.arpa)$/i.test(bare)) {
+    return { problem: 'private', detail: `${bare} is a name on this network` };
+  }
+  let found;
+  try {
+    found = await lookup(bare, { all: true, verbatim: true });
+  } catch (err) {
+    return { problem: 'unresolved', detail: `this server could not look ${bare} up (${err.code || err.message})` };
+  }
+  if (!found.length) return { problem: 'unresolved', detail: `this server could not look ${bare} up (no addresses)` };
+  const blocked = found.find((a) => isBlocked(a.address));
+  if (blocked) {
+    return { problem: 'private', detail: `${bare} resolves to ${blocked.address}, which is a private or reserved address` };
+  }
+  return { addresses: found.map((a) => a.address) };
+}
+
+/** The first public address for `host`, or null. */
+async function publicAddress(host, opts) {
+  return (await lookupPublic(host, opts)).addresses?.[0] || null;
+}
+
+const CONNECT_TIMEOUT_MS = 10 * 1000;
+
+/** A socket to the first of `addresses` that answers on `port`. Throws with each one's reason. */
+function connectFirst(addresses, port) {
+  return new Promise((resolve, reject) => {
+    const failures = [];
+    const attempt = (i) => {
+      if (i >= addresses.length) { reject(new Error(failures.join(', '))); return; }
+      const socket = net.connect({ host: addresses[i], port });
+      const timer = setTimeout(() => socket.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })), CONNECT_TIMEOUT_MS);
+      socket.once('connect', () => { clearTimeout(timer); socket.removeAllListeners('error'); resolve(socket); });
+      socket.once('error', (err) => {
+        clearTimeout(timer);
+        failures.push(`${addresses[i]}: ${err.code || err.message}`);
+        attempt(i + 1);
+      });
+    };
+    attempt(0);
+  });
+}
+
+/**
+ * A tunnel to host:port through another proxy - for a network that only
+ * reaches the internet through one (BROWSER_UPSTREAM_PROXY). The address rule
+ * is still checked here first; the upstream proxy then does the connecting.
+ */
+function tunnelVia(upstream, host, port) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host: upstream.hostname, port: Number(upstream.port) || 80 });
+    const timer = setTimeout(() => socket.destroy(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })), CONNECT_TIMEOUT_MS);
+    const auth = upstream.username
+      ? `Proxy-Authorization: Basic ${Buffer.from(`${decodeURIComponent(upstream.username)}:${decodeURIComponent(upstream.password)}`).toString('base64')}\r\n`
+      : '';
+    let reply = Buffer.alloc(0);
+    const onData = (chunk) => {
+      reply = Buffer.concat([reply, chunk]);
+      const end = reply.indexOf('\r\n\r\n');
+      if (end === -1) { if (reply.length > 16 * 1024) socket.destroy(new Error('the proxy said too much')); return; }
+      clearTimeout(timer);
+      socket.off('data', onData);
+      const status = /^HTTP\/1\.[01] (\d{3})/.exec(reply.toString('latin1'))?.[1];
+      if (status !== '200') { socket.destroy(); reject(new Error(`the upstream proxy answered ${status || 'something else'}`)); return; }
+      const rest = reply.subarray(end + 4);
+      if (rest.length) socket.unshift(rest);
+      resolve(socket);
+    };
+    socket.on('data', onData);
+    socket.once('connect', () => socket.write(`CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n${auth}\r\n`));
+    socket.once('error', (err) => { clearTimeout(timer); reject(new Error(`the upstream proxy ${upstream.host}: ${err.code || err.message}`)); });
+  });
 }
 
 /**
@@ -164,30 +234,66 @@ async function publicAddress(host, { isBlocked = isPrivateAddress, lookup = dns.
  * every connection Chromium makes goes through - pages, images, scripts,
  * iframes in their own process, workers, service workers, WebSockets. It
  * resolves the name itself, refuses anything that is not public, and then
- * connects to the very address it checked, so a name cannot answer "public"
+ * connects to the very addresses it checked, so a name cannot answer "public"
  * to the check and "private" to the connection a moment later.
+ *
+ * Every connection it does not make is reported to `onProblem` - whether the
+ * name would not resolve, resolved to a private address, or could not be
+ * reached - since otherwise all the person at the controller sees is
+ * Chromium's ERR_TUNNEL_CONNECTION_FAILED. `problemFor(host)` is the latest.
  */
-function createGuardProxy({ isBlocked = isPrivateAddress, lookup = dns.promises.lookup } = {}) {
-  const resolve = (host) => publicAddress(host, { isBlocked, lookup });
+function createGuardProxy({ isBlocked = isPrivateAddress, lookup = dns.promises.lookup, upstream = '', onProblem = () => {} } = {}) {
+  const via = upstream ? new URL(/^[a-z]+:\/\//i.test(upstream) ? upstream : `http://${upstream}`) : null;
+  const problems = new Map();   // host -> { message, at }
   const REFUSED = 'Podium’s live browser does not open addresses on private networks.';
+  const report = (host, port, message) => {
+    problems.set(host.toLowerCase(), { message, at: Date.now() });
+    if (problems.size > 500) problems.delete(problems.keys().next().value);
+    onProblem(host, port, message);
+  };
+
+  /** A socket to host:port, or a thrown { refused, message }. */
+  async function open(host, port) {
+    const found = await lookupPublic(host, { isBlocked, lookup });
+    // With an upstream proxy, a name this server cannot look up itself may
+    // still be one the proxy can: that is often how such networks work.
+    if (found.problem && !(via && found.problem === 'unresolved')) {
+      report(host, port, `${found.detail}${found.problem === 'private' ? ' (BROWSER_ALLOW_PRIVATE=1 lets pages reach those)' : ''}`);
+      throw Object.assign(new Error(found.detail), { refused: found.problem === 'private' });
+    }
+    try {
+      return via ? await tunnelVia(via, host, port) : await connectFirst(found.addresses, port);
+    } catch (err) {
+      const message = via
+        ? `${host}:${port} could not be reached through ${via.host} (${err.message})`
+        : `${host}:${port} could not be reached from this server (${err.message}) - is outgoing traffic blocked, or does this network need a proxy? (BROWSER_UPSTREAM_PROXY)`;
+      report(host, port, message);
+      throw new Error(message, { cause: err });
+    }
+  }
+
   const server = http.createServer((req, res) => {
-    // Plain http: the request line carries the whole address.
+    // Plain http: the request line carries the whole address. Sent over a
+    // socket of our own, so it goes only where open() said it may.
     let url;
     try { url = new URL(req.url); } catch { res.writeHead(400); res.end(); return; }
     if (url.protocol !== 'http:') { res.writeHead(400); res.end(); return; }
-    resolve(url.hostname).then((address) => {
-      if (!address) { res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }); res.end(REFUSED); return; }
+    const port = Number(url.port) || 80;
+    open(url.hostname, port).then((socket) => {
       const headers = { ...req.headers, host: url.host };
       delete headers['proxy-connection'];
       delete headers['proxy-authorization'];
-      const upstream = http.request({
-        host: address, port: url.port || 80, method: req.method, path: `${url.pathname}${url.search}`, headers, setHost: false,
+      const upstreamReq = http.request({
+        createConnection: () => socket, method: req.method, path: `${url.pathname}${url.search}`, headers, setHost: false,
       }, (answer) => {
         res.writeHead(answer.statusCode, answer.headers);
         answer.pipe(res);
       });
-      upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
-      req.pipe(upstream);
+      upstreamReq.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+      req.pipe(upstreamReq);
+    }, (err) => {
+      res.writeHead(err.refused ? 403 : 502, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end(err.refused ? REFUSED : err.message);
     });
   });
   // https and WebSockets: a tunnel to host:port, opened only to a public address.
@@ -195,16 +301,17 @@ function createGuardProxy({ isBlocked = isPrivateAddress, lookup = dns.promises.
     const at = /^\[?([^\]]+?)\]?:(\d+)$/.exec(req.url || '');
     if (!at) { client.end('HTTP/1.1 400 Bad Request\r\n\r\n'); return; }
     client.on('error', () => {});
-    resolve(at[1]).then((address) => {
-      if (!address) { client.end(`HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\n\r\n${REFUSED}`); return; }
-      const upstream = net.connect(Number(at[2]), address, () => {
-        client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-        if (head?.length) upstream.write(head);
-        upstream.pipe(client);
-        client.pipe(upstream);
-      });
-      upstream.on('error', () => client.destroy());
-      client.on('close', () => upstream.destroy());
+    open(at[1], Number(at[2])).then((upstreamSocket) => {
+      client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head?.length) upstreamSocket.write(head);
+      upstreamSocket.pipe(client);
+      client.pipe(upstreamSocket);
+      upstreamSocket.on('error', () => client.destroy());
+      client.on('close', () => upstreamSocket.destroy());
+    }, (err) => {
+      client.end(err.refused
+        ? `HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\n\r\n${REFUSED}`
+        : `HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain\r\n\r\n${err.message}`);
     });
   });
   server.on('clientError', (err, socket) => socket.destroy());
@@ -215,8 +322,32 @@ function createGuardProxy({ isBlocked = isPrivateAddress, lookup = dns.promises.
       server.once('error', fail);
       server.listen(0, '127.0.0.1', () => ok(server.address().port));
     })),
+    /** Open a connection the way a page would, for a check (see probeReach). */
+    open,
+    /** Why `host` was last not opened, if that was in the last minute. */
+    problemFor(host) {
+      const found = problems.get(String(host || '').toLowerCase());
+      return found && found.at > Date.now() - 60 * 1000 ? found.message : '';
+    },
     close: () => { try { server.close(); } catch { /* not listening */ } server.closeAllConnections?.(); },
   };
+}
+
+/**
+ * Can a live page reach `host` from this server - through the same guard,
+ * and the same upstream proxy if there is one? For podium-admin doctor.
+ */
+async function probeReach({ host = 'github.com', port = 443, allowPrivate = false, upstream = '', lookup } = {}) {
+  const guard = createGuardProxy({ isBlocked: allowPrivate ? () => false : isPrivateAddress, upstream, lookup });
+  try {
+    const socket = await guard.open(host, port);
+    socket.destroy();
+    return { ok: true, detail: `${host}:${port} is reachable${upstream ? ` through ${upstream}` : ''}` };
+  } catch (err) {
+    return { ok: false, detail: err.message };
+  } finally {
+    guard.close();
+  }
 }
 
 // --- keys ----------------------------------------------------------------------
@@ -343,6 +474,7 @@ const MAX_CLIENTS_PER_SESSION = 16;
  * @param {number} [opts.idleMs]         how long a page nobody is watching stays open
  * @param {string} [opts.searchUrl]      where words typed in the address bar go
  * @param {string} [opts.extraArgs]      more Chromium switches, space-separated
+ * @param {string} [opts.upstreamProxy]  http://host:port this network reaches the internet through
  * @param {boolean} [opts.sandbox]       false to run Chromium without its sandbox
  * @param {(ip: string) => boolean} [opts.isBlocked]  which addresses are private (tests)
  * @param {(msg: string) => void} [opts.log]
@@ -354,6 +486,7 @@ function createLiveBrowser(opts = {}) {
   const idleMs = Math.max(5000, Number(opts.idleMs) || 10 * 60 * 1000);
   const searchUrl = opts.searchUrl || 'https://duckduckgo.com/?q=';
   const extraArgs = String(opts.extraArgs || '').split(/\s+/).filter(Boolean);
+  const upstreamProxy = String(opts.upstreamProxy || '').trim();
   const sandbox = opts.sandbox !== false;
   // Which addresses count as private: isPrivateAddress, except in a test that
   // needs a "public" site on this machine.
@@ -376,11 +509,29 @@ function createLiveBrowser(opts = {}) {
 
   // --- the browser process ---------------------------------------------------
 
+  // What the guard would not open, in the service's log - once a minute per
+  // host, since one page can ask for the same blocked thing many times over.
+  const problemLogged = new Map();
+  function logProblem(host, port, message) {
+    const key = `${host}:${port}`;
+    if ((problemLogged.get(key) || 0) > Date.now() - 60 * 1000) return;
+    if (problemLogged.size > 500) problemLogged.clear();
+    problemLogged.set(key, Date.now());
+    log(`live browser: did not open ${key} - ${message}`);
+  }
+
+  /** Why the guard did not open a page's address, for the controller to show. */
+  function whyNot(url) {
+    let host;
+    try { host = new URL(url).hostname; } catch { return ''; }
+    return guard?.problemFor(host) || '';
+  }
+
   async function launch() {
     profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'podium-browser-'));
     let proxyArgs = [];
     if (guarded) {
-      guard ??= createGuardProxy({ isBlocked });
+      guard ??= createGuardProxy({ isBlocked, upstream: upstreamProxy, onProblem: logProblem });
       const port = await guard.listen();
       proxyArgs = [
         `--proxy-server=http://127.0.0.1:${port}`,
@@ -653,7 +804,10 @@ function createLiveBrowser(opts = {}) {
     broadcastState(session);
     const result = await apply(session, 'Page.navigate', { url }).catch((err) => ({ errorText: err.message }));
     if (result.errorText && result.errorText !== 'net::ERR_ABORTED') {
-      session.error = `That page did not open (${result.errorText}).`;
+      // Chromium only knows the tunnel failed; the guard knows why.
+      const why = whyNot(url);
+      session.error = why ? `That page did not open: ${why}.` : `That page did not open (${result.errorText}).`;
+      if (!why) log(`live browser: ${url} did not open (${result.errorText})`);
       session.loading = false;
       broadcastState(session);
     }
@@ -729,6 +883,7 @@ function createLiveBrowser(opts = {}) {
           const shown = params.frame.unreachableUrl || params.frame.url;
           if (shown && shown !== 'about:blank' && !shown.startsWith('chrome-error:')) session.url = shown;
           if (!params.frame.unreachableUrl) session.error = '';
+          else if (whyNot(params.frame.unreachableUrl)) session.error = `That page did not open: ${whyNot(params.frame.unreachableUrl)}.`;
           refreshHistory(session);
         }
         return;
@@ -971,5 +1126,5 @@ function createLiveBrowser(opts = {}) {
 }
 
 module.exports = {
-  createLiveBrowser, createGuardProxy, publicAddress, findBrowser, isPrivateAddress, addressToUrl, viewFrom, metricsFor, KEYS, SESSION_KEY_RE,
+  createLiveBrowser, createGuardProxy, publicAddress, lookupPublic, probeReach, findBrowser, isPrivateAddress, addressToUrl, viewFrom, metricsFor, KEYS, SESSION_KEY_RE,
 };

@@ -789,7 +789,13 @@ the check and then point somewhere else. A page therefore cannot reach this
 process on `127.0.0.1`, a cloud provider's metadata address, or the machine
 room's switches. WebRTC is kept to the proxy too.
 `BROWSER_ALLOW_PRIVATE=1` turns the proxy off, for a server on a campus network
-whose intranet is the point. A `--proxy-server` of your own in `BROWSER_ARGS`
+whose intranet is the point. A network that only reaches the internet through
+a proxy of its own sets `BROWSER_UPSTREAM_PROXY`: the guard still checks every
+address, then asks that proxy to make the connection. Every connection the
+guard does not make is logged with its reason (the name would not resolve,
+resolved to a private address, or could not be reached), and the controller
+shows the same reason under the page, rather than Chromium's
+`ERR_TUNNEL_CONNECTION_FAILED`. A `--proxy-server` of your own in `BROWSER_ARGS`
 replaces it, and your proxy then decides what may be reached. The address bar
 opens only `http` and `https`; downloads are refused; a link that opens a new
 tab opens in the same one; JavaScript dialogs are answered so a page never
@@ -811,6 +817,11 @@ bot detection may notice that the browser is headless.
 
 Optional. Without it, web pages embed exactly as before. Any Chromium or
 Google Chrome works:
+
+`deploy/install.sh` installs one for you: Google Chrome on amd64, Debian's
+Chromium on arm64 Debian (`INSTALL_CHROME=0` skips it). On a server installed
+before it did, run it again (it leaves an existing configuration and database
+alone), or install one by hand:
 
 ```
 # Debian / Ubuntu: Google's own package
@@ -834,7 +845,9 @@ podium live browser: /usr/bin/google-chrome-stable
 ```
 
 It is then in `/api/capabilities` (`features` includes `browser`), and
-`podium-admin doctor` reports it. Settings, all optional, in `podium.env`:
+`podium-admin doctor` reports it, with a **web access** line that tries to
+open `github.com` through the guard proxy the way a page would
+(`BROWSER_TEST_HOST` names another site). Settings, all optional, in `podium.env`:
 
 | Setting | Default | |
 | :--- | :--- | :--- |
@@ -844,6 +857,7 @@ It is then in `/api/capabilities` (`features` includes `browser`), and
 | `BROWSER_IDLE_MINUTES` | `10` | How long a page nobody is watching stays open. |
 | `BROWSER_ALLOW_PRIVATE` | off | `1` lets pages reach private and loopback addresses (turns the guard proxy off). |
 | `BROWSER_SEARCH_URL` | DuckDuckGo | Where words typed in the address bar go, e.g. `https://www.google.com/search?q=`. |
+| `BROWSER_UPSTREAM_PROXY` | none | `http://host:port` (or `http://user:pass@host:port`) for a network that only reaches the internet through a proxy. The guard proxy still checks every address first. |
 | `BROWSER_ARGS` | none | More Chromium switches, space-separated. A `--proxy-server=http://proxy.campus.edu:3128` here is used instead of the guard proxy, and decides what pages may reach. |
 | `BROWSER_SANDBOX` | on | `off` runs Chromium without its sandbox. See below. |
 

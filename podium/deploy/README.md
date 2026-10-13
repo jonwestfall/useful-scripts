@@ -99,10 +99,13 @@ cannot be sent is logged; it never holds up a student's check-in.
 
 ## The live browser (web pages driven from the controller)
 
-Optional. With Chromium on the box, a web page item runs in the server's own
-browser: the projector shows any site (GitHub and Google included, which
-refuse to be embedded), and the controller clicks, scrolls and types into it.
-Without it, web pages are embedded frames, as they always were.
+With Chromium on the box, a web page item runs in the server's own browser:
+the projector shows any site (GitHub and Google included, which refuse to be
+embedded), and the controller clicks, scrolls and types into it. Without it,
+web pages are embedded frames, as they always were.
+
+`install.sh` installs Google Chrome (amd64) or Debian's Chromium (arm64 Debian)
+unless run with `INSTALL_CHROME=0`. On a server installed before it did:
 
 ```
 wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
@@ -111,7 +114,11 @@ sudo systemctl restart podium
 ```
 
 The service log then says `podium live browser: /usr/bin/google-chrome-stable`,
-and `podium-admin doctor` has a **live browser** line. It needs nothing in
+and `podium-admin doctor` has a **live browser** line and a **web access** line,
+which says whether a page can actually get out to the internet from here. If
+pages show *This site can't be reached* (`ERR_TUNNEL_CONNECTION_FAILED`), the
+reason is in `journalctl -u podium | grep "live browser"`; see
+[troubleshooting](../docs/troubleshooting.md). It needs nothing in
 `podium.env`; the settings it takes (how many pages at once, a campus proxy,
 private addresses, the sandbox) are in [docs/vps.md](../docs/vps.md#the-live-browser).
 Each open page costs roughly 100–300 MB of memory while it is open.

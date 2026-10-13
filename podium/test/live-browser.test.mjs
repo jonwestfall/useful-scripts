@@ -14,6 +14,7 @@
 //   node podium/test/live-browser.test.mjs
 
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import {
@@ -24,7 +25,7 @@ import { initialState, applyCommand, workingItem } from '../assets/js/protocol.j
 const require = createRequire(import.meta.url);
 const doctor = require('../server/doctor.js');
 const {
-  createLiveBrowser, createGuardProxy, publicAddress, findBrowser, isPrivateAddress, addressToUrl, viewFrom, metricsFor, SESSION_KEY_RE,
+  createLiveBrowser, createGuardProxy, publicAddress, lookupPublic, probeReach, findBrowser, isPrivateAddress, addressToUrl, viewFrom, metricsFor, SESSION_KEY_RE,
 } = require('../server/browser.js');
 
 const fails = [];
@@ -85,6 +86,76 @@ ok('LIVE_BROWSER=off is a choice, said as one', /turned off/.test(doctor.checkLi
   ok('listening twice is the same port', (await openGuard.listen()) === openPort);
   strictGuard.close();
   openGuard.close();
+
+  // Saying why (the ERR_TUNNEL_CONNECTION_FAILED a person sees otherwise).
+  ok('a private answer says which address it was',
+    /resolves to 10\.0\.0\.5/.test((await lookupPublic('rebind.example', { lookup: lookup(['93.184.216.34', '10.0.0.5']) })).detail));
+  ok('a name that will not resolve says so', /could not look nowhere\.example up \(ENOTFOUND\)/.test(
+    (await lookupPublic('nowhere.example', { lookup: async () => { throw Object.assign(new Error('x'), { code: 'ENOTFOUND' }); } })).detail));
+  const heard = [];
+  const fake = (answers) => async () => answers.map((address) => ({ address }));
+  const telling = createGuardProxy({ isBlocked: (ip) => ip === '10.0.0.5', lookup: fake(['10.0.0.5']), onProblem: (host, port, message) => heard.push(`${host}:${port} ${message}`) });
+  const tellingPort = await telling.listen();
+  ok('a refused tunnel is a 403', (await through(tellingPort, { method: 'CONNECT', path: 'intranet.example:443' })).status === 403);
+  ok('and the guard says why, for the log', /intranet\.example:443 intranet\.example resolves to 10\.0\.0\.5.*BROWSER_ALLOW_PRIVATE/.test(heard[0] || ''));
+  ok('and remembers it, for the controller', /resolves to 10\.0\.0\.5/.test(telling.problemFor('INTRANET.example')));
+  telling.close();
+
+  // An address that does not answer: the next one is tried; none, and it says so.
+  const closed = http.createServer();
+  await new Promise((r) => closed.listen(0, '127.0.0.1', r));
+  const closedPort = closed.address().port;
+  closed.close();
+  const fallback = createGuardProxy({ isBlocked: () => false, lookup: fake(['127.0.0.3', '127.0.0.1']) });
+  const fallbackPort = await fallback.listen();
+  ok('an address that refuses is passed over for the next one',
+    /inside$/.test((await through(fallbackPort, { method: 'CONNECT', path: `twoaddrs.example:${tport}` })).body || ''));
+  fallback.close();
+  const unreachable = createGuardProxy({ isBlocked: () => false, lookup: fake(['127.0.0.1']), onProblem: (h, p, m) => heard.push(m) });
+  const unreachablePort = await unreachable.listen();
+  ok('none answering is a 502, not a refusal', (await through(unreachablePort, { method: 'CONNECT', path: `down.example:${closedPort}` })).status === 502);
+  ok('saying it could not be reached, and asking whether this network needs a proxy',
+    /down\.example:\d+ could not be reached from this server \(127\.0\.0\.1: ECONNREFUSED\).*BROWSER_UPSTREAM_PROXY/.test(heard.at(-1) || ''));
+  unreachable.close();
+
+  // A network that only reaches out through a proxy of its own.
+  let asked = '';
+  const upstream = http.createServer();
+  upstream.on('connect', (req, socket, head) => {
+    asked = req.url;
+    const onward = net.connect(tport, '127.0.0.1', () => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head?.length) onward.write(head);
+      onward.pipe(socket);
+      socket.pipe(onward);
+    });
+  });
+  await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
+  const chained = createGuardProxy({
+    isBlocked: isPrivateAddress, lookup: async () => { throw Object.assign(new Error('x'), { code: 'ENOTFOUND' }); },
+    upstream: `127.0.0.1:${upstream.address().port}`,
+  });
+  const chainedPort = await chained.listen();
+  ok('through an upstream proxy, a name this server cannot look up still opens',
+    /inside$/.test((await through(chainedPort, { method: 'CONNECT', path: 'outside.example:443' })).body || ''));
+  ok('the upstream proxy is asked for the name, not an address', asked === 'outside.example:443');
+  const chainedPrivate = createGuardProxy({ lookup: fake(['10.0.0.5']), upstream: `127.0.0.1:${upstream.address().port}` });
+  const chainedPrivatePort = await chainedPrivate.listen();
+  ok('and a private address is still refused before the proxy is asked', (await through(chainedPrivatePort, { method: 'CONNECT', path: 'intranet.example:443' })).status === 403);
+  ok('plain http goes through it too', (await through(chainedPort, { method: 'GET', path: 'http://outside.example/' })).body === 'inside');
+  chained.close();
+  chainedPrivate.close();
+  upstream.close();
+
+  // podium-admin doctor's "web access" line: the same guard, asked for real.
+  ok('the doctor\'s reach check opens what a page could', (await probeReach({ host: 'local.example', port: tport, allowPrivate: true, lookup: fake(['127.0.0.1']) })).ok);
+  const refusedReach = await probeReach({ host: 'local.example', port: tport, lookup: fake(['127.0.0.1']) });
+  ok(`and says why when it cannot (${refusedReach.detail})`, !refusedReach.ok && /private or reserved/.test(refusedReach.detail));
+  const withChrome = { BROWSER_PATH: process.execPath };
+  ok('a page that can get out is a plain ok', (await doctor.checkLiveBrowserReach(withChrome, { probe: async () => ({ ok: true, detail: 'github.com:443 is reachable' }) })).level === 'ok');
+  const stuck = await doctor.checkLiveBrowserReach(withChrome, { probe: async () => ({ ok: false, detail: 'github.com:443 could not be reached from this server (140.82.112.3: ETIMEDOUT)' }) });
+  ok('one that cannot is a problem, with the reason', stuck.level === 'bad' && /ETIMEDOUT/.test(stuck.detail));
+  ok('and nothing is checked with the live browser off', (await doctor.checkLiveBrowserReach({ ...withChrome, LIVE_BROWSER: 'off' })) === null);
   target.close();
 }
 
@@ -303,6 +374,16 @@ if (!exe) {
         ok('through the guard, a public page opens', await until('the guarded page', () => latest(g).title === 'Reaching' && latest(g).loading === false, 100000));
         await new Promise((r) => setTimeout(r, 1500));
         ok('and nothing it asks for reaches a private address', secretHits === 0);
+        // An address nothing answers at: the controller is told why, not
+        // just Chromium's ERR_TUNNEL_CONNECTION_FAILED.
+        const nobody = http.createServer();
+        await new Promise((r) => nobody.listen(0, '127.0.0.1', r));
+        const nobodyPort = nobody.address().port;
+        nobody.close();
+        g.ws.send(JSON.stringify({ t: 'go', url: `https://127.0.0.1:${nobodyPort}/` }));
+        ok('a page the server cannot reach says why on the controller',
+          await until('the reason', () => /could not be reached from this server \(127\.0\.0\.1: ECONNREFUSED\)/.test(latest(g).error || '')));
+        ok('and the reason is in the log', logs.some((l) => /did not open 127\.0\.0\.1:\d+ - .*ECONNREFUSED/.test(l)));
         g.ws.close();
       } finally {
         guarded.close();
