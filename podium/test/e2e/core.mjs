@@ -2405,8 +2405,16 @@ await oScreen.waitForFunction(() => !!document.querySelector('.layer[data-role="
 await oPad.click('.tab[data-tab="slides"]');
 await oPad.waitForSelector('#deck-live:not([hidden])');
 for (let i = 0; i < 3; i++) await oPad.click('#deck-next');
-await oPad.waitForTimeout(400);
-const leftAt = await oPad.textContent('#deck-count');
+// Where the deck was left is where it settles: the count no longer moving
+// and naming the slide the display shows. A fixed pause read it mid-way on a
+// slow runner, and the deck then came back at the slide it really reached.
+let leftAt = '';
+for (let i = 0; i < 40; i++) {
+  await oPad.waitForTimeout(250);
+  const count = await oPad.textContent('#deck-count');
+  if (count === leftAt && count.startsWith(`Slide ${(await shownDeckSlide()) + 1} `)) break;
+  leftAt = count;
+}
 ok(`the deck is on screen and the recall row is not (${leftAt})`, await oPad.isHidden('#deck-recall'));
 await oPad.click('.tab[data-tab="library"]');
 await oTile('Whiteboard');
