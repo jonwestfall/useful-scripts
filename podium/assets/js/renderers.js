@@ -2254,9 +2254,16 @@ function renderDocument(item, opts) {
   function fit() {
     const w = host.clientWidth || DOC_WIDTH;
     const h = host.clientHeight || DOC_VIEW;
-    scale = Math.min(w / DOC_WIDTH, h / DOC_VIEW) || 1;
+    // Every screen in the room shows the same window of the page (DOC_VIEW
+    // tall), so ink and Next mean the same thing everywhere. Quick Look
+    // (opts.fitWidth) is one person reading: the page fills the width and as
+    // much of it shows as the screen is tall - a portrait iPad shows a page,
+    // not a 16:9 strip of one - though never so wide a window that less than
+    // half the room's shows.
+    scale = (opts.fitWidth ? Math.min(w / DOC_WIDTH, h / (DOC_VIEW / 2)) : Math.min(w / DOC_WIDTH, h / DOC_VIEW)) || 1;
     left = Math.max(0, (w - DOC_WIDTH * scale) / 2);
     place();
+    opts.onFit?.();
   }
   const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
   resize?.observe(host);
@@ -2357,6 +2364,8 @@ function renderDocument(item, opts) {
     measure: () => metrics,
     /** Where this copy is showing, mid-glide included. */
     shownAt: () => shownAt,
+    /** How much of the page this screen shows, in page units (DOC_VIEW unless opts.fitWidth). */
+    viewHeight: () => (host.clientHeight ? host.clientHeight / scale : DOC_VIEW),
     /** The page as rendered: outline, notes, title. */
     rendered: () => rendered,
     contentAspect: () => null,
