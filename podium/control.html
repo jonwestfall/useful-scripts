@@ -436,6 +436,53 @@
             <span id="page-label"></span>
             <button id="next-page" type="button">Next ▶</button>
           </div>
+          <!-- A web page in the live browser (live-browser.js): the page runs on
+               the server and this drives it. The screen is the page itself -
+               tap to click, drag or use the wheel to scroll, and with a
+               keyboard, click it and type. -->
+          <div id="web-tools" class="web-tools" hidden>
+            <form id="web-address" class="web-address" autocomplete="off">
+              <button id="web-back" type="button" aria-label="Back" title="Back">◀</button>
+              <button id="web-forward" type="button" aria-label="Forward" title="Forward">▶</button>
+              <button id="web-reload" type="button" aria-label="Reload" title="Reload">⟳</button>
+              <input id="web-url" type="text" inputmode="url" spellcheck="false" autocapitalize="off" autocorrect="off"
+                aria-label="Address, or words to search for" placeholder="Address or search">
+              <button type="submit">Go</button>
+            </form>
+            <div id="web-screen" class="web-screen" tabindex="0" role="application"
+              aria-label="The web page. Tap to click, drag to scroll. With a keyboard, select it and type.">
+              <canvas id="web-canvas"></canvas>
+              <div id="web-screen-note" class="web-screen-note"></div>
+            </div>
+            <div class="inline web-row">
+              <button id="web-home" type="button" title="Back to the page this item opens at">⌂ Home</button>
+              <button id="web-page-up" type="button">▲ Page up</button>
+              <button id="web-page-down" type="button">▼ Page down</button>
+              <span class="web-zoom" role="group" aria-label="Size of the page on the projector">
+                <button id="web-zoom-out" type="button" aria-label="Smaller">A−</button>
+                <span id="web-zoom-level" class="mono">100%</span>
+                <button id="web-zoom-in" type="button" aria-label="Bigger">A+</button>
+              </span>
+            </div>
+            <form id="web-type" class="web-type" autocomplete="off">
+              <input id="web-text" type="text" spellcheck="false" autocapitalize="off" autocorrect="off"
+                aria-label="Text to type into the page" placeholder="Type into the page…">
+              <button type="submit">Type</button>
+              <button type="button" data-key="Enter">↵ Enter</button>
+              <button type="button" data-key="Backspace" aria-label="Backspace">⌫</button>
+              <button type="button" data-key="Tab">Tab</button>
+              <button type="button" data-key="Escape">Esc</button>
+            </form>
+            <div id="web-status" class="hint" role="status"></div>
+          </div>
+          <label id="web-browse-row" class="web-browse" hidden>Show this page as
+            <select id="web-browse">
+              <option value="auto">Automatic</option>
+              <option value="live">Live browser, driven from here</option>
+              <option value="embed">Embedded page (plays its own sound)</option>
+            </select>
+          </label>
+          <div id="web-embed-note" class="hint" hidden></div>
           <!-- A markdown document (Issue #240): the paging above scrolls it
                most of a screen at a time; the scrubber and its headings jump.
                Its presenter notes are the comments in what is on screen. -->

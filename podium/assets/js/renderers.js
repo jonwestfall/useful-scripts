@@ -27,6 +27,7 @@ import { BLANK_PIXEL } from './assets.js';
 import { contentRect, isZoomed } from './zoom.js';
 import { formatPollCode } from './poll-link.js';
 import { lookColors, lookVars } from './poll-look.js';
+import { browseMode, refusesFraming, watchLiveBrowser } from './live-browser.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -670,7 +671,10 @@ function renderWeb(item, opts) {
     el('div', { class: 'r-embed-url' }, item.src));
   const node = el('div', { class: 'r-fill r-web' }, frame, warn);
 
-  // Sites that send X-Frame-Options never fire load; leave the hint visible.
+  // The hint is for the seconds before the page arrives. Chromium fires load
+  // even for a page that refused to be framed (on its own error page), so a
+  // refusal cannot be told from here - which is why the sites known to refuse
+  // never get this far (see renderWebItem) and why the live browser exists.
   frame.addEventListener('load', () => node.classList.add('is-loaded'));
 
   let lastNav = item.navNonce || 0;
@@ -702,6 +706,182 @@ function renderWeb(item, opts) {
     },
     telemetry: noTelemetry,
     destroy() { node.remove(); },
+  };
+}
+
+// A web page item: embedded, live, or a card saying why neither (see
+// browseMode in live-browser.js). The choice can change under it - the
+// presenter switching "Show as" on the Now tab, or the server's answer about
+// the live browser arriving after the first paint - so the real renderer is
+// swapped inside one that stays mounted.
+//
+// opts.liveBrowser, where the page has a room to find sessions in:
+//   role         'display' (the projector: it decides the page's shape and
+//                obeys Next/Previous), 'control', or 'viewer' (Guest View -
+//                shown a card, since only the room's own devices hold the key)
+//   availableNow()  true / false / null while still being asked
+//   available       a promise of the same answer
+//   keyFor(item)    a promise of the item's session name
+function renderWebItem(item, opts) {
+  const lb = opts.liveBrowser || null;
+  const node = el('div', { class: 'r-fill r-webhost' });
+  let current = item;
+  let live = lb ? lb.availableNow() : false;
+  let mode = null;
+  let inner = null;
+
+  const choose = (it) => {
+    if (live === null && browseMode(it, true) === 'live') return 'wait';
+    const want = browseMode(it, live === true);
+    if (want === 'live') return lb.role === 'viewer' ? 'card-live' : 'live';
+    if (it.browse !== 'embed' && refusesFraming(it.src)) return 'card-refused';
+    return 'embed';
+  };
+  const show = (it) => {
+    const next = choose(it);
+    if (next === mode) { inner?.update(it); return; }
+    inner?.destroy();
+    mode = next;
+    inner = next === 'live' ? renderLiveWeb(it, opts)
+      : next === 'embed' ? renderWeb(it, opts)
+        : next === 'wait' ? { el: el('div', { class: 'r-fill r-live' }), update() {}, reconcile() {}, destroy() {} }
+          : renderWebCard(it, next === 'card-live' ? 'live' : 'refused');
+    node.replaceChildren(inner.el);
+  };
+  show(item);
+  if (lb && live === null) {
+    lb.available.then((yes) => { live = !!yes; if (inner) show(current); });
+  }
+
+  return {
+    el: node,
+    get browser() { return inner?.browser || null; },
+    get mode() { return mode; },
+    update(it) { current = it; show(it); },
+    reconcile(it, audio) { inner?.reconcile?.(it, audio); },
+    telemetry: noTelemetry,
+    contentAspect() { return null; },
+    snapshot(ctx, rect) { return inner?.snapshot ? inner.snapshot(ctx, rect) : false; },
+    destroy() { inner?.destroy(); inner = null; node.remove(); },
+  };
+}
+
+const hostOf = (src) => { try { return new URL(src, location.href).host; } catch { return String(src || ''); } };
+
+// Said instead of a frame the browser would only replace with its sad face:
+// a site known to refuse being framed, or (to a Guest View viewer, who has no
+// key to the room's live browser) a page the projector is showing live.
+// The refusal only ever shows where there is no live browser to turn to
+// (see choose() above), so it says where one would come from.
+function renderWebCard(item, why) {
+  const host = hostOf(item.src);
+  const note = why === 'live'
+    ? 'On the classroom screen now, in a live browser.'
+    : `${host} does not let other sites show its pages inside them. A Podium server with Chromium installed shows it in its live browser; until then, open it in a tab of its own.`;
+  const link = /^https?:/i.test(item.src || '') ? el('a', { class: 'r-webcard-url', href: item.src, target: '_blank', rel: 'noopener noreferrer' }, item.src) : el('div', { class: 'r-webcard-url' }, item.src || '');
+  const node = el('div', { class: 'r-fill r-webcard' },
+    el('div', { class: 'r-webcard-body' },
+      el('div', { class: 'r-webcard-icon', 'aria-hidden': 'true' }, '\u{1F310}'),
+      el('div', { class: 'r-webcard-title' }, item.title && item.title !== item.src ? item.title : host),
+      link,
+      el('div', { class: 'r-webcard-note' }, note)));
+  return { el: node, update() {}, reconcile() {}, destroy() { node.remove(); } };
+}
+
+// The page itself, running in the server's browser (server/browser.js): a
+// canvas showing the newest picture of it. On the projector this renderer
+// says how big its panel is, so the page is laid out for exactly that space,
+// and turns Next/Previous (a clicker, the guest remote) into Page Down/Up. A
+// controller's preview only watches; the controller drives through `browser`.
+//
+// Frozen, the projector keeps the picture it had while the page underneath
+// goes on changing - the presenter can follow a link or scroll to the right
+// paragraph from the iPad, and the room sees the result on TAKE.
+function renderLiveWeb(item, opts) {
+  const lb = opts.liveBrowser;
+  const isDisplay = !opts.preview && lb.role === 'display';
+  const canvas = el('canvas', { class: 'r-live-canvas', 'aria-hidden': 'true' });
+  const status = el('div', { class: 'r-live-status', role: 'status' });
+  const node = el('div', { class: 'r-fill r-live' }, canvas, status);
+  let current = item;
+  let shown = false;
+  let held = false;
+  const isHeld = () => !!(opts.getHeld ? opts.getHeld() : opts.getFrozen?.());
+  const say = (text, isError = false) => {
+    status.textContent = text;
+    status.hidden = !text;
+    node.classList.toggle('is-error', !!text && isError);
+  };
+  say(`Opening ${hostOf(item.src)}…`);
+
+  const paint = (bitmap) => {
+    if (isDisplay && isHeld() && shown) { held = true; return; }
+    held = false;
+    if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+    }
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    if (!shown) { shown = true; node.classList.add('has-frame'); say(''); }
+  };
+  const browser = watchLiveBrowser({
+    key: lb.keyFor(item),
+    home: item.src,
+    role: isDisplay ? 'display' : 'control',
+    onFrame: paint,
+    onState: (st) => { if (st.error) say(st.error, true); else if (shown) say(''); },
+    onError: (message) => say(message, true),
+    onOpening: () => say(`Opening ${hostOf(current.src)}…`),
+  });
+
+  // The projector's panel is the page's window: its size in CSS pixels, and
+  // how many real pixels each one has, capped (see viewFrom in browser.js).
+  let resize = null;
+  if (isDisplay) {
+    let last = '';
+    const sendView = () => {
+      const w = Math.round(node.clientWidth);
+      const h = Math.round(node.clientHeight);
+      if (!w || !h) return;
+      const scale = Math.min(2, window.devicePixelRatio || 1);
+      const id = `${w}x${h}@${scale}`;
+      if (id === last) return;
+      last = id;
+      browser.send({ t: 'view', w, h, scale });
+    };
+    resize = new ResizeObserver(sendView);
+    resize.observe(node);
+    requestAnimationFrame(sendView);
+  }
+
+  let lastNav = item.navNonce || 0;
+  return {
+    el: node,
+    browser,
+    update(it) {
+      if (it.src !== current.src && it.src) browser.send({ t: 'go', url: it.src });
+      current = it;
+    },
+    reconcile(it) {
+      // Unfrozen (or TAKEn): the room catches up with the page.
+      if (held && !isHeld() && browser.frame) paint(browser.frame);
+      if (!isDisplay) return;
+      if ((it.navNonce || 0) !== lastNav) {
+        lastNav = it.navNonce || 0;
+        browser.send({ t: 'key', key: it.navDir === 'prev' ? 'PageUp' : 'PageDown' });
+      }
+    },
+    telemetry: noTelemetry,
+    snapshot(ctx, rect) {
+      if (!shown || !canvas.width) return false;
+      paintBackdrop(ctx, rect, node, '#fff');
+      return drawFitted(ctx, rect, canvas, canvas.width, canvas.height, 'contain');
+    },
+    destroy() {
+      resize?.disconnect();
+      browser.release();
+      node.remove();
+    },
   };
 }
 
@@ -2238,7 +2418,7 @@ const FACTORIES = {
   audio: renderAudio,
   youtube: renderYouTube,
   stream: renderStream,
-  web: renderWeb,
+  web: renderWebItem,
   slides: renderWeb,
   deck: renderDeck,
   document: renderDocument,

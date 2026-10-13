@@ -30,6 +30,7 @@ import { encodeToFit } from './store.js';
 import { MAX_ASSET_CHARS, itemForStage, readPlan } from './planfile.js';
 import { createCameraReceiver, createMicReceiver } from './rtc.js';
 import { serverInfo } from './server.js';
+import { liveBrowserOptions } from './live-browser.js';
 import { createAssetResolver } from './assets.js';
 import { deckId } from './deck.js';
 import { assetRefsIn } from './deck-source.js';
@@ -279,6 +280,10 @@ function handleMediaEnded(key) {
   commit();
 }
 
+// A viewer is shown a card for a live page: only the room's devices hold the
+// key to it (see live-browser.js).
+const liveWeb = liveBrowserOptions(() => cfg, VIEWER ? 'viewer' : 'display');
+
 function mount(layer, item) {
   freeLayer(layer);
   layer.key = item.key;
@@ -301,6 +306,8 @@ function mount(layer, item) {
     getStream: () => cameraStream,
     getCameraStatus: () => cameraStatus,
     getFrozen: () => state.frozen,
+    // Only panel A holds while frozen; B, C and D always show what they have.
+    getHeld: () => state.frozen && layers.includes(layer),
     getDeckSource,
     // A deck's contentAspect() only has a real answer once it finishes
     // mounting (Marp parse + fetch, genuinely slow for a real lecture deck's
@@ -321,6 +328,8 @@ function mount(layer, item) {
     // Where check-in's code is asked for (Issue #256): the server this display
     // talks to, or the one that served it.
     getServerBase: () => pollBaseUrl(cfg) || new URL('/', location.href).href,
+    // A web page in the server's own browser, driven from the controller.
+    liveBrowser: liveWeb,
   });
   layer.node.append(layer.renderer.el);
 }

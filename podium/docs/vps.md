@@ -739,6 +739,124 @@ Built on everything above, and described for teachers in
 - **Streaming** is not something the server does: [streaming.md](streaming.md)
   covers OBS with YouTube or Twitch.
 
+### The live browser ✅
+
+A web page item used to be an `<iframe>` and nothing else, and a site that
+sends `X-Frame-Options` or a CSP `frame-ancestors` rule (GitHub, Google, most
+news sites, every learning-management system) refuses that outright: the
+projector shows the browser's *"… refused to connect"* face. Nothing in a page
+can get around it, and nothing should. A frame on another site is also sealed
+off from the page holding it, so even a page that does embed cannot be clicked
+or scrolled from the controller.
+
+The server can do what a page cannot: open the site itself, as a top-level
+tab, in a headless Chromium (`server/browser.js`). Nothing is framed, so
+nothing refuses. The tab's screencast (JPEG pictures, sent only when the page
+changes) goes to the display and the controllers over a WebSocket at
+`/browser`. The controller's taps, drags, keys and address bar go back over the
+same socket and are played into the tab as mouse and keyboard input (Chrome
+DevTools protocol `Input.*`). The display says how big its panel is, so the
+page is laid out for exactly that space; the zoom on the Now tab changes the
+layout width the way Ctrl + does.
+
+**How the devices find the page.** Every device in a room works out the same
+session name from the room passphrase and the item (PBKDF2 at the room key's
+own strength, then SHA-256 with the item's `liveId`; see
+`assets/js/live-browser.js`). The display and the controllers find one
+another's tab without a message between them, the server never learns the
+passphrase, and nobody without it can find the page. A copy of an item (the
+cue a frozen Next makes, a *Back to*) keeps its `liveId`, so it shows the same
+tab.
+
+**Who may use it.** A signed-in account or a provisioned kiosk, on the
+server's own origin. It is offered only on an instance with accounts: an open
+server running a browser for anybody who asks would be a free proxy for the
+whole internet. Guest View viewers are shown a card instead.
+
+**What the server sees.** This is the third exception to "the relay only moves
+ciphertext", and the plainest. The server is drawing the page, so it sees the
+page. Each session gets its own browser context (its own cookies, storage and
+cache), thrown away when the session closes, so one lecture's sign-in cannot
+leak into another's. Chromium's profile is a temporary directory, removed when
+it stops. Nothing is logged about what was browsed.
+
+**What a page may reach.** Chromium sends every connection it makes through a
+small proxy inside the server, on `127.0.0.1`: pages, images, scripts, iframes,
+workers, service workers and WebSockets. The proxy looks the name up itself,
+refuses anything with a loopback, private, link-local or otherwise non-public
+address, and connects to the very address it checked, so a name cannot pass
+the check and then point somewhere else. A page therefore cannot reach this
+process on `127.0.0.1`, a cloud provider's metadata address, or the machine
+room's switches. WebRTC is kept to the proxy too.
+`BROWSER_ALLOW_PRIVATE=1` turns the proxy off, for a server on a campus network
+whose intranet is the point. A `--proxy-server` of your own in `BROWSER_ARGS`
+replaces it, and your proxy then decides what may be reached. The address bar
+opens only `http` and `https`; downloads are refused; a link that opens a new
+tab opens in the same one; JavaScript dialogs are answered so a page never
+blocks on them.
+
+**What it costs.** One Chromium process, started when the first live page
+opens and stopped when the last one closes. Each open page is a tab, roughly
+100–300 MB of memory depending on the site. A page nobody is watching closes
+after `BROWSER_IDLE_MINUTES` (10). At most `BROWSER_MAX_SESSIONS` (4) are open
+at once; past that, the page idle longest makes room. Pictures go only to
+devices that are keeping up: a phone on bad Wi-Fi skips frames instead of
+queueing them. A display scrolling a busy page uses on the order of 1–3 MB/s.
+
+**What it cannot do.** It plays no sound (`--mute-audio`): sound belongs to
+Podium's own media items, which the mixer controls. A site with aggressive
+bot detection may notice that the browser is headless.
+
+#### Installing Chromium for the live browser
+
+Optional. Without it, web pages embed exactly as before. Any Chromium or
+Google Chrome works:
+
+```
+# Debian / Ubuntu: Google's own package
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+apt install ./google-chrome-stable_current_amd64.deb
+
+# or, on Debian, the distribution's Chromium
+apt install chromium
+```
+
+Ubuntu's own `chromium` is a snap, which expects a home directory a service
+user does not have; Google's package is the simpler choice there. The
+service's systemd unit works as shipped: Chromium's profile, cache and home
+all live in a temporary directory of its own.
+
+The server looks for `chromium`, `chromium-browser`, `google-chrome-stable`
+and `google-chrome` on its `PATH` once, at startup, and says what it found:
+
+```
+podium live browser: /usr/bin/google-chrome-stable
+```
+
+It is then in `/api/capabilities` (`features` includes `browser`), and
+`podium-admin doctor` reports it. Settings, all optional, in `podium.env`:
+
+| Setting | Default | |
+| :--- | :--- | :--- |
+| `LIVE_BROWSER` | on | `off` never runs it, even with Chromium installed. |
+| `BROWSER_PATH` | found on `PATH` | The Chromium to run. |
+| `BROWSER_MAX_SESSIONS` | `4` | Live pages open at once, across the server. |
+| `BROWSER_IDLE_MINUTES` | `10` | How long a page nobody is watching stays open. |
+| `BROWSER_ALLOW_PRIVATE` | off | `1` lets pages reach private and loopback addresses (turns the guard proxy off). |
+| `BROWSER_SEARCH_URL` | DuckDuckGo | Where words typed in the address bar go, e.g. `https://www.google.com/search?q=`. |
+| `BROWSER_ARGS` | none | More Chromium switches, space-separated. A `--proxy-server=http://proxy.campus.edu:3128` here is used instead of the guard proxy, and decides what pages may reach. |
+| `BROWSER_SANDBOX` | on | `off` runs Chromium without its sandbox. See below. |
+
+**The sandbox.** Chromium's sandbox is what keeps a hostile page inside its
+tab, and Podium leaves it on. Under the service's unit (`NoNewPrivileges`)
+it is built from user namespaces, which some systems do not give an ordinary
+user: Ubuntu 24.04's AppArmor allows them only for browsers it has a profile
+for. If Chromium cannot make one it exits with *No usable sandbox!*, and the
+server's log says so the first time a page is opened. Use a browser your
+system's AppArmor profiles cover (Google's package, on Ubuntu), allow
+unprivileged user namespaces, or (knowing what it costs) set
+`BROWSER_SANDBOX=off`.
+
 ## Installation
 
 `deploy/install.sh` on a fresh box: service user, the directory layout above,

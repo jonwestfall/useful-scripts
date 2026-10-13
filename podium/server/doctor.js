@@ -30,6 +30,7 @@ const accounts = require('./accounts.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
 const mail = require('./mail.js');
+const { findBrowser } = require('./browser.js');
 
 const DAY = 24 * 60 * 60 * 1000;
 const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -269,6 +270,27 @@ function checkMail(env) {
 }
 
 /**
+ * The live browser (browser.js): optional, like mail. Without Chromium, web
+ * pages are embedded frames, which is how Podium has always worked - so not
+ * having it is said plainly and is not a fault. A BROWSER_PATH that points at
+ * nothing, or a sandbox turned off, is worth knowing about.
+ */
+function checkLiveBrowser(env) {
+  if (/^(off|0|false|no)$/i.test(env.LIVE_BROWSER || '')) return say('ok', 'live browser', 'turned off (LIVE_BROWSER=off); web pages are embedded');
+  const exe = findBrowser(env);
+  if (!exe && env.BROWSER_PATH) {
+    return say('warn', 'live browser', `BROWSER_PATH is ${env.BROWSER_PATH}, which is not a program here`,
+      'Point BROWSER_PATH at Chromium or Google Chrome, or remove it to have the server look on PATH.');
+  }
+  if (!exe) return say('ok', 'live browser', 'no Chromium found; web pages are embedded (see "The live browser" in docs/vps.md)');
+  if (/^(off|0|false|no)$/i.test(env.BROWSER_SANDBOX || '')) {
+    return say('warn', 'live browser', `${exe}, with its sandbox turned off (BROWSER_SANDBOX=off)`,
+      'See "The sandbox" in docs/vps.md for running it with one.');
+  }
+  return say('ok', 'live browser', `${exe}${env.BROWSER_ALLOW_PRIVATE ? ', and may open private addresses (BROWSER_ALLOW_PRIVATE)' : ''}`);
+}
+
+/**
  * Did the deploy actually reach the running process?
  *
  * This is the failure this whole command exists for. `current` is a symlink and
@@ -487,6 +509,7 @@ async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, en
   await attempt(() => checkDisk(dataDir));
   await attempt(() => checkBackup(env));
   await attempt(() => checkMail(env));
+  await attempt(() => checkLiveBrowser(env));
   await attempt(() => checkBuild(releaseDir, healthUrl));
   await attempt(() => checkCertificate(certPath));
   await attempt(() => checkService(healthUrl));
@@ -515,6 +538,7 @@ module.exports = {
   run,
   report,
   checkMail,
+  checkLiveBrowser,
   checkNode,
   checkSchema,
   checkIntegrity,

@@ -97,6 +97,25 @@ MAIL_FROM="Podium <podium@example.edu>"
 has **Send a test email** to prove a message gets through. A receipt that
 cannot be sent is logged; it never holds up a student's check-in.
 
+## The live browser (web pages driven from the controller)
+
+Optional. With Chromium on the box, a web page item runs in the server's own
+browser: the projector shows any site (GitHub and Google included, which
+refuse to be embedded), and the controller clicks, scrolls and types into it.
+Without it, web pages are embedded frames, as they always were.
+
+```
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install ./google-chrome-stable_current_amd64.deb
+sudo systemctl restart podium
+```
+
+The service log then says `podium live browser: /usr/bin/google-chrome-stable`,
+and `podium-admin doctor` has a **live browser** line. It needs nothing in
+`podium.env`; the settings it takes (how many pages at once, a campus proxy,
+private addresses, the sandbox) are in [docs/vps.md](../docs/vps.md#the-live-browser).
+Each open page costs roughly 100–300 MB of memory while it is open.
+
 ## Session records, and how long they are kept
 
 Once there are accounts, the display writes down what it showed, and the

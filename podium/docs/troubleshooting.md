@@ -132,7 +132,26 @@ When the display runs fullscreen on the classroom PC with browser controls hidde
 
 ---
 
-## 5. Recording, Replay, Search & Attendance (Your Own Server)
+## 5. Web Pages
+
+### A web page shows "… refused to connect" or a sad face
+The site will not let other sites show its pages inside them. GitHub, Google, most news sites and every learning-management system send `X-Frame-Options` or a `frame-ancestors` rule that says so, and the browser obeys. No setting in Podium (or any other web page) can get around it.
+- **On your own server, use the live browser.** With Chromium installed (see [vps.md](vps.md#the-live-browser)), a page on another site opens in the server's own browser instead of a frame. Set the item to **Show it as: Live browser** (or *Automatic*) in the planner, or with **Show this page as** on the Now tab. You also get to click, scroll and type into it from the controller.
+- **Without a server**, Podium shows a card instead of the sad face for the sites it knows refuse. For the others, open the page in a tab of its own on the classroom computer, or put up a QR code of it for the class.
+
+### The live browser says it is not available, or pages only ever embed
+- `podium-admin doctor` has a **live browser** line saying whether the server found Chromium. The service log says it at startup too (`podium live browser: …`). Chromium installed after the server started needs `systemctl restart podium`.
+- It is only offered on a server with accounts, to a signed-in controller or display (or a kiosk).
+- **Chromium would not start (… No usable sandbox!)** in the service log: see *The sandbox* in [vps.md](vps.md#installing-chromium-for-the-live-browser).
+- **That address is on a private network**: the live browser does not open `localhost`, `10.x`, `192.168.x` and similar addresses unless `BROWSER_ALLOW_PRIVATE=1`.
+- **The live browser already has 4 pages open**: close one, wait for one nobody is watching to close itself (10 minutes), or raise `BROWSER_MAX_SESSIONS`.
+
+### The live page has no sound
+On purpose: the live browser is silent. Play the video through Podium's own **Video**, **YouTube** or **Live stream** item, which the mixer controls, or set the page to **Embedded** (if the site allows framing).
+
+---
+
+## 6. Recording, Replay, Search & Attendance (Your Own Server)
 
 These all need Podium's own server with accounts (see [vps.md](vps.md)).
 

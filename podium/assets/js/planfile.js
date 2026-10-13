@@ -195,8 +195,15 @@ export const PLAN_TYPES = {
   },
   web: {
     label: 'Web page', icon: '\u{1F310}',
-    blurb: 'Any page. Some sites refuse to be framed; check it here before class.',
-    fields: [{ key: 'src', label: 'URL', kind: 'text', placeholder: 'https://example.edu/demo' }],
+    blurb: 'Any page. On a Podium server with the live browser, it opens there and you drive it from the controller; otherwise it is embedded, and some sites refuse that.',
+    fields: [
+      { key: 'src', label: 'URL', kind: 'text', placeholder: 'https://example.edu/demo' },
+      // live-browser.js: 'auto' is the live browser for another site's page
+      // where the server has one, and an embedded frame otherwise.
+      { key: 'browse', label: 'Show it as', kind: 'select', def: 'auto',
+        options: [['auto', 'Automatic'], ['live', 'Live browser, driven from the controller'], ['embed', 'Embedded page (plays its own sound)']],
+        hint: 'The live browser shows any site, even ones that refuse to be embedded, and lets you click, scroll and type from the controller. It needs a Podium server with Chromium installed.' },
+    ],
   },
   whiteboard: {
     label: 'Whiteboard', icon: '✎',
