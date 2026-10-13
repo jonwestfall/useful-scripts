@@ -325,6 +325,10 @@ function connectCdp(wsUrl) {
 // --- the manager ---------------------------------------------------------------
 
 const SESSION_KEY_RE = /^[A-Za-z0-9_-]{32,64}$/;
+// A browser's very first start on a machine (its profile, fonts and caches
+// all cold) can take tens of seconds - on a freshly installed server, the
+// first web page anyone opens. Every start after that takes about one.
+const LAUNCH_TIMEOUT_MS = 90 * 1000;
 // Every connected device has its own send buffer; a phone on bad Wi-Fi that
 // falls behind skips pictures rather than queueing a minute of them.
 const MAX_BUFFERED = 2 * 1024 * 1024;
@@ -428,7 +432,10 @@ function createLiveBrowser(opts = {}) {
       // What Chromium said before it gave up, for the log: "No usable
       // sandbox!" is the one an operator most needs to read.
       const why = () => tail.split('\n').map((l) => l.trim()).filter((l) => l && !/dbus|Fontconfig/i.test(l)).slice(-3).join(' | ');
-      const timer = setTimeout(() => { reject(new Error('Chromium did not start within 20 seconds')); child.kill('SIGKILL'); }, 20000);
+      const timer = setTimeout(() => {
+        reject(new Error(`Chromium did not start within ${LAUNCH_TIMEOUT_MS / 1000} seconds`));
+        child.kill('SIGKILL');
+      }, LAUNCH_TIMEOUT_MS);
       child.stderr.setEncoding('utf8');
       child.stderr.on('data', (chunk) => {
         tail = (tail + chunk).slice(-4096);

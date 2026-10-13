@@ -234,7 +234,10 @@ if (!exe) {
     const key = await liveSessionKey('room', 'pass', 'web-1');
     const display = await connect(key, 'display');
     send(display, { t: 'view', w: 800, h: 600, scale: 1 });
-    ok('a page that refuses framing opens in the live browser', await until('the first page', () => latest(display).title === 'One'));
+    // The first page waits on Chromium starting, which on a fresh machine (a
+    // CI runner's first launch of its Chrome) can take far longer than the
+    // second.
+    ok('a page that refuses framing opens in the live browser', await until('the first page', () => latest(display).title === 'One', 100000));
     ok('and pictures of it arrive, as JPEG', await until('a frame', () => display.frames.some((f) => f[0] === 0xff && f[1] === 0xd8)));
 
     const controller = await connect(key, 'control');
@@ -297,7 +300,7 @@ if (!exe) {
           ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', home: `${home}reach`, role: 'display' })); resolve(client); });
           ws.on('error', reject);
         });
-        ok('through the guard, a public page opens', await until('the guarded page', () => latest(g).title === 'Reaching' && latest(g).loading === false));
+        ok('through the guard, a public page opens', await until('the guarded page', () => latest(g).title === 'Reaching' && latest(g).loading === false, 100000));
         await new Promise((r) => setTimeout(r, 1500));
         ok('and nothing it asks for reaches a private address', secretHits === 0);
         g.ws.close();
@@ -312,7 +315,7 @@ if (!exe) {
 
     const strictKey = await liveSessionKey('room', 'pass', 'web-2');
     const guarded = await connect(strictKey, 'display', '&strict=1');
-    ok('with private addresses off limits, a page on this machine is refused', await until('private refusal', () => /private network/i.test(latest(guarded).error || '')));
+    ok('with private addresses off limits, a page on this machine is refused', await until('private refusal', () => /private network/i.test(latest(guarded).error || ''), 100000));
     guarded.ws.close();
 
     // The projector and a controller's preview ask for a new page at the same
