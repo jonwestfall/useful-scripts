@@ -157,7 +157,17 @@ Every connection a live page makes goes through a guard inside the Podium server
 - **`podium-admin doctor`** (`sudo -u podium node /opt/podium/current/server/podium-admin.js doctor`): its **web access** line tries `github.com` through the same guard, with the same settings, and says whether a page could open it.
 
 What the reason means:
-- **could not look … up (ENOTFOUND, EAI_AGAIN)**: the server's own DNS is not answering for that name. Check `getent ahosts github.com` on the server.
+- **could not look … up**: the server's own name lookups fail. Podium asks the system's lookup first, then the DNS servers in `/etc/resolv.conf` directly; when both fail, the reason shows both, as in `EAI_AGAIN; asking its DNS servers directly: ECONNREFUSED`.
+  - **`EAI_AGAIN` for every address, at once** (often Chrome's own `update.googleapis.com` and similar as well as the page): the Podium service cannot resolve names at all, even if the rest of the server can. Compare the server, the service account, and the service's own sandbox:
+    ```
+    getent ahosts github.com
+    sudo -u podium getent ahosts github.com
+    sudo systemd-run --pipe --wait -p User=podium -p ProtectSystem=strict -p ProtectHome=true -p PrivateTmp=true getent ahosts github.com
+    ls -l /etc/resolv.conf; cat /etc/resolv.conf; grep '^hosts' /etc/nsswitch.conf
+    systemctl cat podium
+    ```
+    The first that fails says where: the whole server (DNS itself), only the `podium` account (often an `/etc/resolv.conf` it cannot read), or only inside the service (settings in `systemctl cat podium` such as `IPAddressDeny=`, `RestrictAddressFamilies=` or `PrivateNetwork=`, or a name-service module in `/etc/nsswitch.conf` the sandbox blocks).
+  - **`ENOTFOUND`**: that one name does not exist, or the server's DNS does not know it.
 - **resolves to …, which is a private or reserved address**: the name came back as an address inside a private or reserved range. Some DNS filters, VPNs and "fake IP" proxy setups do this. Fix the DNS, or set `BROWSER_ALLOW_PRIVATE=1` if pages on that network should be reachable.
 - **could not be reached from this server (… ETIMEDOUT, ECONNREFUSED, ENETUNREACH)**: the server cannot connect out directly. Try `curl -sI https://github.com` on the server. A firewall may be blocking outgoing connections, or the network may only reach the internet through a proxy. If so, set `BROWSER_UPSTREAM_PROXY=http://proxy.example.edu:3128` in `podium.env` and restart. Pages then go out through that proxy, still under the private-address rule.
 
