@@ -1470,6 +1470,7 @@ ok('and the login page styles itself, having nothing behind the gate to fetch',
 
 await pad.fill('#username', 'jon');
 await pad.fill('#password', 'not the password');
+expecting.loginRefused = true;
 await pad.click('#go');
 await pad.waitForFunction(() => document.querySelector('#note')?.classList.contains('bad'), null, { timeout: 8000 });
 ok(`a wrong password says so and stays put ("${(await pad.textContent('#note')).trim()}")`,
@@ -1478,6 +1479,8 @@ ok('and clears the password rather than leaving it sitting there', await pad.inp
 
 await pad.fill('#password', 'a good long password');
 await Promise.all([pad.waitForURL(/control\.html/), pad.click('#go')]);
+// Its console message can trail the page by a moment; signed in, it is over.
+expecting.loginRefused = false;
 ok('the right password lands on the page that was asked for', /control\.html$/.test(pad.url()));
 
 // In the ⋯ menu since Issue #187 - present, if not on show until it opens.

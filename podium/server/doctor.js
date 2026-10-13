@@ -30,7 +30,7 @@ const accounts = require('./accounts.js');
 const library = require('./library.js');
 const lectures = require('./lectures.js');
 const mail = require('./mail.js');
-const { findBrowser } = require('./browser.js');
+const { findBrowser, probeReach } = require('./browser.js');
 
 const DAY = 24 * 60 * 60 * 1000;
 const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -291,6 +291,24 @@ function checkLiveBrowser(env) {
 }
 
 /**
+ * Can a live page get out? The same guard and the same upstream proxy a page
+ * goes through, asked to open github.com - which is what a page that says
+ * ERR_TUNNEL_CONNECTION_FAILED could not do, with the reason why. Only where
+ * there is a live browser to have the problem.
+ */
+async function checkLiveBrowserReach(env, { host = env.BROWSER_TEST_HOST || 'github.com', probe = probeReach } = {}) {
+  if (/^(off|0|false|no)$/i.test(env.LIVE_BROWSER || '') || !findBrowser(env)) return null;
+  const result = await probe({
+    host, port: 443,
+    allowPrivate: /^(1|true|yes|on)$/i.test(env.BROWSER_ALLOW_PRIVATE || ''),
+    upstream: env.BROWSER_UPSTREAM_PROXY || '',
+  });
+  if (result.ok) return say('ok', 'web access', `a live page can reach ${result.detail.replace(/ is reachable/, '')}`);
+  return say('bad', 'web access', `a live page cannot open ${host}: ${result.detail}`,
+    'See "The live page says This site can\'t be reached" in docs/troubleshooting.md.');
+}
+
+/**
  * Did the deploy actually reach the running process?
  *
  * This is the failure this whole command exists for. `current` is a symlink and
@@ -510,6 +528,10 @@ async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, en
   await attempt(() => checkBackup(env));
   await attempt(() => checkMail(env));
   await attempt(() => checkLiveBrowser(env));
+  {
+    const reach = await checkLiveBrowserReach(env).catch((err) => say('warn', 'check', `a check could not run (${err.message})`));
+    if (reach) found.push(reach);
+  }
   await attempt(() => checkBuild(releaseDir, healthUrl));
   await attempt(() => checkCertificate(certPath));
   await attempt(() => checkService(healthUrl));
@@ -539,6 +561,7 @@ module.exports = {
   report,
   checkMail,
   checkLiveBrowser,
+  checkLiveBrowserReach,
   checkNode,
   checkSchema,
   checkIntegrity,

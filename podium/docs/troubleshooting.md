@@ -146,6 +146,23 @@ The site will not let other sites show its pages inside them. GitHub, Google, mo
 - **That address is on a private network**: the live browser does not open `localhost`, `10.x`, `192.168.x` and similar addresses unless `BROWSER_ALLOW_PRIVATE=1`.
 - **The live browser already has 4 pages open**: close one, wait for one nobody is watching to close itself (10 minutes), or raise `BROWSER_MAX_SESSIONS`.
 
+### The live page says "This site can't be reached" (ERR_TUNNEL_CONNECTION_FAILED)
+Every connection a live page makes goes through a guard inside the Podium server, which refuses addresses on private networks. `ERR_TUNNEL_CONNECTION_FAILED` is Chromium saying the guard did not open the connection. The guard says why in three places:
+- **On the controller**: the line under the page reads *That page did not open: …* with the reason.
+- **In the service log**: one line per address, at most once a minute:
+  ```
+  journalctl -u podium --since "15 min ago" | grep "live browser"
+  ```
+  For example: `live browser: did not open github.com:443 - github.com:443 could not be reached from this server (140.82.112.3: ETIMEDOUT) - …`
+- **`podium-admin doctor`** (`sudo -u podium node /opt/podium/current/server/podium-admin.js doctor`): its **web access** line tries `github.com` through the same guard, with the same settings, and says whether a page could open it.
+
+What the reason means:
+- **could not look … up (ENOTFOUND, EAI_AGAIN)**: the server's own DNS is not answering for that name. Check `getent ahosts github.com` on the server.
+- **resolves to …, which is a private or reserved address**: the name came back as an address inside a private or reserved range. Some DNS filters, VPNs and "fake IP" proxy setups do this. Fix the DNS, or set `BROWSER_ALLOW_PRIVATE=1` if pages on that network should be reachable.
+- **could not be reached from this server (… ETIMEDOUT, ECONNREFUSED, ENETUNREACH)**: the server cannot connect out directly. Try `curl -sI https://github.com` on the server. A firewall may be blocking outgoing connections, or the network may only reach the internet through a proxy. If so, set `BROWSER_UPSTREAM_PROXY=http://proxy.example.edu:3128` in `podium.env` and restart. Pages then go out through that proxy, still under the private-address rule.
+
+After changing `podium.env`: `sudo systemctl restart podium`.
+
 ### The live page has no sound
 On purpose: the live browser is silent. Play the video through Podium's own **Video**, **YouTube** or **Live stream** item, which the mixer controls, or set the page to **Embedded** (if the site allows framing).
 

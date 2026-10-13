@@ -242,6 +242,7 @@ const liveBrowser = createLiveBrowser({
   idleMs: Number(process.env.BROWSER_IDLE_MINUTES || 10) * 60 * 1000,
   searchUrl: process.env.BROWSER_SEARCH_URL || undefined,
   extraArgs: process.env.BROWSER_ARGS || '',
+  upstreamProxy: process.env.BROWSER_UPSTREAM_PROXY || '',
   sandbox: !/^(off|0|false|no)$/i.test(process.env.BROWSER_SANDBOX || ''),
 });
 const liveBrowserReady = () => liveBrowser.available && hasAccounts();

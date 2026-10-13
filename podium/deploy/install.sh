@@ -14,6 +14,10 @@
 # must not roll back last week's database, and a bad deploy must not be able to
 # take the library with it.
 #
+# The one package it does install is a browser, for the live browser (web
+# pages driven from the controller): Google Chrome on amd64, Debian's Chromium
+# on arm64 Debian. INSTALL_CHROME=0 leaves it out.
+#
 # It does not install nginx, get you a certificate, or open a firewall. Those
 # are the parts where a box differs from every other box, and deploy/README.md
 # says what to do with the template next to this script.
@@ -25,6 +29,9 @@ PREFIX=${PREFIX:-/opt/podium}
 DATA_DIR=${DATA_DIR:-/var/lib/podium}
 CONFIG_DIR=${CONFIG_DIR:-/etc/podium}
 PORT=${PORT:-8080}
+# The live browser (server/browser.js) needs a Chromium. INSTALL_CHROME=0
+# skips installing one; web pages are then embedded frames, as they always were.
+INSTALL_CHROME=${INSTALL_CHROME:-1}
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 
@@ -87,20 +94,72 @@ DATA_DIR=$DATA_DIR
 #SMTP_URL=smtp://user:password@mail.example.edu:587
 #MAIL_FROM="Podium <podium@example.edu>"
 
-# The live browser (optional): web pages run in Chromium on this box and are
-# driven from the controller. On automatically once Chromium is installed
-# (restart the service after installing it). See docs/vps.md.
+# The live browser: web pages run in Chromium on this box and are driven from
+# the controller. On whenever Chromium is installed (this script installs it;
+# restart the service after installing one by hand). See docs/vps.md.
 #LIVE_BROWSER=off
 #BROWSER_PATH=/usr/bin/google-chrome-stable
 #BROWSER_MAX_SESSIONS=4
 #BROWSER_IDLE_MINUTES=10
 #BROWSER_ALLOW_PRIVATE=1
 #BROWSER_SEARCH_URL=https://www.google.com/search?q=
-#BROWSER_ARGS=--proxy-server=http://proxy.example.edu:3128
+# A network that only reaches the internet through a proxy:
+#BROWSER_UPSTREAM_PROXY=http://proxy.example.edu:3128
+#BROWSER_ARGS=
 #BROWSER_SANDBOX=off
 EOF
   chmod 0640 "$CONFIG_DIR/podium.env"
   chgrp "$PODIUM_USER" "$CONFIG_DIR/podium.env"
+fi
+
+echo "==> live browser (a Chromium for web pages driven from the controller)"
+# Never fatal: everything else works without it, and a mirror that is down
+# today is no reason to leave a half-installed server behind.
+find_chrome() {
+  local name
+  for name in google-chrome-stable google-chrome chromium chromium-browser; do
+    command -v "$name" 2>/dev/null && return 0
+  done
+  return 1
+}
+install_chrome() {
+  command -v apt-get >/dev/null || { echo "    no apt here: install Chrome or Chromium yourself (docs/vps.md, \"The live browser\")"; return 0; }
+  local arch tmp
+  arch=$(dpkg --print-architecture)
+  if [[ "$arch" == amd64 ]]; then
+    tmp=$(mktemp -d)
+    # Google's own package: its sandbox works for a service user, and it adds
+    # Google's apt repository, so Chrome updates with the rest of the system.
+    if command -v curl >/dev/null; then
+      curl -fsSL -o "$tmp/chrome.deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb || { rm -rf "$tmp"; return 1; }
+    elif command -v wget >/dev/null; then
+      wget -q -O "$tmp/chrome.deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb || { rm -rf "$tmp"; return 1; }
+    else
+      rm -rf "$tmp"; echo "    neither curl nor wget is here to download Chrome with"; return 1
+    fi
+    apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$tmp/chrome.deb"
+    local status=$?
+    rm -rf "$tmp"
+    return $status
+  fi
+  # No Google Chrome for Linux on other architectures. Debian's own Chromium
+  # is a real package; Ubuntu's is a snap, which expects a home directory a
+  # service account does not have.
+  if grep -qi '^ID=debian' /etc/os-release 2>/dev/null; then
+    apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq chromium
+    return $?
+  fi
+  echo "    no package for $arch here: install a Chromium yourself and set BROWSER_PATH (docs/vps.md)"
+  return 0
+}
+if [[ "$INSTALL_CHROME" == 0 ]]; then
+  echo "    skipped (INSTALL_CHROME=0): web pages will be embedded frames"
+elif chrome=$(find_chrome); then
+  echo "    already here: $chrome"
+elif install_chrome; then
+  chrome=$(find_chrome) && echo "    installed: $chrome"
+else
+  echo "    WARNING: Chrome did not install; web pages will be embedded frames until it does (docs/vps.md, \"The live browser\")"
 fi
 
 echo "==> systemd unit"
