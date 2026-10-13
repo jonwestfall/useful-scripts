@@ -3654,17 +3654,17 @@ await pvCtrl.waitForSelector('#app:not([hidden])');
 // At the desk, days before.
 const pvPlanner = await pvPresenter.newPage();
 trap(pvPlanner, 'view link planner');
-// This browser's storage answering after the server does - as it can on a
-// fresh browser - is when New lecture used to be overwritten by the page's
-// own start-up (it lights up when the server answers). Made certain here.
+// This browser's storage being slow - as it is on a fresh CI browser - is
+// when a lecture started and titled at once used to stay "Untitled lecture":
+// start-up, or New lecture's own save of the lecture it was leaving, put a
+// blank one in its place after the typing. Made certain here: every answer
+// from this page's storage arrives late.
 await pvPlanner.addInitScript(() => {
-  const open = indexedDB.open.bind(indexedDB);
-  indexedDB.open = (...args) => new Proxy(open(...args), {
-    set(req, key, value) {
-      req[key] = key === 'onsuccess' ? (ev) => setTimeout(() => value.call(req, ev), 1500) : value;
-      return true;
-    },
-    get(req, key) { const v = req[key]; return typeof v === 'function' ? v.bind(req) : v; },
+  const success = Object.getOwnPropertyDescriptor(IDBRequest.prototype, 'onsuccess');
+  Object.defineProperty(IDBRequest.prototype, 'onsuccess', {
+    configurable: true,
+    get() { return success.get.call(this); },
+    set(fn) { success.set.call(this, fn && ((ev) => setTimeout(() => fn.call(this, ev), 600))); },
   });
 });
 await pvPlanner.goto(`${pvBase}/plan.html`);
