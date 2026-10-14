@@ -20,7 +20,7 @@ import { openQuickLook, canQuickLook } from './quicklook-open.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
 import { mountSessionBadge, serverInfo } from './server.js';
 import { liveBrowserOptions, liveBrowserAvailable } from './live-browser.js';
-import { createAssetResolver, BLANK_PIXEL } from './assets.js';
+import { createAssetResolver, sendOnce, BLANK_PIXEL } from './assets.js';
 import { createWatermarkPanel } from './watermark.js';
 import { createThumbnailer } from './thumbs.js';
 import { loadDefaults, defaultCommands, defaultsDelta, changedDefaultCommands, createDefaultsPanel, DEFAULTS_KEY } from './defaults.js';
@@ -1204,12 +1204,12 @@ function renderRecent() {
 // Push the bytes ahead of an item that refers to them, so the projector does
 // not have to notice and ask. Once each: a photo is ~120 KB and re-picking
 // it is common, while a display that reloaded and lost it asks for it by
-// name (see 'asset-need').
+// name (see 'asset-need'). Counted as sent only once the bus says it went
+// (see sendOnce), so one refused while the relay was down goes next time.
 function pushAssetIfHeld(src) {
   const assetId = assetIdOf(src);
-  if (assetId && assetStore.has(assetId) && !assetsSent.has(assetId)) {
-    if (bus?.send({ t: 'asset', id: assetId, data: assetStore.get(assetId) }) !== false) assetsSent.add(assetId);
-  }
+  if (!assetId || !assetStore.has(assetId)) return;
+  sendOnce(assetsSent, assetId, () => bus?.send({ t: 'asset', id: assetId, data: assetStore.get(assetId) }));
 }
 
 function stage(item, where = 'auto') {
