@@ -59,6 +59,7 @@ const mail = require('./mail.js');
 const zipStaging = require('./zip-staging.js');
 const { createViewCodes, linkCodeForKey, VIEW_ROOM_RE } = require('./view-codes.js');
 const { createLiveBrowser, findBrowser } = require('./browser.js');
+const { AUTH_OPEN_PATHS, AUTH_PUBLIC_WITH_ACCOUNTS, KIOSK_OPEN_PATHS } = require('./open-paths.js');
 
 const PORT = Number(process.env.PORT || 8080);
 // Unset means every interface, which is what running this on a laptop for a
@@ -115,72 +116,8 @@ const MAX_ROOMS = Number(process.env.MAX_ROOMS || 200);
 // into the plain-file list below, which is index.html's alone.
 const AUTH_USER = process.env.AUTH_USER || 'podium';
 const AUTH_PASSWORD = process.env.AUTH_PASSWORD || '';
-const AUTH_OPEN_PATHS = new Set([
-  '/join.html', '/assets/js/join.js', '/login.html', '/favicon.ico',
-  // A student checking in (Issue #256) has no account either; the page is
-  // self-contained, and its /attend routes answer nothing without a code.
-  '/attend.html',
-  '/guest.html', '/assets/js/guest.js', '/assets/js/bus.js', '/assets/js/config.js',
-  '/assets/js/crypto.js', '/assets/js/transport/index.js', '/assets/js/transport/ws.js',
-  '/assets/js/transport/mqtt.js', '/assets/js/transport/supabase.js',
-  // index.html is the showcase page (see below) - these are the static
-  // files it loads to render, none of which carry anything a stranger
-  // could not already read in the public repo. Opening them exposes no
-  // page: gate() still checks each request's own path, so control.html,
-  // display.html, plan.html and admin.html are untouched by this.
-  '/assets/css/podium.css', '/assets/js/server.js', '/assets/js/protocol.js', '/assets/js/zoom.js', '/assets/js/poll-look.js',
-  '/assets/js/util.js', '/assets/js/index.js', '/assets/icons/apple-touch-icon.png',
-  // Light or dark (theme.js): the landing page, the guide and a guest's
-  // controller all start with it, and it is no more than a colour choice.
-  '/assets/js/theme.js', '/assets/js/theme-boot.js',
-]);
-
-// index.html itself, reachable without signing in even where accounts are
-// configured - it is the showcase, meant to sell Podium to someone who has
-// not signed in yet and hand them a Sign in link, not a wall. This is
-// narrower than AUTH_OPEN_PATHS above on purpose: it excuses the splash
-// from the *accounts* check only (see gate() in api.js). A self-hosted
-// instance using the simpler AUTH_PASSWORD gate instead of accounts chose
-// that specifically to keep the whole thing off the public internet, splash
-// included, and still gets challenged for these paths like every other.
-// guide.html is the same kind of page: a self-contained tour of what Podium
-// is, linked from the showcase, loading nothing but the light/dark choice
-// (theme.js, open above).
-const AUTH_PUBLIC_WITH_ACCOUNTS = new Set(['/', '/index.html', '/guide.html']);
-
-// What a provisioned kiosk (Issue #151) is let onto with its own cookie
-// instead of a signed-in user - display.html itself, plus every file it
-// actually loads to run. Deliberately NOT control.html, plan.html or
-// admin.html: a kiosk cookie is scoped to the one page a device nobody is
-// watching has any business reaching. Built from the same file list sw.js's
-// WARM keeps in sync with display.js's real imports (test/offline-shell.test.mjs
-// enforces that), so a future renderer module landing there does not silently
-// leave a kiosk stuck on the login page.
-const KIOSK_OPEN_PATHS = new Set([
-  '/display.html', '/config.json', '/manifest-display.webmanifest',
-  '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
-  '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
-  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/screen-record.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-qr.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
-  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/live-browser.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
-  '/assets/js/zoom.js', '/assets/js/poll-link.js', '/assets/js/poll-look.js', '/assets/js/view-link.js',
-]);
-
-// What view.html (Guest View, Issue #150) needs to load, open to everyone
-// the same way guest.html's files are: a viewer has no account and is not
-// meant to have one. It is the viewer mode of display.js, so it is most of
-// the kiosk list above - never display.html itself, and never config.json:
-// a viewer's whole configuration arrives in its link, and the deployment's
-// default config is none of a stranger's business.
-// test/kiosk-open-paths.test.mjs checks this against what view.html really loads.
-const VIEW_OPEN_PATHS = new Set([
-  '/view.html',
-  '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
-  '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
-  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/screen-record.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-qr.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
-  '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/live-browser.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
-  '/assets/js/zoom.js', '/assets/js/poll-link.js', '/assets/js/poll-look.js', '/assets/js/view-link.js',
-]);
-for (const openPath of VIEW_OPEN_PATHS) AUTH_OPEN_PATHS.add(openPath);
+// The paths themselves - open to everyone, to the signed-out showcase, to a
+// kiosk's cookie and to a Guest View viewer - are listed in open-paths.js.
 
 const viewCodes = createViewCodes();
 
@@ -1131,7 +1068,7 @@ server.on('upgrade', (req, socket, head) => {
   // wants ORIGIN rather than accounts. See VPS.md.
   //
   // This is also the edge guest.html (Issue #77) cannot get around: opening
-  // the page needs no account (see AUTH_OPEN_PATHS above), but this socket
+  // the page needs no account (see AUTH_OPEN_PATHS in open-paths.js), but this socket
   // still does when accounts are configured, exactly like the instructor's
   // own control.html on the same deployment. A guest pairing link works
   // everywhere the existing full-control one already does - GitHub Pages,
