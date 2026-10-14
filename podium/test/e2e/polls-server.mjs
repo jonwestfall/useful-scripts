@@ -2227,6 +2227,19 @@ ok('rotating it is one button, because that is how you take a room back',
 // it reading what the server actually holds rather than a key nobody has.
 await desk.fill(passField, before);
 
+// Admin -> Server -> Health: podium-admin doctor, from the browser. What it
+// finds depends on the machine (a backup, mail, the internet); that it asks,
+// and shows every answer, does not.
+await desk.click('#tab-server');
+await desk.waitForSelector('#health-list .health-item', { timeout: 30000 });
+const healthChecks = await desk.$$eval('#health-list .health-item', (els) => els.map((e) => e.dataset.check));
+ok(`opening the Server tab runs the health checks (${healthChecks.join(', ')})`,
+  ['node', 'schema', 'database', 'accounts', 'disk', 'build'].every((c) => healthChecks.includes(c)));
+ok(`and says how it went (${await desk.textContent('#health-note')})`,
+  /checks out|worth knowing|need/.test(await desk.textContent('#health-note')));
+ok(`the build is the one this server runs (${await desk.textContent('#health-list [data-check="build"] .health-detail')})`,
+  /deployed and running/.test(await desk.textContent('#health-list [data-check="build"] .health-detail')));
+
 await desk.click('#tab-storage');
 await desk.waitForSelector('#panel-storage:not([hidden])');
 
@@ -2535,6 +2548,8 @@ ok(`the relay socket refuses a stranger who knows the room name (${await upgrade
     method: 'POST', headers: { cookie: taCookie }, body: 'PK',
   })).status;
   ok(`a non-admin account cannot import into the content folders (${memberPost})`, memberPost === 403);
+  const memberHealth = (await fetch(`${acctBase}/api/system/health`, { headers: { cookie: taCookie } })).status;
+  ok(`nor see the server's health checks (${memberHealth})`, memberHealth === 403);
   await zipDesk.close();
 }
 

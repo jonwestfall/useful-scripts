@@ -265,6 +265,8 @@ const authContext = {
   kioskOpenPaths: KIOSK_OPEN_PATHS,
   viewerMayRead: (req, pathname) => viewerMayRead(req, pathname),
   liveBrowser: liveBrowserReady,
+  // What this process read at startup, for Admin -> Server -> Health.
+  served: SERVED,
 };
 
 function timingSafeEqualString(given, want) {

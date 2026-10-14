@@ -106,6 +106,14 @@
   <div class="admin-panel" id="panel-server" hidden>
   <section class="card" id="server-card">
     <div class="admin-head">
+      <h2>Health</h2>
+      <button type="button" id="health-go">Check again</button>
+    </div>
+    <p class="hint" id="health-note" role="status">Checking…</p>
+    <ul class="health-list" id="health-list"></ul>
+    <p class="hint">The same checks as <code>podium-admin doctor</code> on the server, asked of the running service. The certificate, and whether the relay answers from outside, are checked only there.</p>
+    <hr style="border:0;border-top:1px solid var(--line);margin:24px 0 12px 0">
+    <div class="admin-head">
       <h2>User &amp; Security Logs</h2>
     </div>
     <div class="admin-actions">

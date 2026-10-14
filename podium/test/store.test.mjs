@@ -7,7 +7,7 @@
 // migrations that run once, a password that cannot be read back, a session
 // that stops working when its account does. A mock would be testing itself.
 
-import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, chmodSync, writeFileSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readdirSync, mkdirSync, chmodSync, writeFileSync, statSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
@@ -1670,6 +1670,35 @@ const code = doctor.report(report, (line) => lines.push(line));
 ok('a run with nothing broken exits 0 even when it has warnings',
   code === (report.some((item) => item.level === 'bad') ? 1 : 0));
 ok('and every finding gets a line somebody can read', lines.length >= report.length);
+
+// Admin -> Server -> Health: the same checks, asked of the running service.
+// Laid out the way update.sh deploys (<prefix>/releases/<id>, and current
+// pointing at one), so a deploy the service was not restarted into shows.
+{
+  const prefix = mkdtempSync(path.join(tmpdir(), 'podium-doctor-releases-'));
+  const release = (id, build) => {
+    const dir = path.join(prefix, 'releases', id);
+    mkdirSync(path.join(dir, 'assets', 'js'), { recursive: true });
+    writeFileSync(path.join(dir, 'assets', 'js', 'protocol.js'), `export const BUILD = ${build};\nexport const VERSION = '9.9';\n`);
+    return dir;
+  };
+  const old = release('one', 41);
+  const next = release('two', 42);
+  symlinkSync(old, path.join(prefix, 'current'));
+  const inService = await doctor.runInService({ db, dataDir, staticDir: old, served: { build: 41 } });
+  ok(`from inside the service, the build it is running is the release it serves (${seen(inService, 'build').detail})`,
+    seen(inService, 'build').level === 'ok' && /build 41/.test(seen(inService, 'build').detail));
+  ok('and it does not ask itself over its own port, or read a certificate only root can',
+    !seen(inService, 'service') && !seen(inService, 'relay') && !seen(inService, 'certificate'));
+  ok('but every other check is there', ['node', 'schema', 'database', 'accounts', 'media', 'storage', 'permissions', 'disk', 'backup', 'mail']
+    .every((title) => !!seen(inService, title)));
+  unlinkSync(path.join(prefix, 'current'));
+  symlinkSync(next, path.join(prefix, 'current'));
+  const notRestarted = await doctor.runInService({ db, dataDir, staticDir: old, served: { build: 41 } });
+  ok(`a release deployed but not restarted into is called out (${seen(notRestarted, 'build').detail})`,
+    seen(notRestarted, 'build').level === 'bad' && /build 42.*build 41/.test(seen(notRestarted, 'build').detail));
+  rmSync(prefix, { recursive: true, force: true });
+}
 
 // A database that will not open at all - the recovery scenario doctor exists
 // for - has to be a finding, not a crash that pre-empts every other check.

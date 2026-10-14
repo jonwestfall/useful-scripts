@@ -681,6 +681,13 @@ rather than by fetching `protocol.js`, because on an instance with accounts that
 file is behind the login gate and answers 401 — which would have made the check
 useless on exactly the deployments it matters most for.
 
+An administrator without a shell on the box gets the same checks in **Admin →
+Server → Health**, asked of the running service when the tab is opened. From
+there the running build needs no asking, and the release on disk is whatever
+`current` points at now, so a deploy the service was not restarted into shows
+too. The certificate (usually readable by root alone), and whether the service
+and relay answer from outside, are left to the command line.
+
 **Logs** needed no rotation in the end, which is the right answer rather than a
 missing one. Podium writes no log files: the service logs to the journal, which
 rotates itself and can be capped in `journald.conf`; nginx's logs are rotated by
