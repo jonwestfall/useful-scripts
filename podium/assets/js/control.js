@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, guessItemFromUrl, throttle, wireDangerButton, wireRevealButtons, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
+import { $, $$, el, uid, fmtTime, setText, setAttr, setHidden, guessItemFromUrl, throttle, wireDangerButton, wireRevealButtons, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, workingItem, PANEL_COUNT, panelOnScreen, deckStep,
@@ -2746,6 +2746,23 @@ function renderNowPreview() {
   if (work !== live) note.textContent = `Frozen. The controls below work on the cue: ${itemTitle(work)}.`;
 }
 
+// The playing clip's time and scrubber: the one part of the Now tab that moves
+// with the clock rather than with the room's state, so the ticker below keeps
+// it current between the display's reports.
+function renderMediaClock() {
+  const t = currentTime();
+  const d = telemetry.duration || 0;
+  setText($('#time-now'), fmtTime(t));
+  setText($('#time-total'), d ? fmtTime(d) : '--:--');
+  const scrub = $('#scrub');
+  scrub.max = d || 0;
+  scrub.disabled = !d;
+  if (!scrubbing) scrub.value = Math.min(t, d || t);
+}
+
+// Drawn when the room's state arrives (renderAll: every change, and the
+// display's heartbeat), when the Now tab is opened, and when this device
+// changes something only it shows - not on the clock.
 function renderNow() {
   renderNowPreview();
   // Paging and PDF zoom follow the cue while frozen (Issue #174), the same
@@ -2802,16 +2819,9 @@ function renderNow() {
   }
 
   if (isMedia) {
-    const t = currentTime();
-    const d = telemetry.duration || 0;
     $('#play-pause').textContent = telemetry.playing ? '⏸' : '▶';
     $('#play-pause').setAttribute('aria-label', telemetry.playing ? 'Pause' : 'Play');
-    $('#time-now').textContent = fmtTime(t);
-    $('#time-total').textContent = d ? fmtTime(d) : '--:--';
-    const scrub = $('#scrub');
-    scrub.max = d || 0;
-    scrub.disabled = !d;
-    if (!scrubbing) scrub.value = Math.min(t, d || t);
+    renderMediaClock();
     if (document.activeElement !== $('#media-loop')) $('#media-loop').checked = !!item.loop;
   }
 
@@ -2872,7 +2882,7 @@ function renderTimers() {
     const chip = row.children[i];
     if (!chip) return;
     const left = timerRemaining(timer);
-    chip.querySelector('.timer-chip-time').textContent = fmtTime(Math.ceil(left / 1000));
+    setText(chip.querySelector('.timer-chip-time'), fmtTime(Math.ceil(left / 1000)));
     chip.classList.toggle('is-running', timer.running);
     chip.classList.toggle('is-urgent', timer.running && left > 0 && left <= 30000);
   });
@@ -2880,13 +2890,13 @@ function renderTimers() {
   checkTimerCompletions(timers);
 
   const ms = active ? timerRemaining(active) : 0;
-  $('#timer-readout').textContent = fmtTime(Math.ceil(ms / 1000));
+  setText($('#timer-readout'), fmtTime(Math.ceil(ms / 1000)));
   $('#timer-readout').classList.toggle('is-urgent', !!active?.running && ms <= 30000);
-  $('#timer-start').textContent = active?.running ? 'Pause' : ((active?.remainingMs || 0) > 0 ? 'Resume' : 'Start');
+  setText($('#timer-start'), active?.running ? 'Pause' : ((active?.remainingMs || 0) > 0 ? 'Resume' : 'Start'));
   $('#timer-add').disabled = timers.length >= MAX_TIMERS;
   // The first is what every timer item falls back to, so it is the one that
   // cannot go away.
-  $('#timer-remove').hidden = timers.length <= 1 || timers[0]?.id === shownId;
+  setHidden($('#timer-remove'), timers.length <= 1 || timers[0]?.id === shownId);
 }
 
 const runningTimers = new Set();
@@ -2927,7 +2937,7 @@ const PANEL_LABELS = ['A', 'B', 'C', 'D'];
 function renderLayoutBar() {
   $$('.layout-btn').forEach((b) => {
     b.classList.toggle('is-on', b.dataset.layout === state.layout);
-    b.setAttribute('aria-pressed', String(b.dataset.layout === state.layout));
+    setAttr(b, 'aria-pressed', String(b.dataset.layout === state.layout));
     // Frozen and waiting on TAKE - see the 'layout' case in protocol.js.
     b.classList.toggle('is-cued', state.previewLayout !== null && b.dataset.layout === state.previewLayout);
   });
@@ -2968,11 +2978,11 @@ function renderLayoutBar() {
     const shown = panelOnScreen(state, i);
     b.classList.toggle('is-on', i === state.focus);
     b.classList.toggle('is-offscreen', !shown);
-    b.setAttribute('aria-pressed', String(i === state.focus));
-    b.title = shown
+    setAttr(b, 'aria-pressed', String(i === state.focus));
+    setAttr(b, 'title', shown
       ? `Work on panel ${PANEL_LABELS[i]} — hold to photograph it`
-      : `Work on panel ${PANEL_LABELS[i]} — not on screen in this layout`;
-    b.setAttribute('aria-label', shown ? `Panel ${PANEL_LABELS[i]}` : `Panel ${PANEL_LABELS[i]}, off screen`);
+      : `Work on panel ${PANEL_LABELS[i]} — not on screen in this layout`);
+    setAttr(b, 'aria-label', shown ? `Panel ${PANEL_LABELS[i]}` : `Panel ${PANEL_LABELS[i]}, off screen`);
   });
 }
 
@@ -5869,15 +5879,15 @@ function renderConnection() {
   else if (state.soundBlocked) label = 'The display’s browser blocked this clip’s sound — click once on the display';
   else label = `Display connected${display.rtt ? ` · ${display.rtt} ms` : ''} · build ${BUILD}`;
 
-  $('#display-state').textContent = label;
-  $('.topbar-status').title = label;
+  setText($('#display-state'), label);
+  setAttr($('.topbar-status'), 'title', label);
   announce('display', label.replace(/ · \d+ ms/, ''));
   $('#display-state').classList.toggle('is-bad', !display || !!mismatch || (!!display && !!state.soundBlocked));
-  $('#peer-count').textContent = [
+  setText($('#peer-count'), [
     others.length ? `+${others.length} other controller${others.length > 1 ? 's' : ''}` : '',
     // Guest View (Issue #150): confirmation people are watching, never who.
     display && state.viewers ? `${state.viewers} watching` : '',
-  ].filter(Boolean).join(' · ');
+  ].filter(Boolean).join(' · '));
 
   if (display) waitingSince = Date.now();
 
@@ -5885,10 +5895,10 @@ function renderConnection() {
   // join should not throw a banner at you mid-lecture.
   const stranded = relayStatus === 'online' && !display && Date.now() - waitingSince > 6000;
   const help = $('#link-help');
-  help.hidden = !(stranded || relayStatus === 'mismatch');
+  setHidden(help, !(stranded || relayStatus === 'mismatch'));
   help.classList.toggle('is-mismatch', relayStatus === 'mismatch');
-  $('#help-room').textContent = cfg.room;
-  $('#help-code').textContent = bus?.fingerprint || '····';
+  setText($('#help-room'), cfg.room);
+  setText($('#help-code'), bus?.fingerprint || '····');
 }
 
 async function connect() {
@@ -6026,6 +6036,7 @@ function rememberedTab() {
 
 function tab(name) {
   try { if (TAB_IDS.includes(name)) sessionStorage.setItem(TAB_KEY, name); } catch { /* private mode: Library after a reload */ }
+  const nowWasOpen = !$('[data-panel="now"]').hidden;
   const dualPane = document.body.classList.contains('dual-pane');
   // `[data-tab]`: the controller's own tabs, not Settings' Connection and
   // Presentation tabs, which share the class (Issue #178 - see below).
@@ -6063,6 +6074,10 @@ function tab(name) {
   if (name === 'library' && !$('#plan-server').hidden) refreshServerPlans();
   if (name === 'attendance') attendancePanel?.opened();
   else attendancePanel?.closed();
+  // The Now tab is drawn as it opens (its live page connects then), and the
+  // live page it was driving is let go as it closes. Only then: a tab switch
+  // during startup (applyDualPane) comes before what renderNow reads exists.
+  if (nowWasOpen !== !$('[data-panel="now"]').hidden) renderNow();
   // Every panel shares one scrolling container (.panels), so a tab switch
   // alone does not reset it - scrolled halfway down a long Library before
   // tapping Ink lands the Ink tab starting from that same halfway point,
@@ -6316,6 +6331,8 @@ $('#poll-export').addEventListener('click', exportPollCsv);
 // button stuck reading "Clearing…" would silently break the second one.
 pollEndButton = wireDangerButton($('#poll-end'), 'End poll', endPoll);
 $('#scrub').addEventListener('pointerdown', () => { scrubbing = true; });
+// The time beside it follows the drag, playing or not.
+$('#scrub').addEventListener('input', () => { scrubbing = true; renderMediaClock(); });
 $('#scrub').addEventListener('change', (ev) => {
   scrubbing = false;
   send({ op: 'media', action: 'seek', value: Number(ev.target.value) });
@@ -7552,7 +7569,16 @@ if (typeof ResizeObserver === 'function') {
 window.addEventListener('beforeunload', () => bus?.close());
 
 installOfflineShell();
-setInterval(() => { renderNow(); renderTimers(); renderConnection(); renderClockAndPacing(); }, 250);
+// Four times a second, only what moves with the clock: countdowns, the clock
+// and pacing, how long a display has been missing, and a playing clip's
+// time. The rest of the Now tab (its preview measures the page) is drawn when
+// something changes - see renderNow.
+setInterval(() => {
+  if (!$('[data-panel="now"]').hidden && !$('#transport').hidden && telemetry.playing) renderMediaClock();
+  renderTimers();
+  renderConnection();
+  renderClockAndPacing();
+}, 250);
 
 // Is this tab itself the stale one? Reloading a page that a cache is still
 // answering for can leave you reloading forever without moving, so the
@@ -7676,7 +7702,7 @@ function checkPacingAutoStart(cmd) {
 function renderClockAndPacing() {
   const clockEl = $('#topbar-clock');
   if (clockEl) {
-    clockEl.textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    setText(clockEl, new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
   }
 
   const pacingBtn = $('#topbar-pacing');
@@ -7686,16 +7712,16 @@ function renderClockAndPacing() {
 
   const dur = Number(presentation.lectureDuration) || 0;
   if (dur <= 0) {
-    pacingBtn.hidden = true;
+    setHidden(pacingBtn, true);
     return;
   }
-  pacingBtn.hidden = false;
+  setHidden(pacingBtn, false);
 
   if (!pacingState.startedAt) {
     pacingBtn.classList.remove('is-running', 'is-near-end', 'is-overtime');
-    pacingLabel.textContent = `▶ Start (${dur}m)`;
+    setText(pacingLabel, `▶ Start (${dur}m)`);
     pacingBar.style.width = '0%';
-    pacingBtn.title = 'Start lecture pacing timer';
+    setAttr(pacingBtn, 'title', 'Start lecture pacing timer');
     return;
   }
 
@@ -7709,135 +7735,137 @@ function renderClockAndPacing() {
     pacingBtn.classList.remove('is-overtime');
     const pct = Math.min(100, Math.round((elapsedSec / totalSec) * 100));
     pacingBar.style.width = `${pct}%`;
-    pacingLabel.textContent = `${fmtTime(elapsedSec)} / ${dur}m`;
-    pacingBtn.title = `Lecture pacing: ${fmtTime(elapsedSec)} elapsed of ${dur}m (tap to reset)`;
+    setText(pacingLabel, `${fmtTime(elapsedSec)} / ${dur}m`);
+    setAttr(pacingBtn, 'title', `Lecture pacing: ${fmtTime(elapsedSec)} elapsed of ${dur}m (tap to reset)`);
   } else {
     pacingBtn.classList.remove('is-near-end');
     pacingBtn.classList.add('is-overtime');
     const overSec = elapsedSec - totalSec;
     pacingBar.style.width = '100%';
-    pacingLabel.textContent = `+${fmtTime(overSec)} (${dur}m)`;
-    pacingBtn.title = `Lecture pacing: ${fmtTime(overSec)} overtime (tap to reset)`;
+    setText(pacingLabel, `+${fmtTime(overSec)} (${dur}m)`);
+    setAttr(pacingBtn, 'title', `Lecture pacing: ${fmtTime(overSec)} overtime (tap to reset)`);
   }
 }
 renderClockAndPacing();
 
 function renderSlotButton(btn, slotType) {
   if (!btn) return;
-  btn.dataset.slotAction = slotType || 'none';
+  // Only what differs is written: this runs on every heartbeat, for every slot.
+  setAttr(btn, 'data-slot-action', slotType || 'none');
   btn.disabled = false;
-  btn.classList.remove('is-on', 'is-armed');
+  let on = false;
+  let armed = false;
 
   switch (slotType) {
     case 'music': {
       const music = state.music || { tracks: [], playing: false };
-      btn.hidden = !music.tracks?.length;
-      btn.textContent = music.playing ? '♪ ⏸' : '♪ ▶';
-      btn.title = music.playing ? 'Pause background music' : 'Play background music';
-      btn.classList.toggle('is-on', !!music.playing);
+      setHidden(btn, !music.tracks?.length);
+      setText(btn, music.playing ? '♪ ⏸' : '♪ ▶');
+      setAttr(btn, 'title', music.playing ? 'Pause background music' : 'Play background music');
+      on = !!music.playing;
       break;
     }
 
     case 'play': {
       const item = focusedItem(state);
       const isMedia = isPlayable(item);
-      btn.hidden = !isMedia;
-      btn.textContent = telemetry.playing ? '⏸' : '▶';
-      btn.title = telemetry.playing ? 'Pause media' : 'Play media';
-      btn.classList.toggle('is-on', telemetry.playing);
+      setHidden(btn, !isMedia);
+      setText(btn, telemetry.playing ? '⏸' : '▶');
+      setAttr(btn, 'title', telemetry.playing ? 'Pause media' : 'Play media');
+      on = telemetry.playing;
       break;
     }
 
     case 'freeze':
-      btn.hidden = false;
-      btn.textContent = state.frozen ? 'Frozen' : 'Freeze';
-      btn.title = state.frozen ? 'Unfreeze presentation' : 'Freeze presentation (holds screen)';
-      btn.classList.toggle('is-on', !!state.frozen);
+      setHidden(btn, false);
+      setText(btn, state.frozen ? 'Frozen' : 'Freeze');
+      setAttr(btn, 'title', state.frozen ? 'Unfreeze presentation' : 'Freeze presentation (holds screen)');
+      on = !!state.frozen;
       break;
 
     case 'blank':
-      btn.hidden = false;
-      btn.textContent = state.blank ? 'Blanked' : 'Blank';
-      btn.title = state.blank ? 'Unblank presentation' : 'Blank presentation (black screen)';
-      btn.classList.toggle('is-on', !!state.blank);
+      setHidden(btn, false);
+      setText(btn, state.blank ? 'Blanked' : 'Blank');
+      setAttr(btn, 'title', state.blank ? 'Unblank presentation' : 'Blank presentation (black screen)');
+      on = !!state.blank;
       break;
 
     case 'take': {
       const cued = hasCue();
-      btn.hidden = false;
+      setHidden(btn, false);
       btn.disabled = !cued;
-      btn.textContent = 'TAKE';
-      btn.title = cued ? 'Take cued item to live display' : 'No item cued';
-      btn.classList.toggle('is-armed', cued);
+      setText(btn, 'TAKE');
+      setAttr(btn, 'title', cued ? 'Take cued item to live display' : 'No item cued');
+      armed = cued;
       break;
     }
 
     case 'clear': {
       const cued = hasCue();
-      btn.hidden = false;
+      setHidden(btn, false);
       btn.disabled = !cued;
-      btn.textContent = '✕ Clear';
-      btn.title = cued ? 'Clear cued preview' : 'No item cued';
+      setText(btn, '✕ Clear');
+      setAttr(btn, 'title', cued ? 'Clear cued preview' : 'No item cued');
       break;
     }
 
     case 'whiteboard': {
-      btn.hidden = false;
+      setHidden(btn, false);
       const isWb = focusedItem(state)?.type === 'whiteboard';
-      btn.textContent = '✎';
-      btn.title = 'Quick whiteboard';
-      btn.classList.toggle('is-on', isWb);
+      setText(btn, '✎');
+      setAttr(btn, 'title', 'Quick whiteboard');
+      on = isWb;
       break;
     }
 
     case 'laser':
-      btn.hidden = false;
-      btn.textContent = '🔦';
-      btn.title = 'Toggle laser pointer';
-      btn.classList.toggle('is-on', laserActive);
+      setHidden(btn, false);
+      setText(btn, '🔦');
+      setAttr(btn, 'title', 'Toggle laser pointer');
+      on = laserActive;
       break;
 
     case 'spotlight':
-      btn.hidden = false;
-      btn.textContent = '🔆';
-      btn.title = 'Toggle spotlight mode';
-      btn.classList.toggle('is-on', spotlightActive);
+      setHidden(btn, false);
+      setText(btn, '🔆');
+      setAttr(btn, 'title', 'Toggle spotlight mode');
+      on = spotlightActive;
       break;
 
     case 'timer': {
-      btn.hidden = false;
+      setHidden(btn, false);
       const timer = currentTimer();
-      btn.textContent = timer?.running ? '⏱ ⏸' : '⏱ ▶';
-      btn.title = timer?.running ? 'Pause timer' : 'Start / resume timer';
-      btn.classList.toggle('is-on', !!timer?.running);
+      setText(btn, timer?.running ? '⏱ ⏸' : '⏱ ▶');
+      setAttr(btn, 'title', timer?.running ? 'Pause timer' : 'Start / resume timer');
+      on = !!timer?.running;
       break;
     }
 
     case 'next': {
       const item = workItem();
       const isPaged = ['pdf', 'slides', 'web', 'deck'].includes(item?.type);
-      btn.hidden = false;
+      setHidden(btn, false);
       btn.disabled = !isPaged;
-      btn.textContent = '→';
-      btn.title = 'Next slide / page';
+      setText(btn, '→');
+      setAttr(btn, 'title', 'Next slide / page');
       break;
     }
 
     case 'prev': {
       const item = workItem();
       const isPaged = ['pdf', 'slides', 'web', 'deck'].includes(item?.type);
-      btn.hidden = false;
+      setHidden(btn, false);
       btn.disabled = !isPaged;
-      btn.textContent = '←';
-      btn.title = 'Previous slide / page';
+      setText(btn, '←');
+      setAttr(btn, 'title', 'Previous slide / page');
       break;
     }
 
     case 'none':
     default:
-      btn.hidden = true;
-      btn.textContent = '';
-      btn.title = '';
+      setHidden(btn, true);
+      setText(btn, '');
+      setAttr(btn, 'title', '');
       break;
   }
   // Issue #156: a button's text wins over its title for a screen reader, so a
@@ -7845,11 +7873,13 @@ function renderSlotButton(btn, slotType) {
   // symbol's Unicode name. Name it from its title instead - but leave a slot
   // with a real word on it (Freeze, TAKE) named by that word, which is what a
   // voice-control user will say to press it.
-  if (btn.title && !/[a-z]{2}/i.test(btn.textContent)) btn.setAttribute('aria-label', btn.title);
+  btn.classList.toggle('is-on', !!on);
+  btn.classList.toggle('is-armed', !!armed);
+  if (btn.title && !/[a-z]{2}/i.test(btn.textContent)) setAttr(btn, 'aria-label', btn.title);
   else btn.removeAttribute('aria-label');
   // The slots that switch something on and off, and so carry aria-pressed.
   const toggles = ['music', 'play', 'freeze', 'blank', 'whiteboard', 'laser', 'spotlight', 'timer'];
-  if (toggles.includes(slotType)) btn.setAttribute('aria-pressed', String(btn.classList.contains('is-on')));
+  if (toggles.includes(slotType)) setAttr(btn, 'aria-pressed', String(!!on));
   else btn.removeAttribute('aria-pressed');
 }
 
@@ -7876,7 +7906,9 @@ function renderBottomSlots() {
       visibleActiveCount += 1;
       btn.classList.toggle('mobile-overflow', visibleActiveCount > 4);
     } else {
-      btn.classList.remove('mobile-overflow');
+      // toggle(…, false) rather than remove(): remove() rewrites the class
+      // attribute even when there is nothing to take off.
+      btn.classList.toggle('mobile-overflow', false);
     }
   });
 }

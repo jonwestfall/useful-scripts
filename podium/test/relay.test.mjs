@@ -46,23 +46,39 @@ async function startRelay(env) {
   return { port, proc };
 }
 
-// Opens a socket and waits briefly to see how the server actually responded:
-// a clean handshake that stays open, a handshake that opens and is then
-// closed with a code (MAX_PER_ROOM/MAX_ROOMS - the connection completed,
-// the relay is declining it), or the raw socket being destroyed mid-upgrade
-// (the per-IP throttle - never even gets to a WebSocket close code).
+// Opens a socket and finds out how the server actually responded: a clean
+// handshake that stays open, a handshake that opens and is then closed with
+// a code (MAX_PER_ROOM/MAX_ROOMS - the connection completed, the relay is
+// declining it), or the raw socket being destroyed mid-upgrade (the per-IP
+// throttle - never even gets to a WebSocket close code).
+//
+// "Stays open" is known for certain, not waited out: the relay declines a
+// socket in the same moment it accepts the handshake, before it reads
+// anything from it, so a ping answered with a pong is one it kept - its
+// close frame, had it declined, would have come first.
 function connect(port, room, { cookie } = {}) {
   return new Promise((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/podium?room=${encodeURIComponent(room)}`,
       cookie ? { headers: { cookie } } : undefined);
     const result = { ws, opened: false, closeCode: null, closeReason: '', errored: false };
     let settled = false;
-    const finish = () => { if (!settled) { settled = true; resolve(result); } };
-    ws.on('open', () => { result.opened = true; });
+    const finish = () => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
+    ws.on('open', () => { result.opened = true; ws.ping(); });
+    ws.on('pong', finish);
     ws.on('close', (code, reason) => { result.closeCode = code; result.closeReason = reason.toString(); finish(); });
     ws.on('error', () => { result.errored = true; finish(); });
-    setTimeout(finish, 500);
+    // Only if the server says nothing at all.
+    const timer = setTimeout(finish, 5000);
   });
+}
+
+// Asks until `check` answers, rather than sleeping for a guess at how long
+// the server takes to notice something.
+async function until(check, { timeout = 5000, interval = 50 } = {}) {
+  for (const end = Date.now() + timeout; Date.now() < end; await new Promise((r) => setTimeout(r, interval))) {
+    if (await check()) return true;
+  }
+  return false;
 }
 
 // --- MAX_PER_ROOM: a room name is not secret, so an attacker who knows one
@@ -193,8 +209,8 @@ function connect(port, room, { cookie } = {}) {
   ok('or the API', (await get('/api/courses')).status === 401);
 
   display.ws.terminate();
-  await new Promise((r) => setTimeout(r, 300));
-  ok('and the pass is worth nothing once the display stands down', (await get('/content/decks/example-builds.md')).status === 401);
+  ok('and the pass is worth nothing once the display stands down',
+    await until(async () => (await get('/content/decks/example-builds.md')).status === 401));
 
   for (const p of [early, control, display, viewer]) p.ws.terminate();
   proc.kill();
