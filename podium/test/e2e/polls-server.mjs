@@ -2551,8 +2551,13 @@ await pad.waitForSelector('#status[data-status="online"]', { timeout: 15000 });
 ok('so the signed-in controller actually reaches the relay', true);
 
 await pad.click('#topbar-more');
+expecting.signingOut = true;
 await Promise.all([pad.waitForURL(/login\.html/), pad.click('#session-badge button')]);
 ok('signing out goes back to the login page', /login\.html/.test(pad.url()));
+// Closed before the flag drops, so a refusal still on its way from the
+// controller's last moment cannot land after it.
+await pad.close();
+expecting.signingOut = false;
 ok('and the controller is behind the gate again',
   (await fetch(`${acctBase}/control.html`)).status === 401);
 
