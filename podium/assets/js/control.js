@@ -22,7 +22,7 @@ import { mountSessionBadge, serverInfo } from './server.js';
 import { liveBrowserOptions, liveBrowserAvailable } from './live-browser.js';
 import { createAssetResolver, sendOnce, BLANK_PIXEL } from './assets.js';
 import { createWatermarkPanel } from './watermark.js';
-import { createThumbnailer } from './thumbs.js';
+import { createThumbnailer, firstImageOf } from './thumbs.js';
 import { loadDefaults, defaultCommands, defaultsDelta, changedDefaultCommands, createDefaultsPanel, DEFAULTS_KEY } from './defaults.js';
 import { createPipPanel } from './pip.js';
 import { createDurationProber } from './duration-probe.js';
@@ -740,7 +740,7 @@ const thumbnails = createThumbnailer(async (item) => {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (item.type === 'image' || item.type === 'imagedeck') {
-    const src = item.type === 'image' ? item.src : item.images?.[0]?.src;
+    const src = item.type === 'image' ? item.src : firstImageOf(item);
     const id = assetIdOf(src);
     if (id !== null) return assetStore.get(id) || null;
     return src || null;

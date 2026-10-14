@@ -14,8 +14,15 @@
 // which has the deck and PDF machinery); this only decides when, and where it
 // goes.
 
+// A picture deck's first picture. Decks store their pictures as plain URLs
+// (see zip-staging.js); an { src } object is accepted too.
+export const firstImageOf = (item) => {
+  const first = item?.images?.[0];
+  return typeof first === 'string' ? first : first?.src;
+};
+
 const keyOf = (item) => {
-  const ref = item?.src || item?.deckId || item?.images?.[0]?.src;
+  const ref = item?.src || item?.deckId || firstImageOf(item);
   return ref ? `${item.type}:${ref}` : null;
 };
 

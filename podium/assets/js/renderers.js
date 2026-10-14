@@ -946,8 +946,12 @@ function renderPdf(item) {
   let zoom = item.zoom || 1;
   let panX = Number.isFinite(item.panX) ? item.panX : 0.5;
   let panY = Number.isFinite(item.panY) ? item.panY : 0.5;
-  let currentDoc = null;
-  let currentDocSrc = null;
+  // The pdf.js loading task for docSrc. It owns the document and its worker,
+  // so destroying it frees both (or aborts a load still in flight) - each
+  // instance (display, preview, Now mirror, ink pad mirror) has its own, and
+  // simply dropping the reference on a file switch or remount leaks them.
+  let loadingTask = null;
+  let docSrc = null;
   let currentRenderTask = null;
   let isDestroyed = false;
   // The page's own aspect ratio, independent of dpr or of whichever box this
@@ -961,11 +965,27 @@ function renderPdf(item) {
 
   node.appendChild(canvas);
 
+  const cancelRender = () => {
+    if (currentRenderTask) {
+      try { currentRenderTask.cancel(); } catch { /* already finished or already cancelled */ }
+      currentRenderTask = null;
+    }
+  };
+
+  const releaseDoc = () => {
+    const task = loadingTask;
+    loadingTask = null;
+    docSrc = null;
+    // A render still awaiting this task sees it is no longer loadingTask and
+    // stops quietly - see the checks in render().
+    task?.destroy().catch(() => { /* already destroyed */ });
+  };
+
   const render = async () => {
     // Nothing picked yet (a freshly added item, before an upload or a typed
     // path lands) - render nothing rather than an iframe whose src is the
     // literal string "undefined", which the browser dutifully fetches.
-    if (!src) { node.replaceChildren(); return; }
+    if (!src) { cancelRender(); releaseDoc(); node.replaceChildren(); return; }
     if (!window.pdfjsLib) {
       node.replaceChildren(el('iframe', {
         class: 'r-frame',
@@ -979,22 +999,27 @@ function renderPdf(item) {
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'assets/vendor/pdf.worker.min.js';
     }
 
+    if (docSrc !== src) {
+      cancelRender();
+      releaseDoc();
+      docSrc = src;
+      loadingTask = window.pdfjsLib.getDocument(src);
+    }
+    const task = loadingTask;
+    // Destroyed, or switched to another file, while this render was waiting:
+    // its document is gone (or going), so it draws nothing and shows no error.
+    const stale = () => isDestroyed || task !== loadingTask;
+
     try {
-      if (currentDocSrc !== src) {
-        currentDocSrc = src;
-        currentDoc = await window.pdfjsLib.getDocument(src).promise;
-      }
-      if (isDestroyed || !currentDoc) return;
+      const doc = await task.promise;
+      if (stale()) return;
 
-      const numPages = currentDoc.numPages;
+      const numPages = doc.numPages;
       const targetPage = Math.max(1, Math.min(numPages, pageNumber));
-      const page = await currentDoc.getPage(targetPage);
-      if (isDestroyed) return;
+      const page = await doc.getPage(targetPage);
+      if (stale()) return;
 
-      if (currentRenderTask) {
-        try { currentRenderTask.cancel(); } catch { /* already finished or already cancelled */ }
-        currentRenderTask = null;
-      }
+      cancelRender();
 
       const unscaledViewport = page.getViewport({ scale: 1 });
       aspect = unscaledViewport.width / unscaledViewport.height;
@@ -1035,16 +1060,17 @@ function renderPdf(item) {
       canvas.classList.toggle('is-zoomed', isZoomed(view));
 
       const ctx = canvas.getContext('2d');
-      currentRenderTask = page.render({
+      const renderTask = page.render({
         canvasContext: ctx,
         viewport: viewport,
         transform,
       });
+      currentRenderTask = renderTask;
 
-      await currentRenderTask.promise;
-      currentRenderTask = null;
+      await renderTask.promise;
+      if (currentRenderTask === renderTask) currentRenderTask = null;
     } catch (err) {
-      if (err?.name === 'RenderingCancelledException') return;
+      if (stale() || err?.name === 'RenderingCancelledException') return;
       node.replaceChildren(el('iframe', {
         class: 'r-frame',
         src: `${src}#page=${pageNumber}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,
@@ -1093,11 +1119,8 @@ function renderPdf(item) {
     },
     destroy() {
       isDestroyed = true;
-      if (currentRenderTask) {
-        try { currentRenderTask.cancel(); } catch { /* already finished or already cancelled */ }
-        currentRenderTask = null;
-      }
-      currentDoc = null;
+      cancelRender();
+      releaseDoc();
       node.remove();
     },
   };
