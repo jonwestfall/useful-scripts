@@ -7,13 +7,14 @@
 // keyboard all go straight to it, not through the display: the projector is
 // only ever shown pictures of the page, so there is nothing for it to apply.
 
-import { $, $$, throttle } from './util.js';
+import { $, $$, throttle, guessItemFromUrl } from './util.js';
 import { focusedItem } from './protocol.js';
 import { browseMode, refusesFraming, liveBrowserAvailableNow, watchLiveBrowser } from './live-browser.js';
 
 /**
  * @param {object} deps
  * @param {Function} deps.send - the shared command dispatcher.
+ * @param {Function} deps.stage - puts an item on the controller's stage.
  * @param {Function} deps.getState - the room's state as this controller has it now.
  * @param {Function} deps.workItem - the item being worked on (see workingItem).
  * @param {Function} deps.haptic - a tap's feedback.
@@ -21,7 +22,7 @@ import { browseMode, refusesFraming, liveBrowserAvailableNow, watchLiveBrowser }
  * @returns {{ render: (item: object) => boolean }} render shows the web
  *   controls for `item`, and says whether it is a page in the live browser.
  */
-export function createLiveBrowserPanel({ send, getState, workItem, haptic, liveWeb }) {
+export function createLiveBrowserPanel({ send, stage, getState, workItem, haptic, liveWeb }) {
   // The web page the Now tab is driving, and what it last said about itself.
   let webDriver = null;          // { id, handle }
   let webState = null;
@@ -67,6 +68,7 @@ export function createLiveBrowserPanel({ send, getState, workItem, haptic, liveW
       key: liveWeb.keyFor(item),
       home: item.src,
       role: 'control',
+      lecture: liveWeb.lecture?.() || 0,
       onFrame: (bitmap) => {
         if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
           canvas.width = bitmap.width;
@@ -95,7 +97,33 @@ export function createLiveBrowserPanel({ send, getState, workItem, haptic, liveW
     $('#web-screen').style.aspectRatio = String(st.aspect || 16 / 9);
     $('#web-status').textContent = st.error || (st.loading ? `Loading ${st.title || st.url || ''}…` : (st.title || ''));
     $('#web-screen-note').textContent = st.error || '';
+    $('#web-video-row').hidden = youTubeVideo(st.url) === null;
   }
+
+  // A YouTube video's page (not a channel or a live stream, which have no
+  // place to start from), as the YouTube item that would play it.
+  function youTubeVideo(url) {
+    const item = url ? guessItemFromUrl(url) : null;
+    return item?.type === 'youtube' ? item : null;
+  }
+
+  // Played in Podium instead: from where the page had got to, which is then
+  // paused, so the two do not run on side by side.
+  $('#web-play-here').addEventListener('click', async () => {
+    const st = webState;
+    const video = youTubeVideo(st?.url);
+    if (!video || !webDriver) return;
+    const button = $('#web-play-here');
+    button.disabled = true;
+    try {
+      const media = await webDriver.handle.askMedia({ pause: true });
+      const title = String(st.title || '').replace(/\s*[-–]\s*YouTube\s*$/, '').trim() || 'YouTube';
+      stage({ ...video, title, startAt: Math.floor(media?.time ?? video.startAt ?? 0) });
+      haptic('tick');
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   const webSend = (msg) => webDriver?.handle.send(msg);
 

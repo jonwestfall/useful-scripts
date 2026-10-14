@@ -3623,6 +3623,32 @@ try {
   await until(async () => white(await wallColour())).catch(() => {});
   ok('and the room sees the page itself', white(await wallColour()));
 
+  // Guest View: a viewer cannot reach the page (no account, no key to it), so
+  // the display relays pictures of what the room sees of it.
+  await screen.evaluate(() => { document.querySelector('#pair').hidden = false; });
+  await screen.click('#pair-mode-view');
+  await screen.waitForFunction(() => /view\.html#/.test(document.querySelector('#pair-url').textContent), null, { timeout: 10000 });
+  const viewerLink = await screen.textContent('#pair-url');
+  await screen.click('#pair-close');
+  const stranger = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const viewer = await stranger.newPage();
+  trap(viewer, 'live browser viewer');
+  await viewer.goto(viewerLink);
+  await viewer.waitForSelector('#viewer-start-row:not([hidden])', { timeout: 15000 });
+  await viewer.click('#viewer-start');
+  const viewerColour = () => viewer.evaluate(() => {
+    const img = document.querySelector('.layer[data-role="program"] .r-live-relayed.has-frame img');
+    if (!img?.naturalWidth) return null;
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const [r, g, b] = ctx.getImageData(Math.floor(c.width * 0.8), Math.floor(c.height * 0.8), 1, 1).data;
+    return { r, g, b };
+  });
+  await until(async () => white(await viewerColour()), { timeout: 20000 }).catch(() => {});
+  ok('a Guest View viewer sees the live page, as pictures the display relays', white(await viewerColour()));
+
   await pad.click('.tab[data-tab="now"]');
   await pad.waitForSelector('#web-screen.has-frame', { timeout: 15000 })
     .then(() => ok('the Now tab shows the page, to drive', true))
@@ -3642,6 +3668,9 @@ try {
     .catch(() => ok('a tap on a link follows it', false));
   await until(async () => green(await wallColour())).catch(() => {});
   ok('and the projector follows', green(await wallColour()));
+  await until(async () => green(await viewerColour())).catch(() => {});
+  ok('and so does the viewer', green(await viewerColour()));
+  await stranger.close();
 
   // Frozen, the room keeps the page it has while the presenter browses on.
   await pad.click('#freeze');

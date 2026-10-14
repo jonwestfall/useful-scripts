@@ -50,6 +50,7 @@ const { WebSocketServer } = require('ws');
 const store = require('./store.js');
 const accounts = require('./accounts.js');
 const kiosks = require('./kiosks.js');
+const courses = require('./courses.js');
 const content = require('./content.js');
 const api = require('./api.js');
 const library = require('./library.js');
@@ -181,6 +182,8 @@ const liveBrowser = createLiveBrowser({
   extraArgs: process.env.BROWSER_ARGS || '',
   upstreamProxy: process.env.BROWSER_UPSTREAM_PROXY || '',
   sandbox: !/^(off|0|false|no)$/i.test(process.env.BROWSER_SANDBOX || ''),
+  // A course that keeps its live pages' sign-ins, for someone in it.
+  signinsFor: (who, lectureId) => (db && who?.user ? courses.liveSignins(db, who.user, lectureId) : null),
 });
 const liveBrowserReady = () => liveBrowser.available && hasAccounts();
 // Chromium is a child of this process, and a stopped service should not leave
@@ -1143,9 +1146,11 @@ function upgradeLiveBrowser(req, socket, head) {
     try { host = new URL(origin).host; } catch { /* unparseable: not ours */ }
     if (host !== String(req.headers.host || '') && !(ORIGINS && ORIGINS.includes(origin))) { refuse('403 Forbidden'); return; }
   }
-  const signedIn = accounts.sessionUser(db, api.cookieToken(req)) || kiosks.sessionKiosk(db, api.kioskCookieToken(req));
+  const user = accounts.sessionUser(db, api.cookieToken(req));
+  const signedIn = user || kiosks.sessionKiosk(db, api.kioskCookieToken(req));
   if (!signedIn) { refuse('401 Unauthorized'); return; }
-  liveBrowser.handleUpgrade(req, socket, head);
+  // A kiosk is let in too, but never to a course's kept sign-ins.
+  liveBrowser.handleUpgrade(req, socket, head, user ? { user } : null);
 }
 
 // Campus Wi-Fi drops sockets without closing them; this reaps the dead ones.

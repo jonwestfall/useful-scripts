@@ -65,6 +65,8 @@ function courseRow(row) {
     // Issue #224: set only for a class an instructor made from the planner,
     // so Administration can say so.
     createdBy: row.created_by_name || null,
+    // Live pages keep the websites they were signed in to (see liveSignins).
+    liveSignins: !!row.live_signins,
   };
 }
 
@@ -323,7 +325,74 @@ function removeMember(db, user, code, username) {
   return members(db, course.id);
 }
 
+// --- staying signed in to websites in live pages ----------------------------------
+//
+// The live browser (browser.js) opens every page in a context of its own and
+// forgets it when the page closes, so a library database or a site the
+// instructor signs in to in class asks again next time. A course's owner can
+// choose to keep those sign-ins: the cookies of the course's live pages are
+// saved when a page closes (and as it loads), and put back into the next one
+// opened in one of its lectures - only for someone in the course, and never
+// for a kiosk. Off by default: they are somebody's signed-in session to
+// another site, on this server's disk and in its backups.
+
+// No site's cookies run to this, and a sign-in that did is not worth keeping.
+const MAX_LIVE_COOKIES = 400;
+const MAX_LIVE_COOKIE_CHARS = 512 * 1024;
+
+/** Turn it on or off (owners and admins); off forgets what was kept, at once. */
+function setLiveSignins(db, user, code, on) {
+  const course = find(db, code);
+  if (!mayManage(db, user, code)) {
+    throw Object.assign(new Error(`only an owner of ${course.code.toUpperCase()} or an admin can change this`), { status: 403 });
+  }
+  db.prepare('UPDATE courses SET live_signins = ? WHERE id = ?').run(on ? 1 : 0, course.id);
+  if (!on) db.prepare('DELETE FROM course_live_cookies WHERE course_id = ?').run(course.id);
+  return { course: course.code, liveSignins: !!on };
+}
+
+/** Forget the sign-ins kept so far, leaving it on. */
+function forgetLiveSignins(db, user, code) {
+  const course = find(db, code);
+  if (!mayManage(db, user, code)) {
+    throw Object.assign(new Error(`only an owner of ${course.code.toUpperCase()} or an admin can change this`), { status: 403 });
+  }
+  db.prepare('DELETE FROM course_live_cookies WHERE course_id = ?').run(course.id);
+  return { course: course.code };
+}
+
+/**
+ * The sign-ins a live page opened in lecture `lectureId` starts with, for
+ * `user`: { load(), save(cookies) }, or null - no such lecture, no course,
+ * the course has not chosen to keep them, or this person is not in it.
+ */
+function liveSignins(db, user, lectureId) {
+  if (!user || !lectureId) return null;
+  const row = db.prepare(`SELECT c.id, c.code, c.live_signins, c.archived_at FROM lectures l
+      JOIN courses c ON c.id = l.course_id WHERE l.id = ?`).get(Number(lectureId) || 0);
+  if (!row?.live_signins || row.archived_at || !roleOf(db, user, row.code)) return null;
+  const stillOn = () => !!db.prepare('SELECT live_signins FROM courses WHERE id = ?').get(row.id)?.live_signins;
+  return {
+    course: row.code,
+    load() {
+      try {
+        const kept = JSON.parse(db.prepare('SELECT cookies FROM course_live_cookies WHERE course_id = ?').get(row.id)?.cookies || '[]');
+        return Array.isArray(kept) ? kept : [];
+      } catch { return []; }
+    },
+    save(cookies) {
+      // Turned off while the page was open: nothing is kept.
+      if (!stillOn() || !Array.isArray(cookies)) return;
+      const text = JSON.stringify(cookies.slice(0, MAX_LIVE_COOKIES));
+      if (text.length > MAX_LIVE_COOKIE_CHARS) return;
+      db.prepare(`INSERT INTO course_live_cookies (course_id, cookies, saved_at) VALUES (?, ?, ?)
+          ON CONFLICT(course_id) DO UPDATE SET cookies = excluded.cookies, saved_at = excluded.saved_at`).run(row.id, text, Date.now());
+    },
+  };
+}
+
 module.exports = {
   list, memberships, members, create, createFromPlanner, codeFor, update, addMember, removeMember, roleOf, mayManage, find,
   brandingFor, setBranding, cleanBranding, MAX_BRANDING_IMAGE_CHARS,
+  setLiveSignins, forgetLiveSignins, liveSignins,
 };

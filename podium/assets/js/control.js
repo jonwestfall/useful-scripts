@@ -62,7 +62,7 @@ let cfg = await loadConfig();
 let bus = null;
 // Web pages in the server's own browser (live-browser.js): every preview here
 // watches the same session the projector shows.
-const liveWeb = liveBrowserOptions(() => cfg, 'control');
+const liveWeb = liveBrowserOptions(() => cfg, 'control', () => state.lectureId);
 
 /**
  * How every picture of the room's screen on this controller is drawn - the
@@ -210,7 +210,7 @@ let planAssetIds = new Set();
 // The tab bar, in this device's order (Issue #197).
 const tabBar = createTabBar({ presentation, save: () => savePresentation(presentation), tabAvailable: (id) => tabAvailable(id), tab: (id) => tab(id) });
 // The Now tab's live browser controls (live-browser-panel.js).
-const webPanel = createLiveBrowserPanel({ send, getState: () => state, workItem, haptic, liveWeb });
+const webPanel = createLiveBrowserPanel({ send, stage, getState: () => state, workItem, haptic, liveWeb });
 // The full-screen message editor (Issue #103).
 createMessageEditor({ stage, resolveAssets, assetStore });
 // Live captions (Issue #79), and this controller's own mic (Issue #147).

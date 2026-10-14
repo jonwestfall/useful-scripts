@@ -132,8 +132,9 @@ function connectionFor(key, role) {
   let conn = connections.get(id);
   if (conn) { clearTimeout(conn.releaseTimer); return conn; }
   conn = {
-    id, key, role, ws: null, subs: new Set(), frame: null, state: null, view: null, home: '',
+    id, key, role, ws: null, subs: new Set(), frame: null, state: null, view: null, home: '', lecture: 0,
     retry: 0, retryTimer: null, releaseTimer: null, closed: false, decoding: null, pendingFrame: null,
+    mediaAsks: new Map(),
   };
   connections.set(id, conn);
   open(conn);
@@ -148,7 +149,7 @@ function open(conn) {
   conn.ws = ws;
   ws.onopen = () => {
     conn.retry = 0;
-    ws.send(JSON.stringify({ t: 'hello', home: conn.home, role: conn.role }));
+    ws.send(JSON.stringify({ t: 'hello', home: conn.home, role: conn.role, lecture: conn.lecture }));
     if (conn.view) ws.send(JSON.stringify({ t: 'view', ...conn.view }));
   };
   ws.onmessage = (ev) => {
@@ -160,6 +161,9 @@ function open(conn) {
       for (const sub of conn.subs) sub.onState?.(msg);
     } else if (msg.t === 'opening') {
       for (const sub of conn.subs) sub.onOpening?.();
+    } else if (msg.t === 'media') {
+      conn.mediaAsks.get(msg.id)?.(msg.media || null);
+      conn.mediaAsks.delete(msg.id);
     } else if (msg.t === 'error') {
       for (const sub of conn.subs) sub.onError?.(msg.message || 'The live browser stopped.');
     }
@@ -207,9 +211,10 @@ function send(conn, msg) {
  * newest picture (an ImageBitmap, drawn by the caller and not kept: it is
  * closed when the next one arrives), the page's state, and any error.
  * `role` 'display' is the screen the room sees: its panel decides the page's
- * shape (see setView). Everything else is a controller.
+ * shape (see setView). Everything else is a controller. `lecture` is the
+ * server's lecture it is opened in, if any.
  */
-export function watchLiveBrowser({ key, home = '', role = 'control', onFrame, onState, onError, onOpening }) {
+export function watchLiveBrowser({ key, home = '', role = 'control', lecture = 0, onFrame, onState, onError, onOpening }) {
   const sub = { onFrame, onState, onError, onOpening };
   let conn = null;
   let released = false;
@@ -218,6 +223,9 @@ export function watchLiveBrowser({ key, home = '', role = 'control', onFrame, on
     if (released || !k) return;
     conn = connectionFor(k, role === 'display' ? 'display' : 'control');
     if (home && !conn.home) conn.home = home;
+    // The lecture it opens in: a course that keeps its live pages' sign-ins
+    // (server/courses.js) starts the page with them.
+    if (lecture && !conn.lecture) conn.lecture = lecture;
     conn.subs.add(sub);
     if (conn.state) onState?.(conn.state);
     if (conn.frame) onFrame?.(conn.frame);
@@ -229,6 +237,19 @@ export function watchLiveBrowser({ key, home = '', role = 'control', onFrame, on
       if (!conn) { queued.push(msg); return; }
       if (msg.t === 'view') conn.view = { w: msg.w, h: msg.h, scale: msg.scale };
       send(conn, msg);
+    },
+    /**
+     * Where the page's video is: { time, duration, paused }, or null when it
+     * has none (or the server did not answer). `pause` stops it there too.
+     */
+    askMedia({ pause = false } = {}) {
+      if (!conn || conn.ws?.readyState !== WebSocket.OPEN) return Promise.resolve(null);
+      const id = Math.random().toString(36).slice(2, 10);
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => { conn.mediaAsks.delete(id); resolve(null); }, 4000);
+        conn.mediaAsks.set(id, (media) => { clearTimeout(timer); resolve(media); });
+        send(conn, { t: 'media', id, pause });
+      });
     },
     get state() { return conn?.state || null; },
     get frame() { return conn?.frame || null; },
@@ -260,9 +281,10 @@ export function watchLiveBrowser({ key, home = '', role = 'control', onFrame, on
  * renderers.js). `getCfg` is read each time, so a room changed in Settings
  * finds its own sessions.
  */
-export function liveBrowserOptions(getCfg, role) {
+export function liveBrowserOptions(getCfg, role, getLecture = () => 0) {
   return {
     role,
+    lecture: () => Number(getLecture()) || 0,
     availableNow: liveBrowserAvailableNow,
     available: liveBrowserAvailable(),
     keyFor: (item) => {

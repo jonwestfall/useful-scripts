@@ -399,6 +399,22 @@ async function handleApi(req, res, url, ctx) {
       return true;
     }
 
+    // Staying signed in to websites in this course's live pages: on, off
+    // (which forgets them), or forget what has been kept so far.
+    if (head === 'courses' && rest.length === 2 && rest[1] === 'live-signins' && req.method === 'PUT') {
+      const body = await readJson(req, 1024);
+      const changed = courses.setLiveSignins(ctx.db, user, rest[0], !!body.on);
+      auditLog(ctx, req, user, 'course_live_signins_changed', { courseCode: changed.course, on: changed.liveSignins });
+      json(res, 200, changed);
+      return true;
+    }
+    if (head === 'courses' && rest.length === 2 && rest[1] === 'live-signins' && req.method === 'DELETE') {
+      const forgot = courses.forgetLiveSignins(ctx.db, user, rest[0]);
+      auditLog(ctx, req, user, 'course_live_signins_forgotten', { courseCode: forgot.course });
+      json(res, 200, forgot);
+      return true;
+    }
+
     if (head === 'courses' && rest.length === 2 && rest[1] === 'members' && req.method === 'POST') {
       const body = await readJson(req, 8 * 1024);
       json(res, 200, { people: courses.addMember(ctx.db, user, rest[0], { username: body.username, role: body.role }) });

@@ -1320,6 +1320,12 @@ function renderCourseBody(course) {
     'What a new lecture in this course starts with in the corner. It can still be changed or hidden from the Say tab during a lecture.'));
   body.append(renderCourseBranding(course));
 
+  // Only where there is a live browser to keep them for.
+  if (info.features.includes('browser')) {
+    body.append(el('h3', { class: 'hint', style: 'margin:14px 0 0' }, 'Live pages'));
+    body.append(renderCourseLiveSignins(course));
+  }
+
   body.append(el('h3', { class: 'hint', style: 'margin:14px 0 0' }, 'Plan template'));
   const template = courseTemplates[course.code];
   if (template) {
@@ -1339,6 +1345,37 @@ function renderCourseBody(course) {
       'No template yet - open a lecture that has the shape this course reuses every week in the planning page and use "Save as this course\'s template" there.'));
   }
   return body;
+}
+
+/**
+ * Whether this course's live pages stay signed in to the websites opened in
+ * them, from one lecture to the next (see liveSignins in server/courses.js).
+ */
+function renderCourseLiveSignins(course) {
+  const check = el('input', {
+    type: 'checkbox', checked: !!course.liveSignins,
+    onchange: () => withCourse(() => courseApi(`/${encodeURIComponent(course.code)}/live-signins`,
+      { method: 'PUT', body: JSON.stringify({ on: check.checked }) })),
+  });
+  const forget = el('button', {
+    class: 'admin-small', type: 'button', hidden: !course.liveSignins,
+    onclick: async () => {
+      try {
+        await courseApi(`/${encodeURIComponent(course.code)}/live-signins`, { method: 'DELETE' });
+        sayCourses(`The sign-ins kept for ${course.code} are forgotten.`);
+      } catch (err) {
+        sayCourses(err.message, true);
+      }
+    },
+  }, 'Forget the sign-ins kept so far');
+  return el('div', {},
+    el('label', { class: 'check' }, check, ' Stay signed in to websites in this course\'s live pages'),
+    el('p', { class: 'hint' },
+      'A website you sign in to in a live page - a library database, say - is still signed in at the next lecture, instead of asking again. '
+      + 'Only for the people in this course, never for a kiosk. The sign-ins are kept on this server and in its backups, '
+      + 'and anyone in the course who opens a live page is signed in as you on those sites: use a shared or class account, not your own. '
+      + 'Turning this off forgets them.'),
+    el('div', { class: 'admin-actions' }, forget));
 }
 
 async function withCourse(work) {

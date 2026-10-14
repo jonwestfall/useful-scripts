@@ -838,6 +838,20 @@ const MIGRATIONS = [
       SELECT id * 4 + 3, text, NULL, 'parking', id, at FROM attendance_parking WHERE TRIM(text) <> '';
     `);
   },
+  (db) => {
+    db.exec(`
+      -- Staying signed in to websites in a course's live pages (the live
+      -- browser, server/browser.js). Off unless a course's owner turns it on;
+      -- the cookies themselves are a sign-in, so they are kept apart from the
+      -- course row and deleted the moment it is turned off.
+      ALTER TABLE courses ADD COLUMN live_signins INTEGER NOT NULL DEFAULT 0;
+      CREATE TABLE course_live_cookies (
+        course_id INTEGER PRIMARY KEY REFERENCES courses(id) ON DELETE CASCADE,
+        cookies   TEXT    NOT NULL,
+        saved_at  INTEGER NOT NULL
+      );
+    `);
+  },
 ];
 
 function migrate(db) {

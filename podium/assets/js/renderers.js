@@ -718,7 +718,10 @@ function renderWeb(item, opts) {
 // opts.liveBrowser, where the page has a room to find sessions in:
 //   role         'display' (the projector: it decides the page's shape and
 //                obeys Next/Previous), 'control', or 'viewer' (Guest View -
-//                shown a card, since only the room's own devices hold the key)
+//                only the room's own devices hold the key, so a viewer is
+//                shown the pictures the display relays, or a card)
+//   relayed      for a viewer: { watch(key, fn) } - fn(dataUrl) with the
+//                display's newest picture of the page, now and as they come
 //   availableNow()  true / false / null while still being asked
 //   available       a promise of the same answer
 //   keyFor(item)    a promise of the item's session name
@@ -733,7 +736,7 @@ function renderWebItem(item, opts) {
   const choose = (it) => {
     if (live === null && browseMode(it, true) === 'live') return 'wait';
     const want = browseMode(it, live === true);
-    if (want === 'live') return lb.role === 'viewer' ? 'card-live' : 'live';
+    if (want === 'live') return lb.role !== 'viewer' ? 'live' : lb.relayed ? 'relayed' : 'card-live';
     if (it.browse !== 'embed' && refusesFraming(it.src)) return 'card-refused';
     return 'embed';
   };
@@ -743,6 +746,7 @@ function renderWebItem(item, opts) {
     inner?.destroy();
     mode = next;
     inner = next === 'live' ? renderLiveWeb(it, opts)
+      : next === 'relayed' ? renderRelayedWeb(it, lb.relayed)
       : next === 'embed' ? renderWeb(it, opts)
         : next === 'wait' ? { el: el('div', { class: 'r-fill r-live' }), update() {}, reconcile() {}, destroy() {} }
           : renderWebCard(it, next === 'card-live' ? 'live' : 'refused');
@@ -756,6 +760,7 @@ function renderWebItem(item, opts) {
   return {
     el: node,
     get browser() { return inner?.browser || null; },
+    get picture() { return inner?.picture || null; },
     get mode() { return mode; },
     update(it) { current = it; show(it); },
     reconcile(it, audio) { inner?.reconcile?.(it, audio); },
@@ -788,6 +793,38 @@ function renderWebCard(item, why) {
   return { el: node, update() {}, reconcile() {}, destroy() { node.remove(); } };
 }
 
+// A live page, for a Guest View viewer: the pictures of it the display
+// relays (about one a second), with the card until the first arrives. Only
+// pictures - a viewer cannot reach the page itself.
+const liveKeyOf = (item) => `${item?.liveId || item?.key || ''}`;
+function renderRelayedWeb(item, relayed) {
+  const card = renderWebCard(item, 'live');
+  const img = el('img', { class: 'r-live-canvas', alt: '', hidden: true });
+  const node = el('div', { class: 'r-fill r-live r-live-relayed' }, img, card.el);
+  let key = liveKeyOf(item);
+  const show = (dataUrl) => {
+    if (!dataUrl) return;
+    img.src = dataUrl;
+    img.hidden = false;
+    card.el.hidden = true;
+    node.classList.add('has-frame');
+  };
+  let stop = relayed.watch(key, show);
+  return {
+    el: node,
+    update(it) {
+      if (liveKeyOf(it) === key) return;
+      stop();
+      key = liveKeyOf(it);
+      img.hidden = true;
+      card.el.hidden = false;
+      stop = relayed.watch(key, show);
+    },
+    reconcile() {},
+    destroy() { stop(); node.remove(); },
+  };
+}
+
 // The page itself, running in the server's browser (server/browser.js): a
 // canvas showing the newest picture of it. On the projector this renderer
 // says how big its panel is, so the page is laid out for exactly that space,
@@ -806,6 +843,7 @@ function renderLiveWeb(item, opts) {
   let current = item;
   let shown = false;
   let held = false;
+  let painted = 0;   // pictures actually drawn, so a copy of it knows when it has changed
   const isHeld = () => !!(opts.getHeld ? opts.getHeld() : opts.getFrozen?.());
   const say = (text, isError = false) => {
     status.textContent = text;
@@ -822,12 +860,14 @@ function renderLiveWeb(item, opts) {
       canvas.height = bitmap.height;
     }
     canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    painted += 1;
     if (!shown) { shown = true; node.classList.add('has-frame'); say(''); }
   };
   const browser = watchLiveBrowser({
     key: lb.keyFor(item),
     home: item.src,
     role: isDisplay ? 'display' : 'control',
+    lecture: lb.lecture?.() || 0,
     onFrame: paint,
     onState: (st) => { if (st.error) say(st.error, true); else if (shown) say(''); },
     onError: (message) => say(message, true),
@@ -858,6 +898,8 @@ function renderLiveWeb(item, opts) {
   return {
     el: node,
     browser,
+    /** What the room sees of the page (held while frozen), for Guest View; null before the first picture. */
+    get picture() { return shown && canvas.width ? { canvas, painted } : null; },
     update(it) {
       if (it.src !== current.src && it.src) browser.send({ t: 'go', url: it.src });
       current = it;
@@ -2444,6 +2486,7 @@ const FACTORIES = {
   attendance: renderAttendance,
 };
 
+export { liveKeyOf };
 export function createRenderer(item, opts = {}) {
   const factory = FACTORIES[item?.type] || renderBlack;
   const renderer = factory(item || { type: 'black' }, opts);
