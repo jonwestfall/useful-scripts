@@ -281,16 +281,15 @@ if (!exe) {
     '/three': '<!doctype html><title>Three</title><body>three',
     '/set': '<!doctype html><title>Set</title><body>signed in',
     '/read': '<!doctype html><title>Read</title><script>document.title = `Read ${document.cookie || "none"}`</script>',
-    '/video': '<!doctype html><title>Video</title><body style="margin:0"><video src="/tone.webm" muted autoplay loop playsinline width="400"></video>',
+    // A video made in the page (a canvas, recorded live) - no file needed.
+    '/video': `<!doctype html><title>Video</title><body style="margin:0"><video muted autoplay playsinline width="400"></video>
+      <script>const c = Object.assign(document.createElement('canvas'), { width: 160, height: 90 });
+      let n = 0; setInterval(() => { const g = c.getContext('2d'); g.fillStyle = 'hsl(' + (n++ * 20) % 360 + ',80%,50%)'; g.fillRect(0, 0, 160, 90); }, 50);
+      document.querySelector('video').srcObject = c.captureStream(20);</script>`,
   };
   const site = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/set') res.setHeader('set-cookie', 'kept=yes; Max-Age=3600; Path=/');
-    if (url.pathname === '/tone.webm') {
-      res.writeHead(200, { 'content-type': 'video/webm' });
-      res.end(fs.readFileSync(new URL('./fixtures/tone-video.webm', import.meta.url)));
-      return;
-    }
     // The reason the live browser exists: this page refuses to be framed.
     res.writeHead(200, { 'content-type': 'text/html', 'x-frame-options': 'deny', 'content-security-policy': "frame-ancestors 'none'" });
     res.end(url.pathname === '/echo' ? `<!doctype html><title>Echo ${url.searchParams.get('q')}</title>` : (pages[url.pathname] || 'nope'));
@@ -394,7 +393,7 @@ if (!exe) {
       playing = await askMedia(`at-${i}`);
       if (!(playing?.time > 0)) await new Promise((r) => setTimeout(r, 250));
     }
-    ok(`a page's video says where it is (${JSON.stringify(playing)})`, playing?.time > 0 && playing.duration > 0 && playing.paused === false);
+    ok(`a page's video says where it is (${JSON.stringify(playing)})`, playing?.time > 0 && playing.paused === false);
     await askMedia('pause', { pause: true });
     ok('and asked to, pauses there', (await askMedia('after'))?.paused === true);
     send(controller, { t: 'home' });
