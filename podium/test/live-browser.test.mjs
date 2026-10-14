@@ -338,11 +338,12 @@ if (!exe) {
     send(controller, { t: 'key', key: 'Home' });
     await until('back to the top', () => latest(controller).title === 'One@0');
 
+    // Sent back to back, as a quick hand on the iPad does: the tap must have
+    // focused the field before the typing lands.
     send(controller, { t: 'click', x: (200 / 800), y: (330 / 600) });
-    await new Promise((r) => setTimeout(r, 300));
     send(controller, { t: 'text', text: 'mitochondria' });
     send(controller, { t: 'key', key: 'Enter' });
-    ok('a tap focuses a field, typing fills it and Enter submits it', await until('the search', () => latest(display).title === 'Echo mitochondria'));
+    ok('a tap focuses a field, typing fills it and Enter submits it, in that order', await until('the search', () => latest(display).title === 'Echo mitochondria'));
 
     send(controller, { t: 'back' });
     ok('Back goes back', await until('back', () => latest(display).url === home));

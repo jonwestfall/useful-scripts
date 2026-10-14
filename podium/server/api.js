@@ -40,6 +40,7 @@ const attendance = require('./attendance.js');
 const mail = require('./mail.js');
 const zipImport = require('./zip-import.js');
 const zipStaging = require('./zip-staging.js');
+const doctor = require('./doctor.js');
 
 const COOKIE = 'podium_session';
 const KIOSK_COOKIE = 'podium_kiosk';
@@ -1158,6 +1159,19 @@ async function handleApi(req, res, url, ctx) {
         json(res, 200, result);
         return true;
       }
+    }
+
+    // podium-admin doctor's checks, asked of the running service, for an
+    // administrator who has a browser and not a shell on the box. One run at
+    // a time: a second click while one is going waits for the same answer.
+    if (head === 'system' && rest[0] === 'health' && rest.length === 1 && req.method === 'GET') {
+      if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can see this' }); return true; }
+      ctx.healthRun ??= doctor.runInService({
+        db: ctx.db, dataDir: ctx.dataDir, staticDir: ctx.staticDir, served: ctx.served,
+      }).finally(() => { ctx.healthRun = null; });
+      const found = await ctx.healthRun;
+      json(res, 200, { checkedAt: Date.now(), found });
+      return true;
     }
 
     // A test message, to check the mail settings before a class relies on them.

@@ -322,6 +322,22 @@ async function pollUntil(page, fn, arg, { timeout = 15000, interval = 300 } = {}
   }
 }
 
+/**
+ * Wait for a state, not a length of time: `check` (run here, in Node, so it
+ * can ask several pages, or the server) is asked every `interval` ms until it
+ * answers truthy. Returns that answer; throws 'timed out' after `timeout`.
+ * Prefer this to waitForTimeout - a fixed pause is too short on a slow CI
+ * runner and too long everywhere else. (A check that something does NOT
+ * happen - a paused set holds, a default is not put back - still needs one.)
+ */
+async function until(check, { timeout = 15000, interval = 250 } = {}) {
+  for (const end = Date.now() + timeout; ; await new Promise((r) => setTimeout(r, interval))) {
+    const answer = await check();
+    if (answer) return answer;
+    if (Date.now() > end) throw new Error('timed out');
+  }
+}
+
 // A browser normalizes a hex colour assigned to .style.background into its
 // own serialization (rgb(...)) before it is readable back off the element, so
 // compare against what THIS browser does with the same hex rather than
@@ -520,6 +536,9 @@ const expecting = {
   passwordRefused: false,
   // A sign-in refused on purpose, while its 401 may arrive with no url.
   loginRefused: false,
+  // Signing out: the controller's own timers can ask the API in the moment
+  // between the session ending and the page leaving, and be refused (401).
+  signingOut: false,
   // Admin's Marp themes: a theme saved under a name another one has, refused on purpose.
   themeNameTaken: false,
   // Replay (Issue #132): a lecture somebody else may not open, refused on purpose.
@@ -592,6 +611,7 @@ const trap = (page, tag) => {
     // but the login page asks with fetch(), whose failed-load message does not
     // always carry one - the same gap expecting.pollLost below describes).
     if (expecting.loginRefused && /responded with a status of 401/.test(text)) return;
+    if (expecting.signingOut && /responded with a status of 401/.test(text)) return;
     if (expecting.lectureNotFound && /responded with a status of 404/.test(text)) return;
     if (expecting.wordRefused && /responded with a status of 4(15|22)/.test(text)) return;
     if (expecting.rosterConflict && /responded with a status of 409/.test(text)) return;
@@ -646,5 +666,5 @@ export {
   HERE, ROOT, fs, path, os, http, spawn, execFileSync,
   writeImageFixture, writeAlphaImageFixture, writeSlideFixtures, writeMinimalPptxFixture, SLIDE_COLOURS, freePort,
   devices, PORT, BASE, CFG, browser, ok, errors, want, trap, expecting, writePortraitImageFixture,
-  pollUntil, bgMatches, reportErrors, teardown, exitWithResult,
+  pollUntil, until, bgMatches, reportErrors, teardown, exitWithResult,
 };

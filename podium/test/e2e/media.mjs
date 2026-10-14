@@ -20,9 +20,25 @@ import {
   trap,
   reportErrors,
   teardown,
-  exitWithResult
+  exitWithResult,
+  until,
 } from './harness.mjs';
 import { PLAN_VERSION } from '../../assets/js/planfile.js';
+
+// Waits for the state a check is about to look at; the check itself still
+// says whether it came.
+const settle = (check, opts) => until(check, opts).catch(() => false);
+// A fade (rampMusic in display.js: a step every 50 ms) has finished when the
+// level has stopped moving.
+const steady = async (read, { still = 600, timeout = 15000 } = {}) => {
+  let last = await read();
+  let since = Date.now();
+  await settle(async () => {
+    const now = await read();
+    if (Math.abs(now - last) > 0.002) { last = now; since = Date.now(); return false; }
+    return Date.now() - since >= still;
+  }, { timeout });
+};
 
 try {
 if (want('the phone-camera tile in the library actually starts the camera')) {
@@ -136,11 +152,11 @@ ok(`it fades in rather than banging on (${rampedUp.first.toFixed(2)} -> ${ramped
 await pad.click('.tab[data-tab="library"]');
 await pad.click('.tile:has(.tile-title:text-is("Waiting music"))');
 await screen.waitForSelector('.r-audio', { timeout: 15000 });
-await pad.waitForTimeout(1800);
+await settle(async () => { const { vol } = await music(); return vol > 0 && vol < 0.2; });
 const ducked = (await music()).vol;
 await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
 await screen.waitForSelector('.r-whiteboard', { timeout: 10000 });
-await pad.waitForTimeout(2200);
+await settle(async () => (await music()).vol > 0.4);
 const recovered = (await music()).vol;
 ok(`a clip with sound ducks the music to a whisper (${ducked})`, ducked > 0 && ducked < 0.2);
 // At rest this is music.volume (0.6 by default) times the master fader
@@ -160,10 +176,10 @@ await pad.click('#freeze');
 
 // Mute is the room's silence button, so it covers the music too.
 await pad.click('#mute');
-await pad.waitForTimeout(1200);
+await settle(async () => (await music()).vol < 0.02);
 ok('Mute silences the music as well as the content', (await music()).vol < 0.02);
 await pad.click('#mute');
-await pad.waitForTimeout(1600);
+await settle(async () => (await music()).vol > 0.4);
 ok('and unmuting brings it back', (await music()).vol > 0.4);
 
 // The queue is shared state: a second controller sees it without asking.
@@ -389,7 +405,7 @@ await pad.click('.tab[data-tab="music"]');
 await pad.check('#music-autoplay');
 await pad.click('#music-load');
 await screen.waitForFunction(() => { const el = document.querySelector('audio#music'); return el && !el.paused && el.currentTime > 0; }, null, { timeout: 15000 });
-await pad.waitForTimeout(1500);   // past the fade-in, onto a settled level
+await steady(() => screen.evaluate(() => document.querySelector('audio#music').volume));   // past the fade-in
 await pad.click('.tab[data-tab="mixer"]');
 await setSlider(pad, '#mixer-master', 0.5);
 await setSlider(pad, '#mixer-music', 0.6);
@@ -975,7 +991,7 @@ await padA.fill('#music-url', 'content/audio/waiting-music.wav');
 await padA.click('#music-url-form button[type="submit"]');
 await padA.click('#music-play');
 await screen.waitForFunction(() => { const el = document.querySelector('audio#music'); return el && !el.paused && el.currentTime > 0; }, null, { timeout: 15000 });
-await padA.waitForTimeout(1200);   // past the fade-in, onto a settled level
+await steady(() => screen.evaluate(() => document.querySelector('audio#music').volume));   // past the fade-in
 const unducked = await screen.evaluate(() => document.querySelector('audio#music').volume);
 
 await amplifyOn(padB);
@@ -1367,7 +1383,7 @@ const putVideoUp = async (pad) => {
   await pad.click('#music-load');
   await screen.waitForFunction(() => { const m = document.querySelector('audio#music'); return !m.paused && m.currentTime > 0; }, null, { timeout: 15000 });
   // Let the fade-in finish, so "before" is the level the music sits at.
-  await screen.waitForTimeout(3500);
+  await steady(async () => (await sound(screen)).music);
   const before = (await sound(screen)).music;
 
   await putVideoUp(pad);
@@ -1377,7 +1393,7 @@ const putVideoUp = async (pad) => {
   }, null, { timeout: 8000 })
     .then(() => ok('a video picked well after Go live plays on the projector', true))
     .catch(() => ok('a video picked well after Go live plays on the projector', false));
-  await screen.waitForTimeout(1200);
+  await settle(async () => Math.abs((await sound(screen)).music / before - 0.2) < 0.03);
   const during = await sound(screen);
   ok(`with its sound on, at the room's level (${JSON.stringify(during.video)})`,
     !!during.video?.playing && !during.video.muted && during.video.volume > 0.5);
@@ -1391,7 +1407,7 @@ const putVideoUp = async (pad) => {
   await pad.click('.tab[data-tab="library"]');
   await pad.click('.tile:has(.tile-title:text-is("Whiteboard"))');
   await screen.waitForSelector('.r-whiteboard', { timeout: 10000 });
-  await screen.waitForTimeout(1500);
+  await settle(async () => Math.abs((await sound(screen)).music - before) < 0.02);
   const after = (await sound(screen)).music;
   ok(`the music comes back up when the video goes (${after})`, Math.abs(after - before) < 0.02);
 
@@ -1465,7 +1481,7 @@ await pad.fill('#timer-mins', '2');
 await pad.click('#timer-add');
 await pad.waitForFunction(() => document.querySelectorAll('.timer-chip').length === 2, null, { timeout: 10000 });
 await pad.click('#timer-start');
-await pad.waitForTimeout(1400);
+await settle(async () => { const c = await chips(); return /Group work7:5/.test(c[0]) && /Break1:5/.test(c[1]); });
 const both = await chips();
 ok(`both clocks are on screen at once, each with its own name and time ("${both.join('", "')}")`,
   both.length === 2 && /Group work7:5/.test(both[0]) && /Break1:5/.test(both[1]));
@@ -1504,9 +1520,12 @@ ok('a countdown can be removed once you are done with it', (await chips()).lengt
 await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="single"]');
 await pad.click('.tab[data-tab="library"]');
 await pad.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
-await pad.waitForTimeout(2500);
 await pad.click('.tab[data-tab="slides"]');
 await pad.waitForSelector('#deck-live:not([hidden])');
+await pad.waitForFunction(() => {
+  const r = document.querySelector('#deck-now-preview .mirror-frame')?.getBoundingClientRect();
+  return r && r.width > 0 && r.height > 0;
+}, null, { timeout: 15000 });
 ok('three colours to choose from', (await pad.$$('.laser-swatch')).length === 3);
 
 await pad.click('.laser-swatch[data-color="green"]');
@@ -1714,7 +1733,7 @@ await screen.waitForSelector('.r-whiteboard', { timeout: 8000 });
 ok('starting it puts the first entry up', true);
 
 const firstBg = await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background);
-await pad.waitForTimeout(3500);
+await settle(async () => (await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background)) !== firstBg, { timeout: 10000 });
 const secondBg = await screen.evaluate(() => document.querySelector('.r-whiteboard')?.style.background);
 ok('it advances itself on schedule, with no controller action', firstBg !== secondBg);
 

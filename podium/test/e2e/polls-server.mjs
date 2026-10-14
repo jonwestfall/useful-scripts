@@ -2227,6 +2227,19 @@ ok('rotating it is one button, because that is how you take a room back',
 // it reading what the server actually holds rather than a key nobody has.
 await desk.fill(passField, before);
 
+// Admin -> Server -> Health: podium-admin doctor, from the browser. What it
+// finds depends on the machine (a backup, mail, the internet); that it asks,
+// and shows every answer, does not.
+await desk.click('#tab-server');
+await desk.waitForSelector('#health-list .health-item', { timeout: 30000 });
+const healthChecks = await desk.$$eval('#health-list .health-item', (els) => els.map((e) => e.dataset.check));
+ok(`opening the Server tab runs the health checks (${healthChecks.join(', ')})`,
+  ['node', 'schema', 'database', 'accounts', 'disk', 'build'].every((c) => healthChecks.includes(c)));
+ok(`and says how it went (${await desk.textContent('#health-note')})`,
+  /checks out|worth knowing|need/.test(await desk.textContent('#health-note')));
+ok(`the build is the one this server runs (${await desk.textContent('#health-list [data-check="build"] .health-detail')})`,
+  /deployed and running/.test(await desk.textContent('#health-list [data-check="build"] .health-detail')));
+
 await desk.click('#tab-storage');
 await desk.waitForSelector('#panel-storage:not([hidden])');
 
@@ -2535,6 +2548,8 @@ ok(`the relay socket refuses a stranger who knows the room name (${await upgrade
     method: 'POST', headers: { cookie: taCookie }, body: 'PK',
   })).status;
   ok(`a non-admin account cannot import into the content folders (${memberPost})`, memberPost === 403);
+  const memberHealth = (await fetch(`${acctBase}/api/system/health`, { headers: { cookie: taCookie } })).status;
+  ok(`nor see the server's health checks (${memberHealth})`, memberHealth === 403);
   await zipDesk.close();
 }
 
@@ -2551,8 +2566,13 @@ await pad.waitForSelector('#status[data-status="online"]', { timeout: 15000 });
 ok('so the signed-in controller actually reaches the relay', true);
 
 await pad.click('#topbar-more');
+expecting.signingOut = true;
 await Promise.all([pad.waitForURL(/login\.html/), pad.click('#session-badge button')]);
 ok('signing out goes back to the login page', /login\.html/.test(pad.url()));
+// Closed before the flag drops, so a refusal still on its way from the
+// controller's last moment cannot land after it.
+await pad.close();
+expecting.signingOut = false;
 ok('and the controller is behind the gate again',
   (await fetch(`${acctBase}/control.html`)).status === 401);
 

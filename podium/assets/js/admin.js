@@ -1549,6 +1549,57 @@ function renderStoragePressure(disk) {
   banner.hidden = false;
 }
 
+// --- health: podium-admin doctor, from the browser -------------------------------
+
+const HEALTH_MARK = { ok: 'OK', warn: 'Note', bad: 'Fix' };
+
+async function refreshHealth() {
+  const note = $('#health-note');
+  const list = $('#health-list');
+  const go = $('#health-go');
+  note.textContent = 'Checking…';
+  note.classList.remove('is-bad');
+  go.disabled = true;
+  try {
+    const res = await fetch('/api/system/health', { credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `the server answered ${res.status}`);
+    list.replaceChildren(...body.found.map((item) => {
+      const li = document.createElement('li');
+      li.className = `health-item is-${item.level}`;
+      li.dataset.check = item.title;
+      const mark = document.createElement('span');
+      mark.className = 'health-mark';
+      mark.textContent = HEALTH_MARK[item.level] || item.level;
+      const title = document.createElement('b');
+      title.textContent = item.title;
+      const detail = document.createElement('span');
+      detail.className = 'health-detail';
+      detail.textContent = item.detail;
+      li.append(mark, title, detail);
+      if (item.fix && item.level !== 'ok') {
+        const fix = document.createElement('span');
+        fix.className = 'health-fix';
+        fix.textContent = item.fix;
+        li.append(fix);
+      }
+      return li;
+    }));
+    const bad = body.found.filter((f) => f.level === 'bad').length;
+    const warn = body.found.filter((f) => f.level === 'warn').length;
+    const at = new Date(body.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    note.textContent = `${bad
+      ? `${bad} thing${bad === 1 ? '' : 's'} need${bad === 1 ? 's' : ''} attention${warn ? `, ${warn} worth knowing about` : ''}.`
+      : (warn ? `Nothing broken; ${warn} thing${warn === 1 ? '' : 's'} worth knowing about.` : 'Everything checks out.')} Checked at ${at}.`;
+    note.classList.toggle('is-bad', bad > 0);
+  } catch (err) {
+    note.textContent = `The checks could not run: ${err.message}.`;
+    note.classList.add('is-bad');
+  } finally {
+    go.disabled = false;
+  }
+}
+
 function downloadBackup() {
   // A plain navigation rather than fetch-then-blob: the file is the whole
   // database and holding a second copy of it in the tab's memory to hand it
@@ -2972,6 +3023,10 @@ if (!info.features.includes('library')) {
       $('#attendance-rotate')?.addEventListener('change', (ev) => updateAttendanceDefaults('attendanceRotate', ev.target.value));
       $('#attendance-radius')?.addEventListener('change', (ev) => updateAttendanceDefaults('attendanceRadius', ev.target.value));
       $('#mail-test')?.addEventListener('click', sendTestEmail);
+      $('#health-go').addEventListener('click', refreshHealth);
+      // Asked the first time the Server tab is opened, not on every visit to
+      // the page: the web access check opens a connection to the internet.
+      $('#tab-server').addEventListener('click', () => { if (!$('#health-list').childElementCount) refreshHealth(); }, { once: true });
       await Promise.all([refreshPeople(), refreshStorage(), refreshSystemSettings()]);
     }
     await refreshCourses();

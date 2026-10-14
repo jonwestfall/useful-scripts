@@ -11,7 +11,7 @@
 
 import {
   ROOT, fs, path, os, http, spawn, execFileSync, freePort, BASE, browser, ok, want, trap, expecting,
-  reportErrors, teardown, exitWithResult, writeImageFixture,
+  reportErrors, teardown, exitWithResult, writeImageFixture, until,
 } from './harness.mjs';
 import { makeDocx, makeRtf } from '../word-fixtures.mjs';
 import net from 'node:net';
@@ -103,14 +103,6 @@ const stripTitles = (page) => page.evaluate(() => [...(document.querySelector('#
 const pickSlide = (page, i) => page.evaluate((n) => document.querySelector('#deck-strip').shadowRoot.querySelectorAll('.cell')[n].click(), i);
 const waitSaved = (page) => page.waitForFunction(() => /^Saved/.test(document.querySelector('#deck-save-state').textContent), null, { timeout: 10000 });
 const serverText = (page, src) => page.evaluate((u) => fetch(u, { cache: 'no-cache' }).then((r) => r.text()), src);
-// Polled from here, in Node - unlike the harness's pollUntil, which runs its
-// function inside a page.
-async function until(check, { timeout = 15000, interval = 300 } = {}) {
-  for (const end = Date.now() + timeout; ; await new Promise((r) => setTimeout(r, interval))) {
-    if (await check()) return true;
-    if (Date.now() > end) throw new Error('timed out');
-  }
-}
 const libraryItem = (page, id) => page.evaluate((n) => fetch('/api/library').then((r) => r.json()).then((b) => b.items.find((i) => i.id === n)), id);
 
 try {
@@ -2258,11 +2250,17 @@ fs.writeFileSync(doc, Buffer.from('not really a Word 97 file'));
     return { status: res.status, error: (await res.json()).error };
   });
   ok(`a raw Word file is refused until a choice is made (${raw.status})`, raw.status === 415 && /document .* or as a PDF/.test(raw.error));
-  const pdf = await page.evaluate(async () => {
-    const res = await fetch('/api/library/upload?filename=x.docx&title=x&course=&as=pdf', { method: 'POST', body: new Blob(['x']) });
+  const asPdf = (bytes) => page.evaluate(async (b) => {
+    const res = await fetch('/api/library/upload?filename=x.docx&title=x&course=&as=pdf', { method: 'POST', body: new Blob([new Uint8Array(b)]) });
     return { status: res.status, error: (await res.json()).error };
-  });
-  ok(`a PDF that cannot be made says why, naming LibreOffice (${pdf.status})`, pdf.status === 422 && /LibreOffice/.test(pdf.error) && /Word or RTF/.test(pdf.error));
+  }, bytes);
+  const notWord = await asPdf([...Buffer.from('x')]);
+  ok(`a file that is not really Word is refused before LibreOffice is asked (${notWord.status})`,
+    notWord.status === 422 && /not really a Word or RTF document/.test(notWord.error));
+  // Starts like a .docx, so it gets as far as LibreOffice - or its absence.
+  const pdf = await asPdf([0x50, 0x4b, 0x03, 0x04, ...Buffer.from('and nothing more')]);
+  ok(`a PDF that cannot be made says why (${pdf.status}: ${pdf.error})`, pdf.status === 422 && /Word or RTF/.test(pdf.error)
+    && (office ? /could not be converted/ : /LibreOffice .* is not installed/).test(pdf.error));
   await ctx.close();
   expecting.wordRefused = false;
 }

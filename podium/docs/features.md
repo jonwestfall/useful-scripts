@@ -905,6 +905,6 @@ A **kiosk** is a display nobody is running: a lobby screen, a hallway sign, a la
 
 - **Install and update** with `deploy/install.sh` and `deploy/update.sh`. Updates run the unit tests first, flip to the new release, check `/healthz`, and roll back automatically if it doesn't come up.
 - **Backups**: a nightly systemd timer, `podium-admin backup` for a database snapshot, and `restore.sh`.
-- **`podium-admin doctor`** works through what actually goes wrong on a box: a full disk, an unsound database, a deploy that never reached the running process, an expiring certificate, no backups, no administrator left, a relay that answers HTTP but doesn't actually relay, and outgoing mail for attendance receipts. It's safe to run from cron.
+- **`podium-admin doctor`** works through what actually goes wrong on a box: a full disk, an unsound database, a deploy that never reached the running process, an expiring certificate, no backups, no administrator left, a relay that answers HTTP but doesn't actually relay, and outgoing mail for attendance receipts. It's safe to run from cron. An administrator can run most of the same checks from the browser too, in **Admin → Server → Health**.
 - **Audit log** of logins and administrative actions, downloadable as CSV and automatically pruned.
 - **Relay limits**: caps on rooms, devices per room (12) and viewers per room (300), plus per-IP connection throttling.

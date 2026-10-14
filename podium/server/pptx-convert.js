@@ -41,6 +41,28 @@ const WHAT = (ext) => (WORD_EXTS.has(ext) ? { noun: 'document', plural: 'Word or
 // anything actually stuck this long is not going to finish on its own.
 const TIMEOUT_MS = 120000;
 
+// What an Office file starts with. LibreOffice will open almost anything -
+// handed a text file named .pptx, it imports the text and makes a PDF of it -
+// so a file that is none of these is refused here, before it is ever started.
+// Any of them under any of the names: LibreOffice tells formats apart by
+// content, and a .docx saved as .doc, or an RTF named .doc, is common.
+const SIGNATURES = [
+  Buffer.from('504b0304', 'hex'), // a ZIP: .pptx and .docx (Office Open XML)
+  Buffer.from('d0cf11e0a1b11ae1', 'hex'), // OLE2: the legacy .ppt and .doc
+  Buffer.from('{\\rtf', 'latin1'), // RTF
+];
+
+/**
+ * Whether these bytes could be the Office file the extension says. Word also
+ * saves "XML Document" and "Web Page" files a .doc may turn out to be.
+ */
+function looksLikeOffice(buffer, ext) {
+  if (!Buffer.isBuffer(buffer)) return false;
+  if (SIGNATURES.some((sig) => buffer.subarray(0, sig.length).equals(sig))) return true;
+  if (!WORD_EXTS.has(ext)) return false;
+  return /^(\ufeff)?\s*</.test(buffer.subarray(0, 64).toString('utf8'));
+}
+
 class ConversionError extends Error {
   constructor(message, status = 422) {
     super(message);
@@ -74,6 +96,11 @@ async function convertToDocx(buffer) {
 
 async function convert(buffer, ext, to) {
   const what = WHAT(ext);
+  if (!looksLikeOffice(buffer, ext)) {
+    throw new ConversionError(
+      `That file could not be converted: it is not really a ${what.noun === 'document' ? 'Word or RTF document' : 'PowerPoint presentation'} inside, whatever its name says.`,
+    );
+  }
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'podium-convert-'));
   try {
     const inputPath = path.join(dir, `input${ext}`);
@@ -127,4 +154,4 @@ function hasLibreOffice() {
   return found;
 }
 
-module.exports = { CONVERTIBLE_EXTS, WORD_EXTS, ConversionError, TIMEOUT_MS, convertToPdf, convertToDocx, hasLibreOffice };
+module.exports = { CONVERTIBLE_EXTS, WORD_EXTS, ConversionError, TIMEOUT_MS, convertToPdf, convertToDocx, hasLibreOffice, looksLikeOffice };

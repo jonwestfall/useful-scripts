@@ -482,6 +482,8 @@ function connectCdp(wsUrl) {
 // --- the manager ---------------------------------------------------------------
 
 const SESSION_KEY_RE = /^[A-Za-z0-9_-]{32,64}$/;
+// What a device sends that is played into the page as input.
+const INPUT_MESSAGES = new Set(['move', 'click', 'scroll', 'key', 'text']);
 // A browser's very first start on a machine (its profile, fonts and caches
 // all cold) can take tens of seconds - on a freshly installed server, the
 // first web page anyone opens. Every start after that takes about one.
@@ -976,7 +978,7 @@ function createLiveBrowser(opts = {}) {
 
   async function handleClientMessage(session, client, msg) {
     session.lastSeen = Date.now();
-    if (['click', 'scroll', 'key', 'text'].includes(msg.t)) refreshSoon(session);
+    if (INPUT_MESSAGES.has(msg.t) && msg.t !== 'move') refreshSoon(session);
     const m = metricsFor(session.view, session.zoom);
     const at = (fx, fy) => ({ x: clamp(fx, 0, 1, 0.5) * m.width, y: clamp(fy, 0, 1, 0.5) * m.height });
     switch (msg.t) {
@@ -1125,9 +1127,15 @@ function createLiveBrowser(opts = {}) {
           return;
         }
         joining?.then(() => {
-          if (session && sessions.get(key) === session) {
-            handleClientMessage(session, client, msg).catch(() => {});
-          }
+          if (!session || sessions.get(key) !== session) return;
+          // Taps, keys and typing one at a time, in the order they came: a tap
+          // on a field is four calls to Chromium, and the text typed straight
+          // after it must not arrive before the field has been focused.
+          // Everything else (Stop above all) goes straight through.
+          if (!INPUT_MESSAGES.has(msg.t)) { handleClientMessage(session, client, msg).catch(() => {}); return; }
+          session.inputQueue = (session.inputQueue || Promise.resolve())
+            .then(() => (sessions.get(key) === session ? handleClientMessage(session, client, msg) : null))
+            .catch(() => {});
         });
       });
       client.on('close', () => {

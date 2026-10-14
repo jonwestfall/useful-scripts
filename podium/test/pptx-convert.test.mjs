@@ -43,10 +43,30 @@ console.log('\n-- LibreOffice not installed --');
   // check runs everywhere.
   const savedPath = process.env.PATH;
   process.env.PATH = path.dirname(process.execPath);
-  const err = await rejects(pptxConvert.convertToPdf(Buffer.from('anything'), '.pptx'));
+  // Starts the way a .pptx does, so it gets as far as asking for LibreOffice.
+  const err = await rejects(pptxConvert.convertToPdf(Buffer.from('504b03040000', 'hex'), '.pptx'));
   process.env.PATH = savedPath;
   chk('says plainly what to install, not a stack trace', err instanceof pptxConvert.ConversionError && /LibreOffice.*is not installed/.test(err.message));
   chk('and suggests the fallback that already exists (export images or a PDF)', /export the slides/.test(err.message));
+}
+
+// --- refused before LibreOffice is ever started, installed or not ---------
+console.log('\n-- something that is not really an Office file --');
+{
+  // LibreOffice opens nearly anything: handed text named .pptx, it makes a
+  // PDF of the text. So the bytes are looked at first.
+  const err = await rejects(pptxConvert.convertToPdf(Buffer.from('not a presentation at all'), '.pptx'));
+  chk('is refused with a plain reason, without starting LibreOffice', err instanceof pptxConvert.ConversionError
+    && /not really a PowerPoint presentation/.test(err.message));
+  const word = await rejects(pptxConvert.convertToPdf(Buffer.from('just some words'), '.docx'));
+  chk('and named as the kind of file it claimed to be', /not really a Word or RTF document/.test(word?.message || ''));
+  const looks = pptxConvert.looksLikeOffice;
+  chk('an Office Open XML file (a ZIP), a legacy OLE2 file and RTF all get through',
+    looks(Buffer.from('504b0304', 'hex'), '.pptx') && looks(Buffer.from('d0cf11e0a1b11ae1', 'hex'), '.ppt') && looks(Buffer.from('{\\rtf1'), '.rtf'));
+  chk('under each other\'s names too, since LibreOffice goes by content (a .docx saved as .doc)',
+    looks(Buffer.from('504b0304', 'hex'), '.doc') && looks(Buffer.from('{\\rtf1'), '.doc'));
+  chk('a .doc that is Word\'s own XML or web page gets through', looks(Buffer.from('\ufeff<?xml version="1.0"?>'), '.doc'));
+  chk('but not a .pptx that is a web page', !looks(Buffer.from('<html>'), '.pptx'));
 }
 
 // --- a minimal, genuinely valid .pptx, built the same way the rest of this
@@ -74,8 +94,8 @@ if (!soffice) {
     const pdfFromPpt = await pptxConvert.convertToPdf(pptx, '.ppt');
     chk('the .ppt path converts too', pdfFromPpt.subarray(0, 5).toString('latin1') === '%PDF-');
 
-    console.log('\n-- something that is not really a presentation --');
-    const err = await rejects(pptxConvert.convertToPdf(Buffer.from('not a presentation at all'), '.pptx'));
+    console.log('\n-- something that only starts like a presentation --');
+    const err = await rejects(pptxConvert.convertToPdf(Buffer.concat([Buffer.from('504b0304', 'hex'), Buffer.from('and then nothing a ZIP would hold')]), '.pptx'));
     // LibreOffice does not use its exit code for this - it says "could not
     // be loaded" and exits 0 regardless - so this is the one behaviour in
     // the whole module that is genuinely worth a real, unmocked assertion:

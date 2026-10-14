@@ -321,13 +321,16 @@ async function checkLiveBrowserReach(env, { host = env.BROWSER_TEST_HOST || 'git
  * its own BUILD against the served one (see servedBuild in util.js) and says so
  * on screen. This is the server-side half of the same question.
  */
-async function checkBuild(releaseDir, healthUrl) {
+async function checkBuild(releaseDir, healthUrl, running = null) {
   const { build: onDisk, version } = releaseIn(path.join(releaseDir, 'assets', 'js', 'protocol.js'));
   // Named on every line below, because "what are you running" is the question
   // somebody opens this report to answer, and a build number alone does not
   // answer it in words anybody uses out loud.
   const release = `Podium ${version ?? '?'}`;
   if (onDisk === null) return say('warn', 'build', `no protocol.js under ${releaseDir}`);
+  // Asked from inside the service (Admin -> Server -> Health), the running
+  // build needs no asking: it is the one this process read when it started.
+  if (running?.build) return compareBuild(release, onDisk, String(running.build));
   if (!healthUrl) return say('ok', 'build', `${release}, build ${onDisk} (nothing to compare it against)`);
 
   // Asked of /healthz rather than by fetching protocol.js over HTTP, because on
@@ -350,6 +353,10 @@ async function checkBuild(releaseDir, healthUrl) {
     return say('warn', 'build', `${release}, build ${onDisk}; the service does not report one`,
       'It is older than this check, or is running as a relay with no pages to serve.');
   }
+  return compareBuild(release, onDisk, served);
+}
+
+function compareBuild(release, onDisk, served) {
   if (Number(served) !== onDisk) {
     return say('bad', 'build', `this release is ${release}, build ${onDisk}, but the running service has build ${served}`,
       'The deploy did not reach the running process - a symlink is resolved once, at start.'
@@ -495,7 +502,7 @@ async function checkRelay(healthUrl) {
  * read them. `db` may be null, in which case the database checks say so rather
  * than being silently skipped.
  */
-async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, env = process.env } = {}) {
+async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, env = process.env, running = null } = {}) {
   const found = [];
   const attempt = async (work) => {
     try { found.push(await work()); } catch (err) {
@@ -532,11 +539,34 @@ async function run({ db, dataDir, openError, releaseDir, healthUrl, certPath, en
     const reach = await checkLiveBrowserReach(env).catch((err) => say('warn', 'check', `a check could not run (${err.message})`));
     if (reach) found.push(reach);
   }
-  await attempt(() => checkBuild(releaseDir, healthUrl));
+  await attempt(() => checkBuild(releaseDir, healthUrl, running));
+  // From inside the service (`running`, see runInService) these three would
+  // only be asking the service about itself over its own loopback port, and
+  // the certificate is usually readable by root alone: they are for the
+  // command line.
+  if (running) return found;
   await attempt(() => checkCertificate(certPath));
   await attempt(() => checkService(healthUrl));
   await attempt(() => checkRelay(healthUrl));
   return found;
+}
+
+/**
+ * The same checks, asked by the running service for Admin -> Server -> Health.
+ * `served` is what the process read at startup ({ build }); `staticDir` the
+ * release it is serving. Where releases are deployed the way update.sh does
+ * it (<prefix>/releases/<id>, with <prefix>/current pointing at one), the
+ * release on disk is what `current` points at now - so a deploy that has not
+ * been restarted into shows here too.
+ */
+async function runInService({ db, dataDir, staticDir, served, env = process.env }) {
+  let releaseDir = staticDir;
+  const parent = path.dirname(staticDir);
+  if (path.basename(parent) === 'releases') {
+    const current = path.join(path.dirname(parent), 'current');
+    if (fs.existsSync(path.join(current, 'assets', 'js', 'protocol.js'))) releaseDir = current;
+  }
+  return run({ db, dataDir, releaseDir, env, running: served?.build ? served : { build: null } });
 }
 
 const MARK = { ok: ' ok ', warn: 'warn', bad: 'BAD ' };
@@ -558,6 +588,7 @@ function report(found, write = (line) => process.stdout.write(`${line}\n`)) {
 
 module.exports = {
   run,
+  runInService,
   report,
   checkMail,
   checkLiveBrowser,

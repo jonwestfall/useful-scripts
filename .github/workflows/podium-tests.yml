@@ -71,6 +71,47 @@ jobs:
         run: bash -n deploy/install.sh deploy/update.sh deploy/backup.sh deploy/restore.sh
         working-directory: podium
 
+  # PowerPoint, Word and RTF conversion (server/pptx-convert.js) on a runner
+  # that has LibreOffice, which the others do not: there, every conversion
+  # check only ever sees "not installed", and the real conversions - and a
+  # file LibreOffice cannot open - go untested.
+  office:
+    name: Conversion (LibreOffice)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install LibreOffice (Impress and Writer, as docs/vps.md says)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libreoffice-impress libreoffice-writer
+          soffice --version
+      - name: Install the relay's own dependency
+        run: npm ci
+        working-directory: podium/server
+      - name: Run the conversion unit tests
+        run: |
+          set -e
+          for f in test/pptx-convert.test.mjs test/zip-staging.test.mjs; do
+            echo "::group::$f"
+            node "$f"
+            echo "::endgroup::"
+          done
+        working-directory: podium
+      - name: Install Playwright and Chromium
+        # The same pin as the e2e groups below.
+        run: |
+          rm -rf node_modules/playwright node_modules/playwright-core
+          npm install playwright@1.56.1
+          npx playwright install --with-deps chromium
+        working-directory: podium
+      - name: Run the Word and RTF end-to-end section
+        run: node test/e2e/editor.mjs --only "Word and RTF"
+        working-directory: podium
+
   # One runner per group (see test/e2e/): each starts its own relay and
   # browser, so the groups are independent, run side by side, and a failure
   # in one does not hide the results of the others.
