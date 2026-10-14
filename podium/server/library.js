@@ -276,11 +276,19 @@ function storeUpload(dataDir, stream, { limit = MAX_UPLOAD_BYTES } = {}) {
     let bytes = 0;
     let settled = false;
 
+    // Only once the write stream has closed: until its open finishes, a
+    // destroyed stream can still create the file after an earlier rm.
+    const dropTemp = (done) => {
+      const rm = () => fs.rm(temp, { force: true }, done);
+      if (out.closed) rm();
+      else out.once('close', rm);
+    };
+
     const fail = (err) => {
       if (settled) return;
       settled = true;
       out.destroy();
-      fs.rm(temp, { force: true }, () => reject(err));
+      dropTemp(() => reject(err));
     };
 
     stream.on('data', (chunk) => {
@@ -300,7 +308,7 @@ function storeUpload(dataDir, stream, { limit = MAX_UPLOAD_BYTES } = {}) {
     out.on('close', () => {
       if (settled) return;
       settled = true;
-      if (!bytes) { fs.rm(temp, { force: true }, () => reject(Object.assign(new Error('that file is empty'), { status: 400 }))); return; }
+      if (!bytes) { dropTemp(() => reject(Object.assign(new Error('that file is empty'), { status: 400 }))); return; }
       const sha256 = hash.digest('hex');
       const final = mediaPath(dataDir, sha256);
       try {
@@ -311,7 +319,7 @@ function storeUpload(dataDir, stream, { limit = MAX_UPLOAD_BYTES } = {}) {
         else fs.renameSync(temp, final);
         resolve({ sha256, bytes });
       } catch (err) {
-        fs.rm(temp, { force: true }, () => reject(err));
+        dropTemp(() => reject(err));
       }
     });
   });
