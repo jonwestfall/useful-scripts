@@ -697,6 +697,14 @@ that it is fine. The relay deliberately logs nothing per request or per message 
 it moves ciphertext for rooms it cannot read, and a record of who connected when
 is one it has no business keeping.
 
+**The app's own files** are sent `no-cache`, so a deploy reaches every open
+page on its next load, but with a validator (an ETag from the file's size and
+time; each release is a new directory) so asking again costs a 304, and
+gzipped for text types: the Marp engine goes from 1.1 MB to about 340 KB, and
+after the first load it is a 304. nginx passes the compressed answer through
+as it is. Library media (`/media/…`) is `private, no-cache` with its own hash
+as the ETag, so access is checked every time it is used.
+
 ### Phase 7 — Guest View codes, kiosks and recaps ✅
 
 Built on everything above, and described for teachers in
@@ -778,7 +786,9 @@ tab.
 **Who may use it.** A signed-in account or a provisioned kiosk, on the
 server's own origin. It is offered only on an instance with accounts: an open
 server running a browser for anybody who asks would be a free proxy for the
-whole internet. Guest View viewers are shown a card instead.
+whole internet. Guest View viewers never reach it: the display sends them
+pictures of the page (about one a second while anyone is watching), over the
+same signed view channel as everything else they see.
 
 **What the server sees.** This is the third exception to "the relay only moves
 ciphertext", and the plainest. The server is drawing the page, so it sees the
@@ -786,6 +796,15 @@ page. Each session gets its own browser context (its own cookies, storage and
 cache), thrown away when the session closes, so one lecture's sign-in cannot
 leak into another's. Chromium's profile is a temporary directory, removed when
 it stops. Nothing is logged about what was browsed.
+
+The one exception is a course whose owner turns on **Stay signed in to
+websites in this course's live pages** (Admin › Courses). A page opened in
+one of its lectures, by someone in the course (never a kiosk), starts with the
+cookies its pages were left with, and those are saved when it closes and as
+its pages load. They are kept in the database (`course_live_cookies`), so they
+are in its backups too, and anyone in the course is signed in as whoever
+signed in. That's why it is off by default and why it says to use a class
+account. Turning it off deletes them.
 
 **What a page may reach.** Chromium sends every connection it makes through a
 small proxy inside the server, on `127.0.0.1`: pages, images, scripts, iframes,

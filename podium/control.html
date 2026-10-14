@@ -454,6 +454,13 @@
               <canvas id="web-canvas"></canvas>
               <div id="web-screen-note" class="web-screen-note"></div>
             </div>
+            <!-- A YouTube video in the live browser: the live browser is
+                 silent (the room hears only what Podium plays), so offer to
+                 play it as a YouTube item, from where it has got to. -->
+            <div id="web-video-row" class="web-video-row" hidden>
+              <button id="web-play-here" type="button" class="primary">▶ Play this video in Podium</button>
+              <span class="hint">The live browser has no sound. Podium plays the video with sound, from where it is now.</span>
+            </div>
             <div class="inline web-row">
               <button id="web-home" type="button" title="Back to the page this item opens at">⌂ Home</button>
               <button id="web-page-up" type="button">▲ Page up</button>

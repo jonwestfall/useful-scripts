@@ -217,6 +217,35 @@ async function until(check, { timeout = 5000, interval = 50 } = {}) {
   rmSync(dataDir, { recursive: true, force: true });
 }
 
+// --- the app's own files: a validator, and compressed --------------------------
+{
+  const { port, proc } = await startRelay({});
+  const { gunzipSync } = await import('node:zlib');
+  const { readFileSync } = await import('node:fs');
+  const file = '/assets/js/deck.js';
+  const onDisk = readFileSync(path.join(ROOT, 'assets', 'js', 'deck.js'));
+  // fetch() would unzip it for us and hide the header; http.get does not.
+  const { get } = await import('node:http');
+  const ask = (headers) => new Promise((resolve, reject) => {
+    get({ host: '127.0.0.1', port, path: file, headers }, (res) => {
+      const parts = [];
+      res.on('data', (d) => parts.push(d));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(parts) }));
+    }).on('error', reject);
+  });
+  const zipped = await ask({ 'accept-encoding': 'gzip, br' });
+  ok(`a script is sent compressed to a browser that takes it (${onDisk.length} -> ${zipped.body.length} bytes)`,
+    zipped.status === 200 && zipped.headers['content-encoding'] === 'gzip' && gunzipSync(zipped.body).equals(onDisk));
+  ok('with a validator, still to be asked about every time', !!zipped.headers.etag && zipped.headers['cache-control'] === 'no-cache');
+  const again = await ask({ 'accept-encoding': 'gzip', 'if-none-match': zipped.headers.etag });
+  ok('asked again with it, the answer is a 304 and no bytes', again.status === 304 && again.body.length === 0);
+  const plain = await ask({});
+  ok('a client that does not take gzip gets the file as it is', plain.status === 200 && !plain.headers['content-encoding'] && plain.body.equals(onDisk));
+  const part = await ask({ 'accept-encoding': 'gzip', range: 'bytes=0-9' });
+  ok('and a range is the file\'s own bytes', part.status === 206 && !part.headers['content-encoding'] && part.body.equals(onDisk.subarray(0, 10)));
+  proc.kill();
+}
+
 {
   // Nothing listening on this port at all - the same shape of failure as a
   // firewall rule or a proxy that never forwards the WS upgrade.

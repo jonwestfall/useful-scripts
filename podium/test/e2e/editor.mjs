@@ -3578,7 +3578,9 @@ console.log('\n-- the live browser: a site that refuses framing, driven from the
 const sitePages = {
   '/': '<!doctype html><title>Lab home</title><body style="margin:0;font:28px sans-serif;height:3000px;background:#fff">'
     + '<a href="/two" style="position:absolute;left:0;top:0;width:400px;height:200px;background:#fd0">Page two</a>'
-    + '<form action="/echo"><input name="q" style="position:absolute;left:0;top:300px;width:400px;height:60px;font-size:28px"></form>',
+    + '<form action="/echo"><input name="q" style="position:absolute;left:0;top:300px;width:400px;height:60px;font-size:28px"'
+    // Says so when it has the focus, so the test can wait for the tap to land.
+    + ' onfocus="document.title=\'Lab home, typing\'"></form>',
   '/two': '<!doctype html><title>Page two</title><body style="margin:0;background:#0c0"><h1>Two</h1>',
 };
 const site = http.createServer((req, res) => {
@@ -3623,6 +3625,32 @@ try {
   await until(async () => white(await wallColour())).catch(() => {});
   ok('and the room sees the page itself', white(await wallColour()));
 
+  // Guest View: a viewer cannot reach the page (no account, no key to it), so
+  // the display relays pictures of what the room sees of it.
+  await screen.evaluate(() => { document.querySelector('#pair').hidden = false; });
+  await screen.click('#pair-mode-view');
+  await screen.waitForFunction(() => /view\.html#/.test(document.querySelector('#pair-url').textContent), null, { timeout: 10000 });
+  const viewerLink = await screen.textContent('#pair-url');
+  await screen.click('#pair-close');
+  const stranger = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const viewer = await stranger.newPage();
+  trap(viewer, 'live browser viewer');
+  await viewer.goto(viewerLink);
+  await viewer.waitForSelector('#viewer-start-row:not([hidden])', { timeout: 15000 });
+  await viewer.click('#viewer-start');
+  const viewerColour = () => viewer.evaluate(() => {
+    const img = document.querySelector('.layer[data-role="program"] .r-live-relayed.has-frame img');
+    if (!img?.naturalWidth) return null;
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const [r, g, b] = ctx.getImageData(Math.floor(c.width * 0.8), Math.floor(c.height * 0.8), 1, 1).data;
+    return { r, g, b };
+  });
+  await until(async () => white(await viewerColour()), { timeout: 20000 }).catch(() => {});
+  ok('a Guest View viewer sees the live page, as pictures the display relays', white(await viewerColour()));
+
   await pad.click('.tab[data-tab="now"]');
   await pad.waitForSelector('#web-screen.has-frame', { timeout: 15000 })
     .then(() => ok('the Now tab shows the page, to drive', true))
@@ -3642,6 +3670,9 @@ try {
     .catch(() => ok('a tap on a link follows it', false));
   await until(async () => green(await wallColour())).catch(() => {});
   ok('and the projector follows', green(await wallColour()));
+  await until(async () => green(await viewerColour())).catch(() => {});
+  ok('and so does the viewer', green(await viewerColour()));
+  await stranger.close();
 
   // Frozen, the room keeps the page it has while the presenter browses on.
   await pad.click('#freeze');
@@ -3656,8 +3687,12 @@ try {
   await until(async () => white(await wallColour())).catch(() => {});
   ok('and catches up when the freeze lifts', white(await wallColour()));
 
-  // Typing: tap the field on the page, then type in the box under it.
+  // Typing: tap the field on the page, then type in the box under it - once
+  // the page says the field has the focus, which is what the typing needs.
   await at(200 / (shape.w || 1280), 330 / (shape.h || 720));
+  await pad.waitForFunction(() => /typing/.test(document.querySelector('#web-status').textContent), null, { timeout: 10000 })
+    .then(() => ok('a tap on a field gives it the focus', true))
+    .catch(async () => ok(`a tap on a field gives it the focus ("${await pad.textContent('#web-status')}")`, false));
   await pad.fill('#web-text', 'mitochondria');
   await pad.click('#web-type button[type="submit"]');
   await pad.click('#web-type [data-key="Enter"]');

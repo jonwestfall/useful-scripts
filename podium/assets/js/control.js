@@ -10,7 +10,7 @@ import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIM
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse, isPlayable, deckVideoHere } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor, svgToImage, drawSvgImage } from './renderers.js';
 import { createCameraSender } from './rtc.js';
-import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill, videoSlides, deckLocation } from './deck.js';
+import { render as renderDeckSource, parse as parseDeckSource, slideHtml, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill, videoSlides, deckLocation } from './deck.js';
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
 import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS, planToJson } from './planfile.js';
@@ -62,7 +62,7 @@ let cfg = await loadConfig();
 let bus = null;
 // Web pages in the server's own browser (live-browser.js): every preview here
 // watches the same session the projector shows.
-const liveWeb = liveBrowserOptions(() => cfg, 'control');
+const liveWeb = liveBrowserOptions(() => cfg, 'control', () => state.lectureId);
 
 /**
  * How every picture of the room's screen on this controller is drawn - the
@@ -170,6 +170,10 @@ const deckStore = new Map();
 const deckFetches = new Map();
 let deckView = { id: null, deck: null };
 let deckGeneration = 0;
+// Decks parsed but perhaps not yet fitted (see parse in deck.js), by id: the
+// shape of every slide is known from here, a second or more before deckView
+// has the finished deck, so the ink pad need not wait for it.
+const deckShapes = new Map();
 // The panel most recently sent a deck pick, and the id it should end up
 // showing, until state's own echo confirms it actually landed - see
 // deckAspectPending() below. Closes the one race deckView alone cannot:
@@ -210,7 +214,7 @@ let planAssetIds = new Set();
 // The tab bar, in this device's order (Issue #197).
 const tabBar = createTabBar({ presentation, save: () => savePresentation(presentation), tabAvailable: (id) => tabAvailable(id), tab: (id) => tab(id) });
 // The Now tab's live browser controls (live-browser-panel.js).
-const webPanel = createLiveBrowserPanel({ send, getState: () => state, workItem, haptic, liveWeb });
+const webPanel = createLiveBrowserPanel({ send, stage, getState: () => state, workItem, haptic, liveWeb });
 // The full-screen message editor (Issue #103).
 createMessageEditor({ stage, resolveAssets, assetStore });
 // Live captions (Issue #79), and this controller's own mic (Issue #147).
@@ -332,22 +336,21 @@ function quickLookOf(item) {
 async function stageDeck({ source, name, src, slide = 0 }) {
   const id = src ? await srcDeckId(src, source) : await deckId(source);
   deckStore.set(id, source);
-  const deck = await renderDeckSource(source, id);
-  // Populate deckView with the SAME parse used to stage it, rather than
-  // leaving ensureDeckView() to redundantly re-fetch and re-render it a
-  // second time once the display's broadcast echoes state.program back.
-  // That second, independent parse is what used to leave a real window -
-  // over a second for a deck with a real theme's fonts - where the ink pad
-  // did not yet know this slide's own aspect ratio and sized itself against
-  // the display's raw window shape instead. A stroke drawn in that window
-  // is fractions of the WRONG box, baked in permanently: no later
-  // correction can fix a point already this shape's guess. Right for the
-  // common case (staging a deck from this controller's own library); the
-  // rarer paths - a second controller syncing to a deck already on screen,
-  // an uploaded deck echoed from elsewhere - still go through
-  // ensureDeckView(), which now also nudges the pad once it resolves.
-  deckGeneration++;
-  deckView = { id, deck };
+  // Put up as soon as it is parsed: how many slides and builds, and each
+  // slide's shape. Fitting every slide to its box (render) takes a second or
+  // more for a long deck with pictures, and the display does that for itself
+  // - waiting for this device to do it first only made the room wait twice.
+  const deck = await parseDeckSource(source, id);
+  deckShapes.set(id, deck);
+  const mine = ++deckGeneration;
+  // The finished deck, for this device's own slide strip and mirrors, as the
+  // display works on its copy.
+  renderDeckSource(source, id).then((full) => {
+    if (mine !== deckGeneration) return;
+    deckView = { id, deck: full };
+    renderSlides();
+    if (!$('[data-panel="ink"]').hidden && !ink.drawing) sizePad();
+  }).catch(() => { /* ensureDeckView tries again, and says why */ });
   // Hand it to the display up front rather than making it ask - and any
   // pictures it keeps in the lecture plan (Issue #226) with it.
   if (!src) bus?.send({ t: 'deck', id, source });
@@ -746,8 +749,10 @@ const thumbnails = createThumbnailer(async (item) => {
     const ref = item.deckId ? item : (item.src ? await loadServerDeck(item.src).then(({ id }) => ({ deckId: id, src: item.src })) : null);
     const source = ref && await getDeckSource(ref);
     if (typeof source !== 'string') return null;
-    const deck = await renderDeckSource(source, ref.deckId);
-    const mounted = await mountDeckForExport(deck);
+    // Its first slide alone, unfitted: a long deck's other slides (and their
+    // pictures) are no part of a picture of slide 1.
+    const deck = await parseDeckSource(source, ref.deckId);
+    const mounted = await mountDeckForExport({ ...deck, html: slideHtml(deck.html, 0), fits: [] });
     try {
       const svg = mounted.svgs[0];
       if (!svg) return null;
@@ -1819,6 +1824,11 @@ async function ensureDeckView(item) {
   }
   if (source == null || mine !== deckGeneration) return;
   try {
+    // Its shape first, so the ink pad is ready before the deck is fitted.
+    if (!deckShapes.has(item.deckId)) {
+      deckShapes.set(item.deckId, await parseDeckSource(source, item.deckId));
+      if (mine === deckGeneration && !$('[data-panel="ink"]').hidden && !ink.drawing) sizePad();
+    }
     const deck = await renderDeckSource(source, item.deckId);
     if (mine !== deckGeneration) return;
     deckView = { id: item.deckId, deck };
@@ -4002,9 +4012,10 @@ const ZOOM_STEP = 1.6;
 // on). Takes an explicit item so it can also answer for a slide that is not
 // the one currently on screen - "Next", in the Slides tab.
 function contentAspectFor(item) {
-  if (item?.type === 'deck' && deckView.id === item.deckId && deckView.deck?.aspects?.length) {
-    const idx = Math.min(deckView.deck.aspects.length - 1, Math.max(0, item.slide || 0));
-    return deckView.deck.aspects[idx] || 16 / 9;
+  const shapes = item?.type === 'deck' ? (deckView.id === item.deckId ? deckView.deck : deckShapes.get(item.deckId))?.aspects : null;
+  if (shapes?.length) {
+    const idx = Math.min(shapes.length - 1, Math.max(0, item.slide || 0));
+    return shapes[idx] || 16 / 9;
   }
   // Keyed by src rather than read off whichever renderer is mounted right
   // now (see pdfAspectFor's own comment) - correct even when the focused
@@ -4124,7 +4135,7 @@ function deckAspectPending(panel, item) {
     if (item?.type === 'deck' && item.deckId === pendingStage.deckId) pendingStage = null;
     else return true;
   }
-  return item?.type === 'deck' && deckView.id !== item.deckId;
+  return item?.type === 'deck' && deckView.id !== item.deckId && !deckShapes.get(item.deckId)?.aspects?.length;
 }
 
 function fitFrame() {

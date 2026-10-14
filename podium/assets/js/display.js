@@ -24,13 +24,13 @@ import {
   watermarkForNewLecture, viewerState, viewChannel, stripDeckNotes,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS, clearStaleMusic, liveInkSurfaces, inkCapturesFor, MEDIA_TYPES,
 } from './protocol.js';
-import { createRenderer, itemTitle, TYPES, blessMediaElements } from './renderers.js';
+import { createRenderer, itemTitle, TYPES, blessMediaElements, liveKeyOf } from './renderers.js';
 import { initTheme, onThemeChange, setThemeChoice, THEME_KEY } from './theme.js';
 import { encodeToFit } from './store.js';
 import { MAX_ASSET_CHARS, itemForStage, readPlan } from './planfile.js';
 import { createCameraReceiver, createMicReceiver } from './rtc.js';
 import { serverInfo } from './server.js';
-import { liveBrowserOptions } from './live-browser.js';
+import { liveBrowserOptions, liveBrowserAvailableNow } from './live-browser.js';
 import { createAssetResolver } from './assets.js';
 import { deckId } from './deck.js';
 import { assetRefsIn } from './deck-source.js';
@@ -280,9 +280,26 @@ function handleMediaEnded(key) {
   commit();
 }
 
-// A viewer is shown a card for a live page: only the room's devices hold the
-// key to it (see live-browser.js).
-const liveWeb = liveBrowserOptions(() => cfg, VIEWER ? 'viewer' : 'display');
+// A viewer cannot reach a live page: only the room's devices hold the key to
+// it (see live-browser.js), and the server's API is closed to it. So the
+// display tells its viewers whether it has a live browser (in its state), and
+// relays pictures of each live page on screen (relayLivePages, below).
+let viewerLiveWeb = null;
+let viewerLiveWebKnown;
+const viewerLiveWebAnswer = new Promise((resolve) => { viewerLiveWebKnown = resolve; });
+const relayedPictures = new Map();   // live key -> the newest picture's data URL
+const relayedWatchers = new Map();   // live key -> Set of fn(dataUrl)
+const relayed = {
+  watch(key, fn) {
+    if (!relayedWatchers.has(key)) relayedWatchers.set(key, new Set());
+    relayedWatchers.get(key).add(fn);
+    if (relayedPictures.has(key)) fn(relayedPictures.get(key));
+    return () => relayedWatchers.get(key)?.delete(fn);
+  },
+};
+const liveWeb = VIEWER
+  ? { role: 'viewer', availableNow: () => viewerLiveWeb, available: viewerLiveWebAnswer, keyFor: async () => '', relayed }
+  : liveBrowserOptions(() => cfg, 'display', () => state.lectureId);
 
 function mount(layer, item) {
   freeLayer(layer);
@@ -2232,7 +2249,11 @@ function sendViewerState() {
   // Between lectures a viewer sees nothing of what the projector last showed.
   if (!state.armed) { sendToViewers({ t: 'state', state: { armed: false } }); return; }
   const surfaces = onScreenSurfaces();
-  sendToViewers({ t: 'state', state: viewerState(wireState(), surfaces), telemetry: telemetry() });
+  sendToViewers({
+    t: 'state',
+    state: { ...viewerState(wireState(), surfaces), liveWeb: liveBrowserAvailableNow() === true },
+    telemetry: telemetry(),
+  });
   for (const [key, digest] of Object.entries(surfaces)) {
     if (viewerInk.get(key) === digest) continue;
     viewerInk.set(key, digest);
@@ -2253,6 +2274,30 @@ function sendInkToViewers(key, to) {
   }));
 }
 
+// A live page on screen, to viewers: what the room sees of it (held while
+// frozen), as a picture that fits one relay message, about once a second and
+// only when it has changed - and only while anyone is watching.
+const RELAY_PAGE_MS = 1000;
+const relayedPainted = new Map();   // live key -> the picture count last sent
+function relayLivePages() {
+  if (!viewBus || !viewerCount || !state.armed) return;
+  for (const { item, renderer } of activePanels()) {
+    const picture = item?.type === 'web' ? renderer?.picture : null;
+    if (!picture) continue;
+    const key = liveKeyOf(item);
+    if (relayedPainted.get(key) === picture.painted) continue;
+    let shrunk;
+    try {
+      shrunk = encodeToFit(picture.canvas, MAX_ASSET_CHARS, { widths: [1280, 960, 720], qualities: [0.6, 0.45] });
+    } catch { continue; }
+    // Too big for one message even at its smallest: this picture is skipped.
+    if (!shrunk || shrunk.tooBig) continue;
+    relayedPainted.set(key, picture.painted);
+    sendToViewers({ t: 'web-frame', key, data: shrunk.dataUrl });
+  }
+}
+if (!VIEWER) setInterval(relayLivePages, RELAY_PAGE_MS);
+
 /** Whether `ref` is something a viewer is being shown right now. */
 function onScreenForViewers(ref) {
   const shown = viewerState(wireState());
@@ -2265,7 +2310,8 @@ function onScreenForViewers(ref) {
 // walk the lecture's other pictures or decks by guessing ids.
 function onViewerRequest(msg) {
   if (!state.armed) { if (msg.t === 'hello') sendViewerState(); return; }
-  if (msg.t === 'hello' || msg.t === 'sync') { sendViewerState(); return; }
+  // Someone new: the live pages' pictures go out again, for them.
+  if (msg.t === 'hello' || msg.t === 'sync') { relayedPainted.clear(); sendViewerState(); return; }
   if (msg.t === 'asset-need' && onScreenForViewers(`asset:${msg.id}`)) {
     const data = assetStore.get(msg.id);
     if (data != null) sendToViewers({ t: 'asset', to: msg.from, id: msg.id, data });
@@ -3408,11 +3454,23 @@ async function onViewerMessage(msg) {
     redrawInk(true);
     return;
   }
+  if (inner.t === 'web-frame' && typeof inner.key === 'string' && typeof inner.data === 'string' && inner.data.startsWith('data:image/')) {
+    relayedPictures.delete(inner.key);
+    relayedPictures.set(inner.key, inner.data);
+    // The few most recent pages only: a lecture can visit many.
+    while (relayedPictures.size > 6) relayedPictures.delete(relayedPictures.keys().next().value);
+    for (const fn of relayedWatchers.get(inner.key) || []) fn(inner.data);
+    return;
+  }
   if (inner.t === 'laser') { showLaser(inner); return; }
   if (inner.t === 'spotlight') showSpotlight(inner);
 }
 
 function adoptViewerState(next, tele) {
+  if ('liveWeb' in next && viewerLiveWeb !== !!next.liveWeb) {
+    viewerLiveWeb = !!next.liveWeb;
+    viewerLiveWebKnown(viewerLiveWeb);
+  }
   const offAir = !next.armed;
   $('#viewer-offair').hidden = !offAir || !viewerStarted;
   if (!viewerStarted) {

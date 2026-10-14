@@ -279,15 +279,30 @@ if (!exe) {
       <script>addEventListener('scroll', () => { document.title = 'One@' + Math.round(scrollY); });</script>`,
     '/two': '<!doctype html><title>Two</title><body style="margin:0"><a href="/three" target="_blank" style="display:block;width:400px;height:200px;background:#0c0">Three</a>',
     '/three': '<!doctype html><title>Three</title><body>three',
+    '/set': '<!doctype html><title>Set</title><body>signed in',
+    '/read': '<!doctype html><title>Read</title><script>document.title = `Read ${document.cookie || "none"}`</script>',
+    // A video made in the page (a canvas, recorded live) - no file needed.
+    '/video': `<!doctype html><title>Video</title><body style="margin:0"><video muted autoplay playsinline width="400"></video>
+      <script>const c = Object.assign(document.createElement('canvas'), { width: 160, height: 90 });
+      let n = 0; setInterval(() => { const g = c.getContext('2d'); g.fillStyle = 'hsl(' + (n++ * 20) % 360 + ',80%,50%)'; g.fillRect(0, 0, 160, 90); }, 50);
+      document.querySelector('video').srcObject = c.captureStream(20);</script>`,
   };
   const site = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
+    if (url.pathname === '/set') res.setHeader('set-cookie', 'kept=yes; Max-Age=3600; Path=/');
     // The reason the live browser exists: this page refuses to be framed.
     res.writeHead(200, { 'content-type': 'text/html', 'x-frame-options': 'deny', 'content-security-policy': "frame-ancestors 'none'" });
     res.end(url.pathname === '/echo' ? `<!doctype html><title>Echo ${url.searchParams.get('q')}</title>` : (pages[url.pathname] || 'nope'));
   });
   const logs = [];
-  const live = createLiveBrowser({ executable: exe, allowPrivate: true, idleMs: 5000, sandbox: false, log: (m) => logs.push(m) });
+  // A course that keeps its live pages' sign-ins, for lecture 7 only.
+  const kept = { cookies: [], saves: 0 };
+  const signinsFor = (who, lectureId) => (lectureId === 7 ? {
+    course: 'psy101',
+    load: () => kept.cookies,
+    save: (cookies) => { kept.cookies = cookies; kept.saves += 1; },
+  } : null);
+  const live = createLiveBrowser({ executable: exe, allowPrivate: true, idleMs: 5000, sandbox: false, log: (m) => logs.push(m), signinsFor });
   const strict = createLiveBrowser({ executable: exe, allowPrivate: false, idleMs: 5000, sandbox: false, log: (m) => logs.push(m) });
   const relay = http.createServer();
   relay.on('upgrade', (req, socket, head) => (req.url.includes('strict=1') ? strict : live).handleUpgrade(req, socket, head));
@@ -295,16 +310,17 @@ if (!exe) {
   await new Promise((r) => relay.listen(0, '127.0.0.1', r));
   const home = `http://127.0.0.1:${site.address().port}/`;
 
-  const connect = (key, role, extra = '') => new Promise((resolve, reject) => {
+  const connect = (key, role, extra = '', hello = {}) => new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${relay.address().port}/browser?s=${key}${extra}`);
-    const client = { ws, frames: [], states: [], errors: [] };
+    const client = { ws, frames: [], states: [], errors: [], media: [] };
     ws.on('message', (data, isBinary) => {
       if (isBinary) { client.frames.push(data); return; }
       const msg = JSON.parse(data.toString());
       if (msg.t === 'state') client.states.push(msg);
       if (msg.t === 'error') client.errors.push(msg.message);
+      if (msg.t === 'media') client.media.push(msg);
     });
-    ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', home, role })); resolve(client); });
+    ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', home, role, ...hello })); resolve(client); });
     ws.on('error', reject);
   });
   const until = async (label, test, ms = 15000) => {
@@ -363,6 +379,41 @@ if (!exe) {
     send(controller, { t: 'home' });
     ok('Home goes back to where the item started', await until('home', () => latest(display).url === home));
 
+    // "Play this in Podium": where the page's video has got to, and pausing it.
+    const askMedia = async (id, extra = {}) => {
+      send(controller, { t: 'media', id, ...extra });
+      await until(`media answer ${id}`, () => controller.media.some((m) => m.id === id));
+      return controller.media.find((m) => m.id === id).media;
+    };
+    ok('a page with no video says so', (await askMedia('none')) === null);
+    send(controller, { t: 'go', url: home.replace(/\/$/, '') + '/video' });
+    await until('the video page', () => latest(display).title === 'Video');
+    let playing = null;
+    for (let i = 0; i < 60 && !(playing?.time > 0); i++) {
+      playing = await askMedia(`at-${i}`);
+      if (!(playing?.time > 0)) await new Promise((r) => setTimeout(r, 250));
+    }
+    ok(`a page's video says where it is (${JSON.stringify(playing)})`, playing?.time > 0 && playing.paused === false);
+    await askMedia('pause', { pause: true });
+    ok('and asked to, pauses there', (await askMedia('after'))?.paused === true);
+    send(controller, { t: 'home' });
+    await until('home again', () => latest(display).url === home);
+
+    // A course that keeps its live pages' sign-ins (courses.liveSignins): a
+    // page opened in one of its lectures keeps the site's cookies as it
+    // loads, and the next one starts with them - and no other page does.
+    const keeping = await connect(await liveSessionKey('room', 'pass', 'web-kept'), 'display', '', { home: `${home}set`, lecture: 7 });
+    await until('the sign-in page', () => latest(keeping).title === 'Set');
+    ok('a page in a lecture whose course keeps sign-ins keeps the site\'s cookie as it loads',
+      await until('kept', () => kept.cookies.some((c) => c.name === 'kept' && c.value === 'yes')));
+    keeping.ws.close();
+    const next = await connect(await liveSessionKey('room', 'pass', 'web-kept-2'), 'display', '', { home: `${home}read`, lecture: 7 });
+    ok('and the next page opened in one of its lectures starts signed in', await until('signed in', () => latest(next).title === 'Read kept=yes'));
+    next.ws.close();
+    const other = await connect(await liveSessionKey('room', 'pass', 'web-unkept'), 'display', '', { home: `${home}read` });
+    ok('but a page opened outside its lectures does not', await until('not signed in', () => latest(other).title === 'Read none'));
+    other.ws.close();
+
     // Through the guard proxy, with 127.0.0.1 standing in for the internet
     // and 127.0.0.2 for the private network behind it: the page opens, and
     // nothing it asks for reaches the private address - not an image, not a
@@ -385,7 +436,7 @@ if (!exe) {
       try {
         const g = await new Promise((resolve, reject) => {
           const ws = new WebSocket(`ws://127.0.0.1:${guardedRelay.address().port}/browser?s=${'g'.repeat(43)}`);
-          const client = { ws, frames: [], states: [], errors: [] };
+          const client = { ws, frames: [], states: [], errors: [], media: [] };
           ws.on('message', (data, isBinary) => { if (isBinary) client.frames.push(data); else { const m = JSON.parse(data.toString()); if (m.t === 'state') client.states.push(m); } });
           ws.on('open', () => { ws.send(JSON.stringify({ t: 'hello', home: `${home}reach`, role: 'display' })); resolve(client); });
           ws.on('error', reject);

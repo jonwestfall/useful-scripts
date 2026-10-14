@@ -520,6 +520,10 @@ function createLiveBrowser(opts = {}) {
   // needs a "public" site on this machine.
   const isBlocked = opts.isBlocked || isPrivateAddress;
   const log = opts.log || ((msg) => console.log(`podium: ${msg}`));
+  // A course that keeps its live pages' sign-ins (see liveSignins in
+  // courses.js): (who, lectureId) -> { load(), save(cookies) } or null. Asked
+  // only by the device whose page opens a new session.
+  const signinsFor = opts.signinsFor || (() => null);
   const wss = new (ws().Server)({ noServer: true, maxPayload: MAX_CLIENT_MESSAGE });
 
   let proc = null;
@@ -733,8 +737,45 @@ function createLiveBrowser(opts = {}) {
     if (session.cdpSession) byCdpSession.delete(session.cdpSession);
   }
 
+  // --- a course's kept sign-ins -------------------------------------------------
+
+  // The cookies a kept sign-in is, as Storage.setCookies takes them back.
+  const COOKIE_FIELDS = ['name', 'value', 'domain', 'path', 'secure', 'httpOnly', 'sameSite', 'priority', 'sourceScheme', 'sourcePort', 'partitionKey'];
+  function cookieParam(cookie) {
+    const out = {};
+    for (const field of COOKIE_FIELDS) if (cookie[field] !== undefined) out[field] = cookie[field];
+    if (!cookie.session && cookie.expires > 0) out.expires = cookie.expires;
+    return out;
+  }
+
+  async function restoreSignins(session) {
+    const cookies = session.signins?.load() || [];
+    if (!cookies.length) return;
+    await session.cdp.send('Storage.setCookies', { cookies: cookies.map(cookieParam), browserContextId: session.contextId })
+      .catch((err) => log(`live browser: kept sign-ins for ${session.signins.course} did not load (${err.message})`));
+  }
+
+  async function keepSignins(session) {
+    if (!session.signins || !session.cdp || !session.contextId) return;
+    try {
+      const { cookies } = await session.cdp.send('Storage.getCookies', { browserContextId: session.contextId });
+      session.signins.save(cookies || []);
+    } catch { /* the page is going; what was kept last time stands */ }
+  }
+
+  // Kept as pages load, not only as the page closes: a server restarted
+  // mid-lecture should not lose the sign-in made in it.
+  function keepSigninsSoon(session) {
+    if (!session.signins) return;
+    clearTimeout(session.saveTimer);
+    session.saveTimer = setTimeout(() => keepSignins(session), 2000);
+    session.saveTimer.unref?.();
+  }
+
   async function closeSession(session) {
     if (sessions.get(session.key) !== session && !session.contextId) return;
+    clearTimeout(session.saveTimer);
+    await keepSignins(session);
     forget(session);
     for (const client of session.clients) { try { client.close(1000, 'closed'); } catch { /* gone */ } }
     const cdp = await cdpPromise?.catch(() => null);
@@ -762,9 +803,9 @@ function createLiveBrowser(opts = {}) {
   // of its tab: the projector and a controller's preview ask for the same
   // page at the same instant when it is first put up, and both must end up
   // in the one tab rather than each opening their own.
-  function createSession(key, home) {
+  function createSession(key, home, signins = null) {
     const session = {
-      key, cdp: null, home, url: '', title: '', loading: true, canBack: false, canForward: false,
+      key, cdp: null, home, signins, saveTimer: null, url: '', title: '', loading: true, canBack: false, canForward: false,
       zoom: 1, view: viewFrom(null), error: '', lastSaid: '',
       clients: new Set(), lastFrame: null, screencasting: false, idleTimer: null, refreshTimer: null,
       lastSeen: Date.now(), contextId: null, targetId: null, cdpSession: null, ready: null,
@@ -790,6 +831,7 @@ function createLiveBrowser(opts = {}) {
       session.cdpSession = sessionId;
       byCdpSession.set(sessionId, session);
       await cdp.send('Browser.setDownloadBehavior', { behavior: 'deny', browserContextId }).catch(() => {});
+      await restoreSignins(session);
       await apply(session, 'Page.enable');
       await apply(session, 'Page.setLifecycleEventsEnabled', { enabled: true }).catch(() => {});
       await applyView(session);
@@ -933,6 +975,7 @@ function createLiveBrowser(opts = {}) {
       case 'Page.loadEventFired':
         session.loading = false;
         refreshHistory(session);
+        keepSigninsSoon(session);
         return;
       // An alert, a confirm or a "leave this page?" would freeze the tab with
       // nobody to click it - answered yes, so the page carries on.
@@ -1051,13 +1094,33 @@ function createLiveBrowser(opts = {}) {
         if (text) await apply(session, 'Input.insertText', { text }).catch(() => {});
         return;
       }
+      case 'media': {
+        // Where the page's video is (a YouTube page, say), for "Play this in
+        // Podium": the room hears a video Podium plays itself, and never one
+        // in the live browser. Asked, it is paused here, so it does not play
+        // on unheard behind the one that takes over. Answered to whoever asked.
+        const pause = msg.pause === true;
+        const found = await apply(session, 'Runtime.evaluate', {
+          expression: `(() => {
+            const v = [...document.querySelectorAll('video')].find((el) => el.duration > 0) || document.querySelector('video');
+            if (!v) return null;
+            const at = { time: v.currentTime || 0, duration: Number.isFinite(v.duration) ? v.duration : 0, paused: v.paused };
+            if (${pause}) v.pause();
+            return at;
+          })()`,
+          returnByValue: true,
+        }).catch(() => null);
+        const media = found?.result?.value || null;
+        sendJson(client, { t: 'media', id: String(msg.id || '').slice(0, 40), media });
+        return;
+      }
       default:
     }
   }
 
-  async function join(client, key, home, role) {
+  async function join(client, key, home, role, lectureId) {
     let session = sessions.get(key);
-    if (!session) session = createSession(key, home);
+    if (!session) session = createSession(key, home, lectureId ? signinsFor(client.who, lectureId) : null);
     if (!session.cdpSession) sendJson(client, { t: 'opening' });
     await session.ready;
     if (client.readyState !== OPEN) {
@@ -1095,12 +1158,16 @@ function createLiveBrowser(opts = {}) {
 
   // --- the socket ----------------------------------------------------------------
 
-  /** Take over an HTTP upgrade to /browser. The caller has already decided who may. */
-  function handleUpgrade(req, socket, head) {
+  /**
+   * Take over an HTTP upgrade to /browser. The caller has already decided who
+   * may; `who` is whom it let in ({ user } for a signed-in person).
+   */
+  function handleUpgrade(req, socket, head, who = null) {
     const url = new URL(req.url, 'http://x');
     const key = url.searchParams.get('s') || '';
     if (!exe || !SESSION_KEY_RE.test(key)) { socket.destroy(); return; }
     wss.handleUpgrade(req, socket, head, (client) => {
+      client.who = who;
       let session = null;
       let joining = null;
       // A frame that could not be sent to a device that had fallen behind is
@@ -1120,7 +1187,8 @@ function createLiveBrowser(opts = {}) {
           if (joining) return;
           const home = addressToUrl(msg.home, searchUrl);
           const role = msg.role === 'display' ? 'display' : 'control';
-          joining = join(client, key, home, role).then((s) => { session = s; return s; }).catch((err) => {
+          const lectureId = Math.max(0, Math.trunc(Number(msg.lecture)) || 0);
+          joining = join(client, key, home, role, lectureId).then((s) => { session = s; return s; }).catch((err) => {
             sendJson(client, { t: 'error', message: err.busy ? err.message : `The live browser could not open that page: ${err.message}` });
             try { client.close(1011, 'could not open'); } catch { /* gone */ }
           });

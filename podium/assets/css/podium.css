@@ -2851,6 +2851,8 @@ body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { disp
 }
 .web-screen-note:empty { display: none; }
 .web-row { flex-wrap: wrap; }
+.web-video-row { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.web-video-row .hint { flex: 1 1 14rem; }
 .web-zoom { display: inline-flex; gap: 4px; align-items: center; margin-left: auto; }
 .web-browse { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
 
