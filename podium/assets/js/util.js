@@ -74,6 +74,19 @@ export function fmtTime(seconds) {
   return (h ? `${h}:` : '') + `${mm}:${String(s).padStart(2, '0')}`;
 }
 
+// Change a node's text, an attribute or whether it is hidden only when it
+// differs. Writing the same value again still marks the page for layout, and
+// the controller redraws its clocks four times a second.
+export function setText(node, text) {
+  if (node && node.textContent !== text) node.textContent = text;
+}
+export function setAttr(node, name, value) {
+  if (node && node.getAttribute(name) !== value) node.setAttribute(name, value);
+}
+export function setHidden(node, hidden) {
+  if (node && node.hidden !== !!hidden) node.hidden = !!hidden;
+}
+
 // The returned function also carries .flush(): run a still-pending trailing
 // call right now instead of waiting out its window. Needed wherever a caller
 // clears state a pending call depends on reading (Issue #119's eraser throttle
