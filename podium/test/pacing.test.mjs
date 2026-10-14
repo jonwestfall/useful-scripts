@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fmtTime } from '../assets/js/util.js';
+import { controllerSource } from './controller-source.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -134,7 +135,7 @@ console.log('-- DOM and assets verification --');
   chk('podium.css has .pacing-track', css.includes('.pacing-track'));
   chk('podium.css has #topbar-pacing-bar', css.includes('#topbar-pacing-bar'));
 
-  const js = fs.readFileSync(path.join(ROOT, 'assets/js/control.js'), 'utf8');
+  const js = controllerSource();
   chk('control.js has lectureDuration default', js.includes('lectureDuration: 0'));
   chk('control.js has pacingAutoStart default', js.includes('pacingAutoStart: true'));
   chk('control.js has PACING_KEY', js.includes('podium.pacing.v1'));

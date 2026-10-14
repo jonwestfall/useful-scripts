@@ -288,7 +288,7 @@ async function handleApi(req, res, url, ctx) {
   // This is navigated to directly - the QR and the link admin.js hands out
   // both point straight here, not at display.html - because display.html
   // itself stays behind gate() even for a kiosk (see KIOSK_OPEN_PATHS in
-  // podium-server.js): a page nobody has to sign in for on the FIRST visit
+  // open-paths.js): a page nobody has to sign in for on the FIRST visit
   // and stays reachable after a profile is revoked would defeat the whole
   // reason a kiosk cookie exists. So the cookie has to be minted and stored
   // in the browser BEFORE display.html is ever asked for, which a redirect
@@ -1731,7 +1731,7 @@ function gate(req, res, pathname, ctx) {
     if (accounts.sessionUser(ctx.db, token, { onSlide })) return true;
     // A kiosk carries its own cookie, not a user session, and is only ever
     // let through for the narrow set of paths display.html actually needs
-    // (see KIOSK_OPEN_PATHS in podium-server.js) - never control.html,
+    // (see KIOSK_OPEN_PATHS in open-paths.js) - never control.html,
     // admin.html, or the authenticated API surface a stolen kiosk cookie
     // would otherwise unlock.
     if (ctx.kioskOpenPaths?.has(pathname)) {

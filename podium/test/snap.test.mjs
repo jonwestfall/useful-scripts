@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { controllerSource } from './controller-source.mjs';
 import {
   applyInkAction,
   strokeHitTest,
@@ -244,7 +245,7 @@ console.log('-- settings UI and defaults --');
   const html = readFileSync(resolve(__dirname, '../control.html'), 'utf8');
   chk('control.html contains #pref-snap-shapes checkbox', html.includes('id="pref-snap-shapes"'));
 
-  const js = readFileSync(resolve(__dirname, '../assets/js/control.js'), 'utf8');
+  const js = controllerSource();
   chk('control.js includes snapShapes in PRESENTATION_DEFAULTS', js.includes('snapShapes: true'));
   chk('control.js handles pref-snap-shapes change listener', js.includes("pref-snap-shapes'"));
   chk('control.js imports detectAndSnapShape from protocol.js', js.includes('detectAndSnapShape'));

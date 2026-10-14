@@ -263,7 +263,7 @@ request automatically — subresources, manifests, icons, service-worker fetches
 - `join.html`, `assets/js/join.js`, `login.html` and its script, `/poll/*`,
   `/healthz` and `/api/capabilities` stay open. The audience never logs in.
 - **Guest View (Issue #150):** a viewer never logs in either.
-  - **Pages:** `view.html` and the files it loads (`VIEW_OPEN_PATHS` in `podium-server.js`) are open. `display.html` and `config.json` are not.
+  - **Pages:** `view.html` and the files it loads (`VIEW_OPEN_PATHS` in `server/open-paths.js`) are open. `display.html` and `config.json` are not.
   - **Endpoints:** `/view-code/<CODE>` (looking up a typed code; rate-limited) and `/view-pass` are open.
   - **The relay socket:** an anonymous viewer is let onto a `view.*` room only while a signed-in display is already in it.
   - **The viewer pass:** a `podium_viewer` cookie that can read `content/` and the presenting account's library media while that display is live, and nothing else.

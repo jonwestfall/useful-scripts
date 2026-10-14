@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { controllerSource } from './controller-source.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -362,7 +363,7 @@ console.log('-- DOM and CSS verification --');
   chk('podium.css has mobile overflow rule', css.includes('.bottombar .bar-slot.mobile-overflow { display: none !important; }'));
   chk('podium.css styles .bottom-slots-grid', css.includes('.bottom-slots-grid'));
 
-  const js = fs.readFileSync(path.join(ROOT, 'assets/js/control.js'), 'utf8');
+  const js = controllerSource();
   chk('control.js has bottomSlots default array', js.includes("bottomSlots: ['music', 'play', 'freeze', 'blank', 'none', 'none', 'none', 'none']"));
   chk('control.js has bottomSlot1 backward compatibility default', js.includes("bottomSlot1: 'music'"));
   chk('control.js has bottomSlot2 backward compatibility default', js.includes("bottomSlot2: 'play'"));

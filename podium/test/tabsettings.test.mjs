@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { controllerSource } from './controller-source.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -121,7 +122,7 @@ console.log('-- DOM and CSS verification --');
   chk('podium.css styles .tab-order-list', css.includes('.tab-order-list'));
   chk('podium.css styles .tab-order-row', css.includes('.tab-order-row'));
 
-  const js = fs.readFileSync(path.join(ROOT, 'assets/js/control.js'), 'utf8');
+  const js = controllerSource();
   chk('control.js has the 13-tab TAB_IDS list', js.includes("const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'attendance', 'music', 'mixer', 'setup']"));
   chk('Attendance stays out of sight until a server with accounts says it can (Issue #256)',
     js.includes("const UNAVAILABLE_TABS = new Set(['attendance'])") && html.includes('data-tab="attendance" type="button" hidden'));
@@ -130,7 +131,7 @@ console.log('-- DOM and CSS verification --');
   chk('control.js has moveTab', js.includes('function moveTab('));
   chk('control.js has toggleTabHidden', js.includes('function toggleTabHidden('));
   chk('control.js has renderTabOrderSettings', js.includes('function renderTabOrderSettings()'));
-  chk('control.js calls renderTabOrderSettings from showSetup', js.includes('renderTabOrderSettings();\n  renderKeepPhotos();'));
+  chk('control.js calls renderTabOrderSettings from showSetup', js.includes('tabBar.renderSettings();\n  renderKeepPhotos();'));
   chk('control.js excludes #tabs-more from the ordinary tab click wiring', js.includes(":not(#dual-pane-toggle):not(#tabs-more)"));
   chk('control.js defaults tabOrder to every tab, with Camera and Photos under More (Issue #197)',
     js.includes('tabOrder: [...TAB_IDS]') && js.includes('hiddenTabs: [...DEFAULT_HIDDEN_TABS]')

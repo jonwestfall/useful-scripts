@@ -1435,7 +1435,7 @@ ok('a student reaches the join page with no account and no prompt',
 await joiner.close();
 
 // A guest lecturer is the same exception, for the same reason (Issue #77) -
-// see AUTH_OPEN_PATHS in podium-server.js.
+// see AUTH_OPEN_PATHS in server/open-paths.js.
 ok('a guest pairing link is reachable with no account either',
   (await fetch(`${acctBase}/guest.html`)).status === 200);
 ok('and so is the script it needs to actually join the room',
@@ -2836,7 +2836,7 @@ if (want('guest pairing: Simple Mode')) {
 console.log('\n-- guest pairing: Simple Mode --');
 // Issue #77: a substitute's clicker. Its own room on the main server - no
 // accounts needed, guest.html works wherever the existing full pairing QR
-// already does (see the comment on AUTH_OPEN_PATHS in podium-server.js).
+// already does (see the comment on AUTH_OPEN_PATHS in server/open-paths.js).
 const gCtx = await browser.newContext();
 await gCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
   JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'guest-room', passphrase: 'hand this to a substitute' }));

@@ -1,5 +1,5 @@
 // Run with: node podium/test/kiosk-open-paths.test.mjs
-// KIOSK_OPEN_PATHS in server/podium-server.js is what lets a provisioned
+// KIOSK_OPEN_PATHS in server/open-paths.js is what lets a provisioned
 // kiosk's own cookie (Issue #151) past gate() instead of a signed-in user -
 // scoped to display.html and whatever it actually loads to run. A module
 // display.js starts importing that is missing from this set (and not already
@@ -7,7 +7,7 @@
 // otherwise-provisioned kiosk stuck on the login page the next time it boots.
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -24,16 +24,9 @@ const chk = (label, cond) => {
   }
 };
 
-// podium-server.js opens a real database and starts listening the moment it
-// runs (it is an entrypoint, not a library) - so the two path sets are pulled
-// out of its source text directly, the same way sw.js's WARM is pulled out
-// without running sw.js's own event-listener setup.
-function pathSet(name) {
-  const source = fs.readFileSync(path.join(ROOT, 'server', 'podium-server.js'), 'utf8');
-  const m = source.match(new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\);`));
-  if (!m) throw new Error(`${name} not found in server/podium-server.js`);
-  return new Set(vm.runInNewContext(`[${m[1]}]`));
-}
+// The sets the server uses, from the module it takes them from.
+const require = createRequire(import.meta.url);
+const openPaths = require('../server/open-paths.js');
 
 // Every local file display.html references directly: stylesheets, manifests,
 // icons, classic scripts and the entry module.
@@ -88,9 +81,8 @@ function moduleGraph(entry) {
 // test's requirement matching offline-shell.test.mjs's own carve-out.
 const NOT_STRICTLY_NEEDED_TO_LOAD = new Set(['assets/vendor/pdf.worker.min.js']);
 
-const AUTH_OPEN_PATHS = pathSet('AUTH_OPEN_PATHS');
-const KIOSK_OPEN_PATHS = pathSet('KIOSK_OPEN_PATHS');
-chk(`KIOSK_OPEN_PATHS parses out of server/podium-server.js (${KIOSK_OPEN_PATHS.size} entries)`, KIOSK_OPEN_PATHS.size > 5);
+const { AUTH_OPEN_PATHS, KIOSK_OPEN_PATHS } = openPaths;
+chk(`KIOSK_OPEN_PATHS has entries (${KIOSK_OPEN_PATHS.size})`, KIOSK_OPEN_PATHS.size > 5);
 
 chk('display.html itself is a kiosk-open path', KIOSK_OPEN_PATHS.has('/display.html'));
 
@@ -121,7 +113,7 @@ console.log('\n-- VIEW_OPEN_PATHS: Guest View (Issue #150) --');
 // guest.html's files. config.json is the one deliberate gap: viewer mode
 // never fetches it (see viewerConfig in config.js), and a deployment's
 // defaults are none of a stranger's business.
-const VIEW_OPEN_PATHS = pathSet('VIEW_OPEN_PATHS');
+const { VIEW_OPEN_PATHS } = openPaths;
 const VIEWER_NEVER_LOADS = new Set(['config.json']);
 const viewNeeded = new Set();
 for (const ref of pageRefs('view.html')) {
