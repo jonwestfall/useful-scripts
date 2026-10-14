@@ -242,11 +242,16 @@ Where the server has the live browser, a page on another site opens there automa
 
 **Everything else works too.** Ink sits on top as it does on any panel. **Photograph this panel** works, unlike an embedded page. The page keeps its place while you go to a photo and come **Back to** it, and through a display reload. Split screen and picture-in-picture each get their own page, laid out for their own panel.
 
+**A YouTube video in it.** On a YouTube video's page, the Now tab offers **▶ Play this video in Podium**. The live browser is silent, so this puts the video up as Podium's own **YouTube** item, with sound and the mixer, from where the page had got to, and pauses the page's copy.
+
+**Guest View** viewers see the live page as pictures the display sends them, about one a second while anyone is watching and only when it changes. They see what the room sees (a frozen page stays frozen for them too), and can't click or scroll it.
+
+**Staying signed in, per course** (off unless a course's owner turns it on, in **Admin › Courses › Live pages**). A site you sign in to in a live page, a library database say, is still signed in at the course's next lecture instead of asking again. The page's cookies are kept when it closes (and as its pages load) and put back into the next live page opened in one of the course's lectures. That happens only for someone in the course, and never for a kiosk. The sign-ins are kept on the server and in its backups, and anyone in the course who opens a live page is signed in as whoever signed in, so use a shared or class account, not your own. Turning it off, or **Forget the sign-ins kept so far**, deletes them.
+
 **What it cannot do**:
-- **No sound.** The live browser is silent on purpose. Play a video's sound through Podium's own **Video**, **YouTube** or **Live stream** items, which the mixer controls, or show the page embedded.
-- **Guest View** viewers see a card naming the page, with a link to open it on their own device, rather than the live page.
+- **No sound.** The live browser is silent on purpose. Play a video's sound through Podium's own **Video**, **YouTube** or **Live stream** items (on a YouTube page, **Play this video in Podium** does it for you), which the mixer controls, or show the page embedded.
 - **It needs your own server** with Chromium installed (see [Self-hosting](vps.md#the-live-browser)). On GitHub Pages, Supabase or a public broker, web pages are always embedded.
-- **Every page you open is on the server.** The server opens the page, so it sees what is on it. Each page has its own private cookies and storage, thrown away when the page closes, so one class's sign-in never reaches another. Pages on the server's own network (`localhost`, `10.x`, `192.168.x` and so on) are refused unless an administrator allows them.
+- **Every page you open is on the server.** The server opens the page, so it sees what is on it. Each page has its own private cookies and storage, thrown away when the page closes, so one class's sign-in never reaches another (unless the course keeps its sign-ins, above, and then only within that course). Pages on the server's own network (`localhost`, `10.x`, `192.168.x` and so on) are refused unless an administrator allows them.
 
 ### Screen Layouts, Split Screen & Picture-in-Picture
 

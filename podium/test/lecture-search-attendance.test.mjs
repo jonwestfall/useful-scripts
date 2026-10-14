@@ -104,11 +104,13 @@ ok('removing a check-in takes its questions and its parking lot with it',
   find(owen, 'zoom lens').length === 0 && find(owen, 'chapter attention').length === 0 && find(owen, 'blindness').length === 0);
 
 console.log('\n-- a database from before this phase --');
+// Back to before this phase's migration; the one after it (a course's kept
+// live-page sign-ins) is replayed with it, which it is written to allow.
 const { session: older } = att.openSession(db, owen, { course: 'psy415', title: 'Week 9', now: T0 + 9 * 864e5, questions: { exit: [{ prompt: 'Name one heuristic' }] } });
 const version = db.prepare('PRAGMA user_version').get().user_version;
 db.exec(`DROP TRIGGER lecture_search_questions_in; DROP TRIGGER lecture_search_questions_change; DROP TRIGGER lecture_search_questions_out;
   DROP TRIGGER lecture_search_parking_in; DROP TRIGGER lecture_search_parking_change; DROP TRIGGER lecture_search_parking_out;
-  DELETE FROM lecture_search WHERE rowid % 4 >= 2; PRAGMA user_version = ${version - 1};`);
+  DELETE FROM lecture_search WHERE rowid % 4 >= 2; PRAGMA user_version = ${version - 2};`);
 ok('(with the attendance rows taken out of the index)', find(owen, 'heuristic').length === 0);
 db.close();
 db = store.open(dir);

@@ -44,6 +44,7 @@ process.on('warning', (warning) => {
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const crypto = require('node:crypto');
 const { Worker } = require('node:worker_threads');
 const { WebSocketServer } = require('ws');
@@ -791,10 +792,75 @@ const server = http.createServer((req, res) => {
     const file = !err && stat.isDirectory() ? path.join(resolved, 'index.html') : resolved;
     fs.stat(file, (statErr, info) => {
       if (statErr || !info.isFile()) { res.writeHead(404); res.end('not found'); return; }
-      serve(req, res, file, info.size);
+      serveStatic(req, res, file, info);
     });
   });
 });
+
+// --- the app's own files ----------------------------------------------------------
+//
+// Still `no-cache` - a deploy has to reach every open page on its next load,
+// not a week later - but with a validator, so asking costs a 304 rather than
+// the whole file again (the Marp engine alone is 1.2 MB, and every page load
+// of a display or a controller used to fetch it in full), and compressed,
+// which shrinks the scripts and styles to about a quarter. Each release is a
+// new directory (deploy/update.sh), so a file's size and time are a fair
+// stand-in for its contents.
+const COMPRESSIBLE = /^(text\/|application\/(javascript|json|manifest\+json)|image\/svg\+xml)/;
+const GZIP_CACHE_BYTES = 64 * 1024 * 1024;
+const gzipped = new Map();   // file + etag -> Promise<Buffer>, oldest first
+let gzippedBytes = 0;
+
+function gzipOf(file, etag) {
+  const id = `${file}\n${etag}`;
+  if (gzipped.has(id)) {
+    const hit = gzipped.get(id);
+    gzipped.delete(id);
+    gzipped.set(id, hit);
+    return hit.job;
+  }
+  const entry = { bytes: 0, job: null };
+  entry.job = fs.promises.readFile(file).then((raw) => new Promise((resolve, reject) => {
+    zlib.gzip(raw, { level: 6 }, (err, out) => (err ? reject(err) : resolve(out)));
+  })).then((out) => {
+    entry.bytes = out.length;
+    gzippedBytes += out.length;
+    // The least recently asked-for go first; a release is a few MB in all.
+    for (const [key, old] of gzipped) {
+      if (gzippedBytes <= GZIP_CACHE_BYTES || key === id) break;
+      gzipped.delete(key);
+      gzippedBytes -= old.bytes;
+    }
+    return out;
+  });
+  entry.job.catch(() => { gzipped.delete(id); });
+  gzipped.set(id, entry);
+  return entry.job;
+}
+
+function serveStatic(req, res, file, info) {
+  const etag = `W/"${info.size.toString(36)}-${Math.floor(info.mtimeMs).toString(36)}"`;
+  const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+  const compress = COMPRESSIBLE.test(type) && info.size > 1024;
+  const vary = compress ? { vary: 'accept-encoding' } : {};
+  const asked = String(req.headers['if-none-match'] || '').split(',').map((tag) => tag.trim());
+  if (asked.includes(etag) || asked.includes('*')) {
+    res.writeHead(304, { etag, 'cache-control': 'no-cache', ...vary });
+    res.end();
+    return;
+  }
+  if (!compress || req.headers.range || !/\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
+    serve(req, res, file, info.size, { etag, ...vary });
+    return;
+  }
+  gzipOf(file, etag).then((body) => {
+    res.writeHead(200, {
+      'content-type': type, 'content-encoding': 'gzip', 'content-length': body.length,
+      'cache-control': 'no-cache', etag, ...vary,
+    });
+    res.end(req.method === 'HEAD' ? undefined : body);
+  }, () => serve(req, res, file, info.size, { etag, ...vary }));
+}
 
 /**
  * An uploaded file, from the library.

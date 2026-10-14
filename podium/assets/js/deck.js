@@ -443,15 +443,27 @@ function fitOne(svg, section) {
   return fits;
 }
 
-/** Webfonts and images change how tall text is, so measure after they land. */
+/**
+ * Webfonts and images change how tall text is, so measure after they land -
+ * an image as soon as its size is known, which is a few hundred bytes into
+ * it: what it looks like never changes what fits, and a deck with sixty
+ * photographs would otherwise wait for every one of them to download.
+ */
 async function contentSettled(root) {
   const waits = [];
   if (document.fonts?.ready) waits.push(document.fonts.ready);
-  for (const img of root.querySelectorAll('img')) {
-    if (img.complete) continue;
+  const sized = (img) => img.complete || img.naturalWidth > 0;
+  const pending = Array.from(root.querySelectorAll('img')).filter((img) => !sized(img));
+  if (pending.length) {
     waits.push(new Promise((resolve) => {
-      img.addEventListener('load', resolve, { once: true });
-      img.addEventListener('error', resolve, { once: true });
+      const check = () => {
+        if (pending.every(sized)) { clearInterval(poll); resolve(); }
+      };
+      const poll = setInterval(check, 30);
+      for (const img of pending) {
+        img.addEventListener('load', check, { once: true });
+        img.addEventListener('error', check, { once: true });
+      }
     }));
   }
   if (!waits.length) return;
@@ -527,7 +539,10 @@ async function measureFits(html, css) {
   }
 }
 
-const cache = new Map();
+// Promises, not results, so a deck asked for twice at once (the controller
+// staging it while a mirror mounts it) is parsed and fitted once.
+const parses = new Map();    // deck id -> the deck, parsed (parse)
+const renders = new Map();   // deck id -> the deck, parsed and fitted (render)
 
 /**
  * Drop one render from the cache. Everywhere else a deck is rendered a few
@@ -535,7 +550,8 @@ const cache = new Map();
  * renders a new version every time typing pauses, and lets go of the last.
  */
 export function forgetDeck(id) {
-  cache.delete(id);
+  parses.delete(id);
+  renders.delete(id);
 }
 
 /**
@@ -657,8 +673,32 @@ export function describeBuild(build) {
  */
 export async function render(source, id) {
   const key = id || await deckId(source);
-  if (cache.has(key)) return cache.get(key);
+  if (!renders.has(key)) {
+    const job = parse(source, key).then(async (deck) => ({ ...deck, fits: await measureFits(deck.html, deck.css) }));
+    renders.set(key, job);
+    // Kept only as long as the parse it came from is (see parse).
+    job.then(() => { if (!parses.has(key)) renders.delete(key); }, () => renders.delete(key));
+  }
+  return renders.get(key);
+}
 
+/**
+ * The deck without its fits (see measureFits), which is everything but the
+ * slow part: how many slides, their builds, titles, notes and shapes, and the
+ * html - what a deck needs to be put up, and what a thumbnail is drawn from.
+ * Where a deck is shown, render() is what to mount.
+ */
+export async function parse(source, id) {
+  const key = id || await deckId(source);
+  if (!parses.has(key)) {
+    const job = parseNow(source, key);
+    parses.set(key, job);
+    job.then((deck) => { if (!deck.keep) parses.delete(key); }, () => parses.delete(key));
+  }
+  return parses.get(key);
+}
+
+async function parseNow(source, key) {
   const marp = await createMarp();
   const { html, css, comments } = marp.render(source.includes('asset:') ? source.replace(ASSET_REF, BLANK) : source);
 
@@ -691,9 +731,6 @@ export async function render(source, id) {
 
   const finalHtml = root.outerHTML;
 
-  // Measured here, once, and carried with the deck: see measureFits.
-  const fits = await measureFits(finalHtml, combinedCss);
-
   // A deck naming a theme that was never installed falls back to the default
   // silently, which is a maddening thing to discover from the back of a lecture
   // hall. Say so instead.
@@ -717,10 +754,10 @@ export async function render(source, id) {
     fragments,
     builds,
     aspects,
-    // One scale per slide: 1 for a slide that fits its box as authored, less
-    // for one whose content would otherwise run off the bottom. Apply with
-    // applyFits() wherever the deck's html is mounted.
-    fits,
+    // One scale per slide (render() adds them): 1 for a slide that fits its
+    // box as authored, less for one whose content would otherwise run off the
+    // bottom. Apply with applyFits() wherever the deck's html is mounted.
+    fits: [],
     count: titles.length,
     // A video slide's video, or null, per slide (Issue #226). Read from the
     // markdown, whose slides are Marp's slides (see deck-source.js) - except
@@ -735,8 +772,20 @@ export async function render(source, id) {
   };
   // A deck drawn while the diagram bundle would not load is shown with that
   // said where each diagram goes, but not kept: the next render tries again.
-  if (!diagrams.some((d) => d.error?.retry) && !qrCodes.some((q) => /could not load/.test(q.error || ''))) cache.set(key, result);
+  Object.defineProperty(result, 'keep', {
+    value: !diagrams.some((d) => d.error?.retry) && !qrCodes.some((q) => /could not load/.test(q.error || '')),
+  });
   return result;
+}
+
+/** One slide of a parsed deck as html on its own (a thumbnail of it loads only its pictures). */
+export function slideHtml(html, index) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const root = doc.querySelector('.marpit');
+  const svgs = Array.from(root?.querySelectorAll(':scope > svg[data-marpit-svg]') || []);
+  if (!root || !svgs[index]) return html;
+  svgs.forEach((svg, i) => { if (i !== index) svg.remove(); });
+  return root.outerHTML;
 }
 
 function videosOf(source, count) {

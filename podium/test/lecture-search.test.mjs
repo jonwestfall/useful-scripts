@@ -110,12 +110,14 @@ ok('removing a lecture takes its hits with it', lectures.searchLectures(db, owen
   && db.prepare('SELECT COUNT(*) AS n FROM lecture_search WHERE lecture_id = ?').get(week2.id).n === 0);
 
 console.log('\n-- a database from before the index --');
+// Back to before the index's two migrations; the one after them (a course's
+// kept live-page sign-ins) is replayed with them, which it is written to allow.
 const version = db.prepare('PRAGMA user_version').get().user_version;
 db.exec(`DROP TRIGGER lecture_search_event_in; DROP TRIGGER lecture_search_event_out;
   DROP TRIGGER lecture_search_poll_in; DROP TRIGGER lecture_search_poll_change; DROP TRIGGER lecture_search_poll_out;
   DROP TRIGGER lecture_search_questions_in; DROP TRIGGER lecture_search_questions_change; DROP TRIGGER lecture_search_questions_out;
   DROP TRIGGER lecture_search_parking_in; DROP TRIGGER lecture_search_parking_change; DROP TRIGGER lecture_search_parking_out;
-  DROP TABLE lecture_search; PRAGMA user_version = ${version - 2};`);
+  DROP TABLE lecture_search; PRAGMA user_version = ${version - 3};`);
 db.prepare("INSERT INTO lecture_events (lecture_id, at, kind, title, detail) VALUES (?, ?, 'caption', 'short', ?)")
   .run(week1.id, T0 + 300000, JSON.stringify({ text: 'Recorded before search existed: mnemonic devices' }));
 db.close();
