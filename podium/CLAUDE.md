@@ -27,9 +27,9 @@ After pushing:
   timing-sensitive on CI's slower runners. The fix is to wait for the state the
   check depends on, never a longer fixed pause, and never skipping the check.
 
-## Known local-only failures
+## LibreOffice
 
-In a sandbox with LibreOffice installed, `test/pptx-convert.test.mjs`,
-`test/zip-staging.test.mjs` and the editor group's "a PDF that cannot be made
-says why, naming LibreOffice" fail, with or without your change: they expect
-that conversion to be unavailable. They pass on CI.
+The conversion tests (`test/pptx-convert.test.mjs`, `test/zip-staging.test.mjs`,
+the editor's "Word and RTF" section) pass with or without LibreOffice. The
+real conversions only run where it is installed: on CI, the "Conversion
+(LibreOffice)" job.
