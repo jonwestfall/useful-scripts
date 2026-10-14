@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { controllerSource } from './controller-source.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -209,7 +210,7 @@ const controlHtml = fs.readFileSync(path.join(ROOT, 'control.html'), 'utf8');
 chk('control.html includes pref-haptics checkbox', controlHtml.includes('id="pref-haptics"'));
 chk('control.html includes pref-haptics-unsupported warning element', controlHtml.includes('id="pref-haptics-unsupported"'));
 
-const controlJs = fs.readFileSync(path.join(ROOT, 'assets/js/control.js'), 'utf8');
+const controlJs = controllerSource();
 chk('control.js has haptics: true in PRESENTATION_DEFAULTS', controlJs.includes('haptics: true,'));
 chk('control.js defines haptic function', controlJs.includes('function haptic('));
 chk('control.js defines triggerCommandHaptic function', controlJs.includes('function triggerCommandHaptic('));

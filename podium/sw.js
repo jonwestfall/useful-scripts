@@ -51,10 +51,12 @@ const WARM = [
   // display.js or deck-editor.js imports that is missing here fails the whole
   // page offline.
   ...[
-    'admin', 'assets', 'attendance-panel', 'attendance-review', 'bus', 'caption-log', 'config', 'control', 'crypto', 'deck', 'deck-checks', 'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-qr', 'deck-source', 'deck-templates',
-    'defaults', 'display', 'doc', 'doc-reader', 'duration-probe', 'file-browser', 'gestures',
-    'index', 'live-browser', 'me', 'pdf-writer', 'pip', 'plan', 'planfile', 'poll-link', 'poll-link-ui', 'poll-look', 'poll-look-theme', 'poll-look-ui', 'protocol', 'quicklook', 'quicklook-open', 'recap', 'recap-pdf', 'renderers', 'replay', 'replay-model', 'roster-panel', 'screen-record', 'session-search', 'theme-sheet', 'theme-sheet-ui', 'view-link', 'view-link-ui',
-    'rtc', 'server', 'store', 'theme', 'theme-boot', 'thumbs', 'util', 'watermark', 'word-import', 'word-upload', 'zip', 'zip-review', 'zoom',
+    'admin', 'assets', 'attendance-panel', 'attendance-review', 'bus', 'caption-log', 'caption-panel', 'config', 'control', 'crypto', 'deck', 'deck-checks',
+    'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-qr', 'deck-source', 'deck-templates', 'defaults', 'display', 'doc', 'doc-reader',
+    'duration-probe', 'file-browser', 'gestures', 'index', 'live-browser', 'live-browser-panel', 'me', 'message-editor', 'mic-panel', 'pdf-writer', 'pip', 'plan',
+    'planfile', 'poll-link', 'poll-link-ui', 'poll-look', 'poll-look-theme', 'poll-look-ui', 'presentation-prefs', 'protocol', 'quicklook', 'quicklook-open', 'recap',
+    'recap-pdf', 'renderers', 'replay', 'replay-model', 'roster-panel', 'rtc', 'screen-record', 'server', 'session-search', 'store', 'tab-bar', 'tabs', 'theme',
+    'theme-boot', 'theme-sheet', 'theme-sheet-ui', 'thumbs', 'util', 'view-link', 'view-link-ui', 'watermark', 'word-import', 'word-upload', 'zip', 'zip-review', 'zoom',
   ].map((name) => `assets/js/${name}.js`),
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),
 ];

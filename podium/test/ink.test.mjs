@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { controllerSource } from './controller-source.mjs';
 import {
   initialState,
   applyCommand,
@@ -156,7 +157,7 @@ console.log('-- DOM and CSS verification --');
   chk('podium.css styles .pad-gutter #pad-viewport', css.includes('.panel[data-panel="ink"].pad-gutter #pad-viewport'));
   chk('podium.css styles .controls-top #ink-controls', css.includes('.panel[data-panel="ink"].controls-top #ink-controls'));
 
-  const js = readFileSync(resolve(__dirname, '../assets/js/control.js'), 'utf-8');
+  const js = controllerSource();
   chk('control.js defaults inkScrollGutter', js.includes('inkScrollGutter: false'));
   chk('control.js defaults inkControlsTop', js.includes('inkControlsTop: false'));
   chk('control.js defines applyInkPreferences', js.includes('function applyInkPreferences()'));

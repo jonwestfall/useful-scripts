@@ -9,7 +9,7 @@ import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIM
   inkDigest, inkDigestsAgree, inkSurfaceKey, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse, isPlayable, deckVideoHere } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor, svgToImage, drawSvgImage } from './renderers.js';
-import { createCameraSender, createMicSender } from './rtc.js';
+import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill, videoSlides, deckLocation } from './deck.js';
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
@@ -19,7 +19,7 @@ import { docTitle, notesInView, headingAt, headingAtTop, docMaxAt, docInkSpace, 
 import { openQuickLook, canQuickLook } from './quicklook-open.js';
 import { loadCurrentPlan, saveCurrentPlan, clearCurrentPlan, readFileText, downscaleImage } from './store.js';
 import { mountSessionBadge, serverInfo } from './server.js';
-import { liveBrowserOptions, browseMode, refusesFraming, liveBrowserAvailable, liveBrowserAvailableNow, watchLiveBrowser } from './live-browser.js';
+import { liveBrowserOptions, liveBrowserAvailable } from './live-browser.js';
 import { createAssetResolver, BLANK_PIXEL } from './assets.js';
 import { createWatermarkPanel } from './watermark.js';
 import { createThumbnailer } from './thumbs.js';
@@ -29,6 +29,13 @@ import { createDurationProber } from './duration-probe.js';
 import { initTheme, themeChoice, setThemeChoice, onThemeChange, THEME_KEY } from './theme.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
 import { createAttendancePanel } from './attendance-panel.js';
+import { createLiveBrowserPanel } from './live-browser-panel.js';
+import { createMessageEditor } from './message-editor.js';
+import { createCaptionPanel } from './caption-panel.js';
+import { createMicPanel } from './mic-panel.js';
+import { loadPresentation, savePresentation } from './presentation-prefs.js';
+import { createTabBar } from './tab-bar.js';
+import { TAB_IDS } from './tabs.js';
 import { clampView, fitView, zoomAround, panBy, isZoomed, visibleWindow, viewKeeping, contentPointAt, panelPointOf, zoomToSlider, sliderToZoom } from './zoom.js';
 import { attachGestures } from './gestures.js';
 import { resolvePollBase, pollLinkBlock, pollLinksSummary, newPollKey, isPollKey } from './poll-link-ui.js';
@@ -57,20 +64,33 @@ let bus = null;
 // watches the same session the projector shows.
 const liveWeb = liveBrowserOptions(() => cfg, 'control');
 
+/**
+ * How every picture of the room's screen on this controller is drawn - the
+ * preview, the Now tab's mirror and the pad's - so a renderer option added
+ * for one reaches them all. `extra` is what one of them needs besides.
+ */
+function previewOptions(item, extra = {}) {
+  return {
+    preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource,
+    onMeasure: (m, r) => docMeasured(item, m, r), resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId),
+    liveBrowser: liveWeb,
+    ...extra,
+  };
+}
+
 // Does nothing unless this Podium came from a server with accounts, which is
 // the whole arrangement: one set of pages, extra affordances only where the
 // thing serving them can back them. Not awaited - a slow probe must not hold
 // up a controller someone is standing in front of a class with.
 mountSessionBadge($('#session-badge'));
+// This device's presentation preferences (presentation-prefs.js), from the
+// start: plenty below reads them, some of it before the Settings code is reached.
+const presentation = loadPresentation();
 let state = initialState();
 let telemetry = { time: 0, duration: 0, playing: false };
 let telemetryAt = Date.now();
 let previewRenderer = null;
 let previewKey = null;
-// The web page the Now tab is driving in the live browser, and what it last
-// said about itself (see renderWebControls).
-let webDriver = null;          // { id, handle }
-let webState = null;
 let scrubbing = false;
 
 // Tactile haptic feedback (navigator.vibrate) for touch and navigation (Issue #32)
@@ -78,7 +98,7 @@ let suppressHaptics = false;
 
 function haptic(pattern = 'tick') {
   if (suppressHaptics) return;
-  if (typeof presentation !== 'undefined' && presentation?.haptics === false) return;
+  if (presentation.haptics === false) return;
   if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return;
   try {
     if (pattern === 'tick') {
@@ -183,6 +203,22 @@ const assetsSent = new Set();
 // or clearing one drops exactly the plan's own photos and leaves the stills
 // where they are.
 let planAssetIds = new Set();
+
+// Features with modules of their own, made here - before anything that might
+// call them runs - and told about what is defined further down through
+// getters rather than by value.
+// The tab bar, in this device's order (Issue #197).
+const tabBar = createTabBar({ presentation, save: () => savePresentation(presentation), tabAvailable: (id) => tabAvailable(id), tab: (id) => tab(id) });
+// The Now tab's live browser controls (live-browser-panel.js).
+const webPanel = createLiveBrowserPanel({ send, getState: () => state, workItem, haptic, liveWeb });
+// The full-screen message editor (Issue #103).
+createMessageEditor({ stage, resolveAssets, assetStore });
+// Live captions (Issue #79), and this controller's own mic (Issue #147).
+createCaptionPanel({ send, confirmOnce });
+const micPanel = createMicPanel({
+  getBus: () => bus, recordingNow: () => recordingNow(), getLectureId: () => lastKnownLectureId,
+  fileWithLecture, acknowledged, confirmOnce,
+});
 
 function forgetPlanAssets() {
   for (const id of planAssetIds) { assetStore.delete(id); assetsSent.delete(id); }
@@ -1346,7 +1382,7 @@ function renderPreview() {
     holder.replaceChildren();
     previewKey = key;
     if (item) {
-      previewRenderer = createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, onMeasure: (m, r) => docMeasured(item, m, r), resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId), liveBrowser: liveWeb });
+      previewRenderer = createRenderer(resolveAssets(item), previewOptions(item));
       holder.append(previewRenderer.el);
     }
   } else if (previewRenderer && item) {
@@ -2740,7 +2776,7 @@ function renderNow() {
   $('#now-type').textContent = TYPES[type]?.label || type || '';
   $('#transport').hidden = !isMedia;
   // A page in the live browser scrolls with its own buttons, below.
-  const webLive = renderWebControls(item);
+  const webLive = webPanel.render(item);
   $('#paging').hidden = !isPaged || webLive;
   $('#page-label').textContent = type === 'pdf'
     ? `Page ${item.page || 1}`
@@ -3055,8 +3091,8 @@ serverInfo().then((info) => {
   if (info.features.includes('attendance') && info.user) {
     UNAVAILABLE_TABS.delete('attendance');
     attendancePanel = createAttendancePanel({ stage, lectureId: () => lastKnownLectureId || state.lectureId });
-    renderTabBar();
-    renderTabOrderSettings();
+    tabBar.render();
+    tabBar.renderSettings();
     if (tabAtLoad === 'attendance') tab('attendance');
   }
 });
@@ -3146,14 +3182,14 @@ function renderKeepPhotos() {
     $('#finish-session').disabled = !bus || !recordingNow();
   }
   // Same two things gate the mic's own "record to the session" row - see
-  // startMicRecording below. A lecture ending out from under a running
+  // startMicRecording in mic-panel.js. A lecture ending out from under a running
   // recording stops it here rather than leaving it recording into a void;
   // the segment already in flight still uploads, under the lecture it
-  // actually belongs to (see lastKnownLectureId in beginMicSegment).
+  // actually belongs to (see getLectureId in beginMicSegment).
   const micRow = $('#mic-record-row');
   if (micRow) {
     micRow.hidden = !serverKeepsSessions;
-    if (!recordingNow() && micRecorder) stopMicRecording();
+    micPanel.recordingChanged();
   }
 }
 
@@ -4135,7 +4171,7 @@ function createLiveMirror(container) {
       renderer?.destroy();
       frame.replaceChildren();
       mountedKey = key;
-      renderer = item ? createRenderer(resolveAssets(item), { preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource, onMeasure: (m, r) => docMeasured(item, m, r), resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId), liveBrowser: liveWeb }) : null;
+      renderer = item ? createRenderer(resolveAssets(item), previewOptions(item)) : null;
       if (renderer) frame.append(renderer.el);
     } else {
       renderer?.update(resolveAssets(item));
@@ -4322,13 +4358,10 @@ function updatePadMirror() {
     padMirrorRenderer?.destroy();
     padMirror.replaceChildren();
     padMirrorKey = key;
-    padMirrorRenderer = item ? createRenderer(resolveAssets(item), {
-      preview: true, getTimer: (id) => timerById(state, id), getMusicNow: getMusicNowPreview, getDeckSource,
-      onMeasure: (m, r) => docMeasured(item, m, r), resolveAssets, getPollJoinUrl: (pollId) => pollJoinUrl(cfg, pollId),
-      liveBrowser: liveWeb,
+    padMirrorRenderer = item ? createRenderer(resolveAssets(item), previewOptions(item, {
       // A document scrolling under the pad (Issue #240): its ink goes with it.
       onScroll: () => redrawPad(),
-    }) : null;
+    })) : null;
     if (padMirrorRenderer) padMirror.append(padMirrorRenderer.el);
   } else {
     padMirrorRenderer?.update(resolveAssets(item));
@@ -4907,7 +4940,6 @@ $('#ink-toggle-mirror').addEventListener('click', (ev) => {
 // --- camera -----------------------------------------------------------------
 
 let cameraSender = null;
-let micSender = null;
 let facing = 'environment';
 
 function setCameraState(status) {
@@ -5946,7 +5978,7 @@ async function connect() {
           && !$('[data-panel="ink"]').hidden) redrawPad();
         return;
       }
-      if (msg.t === 'rtc') { cameraSender?.handle(msg); micSender?.handle(msg); }
+      if (msg.t === 'rtc') { cameraSender?.handle(msg); micPanel.handle(msg); }
     },
   });
 
@@ -5961,7 +5993,7 @@ async function connect() {
     },
   });
 
-  micSender = createMicSender({ bus, onState: setMicAmplifyState });
+  micPanel.connect(bus);
 
   $('#fingerprint').textContent = bus.fingerprint;
   $('#room-name').textContent = cfg.room;
@@ -5972,38 +6004,12 @@ async function connect() {
 
 // --- wiring -----------------------------------------------------------------
 
-// The 12 tabs, in the order they ship in control.html - used to sanitize a
-// saved order (see loadPresentation) and to label the ones tucked under
-// "More". Adding a 13th tab here later needs nothing else done to it: an
-// unknown id in a saved order is dropped and a new one not yet saved is
-// appended, the same defensive merge bottomSlots already does above.
-// The tabs in their four job groups (Issue #197): Present (what is on the
-// projector and what is drawn on it), Room (what the room reads and answers),
-// Sound, and Setup (what is arranged before class). Camera and Photos belong
-// with Present but start under "More" - most lectures never open them.
-// Adding a tab here later needs nothing else done to it: an unknown id in a
-// saved order is dropped and a new one not yet saved is appended, the same
-// defensive merge bottomSlots already does above.
-const TAB_IDS = ['library', 'slides', 'now', 'ink', 'camera', 'photos', 'say', 'timer', 'polls', 'attendance', 'music', 'mixer', 'setup'];
+// The tabs themselves are in tabs.js.
+
 // Tabs this controller cannot use where it is: Attendance needs a server with
 // accounts (Issue #256), and is taken off this list once one says it has them.
 const UNAVAILABLE_TABS = new Set(['attendance']);
 const tabAvailable = (id) => !UNAVAILABLE_TABS.has(id);
-const TAB_LABELS = {
-  library: 'Library', slides: 'Slides', now: 'Now', ink: 'Ink', camera: 'Camera', photos: 'Photos',
-  say: 'Say', timer: 'Timer', polls: 'Polls', attendance: 'Attendance', music: 'Music', mixer: 'Mixer', setup: 'Setup',
-};
-const TAB_GROUPS = [
-  ['present', 'Present', ['library', 'slides', 'now', 'ink', 'camera', 'photos']],
-  ['room', 'Room', ['say', 'timer', 'polls', 'attendance']],
-  ['sound', 'Sound', ['music', 'mixer']],
-  ['setup', 'Setup', ['setup']],
-];
-const groupOfTab = (id) => TAB_GROUPS.find(([, , ids]) => ids.includes(id))?.[0];
-const DEFAULT_HIDDEN_TABS = ['camera', 'photos'];
-// Bumped when the default arrangement itself changes, so a device that saved
-// the old one (12 tabs, in a different order) is moved onto the new one once.
-const TAB_LAYOUT_VERSION = 2;
 
 // Which tab this browser tab was on (Issue #198), so a reload - a Save that
 // changed the connection, or iOS Safari reloading a tab it had put to sleep
@@ -6554,196 +6560,9 @@ const sendDocScrub = throttle((value) => send({ op: 'nav', dir: 'goto', value })
   mirror.addEventListener('pointercancel', () => { drag = null; });
 }
 
-// --- a web page in the live browser (live-browser.js) ------------------------
-//
-// The page runs on the server; this drives it. The screen on the Now tab is
-// the page as it is right now - the item being worked on, which while frozen
-// may be ahead of what the room sees - and taps, drags, the wheel and a
-// keyboard all go straight to it, not through the display: the projector is
-// only ever shown pictures of the page, so there is nothing for it to apply.
-
-const WEB_ZOOMS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 // Once the server has answered whether it has a live browser, the Now tab
 // redraws with the answer (renderNow runs often, but not before then).
 liveBrowserAvailable().then(() => { if (state) renderNow(); });
-
-/** Show the Now tab's web controls for `item`; true when it is a page in the live browser. */
-function renderWebControls(item) {
-  const web = item?.type === 'web' ? item : null;
-  const liveNow = liveBrowserAvailableNow() === true;
-  const live = !!web && browseMode(web, liveNow) === 'live';
-  const nowOpen = !$('[data-panel="now"]').hidden;
-  $('#web-tools').hidden = !live;
-  $('#web-browse-row').hidden = !web || !liveNow;
-  if (web && document.activeElement !== $('#web-browse')) $('#web-browse').value = web.browse || 'auto';
-  const note = $('#web-embed-note');
-  note.hidden = !web || live;
-  if (web && !live) {
-    const host = refusesFraming(web.src);
-    note.textContent = host && web.browse !== 'embed'
-      ? `${host} does not let other sites show its pages inside them, so the room sees a card saying so.${liveNow ? ' Show it as a live browser instead.' : ' A Podium server with Chromium installed can show it in a live browser.'}`
-      : `Embedded: the page plays its own sound, but it can only be clicked or scrolled on the classroom computer.${liveNow ? ' Show it as a live browser to drive it from here.' : ''} If the projector shows a sad face, the site refuses to be embedded.`;
-  }
-  // The Now preview above already shows the room this page; while it is the
-  // same page as the screen below, one picture of it is enough.
-  $('#now-preview').hidden = live && workItem() === focusedItem(state);
-  $('#web-screen').classList.toggle('is-ahead', live && (state.frozen || workItem() !== focusedItem(state)));
-  syncWebDriver(live && nowOpen ? web : null);
-  return live;
-}
-
-function syncWebDriver(item) {
-  const id = item ? `${item.liveId || item.key}` : null;
-  if (id === (webDriver?.id ?? null)) return;
-  webDriver?.handle.release();
-  webDriver = null;
-  webState = null;
-  const canvas = $('#web-canvas');
-  canvas.width = 0;
-  $('#web-screen').classList.remove('has-frame');
-  $('#web-screen-note').textContent = item ? 'Opening…' : '';
-  if (!item) return;
-  const handle = watchLiveBrowser({
-    key: liveWeb.keyFor(item),
-    home: item.src,
-    role: 'control',
-    onFrame: (bitmap) => {
-      if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-      }
-      canvas.getContext('2d').drawImage(bitmap, 0, 0);
-      $('#web-screen').classList.add('has-frame');
-      if (!webState?.error) $('#web-screen-note').textContent = '';
-    },
-    onState: (st) => { webState = st; renderWebState(); },
-    onOpening: () => { $('#web-screen-note').textContent = 'Opening the page…'; },
-    onError: (message) => { $('#web-screen-note').textContent = message; $('#web-status').textContent = message; },
-  });
-  webDriver = { id, handle };
-}
-
-function renderWebState() {
-  const st = webState;
-  if (!st) return;
-  if (document.activeElement !== $('#web-url')) $('#web-url').value = st.url || '';
-  $('#web-back').disabled = !st.canBack;
-  $('#web-forward').disabled = !st.canForward;
-  $('#web-reload').textContent = st.loading ? '✕' : '⟳';
-  $('#web-reload').setAttribute('aria-label', st.loading ? 'Stop loading' : 'Reload');
-  $('#web-zoom-level').textContent = `${Math.round((st.zoom || 1) * 100)}%`;
-  $('#web-screen').style.aspectRatio = String(st.aspect || 16 / 9);
-  $('#web-status').textContent = st.error || (st.loading ? `Loading ${st.title || st.url || ''}…` : (st.title || ''));
-  $('#web-screen-note').textContent = st.error || '';
-}
-
-const webSend = (msg) => webDriver?.handle.send(msg);
-
-$('#web-address').addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  const url = $('#web-url').value.trim();
-  if (!url) return;
-  webSend({ t: 'go', url });
-  $('#web-url').blur();
-});
-$('#web-back').addEventListener('click', () => webSend({ t: 'back' }));
-$('#web-forward').addEventListener('click', () => webSend({ t: 'forward' }));
-$('#web-reload').addEventListener('click', () => webSend({ t: webState?.loading ? 'stop' : 'reload' }));
-$('#web-home').addEventListener('click', () => webSend({ t: 'home' }));
-$('#web-page-up').addEventListener('click', () => webSend({ t: 'key', key: 'PageUp' }));
-$('#web-page-down').addEventListener('click', () => webSend({ t: 'key', key: 'PageDown' }));
-const webZoomStep = (dir) => {
-  const now = webState?.zoom || 1;
-  const next = dir > 0 ? WEB_ZOOMS.find((z) => z > now + 0.001) : [...WEB_ZOOMS].reverse().find((z) => z < now - 0.001);
-  if (next) webSend({ t: 'zoom', zoom: next });
-};
-$('#web-zoom-in').addEventListener('click', () => webZoomStep(1));
-$('#web-zoom-out').addEventListener('click', () => webZoomStep(-1));
-$('#web-type').addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  const text = $('#web-text').value;
-  if (text) webSend({ t: 'text', text });
-  $('#web-text').value = '';
-});
-for (const b of $$('#web-type [data-key]')) b.addEventListener('click', () => webSend({ t: 'key', key: b.dataset.key }));
-$('#web-browse').addEventListener('change', (ev) => send({ op: 'web', browse: ev.target.value }));
-
-// The screen: a tap is a click where it lands; a drag scrolls the page the
-// way a finger scrolls a phone (the page follows the finger); the wheel and a
-// trackpad scroll as they would on a desktop; a mouse just moving over it
-// hovers, for menus that open on hover.
-{
-  const screen = $('#web-screen');
-  const canvas = $('#web-canvas');
-  const at = (ev) => {
-    const r = canvas.getBoundingClientRect();
-    return { x: Math.min(1, Math.max(0, (ev.clientX - r.left) / (r.width || 1))), y: Math.min(1, Math.max(0, (ev.clientY - r.top) / (r.height || 1))), r };
-  };
-  let press = null;
-  let pending = { dx: 0, dy: 0, x: 0.5, y: 0.5 };
-  const flushScroll = throttle(() => {
-    if (!pending.dx && !pending.dy) return;
-    webSend({ t: 'scroll', x: pending.x, y: pending.y, dx: pending.dx, dy: pending.dy });
-    pending = { ...pending, dx: 0, dy: 0 };
-  }, 50);
-  const scrollBy = (p, dx, dy) => {
-    pending = { x: p.x, y: p.y, dx: pending.dx + dx, dy: pending.dy + dy };
-    flushScroll();
-  };
-  screen.addEventListener('pointerdown', (ev) => {
-    if (ev.button !== 0) return;
-    const p = at(ev);
-    press = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, lastX: ev.clientX, lastY: ev.clientY, dragging: false, p };
-    screen.setPointerCapture?.(ev.pointerId);
-    screen.focus({ preventScroll: true });
-    ev.preventDefault();
-  });
-  const sendMove = throttle((p) => webSend({ t: 'move', x: p.x, y: p.y }), 120);
-  screen.addEventListener('pointermove', (ev) => {
-    if (!press) {
-      if (ev.pointerType === 'mouse') sendMove(at(ev));
-      return;
-    }
-    if (ev.pointerId !== press.id) return;
-    if (!press.dragging && Math.hypot(ev.clientX - press.x, ev.clientY - press.y) > 8) press.dragging = true;
-    if (!press.dragging) return;
-    const p = at(ev);
-    scrollBy(p, -(ev.clientX - press.lastX) / (p.r.width || 1), -(ev.clientY - press.lastY) / (p.r.height || 1));
-    press.lastX = ev.clientX;
-    press.lastY = ev.clientY;
-  });
-  screen.addEventListener('pointerup', (ev) => {
-    if (!press || ev.pointerId !== press.id) return;
-    if (!press.dragging) {
-      const p = at(ev);
-      webSend({ t: 'click', x: p.x, y: p.y });
-      haptic('tick');
-    }
-    press = null;
-  });
-  screen.addEventListener('pointercancel', () => { press = null; });
-  screen.addEventListener('wheel', (ev) => {
-    ev.preventDefault();
-    const p = at(ev);
-    const unit = ev.deltaMode === 1 ? 40 : ev.deltaMode === 2 ? p.r.height : 1;
-    scrollBy(p, (ev.deltaX * unit) / (p.r.width || 1), (ev.deltaY * unit) / (p.r.height || 1));
-  }, { passive: false });
-  // A keyboard (a laptop as the controller, or a keyboard on the iPad): with
-  // the screen selected, keys go to the page and nowhere else - none of the
-  // controller's own shortcuts fire while typing into a search box.
-  const NAMED = new Set(['Enter', 'Backspace', 'Tab', 'Escape', 'PageUp', 'PageDown', 'Home', 'End', 'ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'Delete']);
-  screen.addEventListener('keydown', (ev) => {
-    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
-    if (ev.key === 'Escape' && !webState) return;
-    ev.stopPropagation();
-    if (ev.key.length === 1) { ev.preventDefault(); webSend(ev.key === ' ' ? { t: 'key', key: ' ' } : { t: 'text', text: ev.key }); return; }
-    if (NAMED.has(ev.key)) { ev.preventDefault(); webSend({ t: 'key', key: ev.key, shift: ev.shiftKey }); }
-  });
-  screen.addEventListener('paste', (ev) => {
-    const text = ev.clipboardData?.getData('text');
-    if (text) { ev.preventDefault(); webSend({ t: 'text', text }); }
-  });
-}
 
 // A document's scrubber (Issue #240): the room follows as it is dragged.
 $('#doc-scrub').addEventListener('input', (ev) => sendDocScrub(Number(ev.target.value)));
@@ -7054,132 +6873,7 @@ $('#photo-upload').addEventListener('change', async (ev) => {
   }
 });
 
-// --- full-screen message editor (Issue #103) --------------------------------
-//
-// One item shape - type 'text' with body/size/align/font/bg/color/src/caption -
-// that normalizeItem() in protocol.js already validates and renderText() in
-// renderers.js already draws; this modal is just a form for it, following
-// the same open/close/Escape/click-outside convention #modal-countdown
-// (below) already established. The picture reuses the exact asset pipeline
-// every other picture in this app uses - downscaleImage, assetStore,
-// pushAssetIfHeld via stage() itself - by living on `src`, the same field
-// name 'image' items already use, rather than a name of its own.
-
-let messageImageSrc = '';  // '' or an asset:<id> reference
-let messageBg = '';        // '' (Default) or a #hex, from a preset or the custom picker
-let messageFg = '';        // the same, for the words themselves (Issue #222)
-let messagePreviewRenderer = null;
-
-function currentMessageItem() {
-  return {
-    type: 'text',
-    title: 'Message',
-    body: $('#msg-body').value,
-    size: $('#msg-size').value,
-    align: $('#msg-align').value,
-    font: $('#msg-font').value,
-    bg: messageBg,
-    color: messageFg,
-    src: messageImageSrc,
-    caption: $('#msg-caption').value,
-  };
-}
-
-function updateMessagePreview() {
-  // resolveAssets swaps the 'asset:<id>' reference back to the real data URL
-  // this device is holding - the same step every other live preview in this
-  // file takes before handing an item to the renderer (an 'asset:' string is
-  // not a URL the <img> tag can load on its own).
-  const item = resolveAssets(currentMessageItem());
-  if (!messagePreviewRenderer) {
-    messagePreviewRenderer = createRenderer(item, { preview: true });
-    $('#message-preview-box').append(messagePreviewRenderer.el);
-  } else {
-    messagePreviewRenderer.update(item);
-  }
-}
-
-function selectMessageBg(value, swatch) {
-  messageBg = value;
-  $$('#msg-bg-swatches .bg-swatch').forEach((b) => {
-    b.classList.toggle('is-on', b === swatch);
-    b.setAttribute('aria-pressed', String(b === swatch));
-  });
-  $('#msg-bg-custom-label').classList.toggle('is-on', !swatch);
-  updateMessagePreview();
-}
-$$('#msg-bg-swatches .bg-swatch').forEach((b) => b.addEventListener('click', () => selectMessageBg(b.dataset.bg, b)));
-$('#msg-bg-custom').addEventListener('input', (ev) => {
-  $('#msg-bg-custom-label').style.setProperty('--custom-bg-color', ev.target.value);
-  selectMessageBg(ev.target.value, null);
-});
-
-function selectMessageFg(value, swatch) {
-  messageFg = value;
-  $$('#msg-fg-swatches .bg-swatch').forEach((b) => {
-    b.classList.toggle('is-on', b === swatch);
-    b.setAttribute('aria-pressed', String(b === swatch));
-  });
-  $('#msg-fg-custom-label').classList.toggle('is-on', !swatch);
-  updateMessagePreview();
-}
-$$('#msg-fg-swatches .bg-swatch').forEach((b) => b.addEventListener('click', () => selectMessageFg(b.dataset.fg, b)));
-$('#msg-fg-custom').addEventListener('input', (ev) => {
-  $('#msg-fg-custom-label').style.setProperty('--custom-bg-color', ev.target.value);
-  selectMessageFg(ev.target.value, null);
-});
-
-function setMessageImage(src, note) {
-  messageImageSrc = src;
-  $('#msg-image-clear').hidden = !src;
-  $('#msg-caption').hidden = !src;
-  if (!src) $('#msg-caption').value = '';
-  $('#msg-image-note').textContent = note || '';
-  updateMessagePreview();
-}
-$('#msg-image').addEventListener('change', async (ev) => {
-  const file = ev.target.files?.[0];
-  ev.target.value = '';
-  if (!file) return;
-  $('#msg-image-note').textContent = `Resizing ${file.name}…`;
-  try {
-    const shrunk = await downscaleImage(file, MAX_ASSET_CHARS);
-    const id = uid(10);
-    assetStore.set(id, shrunk.dataUrl);
-    setMessageImage(assetRef(id), shrunk.tooBig
-      ? `${file.name} is still ${Math.round(shrunk.dataUrl.length / 1024)} KB after resizing, which is more than a relay message can carry — it may not reach the projector.`
-      : `${file.name} attached.`);
-  } catch (err) {
-    $('#msg-image-note').textContent = `That did not load: ${err.message}`;
-  }
-});
-$('#msg-image-clear').addEventListener('click', () => setMessageImage('', ''));
-
-for (const id of ['msg-body', 'msg-size', 'msg-align', 'msg-font', 'msg-caption']) {
-  $(`#${id}`).addEventListener('input', updateMessagePreview);
-}
-
-function openMessageEditor() {
-  $('#message-editor').hidden = false;
-  updateMessagePreview();
-  $('#msg-body').focus();
-}
-function closeMessageEditor() {
-  $('#message-editor').hidden = true;
-}
-$('#text-open-editor').addEventListener('click', openMessageEditor);
-$('#message-editor-cancel').addEventListener('click', closeMessageEditor);
-$('#message-editor').addEventListener('click', (ev) => {
-  if (ev.target === $('#message-editor')) closeMessageEditor();
-});
-window.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && !$('#message-editor').hidden) closeMessageEditor();
-});
-$('#message-editor-form').addEventListener('submit', (ev) => {
-  ev.preventDefault();
-  stage(currentMessageItem());
-  closeMessageEditor();
-});
+// --- a QR code, Guest View's link, and the caption bar -----------------------
 
 $('#qr-form').addEventListener('submit', (ev) => {
   ev.preventDefault();
@@ -7270,263 +6964,6 @@ $('#overlay-form').addEventListener('submit', (ev) => {
   send({ op: 'overlay', text: $('#overlay-text').value, visible: true });
 });
 $('#overlay-hide').addEventListener('click', () => send({ op: 'overlay', visible: false }));
-
-// --- live captions (Issue #79) ------------------------------------------
-//
-// Speech recognition runs on WHICHEVER device starts it here - normally
-// this controller, since it is the one near the instructor's voice - using
-// the browser's own SpeechRecognition. Recognized text rides the same
-// bottom bar the manual caption above uses, through the 'caption' op (see
-// protocol.js) rather than driving 'overlay' directly, so turning captions
-// off does not depend on remembering whatever text happened to be there.
-//
-// The privacy trade-off (see the hint beside the button in control.html) is
-// real and is not Podium's to fix: recognition happens inside the browser's
-// own code, which this app never touches - in Chrome/Edge that means the
-// room's audio leaves for Google's recognition service, exactly like any
-// other page's use of dictation. There is nothing here for Podium's own
-// encryption to cover, because there is nothing Podium ever receives.
-//
-// This device closing or losing its tab with captions still running leaves
-// the bar showing whatever was last said, the same as any other state this
-// controller alone was driving - there is no reliable send-on-unload here,
-// and nothing else in this file pretends there is one for a mid-freeze cue
-// either. Tap Stop, or Hide on the manual caption above, to clear it.
-const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
-// A lull is not held speech - the bar clears itself rather than sitting on
-// the last thing said for the rest of class.
-const CAPTION_SILENCE_MS = 3000;
-// Interim results can fire many times a second while a phrase is being
-// refined; captions are read text; not a pointer that needs to feel
-// physically responsive, so this is throttled far softer than ink or laser.
-const sendCaptionText = throttle((text) => send({ op: 'caption', text }), 300);
-
-let recognizer = null;
-let captionSilenceTimer = null;
-
-function stopCaptions() {
-  clearTimeout(captionSilenceTimer);
-  if (recognizer) {
-    recognizer.onend = null;   // this stop is deliberate, not a timeout to restart from
-    recognizer.onerror = null;
-    try { recognizer.stop(); } catch { /* already stopped */ }
-    recognizer = null;
-  }
-  send({ op: 'caption', on: false });
-  $('#caption-toggle').textContent = 'Start live captions';
-  $('#caption-toggle').classList.remove('is-on');
-  $('#caption-status').textContent = '';
-}
-
-function startCaptions() {
-  if (!SpeechRecognitionCtor) {
-    $('#caption-status').textContent = 'This browser has no speech recognition — try Chrome, Edge, or Safari.';
-    return;
-  }
-  recognizer = new SpeechRecognitionCtor();
-  recognizer.continuous = true;
-  recognizer.interimResults = true;
-  recognizer.lang = navigator.language || 'en-US';
-
-  recognizer.onresult = (ev) => {
-    // Only the most recent phrase - continuous mode keeps every phrase said
-    // all lecture in ev.results, and a caption bar showing all of it rather
-    // than what is being said right now is not a caption bar any more.
-    const text = (ev.results[ev.results.length - 1]?.[0]?.transcript || '').trim();
-    if (!text) return;
-    sendCaptionText(text);
-    clearTimeout(captionSilenceTimer);
-    captionSilenceTimer = setTimeout(() => sendCaptionText(''), CAPTION_SILENCE_MS);
-  };
-  recognizer.onerror = (ev) => {
-    // 'no-speech' and 'aborted' are routine - a quiet room, a deliberate
-    // stop - not a failure worth interrupting class over.
-    if (ev.error === 'no-speech' || ev.error === 'aborted') return;
-    $('#caption-status').textContent = `Captions stopped: ${ev.error}`;
-    stopCaptions();
-  };
-  recognizer.onend = () => {
-    // Chrome ends a recognition session on its own after a pause even with
-    // continuous:true - restart it seamlessly. stopCaptions() clears this
-    // handler first for a deliberate stop, so a null recognizer here always
-    // means a timeout, never a choice.
-    if (!recognizer) return;
-    try { recognizer.start(); } catch { /* already restarting */ }
-  };
-
-  send({ op: 'caption', on: true });
-  try {
-    recognizer.start();
-  } catch (err) {
-    $('#caption-status').textContent = `Could not start: ${err.message}`;
-    recognizer = null;
-    send({ op: 'caption', on: false });
-    return;
-  }
-  $('#caption-toggle').textContent = 'Stop live captions';
-  $('#caption-toggle').classList.add('is-on');
-  $('#caption-status').textContent = 'Listening…';
-}
-
-$('#caption-toggle').addEventListener('click', async () => {
-  if (recognizer) { stopCaptions(); return; }
-  // The first time on this device, say where the room's audio goes before it
-  // goes there (Issue #189) - once, not as a paragraph on every visit.
-  if (await confirmOnce('captions', $('#caption-privacy'), 'Start live captions')) startCaptions();
-});
-
-// --- controller mic: record to the session (Issue #147) --------------------
-//
-// Independent of Live Captions above, which never touches a MediaStream at
-// all - this is the raw audio itself. Recorded in fixed-length segments,
-// each a complete, independently playable file rather than a fragment only
-// valid concatenated with the ones around it (a MediaRecorder timeslice
-// would produce exactly that), uploaded as it goes the same reason
-// chunkStrokes in display.js splits ink.json rather than holding it for one
-// save at the end: a lecture that stops early keeps whatever already
-// uploaded, not nothing. Stopping and immediately restarting the recorder
-// at each boundary costs a sub-second gap in the audio, a fair trade for
-// every segment standing on its own.
-//
-// Amplifying this same stream through the display is Issue #147's other
-// half, layered on separately - this file only ever asks for the stream
-// once (see startMic) and hands it out from here.
-
-// Overridable the same way MAX_ASSET_ENTRIES is in display.js, so a test can
-// see a chunk boundary without actually waiting two minutes for one.
-const MIC_CHUNK_MS = Number(window.__PODIUM_TEST_MIC_CHUNK_MS__) || 120000;
-
-let micStream = null;
-let micRecorder = null;
-let micChunkTimer = null;
-let micRecordSeq = 0;
-let micSessionStamp = 0;
-
-function micMimeType() {
-  for (const type of ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']) {
-    if (window.MediaRecorder?.isTypeSupported?.(type)) return type;
-  }
-  return '';
-}
-
-// Named from this device's own bus id, a session start time and a sequence
-// number - never a local count alone, since more than one controller can be
-// recording into the same lecture at once (Issue #147 supports several
-// mics live together), and lecture_files is unique by name: two devices
-// racing to file "audio/0002.webm" would have the second replace the first
-// rather than both landing.
-//
-// Each segment also says when it started and how long it ran (Issue #132):
-// "-t<start ms>-d<length ms>" before the extension. A recorder's own file
-// carries no reliable duration (a MediaRecorder WebM reports Infinity), and
-// the stop-and-restart at each boundary means seq x 2 minutes drifts - the
-// replay lines each segment up with the timeline from these two numbers.
-// replay-model.js reads them, and places an older name without them from
-// its recording's start and its sequence number.
-function micChunkName(seq, startedAt, length) {
-  const ext = micMimeType().includes('ogg') ? 'ogg' : 'webm';
-  return `audio/${bus?.clientId || 'mic'}-${micSessionStamp}-${String(seq).padStart(4, '0')}-t${startedAt}-d${Math.max(0, Math.round(length))}.${ext}`;
-}
-
-function beginMicSegment() {
-  if (!micStream || !recordingNow() || !window.MediaRecorder) return;
-  const mimeType = micMimeType();
-  const recorder = mimeType ? new MediaRecorder(micStream, { mimeType }) : new MediaRecorder(micStream);
-  const seq = micRecordSeq++;
-  // Captured now, not read back off state.lectureId when the upload actually
-  // fires - the same reason the session export path takes an explicit
-  // lectureId (see fileWithLecture's own comment): this segment can easily
-  // still be uploading after standDown has already cleared it.
-  const lectureId = lastKnownLectureId;
-  const parts = [];
-  let startedAt = Date.now();
-  recorder.onstart = () => { startedAt = Date.now(); };
-  recorder.ondataavailable = (ev) => { if (ev.data.size) parts.push(ev.data); };
-  recorder.onstop = () => {
-    if (!parts.length) return;
-    fileWithLecture(micChunkName(seq, startedAt, Date.now() - startedAt), 'audio', new Blob(parts, { type: mimeType || 'audio/webm' }), mimeType || 'audio/webm', lectureId);
-  };
-  micRecorder = recorder;
-  recorder.start();
-  micChunkTimer = setTimeout(() => {
-    if (micRecorder !== recorder) return;   // already stopped from elsewhere
-    recorder.stop();
-    beginMicSegment();
-  }, MIC_CHUNK_MS);
-}
-
-function startMicRecording() {
-  if (micRecorder || !micStream || !recordingNow()) return;
-  micSessionStamp = Date.now();
-  micRecordSeq = 0;
-  beginMicSegment();
-}
-
-function stopMicRecording() {
-  clearTimeout(micChunkTimer);
-  micChunkTimer = null;
-  const recorder = micRecorder;
-  micRecorder = null;
-  if (recorder && recorder.state !== 'inactive') recorder.stop();
-}
-
-async function startMic() {
-  if (micStream) return;
-  if (!navigator.mediaDevices?.getUserMedia) {
-    $('#mic-status').textContent = 'This browser has no microphone access.';
-    return;
-  }
-  $('#mic-status').textContent = 'Requesting…';
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-  } catch (err) {
-    $('#mic-status').textContent = `Could not start: ${err.message}`;
-    return;
-  }
-  $('#mic-start').textContent = 'Stop my mic';
-  $('#mic-start').classList.add('is-on');
-  $('#mic-status').textContent = 'Live';
-  if ($('#mic-record').checked) startMicRecording();
-  if ($('#mic-amplify').checked) micSender.start(micStream);
-}
-
-function stopMic() {
-  stopMicRecording();
-  micSender.stop();
-  micStream?.getTracks().forEach((t) => t.stop());
-  micStream = null;
-  $('#mic-start').textContent = 'Start my mic';
-  $('#mic-start').classList.remove('is-on');
-  $('#mic-status').textContent = 'Off';
-}
-
-function setMicAmplifyState(status) {
-  $('#mic-amplify-status').textContent = {
-    idle: '',
-    connecting: 'connecting…',
-    live: 'live on the display',
-    failed: 'could not connect - a guest network may be blocking the two devices from reaching each other',
-  }[status] || status;
-}
-
-$('#mic-start').addEventListener('click', () => { if (micStream) stopMic(); else startMic(); });
-$('#mic-record').addEventListener('change', () => {
-  if (!micStream) return;
-  if ($('#mic-record').checked) startMicRecording();
-  else stopMicRecording();
-});
-$('#mic-amplify').addEventListener('change', async () => {
-  // Feedback is a hazard to the room's ears, so the warning is a question the
-  // first time on this device rather than a paragraph every time (Issue #189).
-  if ($('#mic-amplify').checked && !acknowledged('amplify')) {
-    $('#mic-amplify').checked = false;
-    if (!(await confirmOnce('amplify', $('#mic-amplify-warning'), 'Turn it on'))) return;
-    $('#mic-amplify').checked = true;
-  }
-  if (!micStream) return;
-  if ($('#mic-amplify').checked) micSender.start(micStream);
-  else micSender.stop();
-});
 
 // --- help on demand (Issue #189) ---------------------------------------------
 //
@@ -8147,87 +7584,9 @@ $('#update-reload').addEventListener('click', () => {
 
 // --- presentation preferences -------------------------------------------------
 //
-// Per device, like previewHidden and confidenceSplit above - none of this is
-// room state, so none of it goes through send()/state. Grouped into one
-// object rather than three loose keys because this is the one place in the
-// app where "device preferences" has grown into its own settings surface
-// (the Presentation tab) rather than a single quick-access toggle.
-const PRESENTATION_KEY = 'podium.presentation.v1';
-const PRESENTATION_DEFAULTS = {
-  // Follows the device's own light/dark setting unless chosen here (Issue #210).
-  theme: 'auto',
-  showPollUrl: true,
-  // How polls look (poll-look.js); null is the dark look polls always had.
-  pollLook: null,
-  blankOnConnect: true,
-  keepAwake: true,
-  haptics: true,
-  keepPhotos: false,
-  autoSaveInk: false,
-  lectureDuration: 0,
-  pacingAutoStart: true,
-  bottomSlot1: 'music',
-  bottomSlot2: 'play',
-  bottomSlots: ['music', 'play', 'freeze', 'blank', 'none', 'none', 'none', 'none'],
-  inkScrollGutter: false,
-  inkControlsTop: false,
-  snapShapes: true,
-  autoSwitchTab: true,
-  helpOpen: false,
-  // Issue #209: tighter spacing, smaller buttons, help put away. Per device.
-  compact: false,
-  tabOrder: [...TAB_IDS],
-  hiddenTabs: [...DEFAULT_HIDDEN_TABS],
-  tabLayoutVersion: TAB_LAYOUT_VERSION,
-};
-function loadPresentation() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(PRESENTATION_KEY) || '{}');
-    const merged = { ...PRESENTATION_DEFAULTS, ...(saved && typeof saved === 'object' ? saved : {}) };
-    if (!['dark', 'light', 'auto'].includes(merged.theme)) merged.theme = 'auto';
-    if (merged.haptics === undefined) merged.haptics = true;
-    if (merged.snapShapes === undefined) merged.snapShapes = true;
-    // A saved order is a permutation of whatever TAB_IDS was when it was
-    // saved - drop ids this build no longer has and append ones it grew,
-    // rather than reject the whole thing and silently reset someone's
-    // careful reordering over an unrelated code change.
-    // Once, when the default arrangement changes (Issue #197's groups): a
-    // custom order saved for the old 12 tabs would scatter tabs across the
-    // new group dividers, so this device starts from the new default order,
-    // keeps whatever it had hidden, and has Camera and Photos tucked away too.
-    if ((merged.tabLayoutVersion || 1) < TAB_LAYOUT_VERSION) {
-      merged.tabOrder = [...TAB_IDS];
-      merged.hiddenTabs = [...new Set([...(Array.isArray(merged.hiddenTabs) ? merged.hiddenTabs : []), ...DEFAULT_HIDDEN_TABS])];
-      merged.tabLayoutVersion = TAB_LAYOUT_VERSION;
-    }
-    if (!Array.isArray(merged.tabOrder)) merged.tabOrder = [...TAB_IDS];
-    merged.tabOrder = merged.tabOrder.filter((id) => TAB_IDS.includes(id));
-    for (const id of TAB_IDS) if (!merged.tabOrder.includes(id)) merged.tabOrder.push(id);
-    if (!Array.isArray(merged.hiddenTabs)) merged.hiddenTabs = [];
-    merged.hiddenTabs = merged.hiddenTabs.filter((id) => TAB_IDS.includes(id));
-    // At least one tab must stay reachable without opening Settings.
-    if (merged.hiddenTabs.length >= TAB_IDS.length) merged.hiddenTabs = [];
-    if (!Array.isArray(merged.bottomSlots) || merged.bottomSlots.length !== 8) {
-      merged.bottomSlots = [
-        merged.bottomSlot1 || 'music',
-        merged.bottomSlot2 || 'play',
-        'freeze',
-        'blank',
-        'none',
-        'none',
-        'none',
-        'none',
-      ];
-    }
-    return merged;
-  } catch { return { ...PRESENTATION_DEFAULTS }; }
-}
-function savePresentation() {
-  safeStorageSet(localStorage, PRESENTATION_KEY, JSON.stringify(presentation));
-}
-let presentation = loadPresentation();
-// Help on demand (Issue #189) - here rather than beside the functions it calls,
-// since both read `presentation`, which does not exist until this line.
+// The preferences themselves (presentation-prefs.js) are loaded at the top of
+// this file; the tab bar is tab-bar.js. Here: what they change.
+// Help on demand (Issue #189): what this device has already been told about.
 for (const [key, id] of [['captions', '#caption-privacy'], ['amplify', '#mic-amplify-warning']]) {
   if (acknowledged(key)) asHelp($(id));
 }
@@ -8260,126 +7619,8 @@ function getBottomSlots() {
   ];
 }
 
-/**
- * Lay the 12 tab buttons out in presentation.tabOrder, hide the ones in
- * presentation.hiddenTabs, and keep #tabs-more in sync. The buttons
- * themselves are never rebuilt - appendChild on an existing node just moves
- * it, so the click listener wired once at startup (see below) keeps working
- * on every one of them, hidden or not, in whatever order they end up in.
- */
-/**
- * Lay the tab buttons out by group (Issue #197), in presentation.tabOrder
- * within each group, hide the ones in presentation.hiddenTabs, put a divider
- * between groups, and keep #tabs-more in sync. The buttons themselves are
- * never rebuilt - appendChild on an existing node just moves it, so the click
- * listener wired once at startup keeps working on every one of them, hidden
- * or not, in whatever order they end up in.
- */
-function orderedTabs() {
-  return TAB_GROUPS.flatMap(([group]) => presentation.tabOrder.filter((id) => groupOfTab(id) === group));
-}
+tabBar.render();
 
-function renderTabBar() {
-  const nav = $('.tabs');
-  const moreWrap = $('.tabs-more-wrap');
-  if (!nav || !moreWrap) return;
-  nav.querySelectorAll('.tab-divider').forEach((d) => d.remove());
-  let lastGroup = null;
-  for (const id of orderedTabs()) {
-    const btn = nav.querySelector(`.tab[data-tab="${id}"]`);
-    if (!btn) continue;
-    btn.hidden = presentation.hiddenTabs.includes(id) || !tabAvailable(id);
-    const group = groupOfTab(id);
-    // A divider only between two groups that both have a tab showing.
-    if (!btn.hidden && lastGroup && group !== lastGroup) {
-      nav.insertBefore(el('span', { class: 'tab-divider', 'aria-hidden': 'true' }), moreWrap);
-    }
-    nav.insertBefore(btn, moreWrap);
-    if (!btn.hidden) lastGroup = group;
-  }
-  renderTabsMoreMenu();
-}
-
-function renderTabsMoreMenu() {
-  const hiddenIds = orderedTabs().filter((id) => presentation.hiddenTabs.includes(id) && tabAvailable(id));
-  const moreBtn = $('#tabs-more');
-  const menu = $('#tabs-more-menu');
-  if (!moreBtn || !menu) return;
-  moreBtn.hidden = hiddenIds.length === 0;
-  menu.replaceChildren(...hiddenIds.map((id) => el('button', {
-    type: 'button',
-    onclick: () => { menu.hidden = true; tab(id); },
-  }, TAB_LABELS[id] || id)));
-  if (hiddenIds.length === 0) menu.hidden = true;
-}
-
-/** Swap tab `id` with its neighbour in its own group; `dir` is -1 or 1. */
-function moveTab(id, dir) {
-  const group = TAB_GROUPS.find(([g]) => g === groupOfTab(id))?.[2] || [];
-  const inGroup = presentation.tabOrder.filter((t) => group.includes(t));
-  const i = inGroup.indexOf(id);
-  const j = i + dir;
-  if (i < 0 || j < 0 || j >= inGroup.length) return;
-  const order = presentation.tabOrder.slice();
-  const a = order.indexOf(inGroup[i]);
-  const b = order.indexOf(inGroup[j]);
-  [order[a], order[b]] = [order[b], order[a]];
-  presentation.tabOrder = order;
-  savePresentation();
-  renderTabBar();
-  renderTabOrderSettings();
-}
-
-function toggleTabHidden(id, hide) {
-  const hiddenTabs = presentation.hiddenTabs.filter((t) => t !== id);
-  if (hide) hiddenTabs.push(id);
-  // Hiding every tab would leave nothing to tap without opening Settings
-  // first - the one rule the reorder/hide UI enforces on itself.
-  if (hiddenTabs.length >= TAB_IDS.length || !TAB_IDS.some((t) => tabAvailable(t) && !hiddenTabs.includes(t))) return;
-  presentation.hiddenTabs = hiddenTabs;
-  savePresentation();
-  renderTabBar();
-  renderTabOrderSettings();
-}
-
-function renderTabOrderSettings() {
-  const list = $('#tab-order-list');
-  if (!list) return;
-  const rows = [];
-  for (const [group, label] of TAB_GROUPS) {
-    const ids = presentation.tabOrder.filter((id) => groupOfTab(id) === group && tabAvailable(id));
-    if (!ids.length) continue;
-    rows.push(el('div', { class: 'tab-order-group' }, label));
-    ids.forEach((id, i) => {
-      const isHidden = presentation.hiddenTabs.includes(id);
-      rows.push(el('div', { class: 'tab-order-row' },
-        el('div', { class: 'tab-order-move' },
-          el('button', { type: 'button', disabled: i === 0, title: 'Move earlier', 'aria-label': `Move ${TAB_LABELS[id] || id} earlier`, onclick: () => moveTab(id, -1) }, '▲'),
-          el('button', { type: 'button', disabled: i === ids.length - 1, title: 'Move later', 'aria-label': `Move ${TAB_LABELS[id] || id} later`, onclick: () => moveTab(id, 1) }, '▼')),
-        el('span', { class: 'tab-order-label' }, TAB_LABELS[id] || id),
-        el('label', { class: 'check tab-order-show' },
-          el('input', {
-            type: 'checkbox',
-            checked: !isHidden,
-            onchange: (ev) => toggleTabHidden(id, !ev.target.checked),
-          }),
-          'Show')));
-    });
-  }
-  list.replaceChildren(...rows);
-}
-renderTabBar();
-
-$('#tabs-more')?.addEventListener('click', (ev) => {
-  ev.stopPropagation();
-  $('#tabs-more-menu').hidden = !$('#tabs-more-menu').hidden;
-});
-// Same dismissal a modal card gets elsewhere: tapping anything outside the
-// open menu closes it, so it never sits open over a tab you meant to press.
-document.addEventListener('click', (ev) => {
-  const menu = $('#tabs-more-menu');
-  if (menu && !menu.hidden && !ev.target.closest('.tabs-more-wrap')) menu.hidden = true;
-});
 
 function applyInkPreferences() {
   const inkPanel = $('[data-panel="ink"]');
@@ -8771,27 +8012,27 @@ function settingsTab(name) {
 $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () => settingsTab(b.dataset.settingsTab)));
 
 $('#pref-theme')?.addEventListener('change', (ev) => { setThemeChoice(ev.target.value); });
-$('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(); });
+$('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(presentation); });
 $('#pref-poll-look').replaceChildren(pollLookPicker({
   value: normalizeLook(presentation.pollLook) || { mode: 'dark' },
   idPrefix: 'pref-poll-look',
-  onChange: (look) => { presentation.pollLook = look; savePresentation(); },
+  onChange: (look) => { presentation.pollLook = look; savePresentation(presentation); },
 }));
-$('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(); });
-$('#pref-auto-switch-tab').addEventListener('change', (ev) => { presentation.autoSwitchTab = ev.target.checked; savePresentation(); });
-$('#pref-help-open').addEventListener('change', (ev) => { presentation.helpOpen = ev.target.checked; savePresentation(); applyHelpOpen(); });
-$('#pref-compact').addEventListener('change', (ev) => { presentation.compact = ev.target.checked; savePresentation(); applyDensity(); });
-$('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(); applyWakeLock(); });
+$('#pref-blank-on-connect').addEventListener('change', (ev) => { presentation.blankOnConnect = ev.target.checked; savePresentation(presentation); });
+$('#pref-auto-switch-tab').addEventListener('change', (ev) => { presentation.autoSwitchTab = ev.target.checked; savePresentation(presentation); });
+$('#pref-help-open').addEventListener('change', (ev) => { presentation.helpOpen = ev.target.checked; savePresentation(presentation); applyHelpOpen(); });
+$('#pref-compact').addEventListener('change', (ev) => { presentation.compact = ev.target.checked; savePresentation(presentation); applyDensity(); });
+$('#pref-keep-awake').addEventListener('change', (ev) => { presentation.keepAwake = ev.target.checked; savePresentation(presentation); applyWakeLock(); });
 $('#pref-haptics')?.addEventListener('change', (ev) => {
   presentation.haptics = ev.target.checked;
-  savePresentation();
+  savePresentation(presentation);
   if (presentation.haptics) haptic('tick');
 });
 // Changing the default takes effect now as well as next time: turning it on in
 // Settings and finding the Photos tab still unticked would read as a bug.
 $('#pref-keep-photos').addEventListener('change', (ev) => {
   presentation.keepPhotos = ev.target.checked;
-  savePresentation();
+  savePresentation(presentation);
   keepPhotosThisSession = null;
   renderKeepPhotos();
 });
@@ -8800,7 +8041,7 @@ $('#pref-keep-photos').addEventListener('change', (ev) => {
 // every lecture this controller opens from here on.
 $('#pref-autosave-ink').addEventListener('change', (ev) => {
   presentation.autoSaveInk = ev.target.checked;
-  savePresentation();
+  savePresentation(presentation);
   if (bus && stateHeard) send({ op: 'autoSaveInk', on: presentation.autoSaveInk });
 });
 $('#ink-autosave').addEventListener('change', (ev) => send({ op: 'autoSaveInk', on: ev.target.checked }));
@@ -8816,7 +8057,7 @@ $('#pref-lecture-duration').addEventListener('change', (ev) => {
     $('#pref-lecture-duration-custom').hidden = true;
     presentation.lectureDuration = Number(val);
   }
-  savePresentation();
+  savePresentation(presentation);
   renderClockAndPacing();
 });
 
@@ -8824,14 +8065,14 @@ $('#pref-lecture-duration-custom').addEventListener('input', (ev) => {
   const parsed = parseInt(ev.target.value, 10);
   if (!Number.isNaN(parsed) && parsed > 0) {
     presentation.lectureDuration = Math.min(360, parsed);
-    savePresentation();
+    savePresentation(presentation);
     renderClockAndPacing();
   }
 });
 
 $('#pref-pacing-autostart').addEventListener('change', (ev) => {
   presentation.pacingAutoStart = ev.target.checked;
-  savePresentation();
+  savePresentation(presentation);
 });
 
 for (let i = 1; i <= 8; i++) {
@@ -8840,26 +8081,26 @@ for (let i = 1; i <= 8; i++) {
     presentation.bottomSlots[i - 1] = ev.target.value;
     presentation.bottomSlot1 = presentation.bottomSlots[0];
     presentation.bottomSlot2 = presentation.bottomSlots[1];
-    savePresentation();
+    savePresentation(presentation);
     renderBottomSlots();
   });
 }
 
 $('#pref-ink-scroll-gutter')?.addEventListener('change', (ev) => {
   presentation.inkScrollGutter = ev.target.checked;
-  savePresentation();
+  savePresentation(presentation);
   applyInkPreferences();
 });
 
 $('#pref-ink-controls-top')?.addEventListener('change', (ev) => {
   presentation.inkControlsTop = ev.target.checked;
-  savePresentation();
+  savePresentation(presentation);
   applyInkPreferences();
 });
 
 $('#pref-snap-shapes')?.addEventListener('change', (ev) => {
   presentation.snapShapes = ev.target.checked;
-  savePresentation();
+  savePresentation(presentation);
 });
 
 $('#topbar-pacing')?.addEventListener('click', () => {
@@ -8927,7 +8168,7 @@ function showSetup() {
   $('#pref-auto-switch-tab').checked = presentation.autoSwitchTab !== false;
   $('#pref-help-open').checked = !!presentation.helpOpen;
   $('#pref-compact').checked = !!presentation.compact;
-  renderTabOrderSettings();
+  tabBar.renderSettings();
   renderKeepPhotos();
   // Filled in from the saved config every time Settings opens, which is also
   // what throws away a half-finished edit that was closed without saving.

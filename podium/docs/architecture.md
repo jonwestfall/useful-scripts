@@ -137,7 +137,9 @@ podium/
 │   ├── vendor/           # Marp, PDF.js, QR code, CodeMirror, Mermaid, mammoth - vendored copies
 │   └── js/
 │       ├── protocol.js   # Deterministic state machine & command reducer, ink math
-│       ├── control.js    # Controller UI
+│       ├── control.js    # Controller UI; its self-contained features are modules beside it:
+│       │                   #   tab-bar.js, tabs.js, presentation-prefs.js, live-browser-panel.js,
+│       │                   #   message-editor.js, caption-panel.js, mic-panel.js, watermark.js, pip.js
 │       ├── display.js    # Projector renderer (and viewer mode for view.html)
 │       ├── renderers.js  # Content renderers (decks, PDFs, media, text, polls, timers)
 │       ├── live-browser.js # Web pages in the server's browser: live or embedded, session names, frames
@@ -157,6 +159,7 @@ podium/
 │       └── ...
 ├── server/               # Self-hosted relay & storage server
 │   ├── podium-server.js  # HTTP + WebSocket relay, auth gate, static files
+│   ├── open-paths.js     # What the gate lets through without an account, and to whom
 │   ├── browser.js        # The live browser: headless Chromium over the DevTools protocol
 │   ├── api.js            # REST API;  store.js - SQLite schema & persistence
 │   ├── accounts.js, courses.js, library.js, plans.js, lectures.js, kiosks.js, ...
