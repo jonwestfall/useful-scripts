@@ -1720,6 +1720,41 @@ const sealed = await pad.evaluate(async () => {
 ok(`encryption round-trips a payload of any size (${Object.entries(sealed).map(([k, v]) => `${k}KB ${v}`).join(', ')})`,
   sealed[64] === 'ok' && sealed[160] === 'ok' && sealed[512] === 'ok');
 
+// And past the relay's 256 KB: a message that seals larger goes as parts
+// (see MAX_FRAME in bus.js) rather than getting its sender hung up on. Two
+// buses of their own on the real relay, so nothing else in the room is in
+// the way. Over the limit, the relay closed the sender's socket and the
+// message was simply lost; the sender's own status is what shows that.
+{
+  const bigCfg = { transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'big-parts', passphrase: 'parts' };
+  await screen.evaluate(async (c) => {
+    const { createBus } = await import('./assets/js/bus.js');
+    window.__bigGot = [];
+    window.__bigBus = await createBus({ cfg: c, role: 'display', onMessage: (m) => window.__bigGot.push(m) });
+  }, bigCfg);
+  const sentBig = await pad.evaluate(async (c) => {
+    const { createBus } = await import('./assets/js/bus.js');
+    window.__bigDrops = 0;
+    window.__bigBus = await createBus({ cfg: c, role: 'control', onMessage: () => {}, onStatus: (st) => {
+      // Counted from the first time it is up: it says 'connecting' before that.
+      if (st === 'online') window.__bigUp = true;
+      else if (window.__bigUp) window.__bigDrops++;
+    } });
+    const data = `data:image/jpeg;base64,${'Q'.repeat(400 * 1024)}`;
+    return window.__bigBus.send({ t: 'asset', id: 'big', data });
+  }, bigCfg);
+  ok('a 400 K-character photo is reported sent over the self-hosted relay', sentBig === true);
+  const landed = await screen.waitForFunction(() => window.__bigGot.find((m) => m.id === 'big')?.data.length, null, { timeout: 10000 })
+    .then((h) => h.jsonValue()).catch(() => 0);
+  ok(`and arrives whole (${landed} chars)`, landed === 400 * 1024 + 'data:image/jpeg;base64,'.length);
+  await pad.evaluate(() => window.__bigBus.send({ t: 'after', id: 'small' }));
+  const after = await screen.waitForFunction(() => window.__bigGot.some((m) => m.t === 'after'), null, { timeout: 10000 })
+    .then(() => true).catch(() => false);
+  ok('and the relay never dropped the sender for it', after && (await pad.evaluate(() => window.__bigDrops)) === 0);
+  await pad.evaluate(() => window.__bigBus.close());
+  await screen.evaluate(() => window.__bigBus.close());
+}
+
 // A second controller used to learn about the first one's strokes only when
 // the next heartbeat carried them - up to two seconds later. It now follows
 // the ink commands off the bus, and asks for a surface only when its own

@@ -53,3 +53,25 @@ export function createAssetResolver(getBus) {
 
   return { store, wanted, want, resolveAssets };
 }
+
+/**
+ * Send something at most once: `id` goes into `sent` while the send is in
+ * flight, so a second call meanwhile does not send it twice, and comes back
+ * out unless the bus reports it actually went. bus.send() is async, so its
+ * answer is a Promise - testing that for `!== false` was always true, and a
+ * photo the transport refused (offline, reconnecting) was marked sent and
+ * never pushed again. Resolves to whether it went.
+ *
+ * @param {Set<string>} sent
+ * @param {string} id
+ * @param {() => (boolean | Promise<boolean> | undefined)} send - undefined
+ *   (no bus yet) counts as not sent.
+ */
+export async function sendOnce(sent, id, send) {
+  if (sent.has(id)) return false;
+  sent.add(id);
+  let went = false;
+  try { went = (await send()) === true; } catch { /* not sent */ }
+  if (!went) sent.delete(id);
+  return went;
+}
