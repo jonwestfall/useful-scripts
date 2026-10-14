@@ -322,6 +322,22 @@ async function pollUntil(page, fn, arg, { timeout = 15000, interval = 300 } = {}
   }
 }
 
+/**
+ * Wait for a state, not a length of time: `check` (run here, in Node, so it
+ * can ask several pages, or the server) is asked every `interval` ms until it
+ * answers truthy. Returns that answer; throws 'timed out' after `timeout`.
+ * Prefer this to waitForTimeout - a fixed pause is too short on a slow CI
+ * runner and too long everywhere else. (A check that something does NOT
+ * happen - a paused set holds, a default is not put back - still needs one.)
+ */
+async function until(check, { timeout = 15000, interval = 250 } = {}) {
+  for (const end = Date.now() + timeout; ; await new Promise((r) => setTimeout(r, interval))) {
+    const answer = await check();
+    if (answer) return answer;
+    if (Date.now() > end) throw new Error('timed out');
+  }
+}
+
 // A browser normalizes a hex colour assigned to .style.background into its
 // own serialization (rgb(...)) before it is readable back off the element, so
 // compare against what THIS browser does with the same hex rather than
@@ -650,5 +666,5 @@ export {
   HERE, ROOT, fs, path, os, http, spawn, execFileSync,
   writeImageFixture, writeAlphaImageFixture, writeSlideFixtures, writeMinimalPptxFixture, SLIDE_COLOURS, freePort,
   devices, PORT, BASE, CFG, browser, ok, errors, want, trap, expecting, writePortraitImageFixture,
-  pollUntil, bgMatches, reportErrors, teardown, exitWithResult,
+  pollUntil, until, bgMatches, reportErrors, teardown, exitWithResult,
 };
