@@ -3578,7 +3578,9 @@ console.log('\n-- the live browser: a site that refuses framing, driven from the
 const sitePages = {
   '/': '<!doctype html><title>Lab home</title><body style="margin:0;font:28px sans-serif;height:3000px;background:#fff">'
     + '<a href="/two" style="position:absolute;left:0;top:0;width:400px;height:200px;background:#fd0">Page two</a>'
-    + '<form action="/echo"><input name="q" style="position:absolute;left:0;top:300px;width:400px;height:60px;font-size:28px"></form>',
+    + '<form action="/echo"><input name="q" style="position:absolute;left:0;top:300px;width:400px;height:60px;font-size:28px"'
+    // Says so when it has the focus, so the test can wait for the tap to land.
+    + ' onfocus="document.title=\'Lab home, typing\'"></form>',
   '/two': '<!doctype html><title>Page two</title><body style="margin:0;background:#0c0"><h1>Two</h1>',
 };
 const site = http.createServer((req, res) => {
@@ -3685,8 +3687,12 @@ try {
   await until(async () => white(await wallColour())).catch(() => {});
   ok('and catches up when the freeze lifts', white(await wallColour()));
 
-  // Typing: tap the field on the page, then type in the box under it.
+  // Typing: tap the field on the page, then type in the box under it - once
+  // the page says the field has the focus, which is what the typing needs.
   await at(200 / (shape.w || 1280), 330 / (shape.h || 720));
+  await pad.waitForFunction(() => /typing/.test(document.querySelector('#web-status').textContent), null, { timeout: 10000 })
+    .then(() => ok('a tap on a field gives it the focus', true))
+    .catch(async () => ok(`a tap on a field gives it the focus ("${await pad.textContent('#web-status')}")`, false));
   await pad.fill('#web-text', 'mitochondria');
   await pad.click('#web-type button[type="submit"]');
   await pad.click('#web-type [data-key="Enter"]');
