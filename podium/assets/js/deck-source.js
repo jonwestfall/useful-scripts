@@ -371,6 +371,37 @@ export function mediaIn(raw) {
   return out.sort((a, b) => a.start - b.start);
 }
 
+/**
+ * The markdown picture the cursor is in, taken apart the way the picture
+ * dialog asks for it (Issue #298), so choosing Picture there changes it rather
+ * than adding a second one. `place` is "inline", or the bg words that say
+ * where and how big ("bg", "bg left:40% contain"...), in that order; `extra`
+ * is every other keyword it had (a filter, a height), kept as written.
+ *
+ * @returns {{start: number, end: number, src: string, alt: string, place: string, width: number, extra: string[]}|null}
+ */
+export function pictureAt(raw, offset) {
+  const found = mediaIn(raw).find((m) => m.kind === 'markdown' && offset >= m.start && offset <= m.end);
+  if (!found) return null;
+  const bg = found.options.find((w) => /^bg$/i.test(w));
+  const side = bg && found.options.find((w) => /^(left|right)(:[\w.%]+)?$/i.test(w));
+  const fit = bg && found.options.find((w) => /^(fit|cover|contain|auto)$/i.test(w));
+  const width = found.options.find((w) => /^(w|width):\d+(px)?$/i.test(w));
+  const used = [bg, side, fit, width].filter(Boolean);
+  return {
+    start: found.start, end: found.end, src: found.src, alt: found.alt,
+    place: bg ? [bg, side, fit].filter(Boolean).join(' ') : 'inline',
+    width: width ? parseInt(width.split(':')[1], 10) : 0,
+    extra: found.options.filter((w) => !used.includes(w)),
+  };
+}
+
+/** A picture's markdown, from what the picture dialog says. */
+export function pictureTag({ src, alt = '', place = 'inline', width = 0, extra = [] }) {
+  const words = [place === 'inline' ? '' : place, width > 0 ? `w:${Math.round(width)}` : '', ...extra, alt].filter(Boolean);
+  return `![${words.join(' ')}](${src.replace(/\s/g, '%20')})`;
+}
+
 // Marp's image keywords: bg, fit/cover/contain, left/right[:N%], w:/h:,
 // filters, vertical, and bare sizes like 50% after bg.
 function isImageOption(word) {

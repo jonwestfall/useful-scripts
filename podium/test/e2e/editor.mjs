@@ -389,6 +389,37 @@ await until(async () => (await markdown()).includes(`![bg right:40%](${picture.s
   .then(() => ok('picked from the library, it is placed as asked, with no second upload', true))
   .catch(() => ok('picked from the library, it is placed as asked', false));
 
+// Issue #298: Picture with the cursor in that picture changes it, rather than
+// adding a second one - and can fit the whole picture into its 40%.
+const placed = `![bg right:40%](${picture.src})`;
+await desk.evaluate(async (tag) => {
+  const CM = await import('/assets/vendor/codemirror.esm.js');
+  const view = CM.EditorView.findFromDOM(document.querySelector('.cm-editor'));
+  view.dispatch({ selection: { anchor: view.state.doc.toString().indexOf(tag) + 5 } });
+  view.focus();
+}, placed);
+await desk.click('.deck-toolbar [data-cmd="image"]');
+await desk.waitForSelector('#deck-image-dialog:not([hidden])', { timeout: 5000 });
+ok('Picture with the cursor in a picture opens it to change, not to add another',
+  (await desk.textContent('#deck-image-heading')) === 'Change this picture' && (await desk.textContent('#deck-image-go')) === 'Change');
+ok('with its address, placement and empty description loaded back in',
+  (await desk.inputValue('#deck-image-src')) === picture.src && (await desk.inputValue('#deck-image-place')) === 'bg right:40%'
+  && (await desk.inputValue('#deck-image-alt')) === '');
+ok('and the picture it has now shown', (await desk.textContent('#deck-image-chosen')) === 'On the slide now'
+  && await desk.isVisible('#deck-image-preview'));
+await desk.selectOption('#deck-image-place', 'bg right:40% contain');
+await desk.fill('#deck-image-alt', 'A red rectangle');
+await desk.click('#deck-image-go');
+await until(async () => (await markdown()).includes(`![bg right:40% contain A red rectangle](${picture.src})`))
+  .then(async () => ok('Change puts the new placement where the old picture was, and no second copy',
+    !(await markdown()).includes(placed)))
+  .catch(async () => ok(`Change rewrites the picture in place (${(await markdown()).slice(-300)})`, false));
+await desk.click('.deck-toolbar [data-cmd="image"]');
+await desk.waitForSelector('#deck-image-dialog:not([hidden])', { timeout: 5000 });
+ok('and with the cursor still in it, it opens to change again, with the new placement',
+  (await desk.inputValue('#deck-image-place')) === 'bg right:40% contain' && (await desk.inputValue('#deck-image-alt')) === 'A red rectangle');
+await desk.click('#deck-image-cancel');
+
 // Dropped on a slide in the strip, a picture goes on that slide.
 await desk.evaluate(async () => {
   const c = document.createElement('canvas');

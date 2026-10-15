@@ -23,7 +23,7 @@
 import { $, $$, el } from './util.js';
 import { encodeToFit, downscaleImage } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
-import { parseTimecode, formatTimecode } from './deck-source.js';
+import { parseTimecode, formatTimecode, pictureTag } from './deck-source.js';
 
 // A projector is 1920 wide; a little more leaves room for zooming into a
 // detail. Nothing bigger is ever worth sending to one.
@@ -135,7 +135,11 @@ export async function uploadDeckMedia(blob, { filename, course = '', deckName = 
  * @param {() => {code: string, title: string, role: string}[]} deps.courses
  * @param {() => string} deps.deckCourse - the course the deck is filed under, if any
  * @param {() => string} deps.deckName - what the uploads say they are for
- * @param {(tag: string) => void} deps.insertPicture
+ * @param {(tag: string, editing: object|null) => void} deps.insertPicture - editing is
+ *   currentPicture()'s answer when the tag replaces a picture already there
+ * @param {() => object|null} [deps.currentPicture] - the picture the cursor is in
+ *   (deck-source.js's pictureAt), to change rather than add to (Issue #298)
+ * @param {(src: string) => string} [deps.previewSrc] - what an <img> can show for a src
  * @param {(video: {src: string, start: number, poster: string}) => void} deps.makeVideoSlide
  * @param {() => ({src: string, start: number}|null)} deps.currentVideo
  * @param {() => void} deps.done - a dialog closed; give the editor its focus back
@@ -229,7 +233,7 @@ export function createDeckMedia(deps) {
 
   // --- pictures ---
 
-  const picture = { file: null, src: '', item: null, objectUrl: '', prompted: false, busy: false };
+  const picture = { file: null, src: '', item: null, objectUrl: '', prompted: false, busy: false, editing: null };
   const pictureDialog = $('#deck-image-dialog');
 
   function chosePicture({ file = null, item = null } = {}) {
@@ -249,15 +253,43 @@ export function createDeckMedia(deps) {
     else if (from === 'address') { chosePicture(); $('#deck-image-src').focus(); }
   });
 
+  // A placement the menu has no words for (bg left:30%, say) is offered as it
+  // is, so changing a picture's description does not quietly move it.
+  function setPlace(value) {
+    const select = $('#deck-image-place');
+    $$('option[data-kept]', select).forEach((o) => o.remove());
+    if (![...select.options].some((o) => o.value === value)) {
+      select.append(el('option', { value, 'data-kept': '' }, `As it is now (${value})`));
+    }
+    select.value = value;
+  }
+
   function openPicture({ file = null } = {}) {
     picture.prompted = false;
     libraryCache = null;
+    // Picture with the cursor in one already changes that one (Issue #298). A
+    // file pasted or dropped is always a new picture.
+    const now = file ? null : deps.currentPicture?.() || null;
+    picture.editing = now;
+    $('#deck-image-heading').textContent = now ? 'Change this picture' : 'Add a picture';
+    $('#deck-image-go').textContent = now ? 'Change' : 'Add';
     $('#deck-image-file').value = '';
     $('#deck-image-src').value = '';
-    $('#deck-image-alt').value = '';
-    $('#deck-image-width').value = '';
-    $('#deck-image-place').value = 'inline';
+    $('#deck-image-alt').value = now?.alt || '';
+    $('#deck-image-width').value = now?.width || '';
+    setPlace(now?.place || 'inline');
     prepareDialog(pictureDialog, 'image');
+    if (now) {
+      // The picture it has now, at its own address; another from this device
+      // or the library replaces it.
+      pickPictureFrom('address');
+      $('#deck-image-src').value = now.src;
+      $('.deck-media-chosen', pictureDialog).hidden = false;
+      $('#deck-image-preview').src = deps.previewSrc?.(now.src) || now.src;
+      $('#deck-image-chosen').textContent = 'On the slide now';
+      $('#deck-image-place').focus();
+      return;
+    }
     const local = deps.canUpload() || inPlan();
     pickPictureFrom(local ? 'device' : 'address');
     chosePicture(file ? { file } : {});
@@ -266,6 +298,7 @@ export function createDeckMedia(deps) {
 
   function closePicture() {
     pictureDialog.hidden = true;
+    picture.editing = null;
     chosePicture();
     deps.done();
   }
@@ -313,10 +346,10 @@ export function createDeckMedia(deps) {
     } finally {
       picture.busy = false;
     }
-    const width = Number($('#deck-image-width').value);
-    const words = [place === 'inline' ? '' : place, width > 0 ? `w:${Math.round(width)}` : '', alt].filter(Boolean);
+    const editing = picture.editing;
+    const tag = pictureTag({ src, alt, place, width: Number($('#deck-image-width').value), extra: editing?.extra || [] });
     closePicture();
-    deps.insertPicture(`![${words.join(' ')}](${src.replace(/\s/g, '%20')})`);
+    deps.insertPicture(tag, editing);
   });
 
   // --- video slides ---
