@@ -1313,7 +1313,19 @@ const media = createDeckMedia({
   courses: () => libraryCourses,
   deckCourse: () => origin.course || params.get('course') || '',
   deckName,
-  insertPicture: (tag) => insertBlock(`${tag}\n`, tag.length + 1),
+  insertPicture: (tag, editing) => {
+    // Changing a picture puts the new tag where the old one was - unless the
+    // text there is not that picture any more, when it goes in as a new one.
+    if (editing && view.state.sliceDoc(editing.start, editing.end) === editing.raw) {
+      view.dispatch({ changes: { from: editing.start, to: editing.end, insert: tag }, selection: { anchor: editing.start + tag.length } });
+      view.focus();
+    } else insertBlock(`${tag}\n`, tag.length + 1);
+  },
+  currentPicture: () => {
+    const found = DS.pictureAt(text(), view.state.selection.main.head);
+    return found && { ...found, raw: view.state.sliceDoc(found.start, found.end) };
+  },
+  previewSrc: (src) => (src.startsWith('asset:') ? planPictures.get(src.slice(6)) || '' : src),
   makeVideoSlide: (video) => applyText(DS.setSlideVideo(text(), current, video), { selectSlide: current }),
   currentVideo: () => deck.slides[current]?.video || null,
   done: () => view.focus(),

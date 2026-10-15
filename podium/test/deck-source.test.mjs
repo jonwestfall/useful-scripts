@@ -11,6 +11,7 @@ import {
   parseDeck, serializeDeck, moveSlide, duplicateSlide, deleteSlide, insertSlide,
   setSlideDirective, setSlideBuild, setSlideNotes, setFrontMatter, slideAt, checkDeck, commentsIn,
   setSlideVideo, parseTimecode, formatTimecode, PODIUM_DIRECTIVES, mermaidFences, MERMAID_THEMES,
+  pictureAt, pictureTag,
 } from '../assets/js/deck-source.js';
 import { deckLocation, markMermaidTheme } from '../assets/js/deck.js';
 
@@ -284,6 +285,33 @@ console.log('-- diagrams (Issue #235) --');
   chk(`the front matter reaches every slide, a comment the slides after it, _ one slide (${marks.join(',')})`,
     marks.join(',') === 'forest,forest,dark,dark,neutral,dark,dark,dark');
   chk('and none of them is a presenter note', themed.comments.every((list) => !list.length));
+}
+
+// --- Issue #298: the picture the cursor is in, back into the picture dialog ---
+{
+  const md = '# Slide\n\n![bg right:40% contain w:600 grayscale A cat asleep](/media/abc/cat%20nap.jpg)\n\nText\n';
+  const at = md.indexOf('![');
+  const found = pictureAt(md, at + 10);
+  chk('the cursor inside a picture finds it', !!found && found.start === at && found.end === md.indexOf(')') + 1);
+  chk(`and takes it apart: where it goes, its width, the rest, its description (${JSON.stringify(found)})`,
+    found.place === 'bg right:40% contain' && found.width === 600 && found.extra.join(' ') === 'grayscale'
+    && found.alt === 'A cat asleep' && found.src === '/media/abc/cat%20nap.jpg');
+  chk('right after its closing bracket still counts', pictureAt(md, found.end)?.start === at);
+  chk('a cursor in the text, not a picture, finds none', pictureAt(md, md.indexOf('Text')) === null && pictureAt(md, 2) === null);
+  chk('put back together from the same answers, it is the same markdown',
+    pictureTag(found) === md.slice(found.start, found.end));
+  const inline = pictureAt('![A chart](chart.png)', 3);
+  chk('a picture with no bg is in the slide, not a background', inline.place === 'inline' && inline.width === 0 && inline.alt === 'A chart');
+  chk('a placement the dialog has no words for is kept as written', pictureAt('![bg left:30% Map](m.png)', 2).place === 'bg left:30%');
+  chk('a picture in a code block is not one', pictureAt('```\n![bg](x.png)\n```\n', 6) === null);
+  chk('a new picture with spaces in its address gets them escaped',
+    pictureTag({ src: '/media/a b.png', alt: 'Two words', place: 'bg left:40% contain', width: 0 }) === '![bg left:40% contain Two words](/media/a%20b.png)');
+  // What the new placements are for: Marp still splits the slide, and fits
+  // the whole picture into its 40% rather than filling it.
+  const split = newMarp().render('![bg left:40% contain](x.png)\n\n# Beside it\n');
+  chk('Marp splits the slide for "left 40%, whole picture showing"', /data-marpit-advanced-background-split="left"/.test(split.html)
+    && /data-marpit-advanced-background-split="left"[^>]*style="[^"]*--marpit-advanced-background-split:\s*40%/.test(split.html));
+  chk('and shows the whole picture in it', /background-size:\s*contain/.test(split.html));
 }
 
 if (!ok) process.exit(1);
