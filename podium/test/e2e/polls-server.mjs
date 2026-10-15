@@ -385,6 +385,87 @@ await tablet.close();
 await room.close();
 }
 
+if (want('a plan deck\'s full-screen photos show in the controller\'s slide grid (#302)')) {
+console.log('\n-- Issue #302: a plan deck\'s full-screen photos show in the controller\'s slide grid --');
+// A deck kept in a lecture plan points at its pictures by `asset:<id>`. The
+// projector and the Now/Next mirrors swapped in the bytes, but the Slides
+// tab's own copy of the deck went straight to Marp, which drew each one blank.
+const photoId = 'photo302';
+const deckAsset = 'deck302';
+const plan = {
+  podium: 'plan', v: 1, id: 'p302', title: 'Photos in the grid', layout: 'single', timers: [],
+  items: [{ id: 'd302', type: 'deck', title: 'Photo deck', note: '', durationMins: 0, asset: deckAsset }],
+  assets: {
+    [photoId]: { name: 'photo.png', mime: 'image/png', data: `data:image/png;base64,${fs.readFileSync(path.join(HERE, 'fixtures', 'photo.png')).toString('base64')}` },
+    [deckAsset]: { name: 'photos.md', mime: 'text/markdown', data: `---\nmarp: true\nsize: 16:9\n---\n![bg](asset:${photoId})\n\n---\n# Beside it\n![bg left:40%](asset:${photoId})\n` },
+  },
+};
+const planPath = path.join(os.tmpdir(), `podium-302-${process.pid}.podium.json`);
+fs.writeFileSync(planPath, JSON.stringify(plan));
+const roomCfg = JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'grid-photos', passphrase: 'every picture in its place' });
+const room = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+await room.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const screen = await room.newPage();
+trap(screen, '302 display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const tablet = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+await tablet.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const pad = await tablet.newPage();
+trap(pad, '302 control');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.setInputFiles('#plan-file', planPath);
+await pad.waitForFunction(() => document.querySelector('#library h3.group')?.textContent === 'Photos in the grid', null, { timeout: 20000 });
+await pad.click('#library .tile:nth-child(1)');
+await pad.click('.tab[data-tab="slides"]');
+// The photo itself, not deck.js's blank (a GIF): the plan's photo is a PNG.
+const gridPhotos = (page) => page.evaluate(() => [...(document.querySelector('#deck-grid')?.shadowRoot?.querySelectorAll('.cell') || [])]
+  .map((c) => getComputedStyle(c.querySelector('figure') || c).backgroundImage.startsWith('url("data:image/png')));
+const bothShown = (page) => page.waitForFunction(() => {
+  const cells = [...(document.querySelector('#deck-grid')?.shadowRoot?.querySelectorAll('.cell') || [])];
+  return cells.length === 2 && cells.every((c) => getComputedStyle(c.querySelector('figure') || c).backgroundImage.startsWith('url("data:image/png'));
+}, null, { timeout: 20000 }).then(() => true).catch(() => false);
+ok(`a full-screen photo kept in the plan shows in the Slides tab's grid, and a split one too${await bothShown(pad) ? '' : ` (${JSON.stringify(await gridPhotos(pad))})`}`,
+  (await gridPhotos(pad)).join() === 'true,true');
+ok('as it does on the projector', await screen.waitForFunction(() => {
+  const host = document.querySelector('.layer[data-role="program"] .r-deck');
+  const fig = host?.shadowRoot?.querySelector('svg.podium-on figure');
+  return !!fig && getComputedStyle(fig).backgroundImage.startsWith('url("data:image/png');
+}, null, { timeout: 20000 }).then(() => true).catch(() => false));
+
+// A second controller that never loaded the plan: it asks the room for the
+// deck and its photo, then draws the Slides tab, rather than sitting on
+// "Loading deck…" for good.
+const phone = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+await phone.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const pad2 = await phone.newPage();
+trap(pad2, '302 second control');
+await pad2.goto(`${BASE}/control.html`);
+await pad2.waitForSelector('.tile');
+await pad2.click('.tab[data-tab="slides"]');
+ok(`a controller without the plan gets the deck, and draws its photos too${await bothShown(pad2) ? '' : ` (${JSON.stringify(await gridPhotos(pad2))})`}`,
+  (await gridPhotos(pad2)).join() === 'true,true');
+ok('with its notes, not "Loading deck…"', await pad2.evaluate(() => document.querySelector('#deck-notes').textContent !== 'Loading deck…'));
+// With both controllers gone, the display is the one that answers.
+await tablet.close();
+await phone.close();
+const tablet2 = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+await tablet2.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), roomCfg);
+const pad3 = await tablet2.newPage();
+trap(pad3, '302 third control');
+await pad3.goto(`${BASE}/control.html`);
+await pad3.waitForSelector('.tile');
+await pad3.click('.tab[data-tab="slides"]');
+ok(`and with those controllers closed, the display hands it over${await bothShown(pad3) ? '' : ` (${JSON.stringify(await gridPhotos(pad3))})`}`,
+  (await gridPhotos(pad3)).join() === 'true,true');
+
+await tablet2.close();
+await room.close();
+fs.rmSync(planPath, { force: true });
+}
+
 if (want('adding a Countdown item gives it its own timer, not a shared one')) {
 console.log('\n-- adding a Countdown item gives it its own timer, not a shared one --');
 // A lecture can hold up to four independent countdowns (MAX_TIMERS, see

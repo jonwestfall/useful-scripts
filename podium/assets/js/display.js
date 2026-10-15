@@ -2760,6 +2760,13 @@ async function connect() {
         syncLayers();
         return;
       }
+      if (msg.t === 'deck-need') {
+        // A controller that never held this deck - a lecture plan's, staged
+        // from another controller - asking for its Slides tab and notes.
+        const source = deckStore.get(msg.id);
+        if (typeof source === 'string') bus.send({ t: 'deck', to: msg.from, id: msg.id, source });
+        return;
+      }
       if (msg.t === 'asset-need') {
         // Usually this screen is the one asking. The exception is a controller
         // that reloaded mid-lecture, or one that joined after a photo was

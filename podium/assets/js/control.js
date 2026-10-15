@@ -168,6 +168,10 @@ const heldInkOnly = () => !state.preview && state.previewLayout === null && (sta
 const MAX_DECK_BYTES = 120 * 1024;
 const deckStore = new Map();
 const deckFetches = new Map();
+// Decks asked of the room, by when (see wantDeck): one this controller never
+// held, such as a lecture plan's deck staged by another controller.
+const deckWanted = new Map();
+const DECK_ASK_MS = 2000;
 let deckView = { id: null, deck: null };
 let deckGeneration = 0;
 // Decks parsed but perhaps not yet fitted (see parse in deck.js), by id: the
@@ -284,10 +288,23 @@ function requestAllInk(timeoutMs = 10000) {
   });
 }
 
+/**
+ * Ask the room for a deck with no address to fetch it from. Asked again on
+ * later state broadcasts, a couple of seconds apart, until one answers - the
+ * display, or whichever controller staged it (the same arrangement the
+ * display uses for a deck it lacks).
+ */
+function wantDeck(id) {
+  const now = Date.now();
+  if (now - (deckWanted.get(id) || 0) < DECK_ASK_MS) return;
+  deckWanted.set(id, now);
+  bus?.send({ t: 'deck-need', id });
+}
+
 function getDeckSource(item) {
   if (!item?.deckId) return null;
   if (deckStore.has(item.deckId)) return deckStore.get(item.deckId);
-  if (!item.src) return null;
+  if (!item.src) { wantDeck(item.deckId); return null; }
   if (!deckFetches.has(item.deckId)) {
     deckFetches.set(item.deckId, fetch(item.src, { cache: 'no-cache' })
       .then((res) => {
@@ -345,7 +362,7 @@ async function stageDeck({ source, name, src, slide = 0 }) {
   const mine = ++deckGeneration;
   // The finished deck, for this device's own slide strip and mirrors, as the
   // display works on its copy.
-  renderDeckSource(source, id).then((full) => {
+  renderDeckView(source, id).then((full) => {
     if (mine !== deckGeneration) return;
     deckView = { id, deck: full };
     renderSlides();
@@ -923,7 +940,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
               bus?.send({ t: 'deck', id: item.deckId, source: deckStore.get(item.deckId) });
               if (i === 0) {
                 try {
-                  const deck = await renderDeckSource(deckStore.get(item.deckId), item.deckId);
+                  const deck = await renderDeckView(deckStore.get(item.deckId), item.deckId);
                   deckGeneration++;
                   deckView = { id: item.deckId, deck };
                 } catch { /* best-effort prefetch - it renders again on demand either way */ }
@@ -1801,6 +1818,29 @@ function highlightGrid(index, deckId = (deckView.id || (workItem()?.type === 'de
 
 const DECK_RETRY_MS = 4000;
 let deckFailed = null;   // { id, at } - the last deck that would not render here
+let deckAssetsArrived = false;   // a picture the Slides tab drew blank has come in
+
+/**
+ * The deck as this device draws it for itself - the Slides tab's grid, the
+ * pop-out, exports (Issue #302). A deck in a lecture plan keeps its pictures
+ * as `asset:<id>`, which deck.js on its own draws blank, so they are swapped
+ * for their bytes first, as the projector and the Now/Next mirrors do (see
+ * withAssets in renderers.js). Keyed by the deck alone when nothing was
+ * swapped in, so a deck with no plan pictures is rendered once, as before.
+ * One this device does not hold yet - a controller that never loaded the
+ * plan - is asked for, and `missingAssets` says to draw it again when it comes.
+ */
+async function renderDeckView(source, id) {
+  let missing = false;
+  const drawn = source.includes('asset:') ? source.replace(ASSET_REF, (ref) => {
+    const got = resolveAssets({ src: ref }).src;
+    if (got && got !== BLANK_PIXEL) return got;
+    missing = true;
+    return ref;
+  }) : source;
+  const deck = await renderDeckSource(drawn, drawn === source ? id : undefined);
+  return missing ? { ...deck, missingAssets: true } : deck;
+}
 
 async function ensureDeckView(item) {
   if (!item || item.type !== 'deck') {
@@ -1811,7 +1851,8 @@ async function ensureDeckView(item) {
     selectedChipSection = null;
     return;
   }
-  if (deckView.id === item.deckId) return;
+  if (deckView.id === item.deckId && !(deckAssetsArrived && deckView.deck?.missingAssets)) return;
+  deckAssetsArrived = false;
   // Called on every state broadcast, so a deck that failed to render is
   // retried a few seconds later rather than twice a second (Issue #221).
   if (deckFailed?.id === item.deckId && Date.now() - deckFailed.at < DECK_RETRY_MS) return;
@@ -1829,7 +1870,7 @@ async function ensureDeckView(item) {
       deckShapes.set(item.deckId, await parseDeckSource(source, item.deckId));
       if (mine === deckGeneration && !$('[data-panel="ink"]').hidden && !ink.drawing) sizePad();
     }
-    const deck = await renderDeckSource(source, item.deckId);
+    const deck = await renderDeckView(source, item.deckId);
     if (mine !== deckGeneration) return;
     deckView = { id: item.deckId, deck };
     renderSlides();
@@ -2504,7 +2545,7 @@ async function collectSessionBundle(status) {
       skipped.push(`${slides.size} annotated slide${slides.size === 1 ? '' : 's'} from a deck this device does not hold`);
       continue;
     }
-    const deck = await renderDeckSource(source, id);
+    const deck = await renderDeckView(source, id);
     const folder = `slides/${safeName(frontMatterTitle(source, 'deck'), 'deck')}`;
     const mounted = await mountDeckForExport(deck);
     try {
@@ -2670,7 +2711,7 @@ async function exportDeck() {
     if (!deck) {
       const source = await getDeckSource(item);
       if (source == null) throw new Error('This deck’s markdown is not available on this device.');
-      deck = await renderDeckSource(source, item.deckId);
+      deck = await renderDeckView(source, item.deckId);
     }
     await buildGrid(deck);
     const svgs = Array.from(ensureGridShadow().querySelectorAll('.cell svg[data-marpit-svg]'));
@@ -5944,6 +5985,22 @@ async function connect() {
         if (source != null) bus.send({ t: 'deck', id: msg.id, source });
         return;
       }
+      if (msg.t === 'deck') {
+        // A deck this controller asked for. Its id is a hash of its markdown
+        // (an addressed deck is fetched, never asked for), so it is checked
+        // against that rather than taken on trust.
+        if (!deckWanted.has(msg.id) || typeof msg.source !== 'string' || msg.source.length > MAX_DECK_BYTES) return;
+        const { id, source } = msg;
+        deckId(source).then((hashed) => {
+          if (hashed !== id || !deckWanted.has(id)) return;
+          deckWanted.delete(id);
+          deckStore.set(id, source);
+          deckFailed = null;
+          previewKey = null;   // the mirrors were waiting for it too
+          renderAll();
+        });
+        return;
+      }
       if (msg.t === 'asset-need') {
         const data = assetStore.get(msg.id);
         if (data != null) bus.send({ t: 'asset', id: msg.id, data });
@@ -5956,6 +6013,7 @@ async function connect() {
         assetStore.set(msg.id, msg.data);
         assetWanted.delete(msg.id);
         previewKey = null;   // force the mirrors to rebuild against real bytes
+        deckAssetsArrived = true;   // and the Slides tab's own copy of a deck
         renderAll();
         return;
       }
