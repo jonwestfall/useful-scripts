@@ -1468,7 +1468,12 @@ async function tickPolls() {
         // trust the reference captured before the fetch went out.
         const current = pollItems().find((it) => it.key === key);
         if (!current) return;
+        // closesAt counts as a change on its own: a timer started before
+        // anyone has voted changes nothing else, and without it the countdown
+        // never reached the screen or the controller (Issue #297).
+        const closesAt = tally.closesAt > 0 ? tally.closesAt : null;
         const changed = current.open !== tally.open || current.voters !== tally.voters
+          || current.closesAt !== closesAt
           || current.askName !== tally.askName || current.namePrompt !== tally.namePrompt
           || JSON.stringify(current.counts) !== JSON.stringify(tally.counts)
           || JSON.stringify(current.answers) !== JSON.stringify(tally.answers)
@@ -1476,7 +1481,7 @@ async function tickPolls() {
           || JSON.stringify(current.qnaFeed) !== JSON.stringify(tally.qnaFeed);
         if (!changed) return;
         current.open = tally.open !== false;
-        current.closesAt = tally.closesAt;
+        current.closesAt = closesAt;
         current.voters = tally.voters || 0;
         current.askName = !!tally.askName;
         current.namePrompt = tally.namePrompt || 'Name:';

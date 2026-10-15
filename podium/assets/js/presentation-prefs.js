@@ -15,6 +15,8 @@ const PRESENTATION_DEFAULTS = {
   // Follows the device's own light/dark setting unless chosen here (Issue #210).
   theme: 'auto',
   showPollUrl: true,
+  // Issue #297: the voting countdown on the poll screen, not just the phones.
+  showPollCountdown: true,
   // How polls look (poll-look.js); null is the dark look polls always had.
   pollLook: null,
   blankOnConnect: true,

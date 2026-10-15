@@ -978,6 +978,7 @@
               <button id="poll-timer-60" type="button" class="btn-small">+60s</button>
               <button id="poll-timer-120" type="button" class="btn-small">+2m</button>
             </div>
+            <label class="check" id="poll-countdown-screen-row"><input id="poll-countdown-screen" type="checkbox" checked> Show the countdown on the poll screen</label>
             <div class="inline">
               <button id="poll-toggle-open" type="button">Close voting</button>
               <button id="poll-toggle-reveal" type="button">Reveal to room</button>
@@ -1388,6 +1389,17 @@
         full address too, for a room where typing beats scanning. Decided once, when you
         start each poll — changing it here does not alter a poll already running.
       </p>
+      </details>
+
+      <label class="check"><input id="pref-poll-countdown" type="checkbox" checked> Show the voting countdown on the poll screen</label>
+      <details class="help">
+        <summary>How this works</summary>
+        <p class="hint">
+        When you start a timer on a poll (+30s, +60s, +2m), phones always show how long is
+        left, and so does the Polls tab here. This decides whether the poll screen shows it
+        too. It is where each new poll starts; the Polls tab can turn it on or off for the
+        poll that is running.
+        </p>
       </details>
 
       <label class="check"><input id="pref-auto-switch-tab" type="checkbox" checked> Go to the controls for whatever I put on screen</label>

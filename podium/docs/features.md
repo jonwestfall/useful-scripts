@@ -446,7 +446,7 @@ Engage your class without third-party software or student logins. Polls need Pod
 **Running a poll**
 - Stage it like anything else, on panel A or any of B/C/D. Only one poll runs at a time.
 - Students scan the QR code, or type the four-letter code at `join.html`. Settings → Presentation can also spell out the full voting address under the QR code for a room where typing beats scanning.
-- Add a voting countdown (**+30s**, **+60s**, **+2m**) that closes the poll automatically, or **Close voting** by hand.
+- Add a voting countdown (**+30s**, **+60s**, **+2m**) that closes the poll automatically, or **Close voting** by hand. The time left shows on students' phones and in the Polls tab, and on the poll screen unless you untick **Show the countdown on the poll screen** (Settings → Presentation sets where each new poll starts).
 - Results appear live on your controller and stay private until you tap **Reveal to room**. **End poll** finishes it.
 
 **How a poll looks on the projector.** Settings → Presentation → *How polls look on the projector* sets it for every poll this device starts; the Polls tab's **Look** can choose another for one poll, and a planned poll can say its own (the planner's preview shows it).

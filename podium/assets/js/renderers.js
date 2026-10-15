@@ -1372,6 +1372,9 @@ function renderPoll(item, opts) {
 
   let tickTimer = null;
   let currentClosesAt = null;
+  // Issue #297: the countdown can be kept off the screen. The clock still
+  // runs either way, because reaching zero is what marks the poll closed here.
+  let showCountdown = true;
 
   const tick = () => {
     if (!currentClosesAt) {
@@ -1380,7 +1383,7 @@ function renderPoll(item, opts) {
       return;
     }
     const remaining = Math.max(0, Math.ceil((currentClosesAt - Date.now()) / 1000));
-    countdownText.hidden = false;
+    countdownText.hidden = !showCountdown;
     const m = Math.floor(remaining / 60);
     const s = String(remaining % 60).padStart(2, '0');
     countdownText.textContent = remaining >= 60 ? `${m}:${s} left` : `${s} seconds left`;
@@ -1453,6 +1456,7 @@ function renderPoll(item, opts) {
       currentClosesAt = it.open ? it.closesAt : null;
     }
     urlText.hidden = !urlText.textContent;
+    showCountdown = it.showCountdown !== false;
     node.classList.toggle('is-revealed', !!it.revealed);
     node.classList.toggle('is-closed', it.open === false);
     status.textContent = it.revealed
