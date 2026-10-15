@@ -724,6 +724,63 @@ ok('while the relay drops the code at the same time, not left dangling', goneToo
 await ctx.close();
 }
 
+if (want('a poll countdown shows on the controller and the poll screen (#297)')) {
+console.log('\n-- Issue #297: a poll countdown shows on the controller and the poll screen --');
+// The display's polling loop used to copy closesAt across only when a vote
+// or the open flag changed too, so a timer started before anyone voted never
+// reached the controller or the screen - only the phones, which ask the
+// relay themselves.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'poll-countdown-room', passphrase: 'how long is left on this one' }));
+const screen = await ctx.newPage();
+trap(screen, 'poll-countdown display');
+await screen.goto(`${BASE}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await ctx.newPage();
+trap(pad, 'poll-countdown pad');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+
+await pad.click('.tab[data-tab="polls"]');
+await pad.fill('#poll-question', 'Ready to move on?');
+await pad.fill('#poll-options .poll-option-row:nth-child(1) input', 'Yes');
+await pad.fill('#poll-options .poll-option-row:nth-child(2) input', 'No');
+await pad.click('#poll-start');
+await pad.waitForFunction(() => !document.querySelector('#poll-running').hidden, null, { timeout: 8000 });
+await screen.waitForFunction(() => document.querySelector('.r-poll-question')?.textContent === 'Ready to move on?', null, { timeout: 5000 });
+ok('the countdown checkbox starts ticked, from the default preference',
+  await pad.evaluate(() => document.querySelector('#poll-countdown-screen').checked));
+
+await pad.click('#poll-timer-60');
+await pad.waitForFunction(() => {
+  const cd = document.querySelector('#poll-running-countdown');
+  return cd && !cd.hidden && cd.textContent.startsWith('Voting closes in');
+}, null, { timeout: 5000 });
+ok('a timer started before any votes shows its countdown in the Polls tab', true);
+await screen.waitForFunction(() => {
+  const cd = document.querySelector('.r-poll-countdown');
+  return cd && !cd.hidden && / left$/.test(cd.textContent);
+}, null, { timeout: 5000 });
+ok('and on the poll screen', true);
+
+await pad.uncheck('#poll-countdown-screen');
+await screen.waitForFunction(() => document.querySelector('.r-poll-countdown')?.hidden === true, null, { timeout: 5000 });
+ok('unticking the checkbox takes the countdown off the poll screen', true);
+ok('while the Polls tab keeps showing it for the presenter',
+  await pad.evaluate(() => !document.querySelector('#poll-running-countdown').hidden));
+await pad.check('#poll-countdown-screen');
+await screen.waitForFunction(() => document.querySelector('.r-poll-countdown')?.hidden === false, null, { timeout: 5000 });
+ok('and ticking it again puts it back', true);
+
+await pad.click('#poll-end');
+await pad.click('#poll-end');
+await screen.waitForFunction(() => !document.querySelector('.r-poll'), null, { timeout: 5000 });
+await ctx.close();
+}
+
 if (want('poll votes are lost on relay restart, with no warning')) {
 console.log('\n-- Issue #115: poll votes are lost on relay restart, with no warning --');
 // A poll's votes and its code live only in the relay's memory (see the

@@ -3450,6 +3450,7 @@ async function startPoll() {
       kind: pollDraft.kind, question, options, correct, askName, namePrompt, showNames: false,
       open: true, revealed: false,
       showUrl: presentation.showPollUrl,
+      showCountdown: presentation.showPollCountdown !== false,
       ...(lookForDraft() ? { look: lookForDraft() } : {}),
     });
     pollDraft = null;
@@ -3763,6 +3764,8 @@ function renderRunningPoll(item) {
   $('#poll-copy-link').hidden = archived || lost;
   $('#poll-toggle-open').hidden = archived || lost;
   $('#poll-timer-btns').hidden = archived || lost || item.open === false;
+  $('#poll-countdown-screen-row').hidden = archived || lost || item.open === false;
+  $('#poll-countdown-screen').checked = item.showCountdown !== false;
   $('#poll-running-status').textContent = lost
     ? 'Connection to this poll was lost — if the relay restarted, its votes and join code are gone. Start a new poll to keep going.'
     : archived
@@ -6311,6 +6314,10 @@ $('#poll-toggle-open').addEventListener('click', () => {
 $('#poll-timer-30').addEventListener('click', () => setPollClosesAt(30));
 $('#poll-timer-60').addEventListener('click', () => setPollClosesAt(60));
 $('#poll-timer-120').addEventListener('click', () => setPollClosesAt(120));
+$('#poll-countdown-screen').addEventListener('change', (ev) => {
+  const item = findPollItem();
+  if (item) send({ op: 'poll', pollId: item.pollId, action: 'showCountdown', value: ev.target.checked });
+});
 $('#poll-toggle-reveal').addEventListener('click', togglePollReveal);
 $('#poll-toggle-names')?.addEventListener('click', () => {
   const item = findPollItem();
@@ -8056,6 +8063,7 @@ $$('#setup .settings-tabs .tab').forEach((b) => b.addEventListener('click', () =
 
 $('#pref-theme')?.addEventListener('change', (ev) => { setThemeChoice(ev.target.value); });
 $('#pref-poll-url').addEventListener('change', (ev) => { presentation.showPollUrl = ev.target.checked; savePresentation(presentation); });
+$('#pref-poll-countdown').addEventListener('change', (ev) => { presentation.showPollCountdown = ev.target.checked; savePresentation(presentation); });
 $('#pref-poll-look').replaceChildren(pollLookPicker({
   value: normalizeLook(presentation.pollLook) || { mode: 'dark' },
   idPrefix: 'pref-poll-look',
@@ -8176,6 +8184,7 @@ function showSetup() {
   const prefTheme = $('#pref-theme');
   if (prefTheme) prefTheme.value = themeChoice();
   $('#pref-poll-url').checked = presentation.showPollUrl;
+  $('#pref-poll-countdown').checked = presentation.showPollCountdown !== false;
   $('#pref-blank-on-connect').checked = presentation.blankOnConnect;
   $('#pref-keep-awake').checked = presentation.keepAwake;
   const prefHaptics = $('#pref-haptics');

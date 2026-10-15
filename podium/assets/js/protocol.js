@@ -578,6 +578,11 @@ function normalizeItem(item) {
     // nothing else about a poll's rendering depends on which controller is
     // looking at it right now.
     copy.showUrl = copy.showUrl !== false;
+    // Whether the poll screen shows the voting countdown once a timer is
+    // started (Issue #297). On unless turned off; the controller always shows
+    // it, since the presenter needs to know either way. Starts from the
+    // controller's preference and can be flipped while the poll runs.
+    copy.showCountdown = copy.showCountdown !== false;
   }
   if (copy.type === 'attendance') {
     // Check-in on screen (Issue #256). The session and the key that lets a
@@ -1580,6 +1585,8 @@ function applyOp(state, cmd) {
         item.viewMode = cmd.value === 'cloud' ? 'cloud' : 'list';
       } else if (cmd.action === 'showNames') {
         item.showNames = !!cmd.value;
+      } else if (cmd.action === 'showCountdown') {
+        item.showCountdown = !!cmd.value;
       } else {
         return false;
       }

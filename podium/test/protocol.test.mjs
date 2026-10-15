@@ -451,6 +451,14 @@ applyCommand(s, {op:'stage', item:{
   type:'poll', pollId:'QRST', token:'secret3', kind:'choice', question:'Show the URL?', options:['Yes','No'], showUrl:false,
 }});
 chk('an explicit showUrl:false is honoured, not overridden by the default', s.program.showUrl === false);
+chk('the poll screen shows the voting countdown by default (Issue #297)', s.program.showCountdown === true);
+chk('the countdown can be taken off the poll screen while the poll runs',
+  applyCommand(s, {op:'poll', pollId:'QRST', action:'showCountdown', value:false}) && s.program.showCountdown === false);
+chk('and put back', applyCommand(s, {op:'poll', pollId:'QRST', action:'showCountdown', value:true}) && s.program.showCountdown === true);
+applyCommand(s, {op:'stage', item:{
+  type:'poll', pollId:'QRSU', token:'secret4', kind:'choice', question:'Countdown?', options:['Yes','No'], showCountdown:false,
+}});
+chk('a poll started with the countdown off keeps it off', s.program.showCountdown === false);
 
 applyCommand(s, {op:'music', action:'load', tracks:[{src:'content/audio/test.mp3', title:'Test Track'}], name:'Test'});
 chk('music load defaults to not playing', s.music.tracks.length === 1 && s.music.playing === false);
