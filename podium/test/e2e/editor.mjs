@@ -3762,7 +3762,11 @@ try {
   await screen.waitForSelector('.layer[data-role="program"] .r-web iframe', { timeout: 10000 })
     .then(() => ok('"Show as: embedded" puts it in a frame instead', true))
     .catch(() => ok('"Show as: embedded" puts it in a frame instead', false));
-  ok('and the Now tab says what that costs', /only be clicked or scrolled on the classroom computer/.test(await pad.textContent('#web-embed-note')));
+  // The note follows the controller's own copy of the state, which comes back
+  // from the display a moment after the display has drawn the frame.
+  await pad.waitForFunction(() => /only be clicked or scrolled on the classroom computer/.test(document.querySelector('#web-embed-note')?.textContent || ''), null, { timeout: 5000 })
+    .then(() => ok('and the Now tab says what that costs', true))
+    .catch(async () => ok(`and the Now tab says what that costs ("${await pad.textContent('#web-embed-note')}")`, false));
   await pad.selectOption('#web-browse', 'auto');
   await screen.waitForSelector('.layer[data-role="program"] .r-live.has-frame', { timeout: 15000 })
     .then(() => ok('and Automatic brings the live page back, where it was', true))
