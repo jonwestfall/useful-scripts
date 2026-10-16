@@ -311,7 +311,13 @@ body.display.is-frozen #stage::after {
   width: 100%; min-height: 66px; font-size: 19px; font-weight: 600;
   background: var(--accent); border-color: var(--accent); color: var(--on-accent);
 }
-.arm-window .pair-button .arm-settings {
+.arm-window {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+}
+.pair-button  {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+}
+.arm-settings {
   background: var(--accent); border-color: var(--accent); color: var(--on-accent);
 }
 .row { display: flex; gap: 10px; flex-wrap: wrap; }
