@@ -2351,6 +2351,16 @@ ok('the ⋯ menu holds Settings, Hide cue bar, the room and the build', await uP
   && /build \d+/.test(await uPad.textContent('#topbar-menu')));
 await uPad.keyboard.press('Escape');
 ok('and Escape closes it', await uPad.isHidden('#topbar-menu'));
+// Issue #304: the layout picker hangs from its button's right edge, which on a
+// phone in portrait put Full screen off the left of the screen.
+await uPad.click('#layout-current');
+const popBox = await uPad.$$eval('.layout-btn', (bs) => {
+  const rs = bs.map((b) => b.getBoundingClientRect());
+  return { left: Math.min(...rs.map((r) => r.left)), right: Math.max(...rs.map((r) => r.right)), rows: new Set(rs.map((r) => Math.round(r.top))).size, width: innerWidth };
+});
+ok(`on a phone all six layouts are on screen, in one row (Issue #304; ${Math.round(popBox.left)}-${Math.round(popBox.right)} of ${popBox.width}, ${popBox.rows} row)`,
+  popBox.left >= 0 && popBox.right <= popBox.width && popBox.rows === 1);
+await uPad.click('.layout-btn[data-layout="single"]');
 await uPad.setViewportSize({ width: 1700, height: 950 });
 await uPad.click('#layout-current');
 ok('the six layouts are one tap away, behind the button that shows the current one', await uPad.isVisible('.layout-btn[data-layout="2h"]'));

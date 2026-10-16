@@ -585,6 +585,7 @@ body.control .topbar-status { min-width: 0; }
 #topbar-more { min-height: 30px; min-width: 36px; padding: 0 10px; font-size: 18px; line-height: 1; }
 .topbar-pop {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+  width: max-content; max-width: calc(100vw - 16px);
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: 0 10px 30px rgba(0, 0, 0, .35); padding: 8px;
 }
@@ -820,7 +821,7 @@ body.guest {
 .workspace { display: flex; flex: 1; min-height: 0; }
 .workspace.no-preview #preview-pane { display: none; }
 
-.layout-picker { display: flex; gap: 4px; }
+.layout-picker { display: flex; flex-wrap: wrap; gap: 4px; }
 .layout-btn {
   display: grid; place-items: center; width: 32px; min-height: 30px; padding: 0;
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
