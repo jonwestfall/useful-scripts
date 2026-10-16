@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Privacy: this policy forbids the page from making any network connection at all. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Exam Curve Calculator</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --ink: #1b1f27; --muted: #566070;
+    --line: #cfd5de; --accent: #1f5fd6; --accent-ink: #ffffff;
+    --orig: #9aa5b5; --new: #1f5fd6; --warn: #a45a00; --warn-bg: #fff3dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b2029; --ink: #eef1f6; --muted: #a3adbd;
+      --line: #3a4252; --accent: #6ea0ff; --accent-ink: #0b1220;
+      --orig: #7b8698; --new: #6ea0ff; --warn: #ffc067; --warn-bg: #3a2c12;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 20px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 2rem; margin: 8px 0 4px; }
+  h2 { font-size: 1.45rem; margin: 0 0 12px; }
+  h3 { font-size: 1.2rem; margin: 20px 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px; margin-bottom: 18px;
+  }
+  label { display: block; font-weight: 600; margin-bottom: 4px; }
+  textarea, input[type=number], select {
+    font: inherit; font-size: 1.1rem; color: var(--ink); background: var(--bg);
+    border: 2px solid var(--line); border-radius: 10px; padding: 10px 12px;
+    width: 100%; min-height: 48px;
+  }
+  textarea { min-height: 200px; resize: vertical; font-variant-numeric: tabular-nums; }
+  textarea:focus, input:focus, select:focus, button:focus-visible, summary:focus-visible {
+    outline: 3px solid var(--accent); outline-offset: 1px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+  .row > * { flex: 1 1 200px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  button {
+    font: inherit; font-weight: 600; min-height: 48px; padding: 10px 18px;
+    border-radius: 10px; border: 2px solid var(--accent); cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); touch-action: manipulation;
+  }
+  button.secondary { background: transparent; color: var(--accent); }
+  .seg { display: flex; flex-wrap: wrap; gap: 10px; }
+  .seg label {
+    display: flex; align-items: center; gap: 10px; font-weight: 600; margin: 0;
+    border: 2px solid var(--line); border-radius: 10px; padding: 10px 16px; min-height: 48px;
+    cursor: pointer; flex: 1 1 220px;
+  }
+  .seg input { width: 24px; height: 24px; accent-color: var(--accent); flex: none; }
+  .seg label:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .check { display: flex; align-items: center; gap: 10px; font-weight: 400; min-height: 48px; }
+  .check input { width: 24px; height: 24px; accent-color: var(--accent); }
+  .note { color: var(--muted); font-size: 0.9rem; margin-top: 6px; }
+  .warn { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 14px; margin-top: 12px; font-size: 0.95rem; }
+  .hidden { display: none; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { font-size: 0.95rem; color: var(--muted); }
+  td.big { font-size: 1.35rem; font-weight: 700; }
+  .scroll { max-height: 420px; overflow: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 10px; }
+  .scroll th { position: sticky; top: 0; background: var(--card); }
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; margin: 4px 0 8px; font-size: 0.95rem; }
+  .sw { display: inline-block; width: 18px; height: 18px; border-radius: 4px; vertical-align: -3px; margin-right: 6px; }
+  svg text { fill: var(--ink); font-family: inherit; }
+  svg .axis { stroke: var(--line); }
+  details.doc { border-top: 1px solid var(--line); padding: 8px 0; }
+  details.doc summary { font-weight: 700; font-size: 1.2rem; cursor: pointer; min-height: 48px; display: flex; align-items: center; }
+  code, pre { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9em; background: var(--bg); border-radius: 6px; }
+  code { padding: 1px 6px; }
+  pre { padding: 12px; overflow-x: auto; }
+  .doc p, .doc li { max-width: 70ch; }
+  .sr { position: absolute; left: -9999px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Exam Curve Calculator</h1>
+  <p class="sub">Paste a column of scores, compare a flat or square-root curve. Everything runs in this page; nothing is uploaded or stored.</p>
+
+  <!-- ============ ACTIVE WORK AREA ============ -->
+  <section class="card" aria-labelledby="h-input">
+    <h2 id="h-input">1. Scores</h2>
+    <div class="row">
+      <div style="flex: 2 1 320px">
+        <label for="scores">Paste scores (one per line; commas, tabs and spaces also work)</label>
+        <textarea id="scores" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="87&#10;92.5&#10;64&#10;71&#10;…"></textarea>
+      </div>
+      <div style="flex: 1 1 200px">
+        <label for="max">Points possible</label>
+        <input id="max" type="number" inputmode="decimal" value="100" min="1" step="any">
+        <div style="margin-top:14px"><label for="bin">Histogram bar width (points)</label>
+        <select id="bin"><option>1</option><option>2</option><option>5</option><option selected>10</option><option>20</option></select></div>
+        <div style="margin-top:14px" class="row"><button class="secondary" id="clear" type="button">Clear</button><button class="secondary" id="sample" type="button">Try sample</button></div>
+      </div>
+    </div>
+    <div id="parseMsg" class="note" aria-live="polite"></div>
+  </section>
+
+  <section class="card" aria-labelledby="h-curve">
+    <h2 id="h-curve">2. Curve</h2>
+    <div class="seg" role="radiogroup" aria-label="Curve type">
+      <label><input type="radio" name="curve" value="none"> No curve</label>
+      <label><input type="radio" name="curve" value="flat" checked> Flat (add points)</label>
+      <label><input type="radio" name="curve" value="sqrt"> Square root</label>
+    </div>
+    <div id="flatOpts" style="margin-top:16px" class="row">
+      <div><label for="flat">Points to add</label><input id="flat" type="number" inputmode="decimal" value="5" step="any"></div>
+      <div><button type="button" class="secondary" id="liftTop">Lift top score to max</button></div>
+    </div>
+    <p id="sqrtOpts" class="note hidden" style="font-size:1rem">New score = <code>max × √(score ÷ max)</code>. For a 100-point exam, that is <code>10 × √score</code>: a 64 becomes 80, a 25 becomes 50.</p>
+    <div class="row" style="margin-top:12px">
+      <label class="check"><input type="checkbox" id="cap" checked> Never exceed points possible</label>
+      <div><label for="round">Round new scores to</label>
+        <select id="round"><option value="0">Whole number</option><option value="1" selected>0.1</option><option value="2">0.01</option><option value="x">No rounding</option></select></div>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="h-res" id="results">
+    <h2 id="h-res">3. Results</h2>
+    <div id="empty" class="note">Paste some scores above to see results.</div>
+    <div id="out" class="hidden">
+      <div class="row" style="align-items:center"><label class="check" style="flex:2 1 300px"><input type="checkbox" id="sample-sd"> Use sample standard deviation (n − 1)</label></div>
+      <table aria-label="Summary statistics">
+        <thead><tr><th>Statistic</th><th>Original</th><th>Curved</th></tr></thead>
+        <tbody id="stats"></tbody>
+      </table>
+
+      <h3>Histogram</h3>
+      <div class="legend"><span><i class="sw" style="background:var(--orig)"></i>Original</span><span><i class="sw" style="background:var(--new)"></i>Curved</span></div>
+      <svg id="hist" viewBox="0 0 900 380" width="100%" role="img" aria-label="Histogram of original and curved scores"></svg>
+
+      <h3>Letter grades</h3>
+      <div class="row">
+        <div><label for="cA">A at or above (%)</label><input id="cA" type="number" inputmode="decimal" value="90"></div>
+        <div><label for="cB">B</label><input id="cB" type="number" inputmode="decimal" value="80"></div>
+        <div><label for="cC">C</label><input id="cC" type="number" inputmode="decimal" value="70"></div>
+        <div><label for="cD">D</label><input id="cD" type="number" inputmode="decimal" value="60"></div>
+      </div>
+      <table style="margin-top:12px" aria-label="Letter grade counts">
+        <thead><tr><th>Grade</th><th>Original</th><th>Curved</th></tr></thead>
+        <tbody id="letters"></tbody>
+      </table>
+
+      <h3>New grades</h3>
+      <div class="row" style="margin-bottom:10px">
+        <button type="button" id="copyNew">Copy curved scores (one per line, same order)</button>
+        <div id="copyMsg" class="note" aria-live="polite"></div>
+      </div>
+      <div class="scroll"><table aria-label="Original and curved scores">
+        <thead><tr><th>#</th><th>Original</th><th>Curved</th><th>Change</th><th>Letter</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ============ DOCUMENTATION ============ -->
+  <section class="card doc" aria-labelledby="h-docs">
+    <h2 id="h-docs">Documentation</h2>
+
+    <details class="doc" open>
+      <summary>Quick start</summary>
+      <ol>
+        <li>Copy a column of scores from your gradebook or spreadsheet and paste it into the <b>Scores</b> box.</li>
+        <li>Set <b>Points possible</b> (default 100).</li>
+        <li>Pick a curve. Results, histogram and the per-student table update immediately.</li>
+        <li>When you like a curve, press <b>Copy curved scores</b> and paste the column back into your gradebook. The order matches what you pasted in.</li>
+      </ol>
+    </details>
+
+    <details class="doc">
+      <summary>Privacy</summary>
+      <p>All calculations happen in your browser with JavaScript. The page does not send, save, or log scores anywhere: it has no server component, uses no cookies or local storage, loads no outside scripts, fonts, or analytics, and carries a Content-Security-Policy that tells the browser to refuse any network connection from the page (<code>connect-src 'none'</code>). Scores disappear when you close or reload the tab. The only way data leaves the page is if you use Copy, which places the curved scores on your device's clipboard.</p>
+      <p>The page itself is downloaded once from GitHub Pages like any web page; your scores are never part of that request.</p>
+    </details>
+
+    <details class="doc">
+      <summary>What gets accepted as input</summary>
+      <ul>
+        <li>Numbers separated by new lines, commas, semicolons, tabs, or spaces. Decimals like <code>87.5</code> are fine.</li>
+        <li>A trailing percent sign is ignored (<code>85%</code> is read as 85).</li>
+        <li>Anything that isn't a number (names, headers, <code>ABS</code>, blanks) is skipped. The count of skipped items is shown under the box so you can check nothing was lost. Pasting only the score column is safest, because a student ID number would be read as a score.</li>
+        <li>Scores below 0 are kept for the statistics but treated as 0 by the square-root curve. Scores above the points possible (extra credit) are kept and shown; they are limited only if "Never exceed points possible" is checked.</li>
+      </ul>
+    </details>
+
+    <details class="doc">
+      <summary>The statistics</summary>
+      <ul>
+        <li><b>Mean</b>: the sum of the scores divided by how many there are.</li>
+        <li><b>Median</b>: the middle score when sorted; with an even count, the average of the two middle scores.</li>
+        <li><b>Standard deviation</b>: how spread out the scores are. By default this is the <i>population</i> standard deviation (divide by n), appropriate when the pasted scores are your whole class. Tick "Use sample standard deviation" to divide by n − 1 instead, which matches Excel's <code>STDEV.S</code>. With one score, the sample version is undefined and shows a dash.</li>
+        <li>The curved column is computed from the new, <i>rounded</i> scores, so it matches what students would actually receive.</li>
+      </ul>
+    </details>
+
+    <details class="doc">
+      <summary>The curves</summary>
+      <h3>No curve</h3>
+      <p>Leaves scores unchanged. Useful as a baseline to compare against.</p>
+      <h3>Flat curve (add points)</h3>
+      <p>Adds the same number of points to everyone: <code>new = score + points</code>. "Lift top score to max" fills in <code>max − highest score</code>, so the best score becomes exactly the points possible. A negative value subtracts points. Everyone moves the same amount, so the standard deviation does not change, except where the cap cuts off the top.</p>
+      <h3>Square-root curve</h3>
+      <p><code>new = max × √(score ÷ max)</code>. With max = 100 this is the familiar <code>10 × √score</code>. It lifts low scores a lot and high scores a little, and 0 and the maximum stay fixed. It compresses the spread of scores, so the standard deviation shrinks.</p>
+      <table aria-label="Square-root curve examples">
+        <thead><tr><th>Original (of 100)</th><th>Curved</th><th>Gain</th></tr></thead>
+        <tbody><tr><td>36</td><td>60</td><td>+24</td></tr><tr><td>49</td><td>70</td><td>+21</td></tr><tr><td>64</td><td>80</td><td>+16</td></tr><tr><td>81</td><td>90</td><td>+9</td></tr><tr><td>100</td><td>100</td><td>0</td></tr></tbody>
+      </table>
+      <h3>Options</h3>
+      <ul>
+        <li><b>Never exceed points possible</b>: limits curved scores to the maximum. On by default.</li>
+        <li><b>Round new scores to</b>: whole number, one or two decimals, or none. Rounding is to nearest, with halves rounding up.</li>
+      </ul>
+    </details>
+
+    <details class="doc">
+      <summary>Histogram and letter grades</summary>
+      <ul>
+        <li>Bars are as wide as the <b>bar width</b> you choose, starting at 0 (for example 0–10, 10–20, …). A score on a boundary goes in the higher bar, except the very top boundary, which is included in the last bar so a perfect score is counted. Grey bars are the original scores and blue bars the curved ones; the number above each blue bar is its count.</li>
+        <li>Letter-grade cutoffs are percentages of the points possible, and a score at the cutoff earns the higher grade. Defaults are 90/80/70/60, with anything lower an F. Edit them to match your syllabus. Letters use the unrounded percentage of the displayed score.</li>
+      </ul>
+    </details>
+
+    <details class="doc">
+      <summary>Using it on an iPad</summary>
+      <ul>
+        <li>Open the GitHub Pages address in Safari. Tap <b>Share → Add to Home Screen</b> for an app-like icon. (Because the page keeps nothing, it needs a connection the first time it loads.)</li>
+        <li>To paste a column from Numbers or Excel: select the cells, tap <b>Copy</b>, then tap in the Scores box and choose <b>Paste</b>.</li>
+        <li>Text sizes, buttons, and fields are large for touch use; rotate to landscape for a wider chart. The page also follows the device's light or dark setting.</li>
+      </ul>
+    </details>
+
+    <details class="doc">
+      <summary>Hosting on GitHub Pages</summary>
+      <p>This is a single self-contained file, <code>exam-curve-calculator/index.html</code>, in the <code>useful-scripts</code> repository. In the repository's <b>Settings → Pages</b>, publish from the branch containing it (root folder). The calculator will then be at <code>https://&lt;user&gt;.github.io/useful-scripts/exam-curve-calculator/</code>. It can also be opened directly from disk by double-clicking the file.</p>
+    </details>
+
+    <details class="doc">
+      <summary>Limits and cautions</summary>
+      <ul>
+        <li>Check the curve against your syllabus and institutional policy; this tool computes numbers, it doesn't decide fairness.</li>
+        <li>Very large pastes (tens of thousands of scores) work but the per-student table will be long.</li>
+        <li>Floating-point arithmetic can cause tiny differences (for example in the 15th decimal place); with the default rounding to 0.1 you will not see them.</li>
+      </ul>
+    </details>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const el = {
+    scores: $("scores"), max: $("max"), bin: $("bin"), flat: $("flat"), cap: $("cap"),
+    round: $("round"), sampleSd: $("sample-sd"), parseMsg: $("parseMsg"),
+    flatOpts: $("flatOpts"), sqrtOpts: $("sqrtOpts"), empty: $("empty"), out: $("out"),
+    stats: $("stats"), letters: $("letters"), rows: $("rows"), hist: $("hist"), copyMsg: $("copyMsg"),
+  };
+  const curveType = () => document.querySelector('input[name="curve"]:checked').value;
+
+  function parseScores(text) {
+    const tokens = text.split(/[\s,;]+/).filter(Boolean);
+    const vals = []; let skipped = 0;
+    for (const t of tokens) {
+      const s = t.replace(/%$/, "");
+      if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(s)) vals.push(parseFloat(s)); else skipped++;
+    }
+    return { vals, skipped };
+  }
+
+  function roundTo(v, mode) {
+    if (mode === "x") return v;
+    const f = Math.pow(10, Number(mode));
+    return Math.floor(v * f + 0.5 + 1e-9) / f;
+  }
+
+  function applyCurve(v, type, max, flat, cap, rmode) {
+    let n = v;
+    if (type === "flat") n = v + flat;
+    else if (type === "sqrt") n = max * Math.sqrt(Math.max(v, 0) / max);
+    n = roundTo(n, rmode);
+    if (cap && n > max) n = max;
+    return n;
+  }
+
+  function stats(a, sample) {
+    const n = a.length;
+    const mean = a.reduce((x, y) => x + y, 0) / n;
+    const s = [...a].sort((x, y) => x - y);
+    const median = n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+    const ss = a.reduce((x, y) => x + (y - mean) * (y - mean), 0);
+    const denom = sample ? n - 1 : n;
+    const sd = denom > 0 ? Math.sqrt(ss / denom) : NaN;
+    return { n, mean, median, sd, min: s[0], max: s[n - 1] };
+  }
+
+  const fmt = (v, d = 2) => Number.isFinite(v)
+    ? v.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: 0 }) : "—";
+
+  function letterFor(v, max, cuts) {
+    const pct = v / max * 100;
+    if (pct >= cuts[0]) return "A";
+    if (pct >= cuts[1]) return "B";
+    if (pct >= cuts[2]) return "C";
+    if (pct >= cuts[3]) return "D";
+    return "F";
+  }
+
+  function histogram(orig, curved, max, bw) {
+    const lo = Math.min(0, Math.floor(Math.min(...orig, ...curved) / bw) * bw);
+    let hi = Math.max(max, Math.max(...orig, ...curved));
+    hi = Math.ceil(hi / bw) * bw;
+    const nb = Math.max(1, Math.round((hi - lo) / bw));
+    const count = (arr) => {
+      const c = new Array(nb).fill(0);
+      for (const v of arr) c[Math.min(nb - 1, Math.max(0, Math.floor((v - lo) / bw + 1e-9)))]++;
+      return c;
+    };
+    return { lo, hi, nb, a: count(orig), b: count(curved) };
+  }
+
+  function drawHist(h, bw) {
+    const W = 900, H = 380, L = 56, R = 16, T = 28, B = 64;
+    const pw = W - L - R, ph = H - T - B;
+    const top = Math.max(1, ...h.a, ...h.b);
+    const step = top <= 8 ? 1 : top <= 20 ? 2 : top <= 50 ? 5 : Math.pow(10, Math.floor(Math.log10(top)));
+    const yMax = Math.ceil(top / step) * step;
+    const slot = pw / h.nb, gap = Math.min(6, slot * 0.1);
+    const bwid = (slot - gap * 2) / 2;
+    const labelEvery = Math.ceil(46 / slot);
+    let s = "";
+    for (let y = 0; y <= yMax; y += step) {
+      const yy = T + ph - (y / yMax) * ph;
+      s += `<line class="axis" x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}"/>` +
+           `<text x="${L - 8}" y="${yy + 6}" text-anchor="end" font-size="18">${y}</text>`;
+    }
+    for (let i = 0; i < h.nb; i++) {
+      const x0 = L + i * slot + gap;
+      const ha = (h.a[i] / yMax) * ph, hb = (h.b[i] / yMax) * ph;
+      const e0 = h.lo + i * bw;
+      s += `<rect x="${x0}" y="${T + ph - ha}" width="${bwid}" height="${ha}" fill="var(--orig)"><title>${e0}–${e0 + bw}: ${h.a[i]} original</title></rect>`;
+      s += `<rect x="${x0 + bwid}" y="${T + ph - hb}" width="${bwid}" height="${hb}" fill="var(--new)"><title>${e0}–${e0 + bw}: ${h.b[i]} curved</title></rect>`;
+      if (h.b[i] > 0 && bwid > 9) s += `<text x="${x0 + bwid * 1.5}" y="${T + ph - hb - 5}" text-anchor="middle" font-size="16" font-weight="700">${h.b[i]}</text>`;
+      if (i % labelEvery === 0) s += `<text x="${L + i * slot}" y="${T + ph + 26}" text-anchor="middle" font-size="18">${e0}</text>`;
+    }
+    s += `<text x="${L + h.nb * slot}" y="${T + ph + 26}" text-anchor="middle" font-size="18">${h.hi}</text>`;
+    s += `<line class="axis" x1="${L}" x2="${W - R}" y1="${T + ph}" y2="${T + ph}" stroke-width="2"/>`;
+    s += `<text x="${L + pw / 2}" y="${H - 8}" text-anchor="middle" font-size="19">Score (points)</text>`;
+    s += `<text transform="translate(16 ${T + ph / 2}) rotate(-90)" text-anchor="middle" font-size="19">Students</text>`;
+    el.hist.innerHTML = s;
+  }
+
+  function update() {
+    const type = curveType();
+    el.flatOpts.classList.toggle("hidden", type !== "flat");
+    el.sqrtOpts.classList.toggle("hidden", type !== "sqrt");
+
+    const { vals, skipped } = parseScores(el.scores.value);
+    const max = parseFloat(el.max.value);
+    el.copyMsg.textContent = "";
+    if (!vals.length) {
+      el.parseMsg.textContent = el.scores.value.trim() && skipped ? `No numbers found (${skipped} item${skipped > 1 ? "s" : ""} skipped).` : "";
+      el.empty.classList.remove("hidden"); el.out.classList.add("hidden"); return;
+    }
+    if (!(max > 0)) {
+      el.parseMsg.textContent = "Enter a points-possible value greater than 0.";
+      el.empty.classList.remove("hidden"); el.out.classList.add("hidden"); return;
+    }
+    el.parseMsg.innerHTML = `Read <b>${vals.length}</b> score${vals.length > 1 ? "s" : ""}` +
+      (skipped ? `; skipped <b>${skipped}</b> non-numeric item${skipped > 1 ? "s" : ""}.` : ".") +
+      (vals.some((v) => v > max) ? `<div class="warn">Some scores are above ${fmt(max)}. They are kept (extra credit).</div>` : "") +
+      (vals.some((v) => v < 0) ? `<div class="warn">Some scores are negative. They are kept, but the square-root curve treats them as 0.</div>` : "");
+
+    const flat = parseFloat(el.flat.value) || 0;
+    const curved = vals.map((v) => applyCurve(v, type, max, flat, el.cap.checked, el.round.value));
+    const sample = el.sampleSd.checked;
+    const so = stats(vals, sample), sc = stats(curved, sample);
+
+    el.empty.classList.add("hidden"); el.out.classList.remove("hidden");
+    const line = (name, k, big) => `<tr><td>${name}</td><td class="${big ? "big" : ""}">${fmt(so[k])}</td><td class="${big ? "big" : ""}">${fmt(sc[k])}</td></tr>`;
+    el.stats.innerHTML = line("Count", "n") + line("Mean", "mean", 1) + line("Median", "median", 1) +
+      line(sample ? "Std. deviation (sample)" : "Std. deviation (population)", "sd", 1) + line("Lowest", "min") + line("Highest", "max");
+
+    drawHist(histogram(vals, curved, max, Number(el.bin.value)), Number(el.bin.value));
+
+    const cuts = ["cA", "cB", "cC", "cD"].map((id) => parseFloat($(id).value));
+    const grades = ["A", "B", "C", "D", "F"];
+    const co = {}, cn = {};
+    grades.forEach((g) => { co[g] = 0; cn[g] = 0; });
+    const lo = vals.map((v) => letterFor(v, max, cuts)), ln = curved.map((v) => letterFor(v, max, cuts));
+    lo.forEach((g) => co[g]++); ln.forEach((g) => cn[g]++);
+    el.letters.innerHTML = grades.map((g) => `<tr><td>${g}</td><td>${co[g]}</td><td>${cn[g]}</td></tr>`).join("");
+
+    el.rows.innerHTML = vals.map((v, i) => {
+      const d = curved[i] - v;
+      return `<tr><td>${i + 1}</td><td>${fmt(v)}</td><td><b>${fmt(curved[i])}</b></td><td>${d > 0 ? "+" : ""}${fmt(d)}</td><td>${lo[i]} → ${ln[i]}</td></tr>`;
+    }).join("");
+    el.lastCurved = curved;
+  }
+
+  async function copyNew() {
+    if (!el.lastCurved) return;
+    const text = el.lastCurved.map((v) => String(+v.toFixed(10))).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      el.copyMsg.textContent = "Copied.";
+    } catch (e) {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+      let ok = false; try { ok = document.execCommand("copy"); } catch (_) {}
+      document.body.removeChild(ta);
+      el.copyMsg.textContent = ok ? "Copied." : "Couldn't copy automatically; select the Curved column and copy it by hand.";
+    }
+  }
+
+  $("liftTop").addEventListener("click", () => {
+    const { vals } = parseScores(el.scores.value);
+    const max = parseFloat(el.max.value);
+    if (!vals.length || !(max > 0)) return;
+    el.flat.value = +(max - Math.max(...vals)).toFixed(6);
+    update();
+  });
+  $("clear").addEventListener("click", () => { el.scores.value = ""; update(); el.scores.focus(); });
+  $("sample").addEventListener("click", () => {
+    el.scores.value = [58,62,67,71,73,74,76,78,79,81,82,84,85,86,88,89,91,93,95,97,44,52,69,72,77,80,83].join("\n");
+    update();
+  });
+  $("copyNew").addEventListener("click", copyNew);
+  document.addEventListener("input", update);
+  document.addEventListener("change", update);
+  update();
+})();
+</script>
+</body>
+</html>
