@@ -44,8 +44,14 @@ try {
 if (want('the phone-camera tile in the library actually starts the camera')) {
 console.log('\n-- the phone-camera tile in the library actually starts the camera --');
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['camera'] });
-await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
-  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'camera-room', passphrase: 'say cheese' }));
+await ctx.addInitScript(([cfg, lib]) => {
+  localStorage.setItem('podium.config.v2', cfg);
+  localStorage.setItem('podium.library.v1', lib);
+}, [
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'camera-room', passphrase: 'say cheese' }),
+  // A camera tile with its own caption, the way a planned one arrives (Issue #305).
+  JSON.stringify([{ type: 'camera', title: 'Doc cam', overlayCaption: 'Look at page twelve' }]),
+]);
 const screen = await ctx.newPage();
 trap(screen, 'camera display');
 await screen.goto(`${BASE}/display.html`);
@@ -64,6 +70,14 @@ await screen.waitForFunction(() => document.querySelector('.layer[data-role="pro
 ok('tapping the library tile alone starts the camera and gets it on screen', true);
 await phone.waitForFunction(() => document.querySelector('#cam-status').textContent === 'Live on the display', null, { timeout: 10000 });
 ok('the controller reflects a live connection too', true);
+// Issue #305: the camera used to go up as a fresh item, dropping the tile's caption.
+await phone.click('.tab[data-tab="library"]');
+await phone.click('.tile:has(.tile-title:text-is("Doc cam"))');
+ok('a camera item\'s own caption shows under the feed (Issue #305)',
+  await settle(() => screen.evaluate(() => {
+    const bar = document.querySelector('#overlay');
+    return bar.classList.contains('is-on') && bar.textContent === 'Look at page twelve';
+  })));
 await ctx.close();
 }
 

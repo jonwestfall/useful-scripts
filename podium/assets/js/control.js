@@ -1253,7 +1253,7 @@ async function pick(item, where = 'auto') {
   // staging live - checked first, ahead of camera/deck's own special
   // handling, since this applies to a tap on absolutely anything.
   if (addToDraftSet(item)) return;
-  if (item.type === 'camera') { await startCamera(where); followToTab(item, where); return; }
+  if (item.type === 'camera') { await startCamera(where, item); followToTab(item, where); return; }
   // A planned poll is a question, not yet a poll - it has no pollId or token
   // until something actually creates it on the relay, which is what the Polls
   // tab's composer does. Tapping it in the Library loads that composer rather
@@ -5028,12 +5028,15 @@ function setCameraState(status) {
 
 // Shared by the Camera tab's button and the "Phone camera" library tile, so
 // either path actually asks for the camera and opens the connection rather
-// than just putting the (empty) camera type on screen.
-async function startCamera(where = 'auto') {
-  if (cameraSender?.active) { stage({ type: 'camera', title: 'Phone camera' }, where); return; }
+// than just putting the (empty) camera type on screen. `item` is the tile that
+// was tapped: a planned one carries its own title and caption (Issue #305),
+// which a fresh camera item would drop.
+async function startCamera(where = 'auto', item = null) {
+  const camera = { ...item, type: 'camera', title: item?.title || 'Phone camera' };
+  if (cameraSender?.active) { stage(camera, where); return; }
   try {
     await cameraSender.start({ facingMode: facing });
-    stage({ type: 'camera', title: 'Phone camera' }, where);
+    stage(camera, where);
   } catch (err) {
     setCameraState('failed');
     $('#cam-status').textContent = `Camera unavailable: ${err.message}`;
@@ -6222,7 +6225,22 @@ function setPopover(wrap, open) {
   pop.hidden = !open;
   button.setAttribute('aria-expanded', String(open));
   button.classList.toggle('is-open', open);
+  if (open) fitPopover(pop);
 }
+// Issue #304: a panel hangs from its button's right edge, which on a phone in
+// portrait put the layout picker's left end - Full screen - off the screen.
+// Opened (or the window turned), it is slid back inside with a small margin.
+function fitPopover(pop) {
+  pop.style.translate = '';
+  const margin = 8;
+  const { left, right } = pop.getBoundingClientRect();
+  const width = document.documentElement.clientWidth;
+  const shift = left < margin ? margin - left : right > width - margin ? width - margin - right : 0;
+  if (shift) pop.style.translate = `${Math.round(shift)}px 0`;
+}
+window.addEventListener('resize', () => {
+  $$('.topbar-pop').forEach((pop) => { if (!pop.hidden) fitPopover(pop); });
+});
 function closePopovers(except = null) {
   $$('.topbar-pop-wrap').forEach((wrap) => { if (wrap !== except) setPopover(wrap, false); });
 }
