@@ -38,6 +38,23 @@ export default [
       globals: { ...globals.browser },
     },
   },
+  // Throwaway spike pages (spike/): browser modules, and Node check scripts.
+  {
+    files: ['spike/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.browser },
+    },
+  },
+  {
+    files: ['spike/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+  },
   // The service worker: its own global scope, not a page's.
   {
     files: ['sw.js'],
