@@ -25,7 +25,7 @@
 import { ZOOM_MAX } from './zoom.js';
 import { normalizeLook } from './poll-look.js';
 
-export const BUILD = 149;
+export const BUILD = 150;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -41,7 +41,7 @@ export const BUILD = 149;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.3';
-export const COMMIT = 'dd3fefc';
+export const COMMIT = '0717fc1';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
