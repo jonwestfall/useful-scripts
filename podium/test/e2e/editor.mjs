@@ -1347,6 +1347,67 @@ ok('a code holding something other than a web address is drawn, but is not a lin
 await ctx.close();
 }
 
+if (want('the deck editor: columns, as a block or a whole slide')) {
+console.log('\n-- the deck editor: columns, as a block or a whole slide --');
+// ▥ Columns: text and pictures side by side in any theme - a block where the
+// cursor is, with the selected text in the first column, or the whole slide
+// flowing in two, set as its class the way lead is.
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+const page = await ctx.newPage();
+trap(page, 'editor columns');
+await page.goto(`${BASE}/deck.html`);
+await page.waitForFunction(() => (document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length || 0) === 2, null, { timeout: 20000 });
+const doc = () => page.evaluate(async () => {
+  const CM = await import('/assets/vendor/codemirror.esm.js');
+  return CM.EditorView.findFromDOM(document.querySelector('.cm-editor')).state.doc.toString();
+});
+// Select the second slide's bullets, then put them in the first of two columns.
+await page.evaluate(async () => {
+  const CM = await import('/assets/vendor/codemirror.esm.js');
+  const view = CM.EditorView.findFromDOM(document.querySelector('.cm-editor'));
+  const text = view.state.doc.toString();
+  const from = text.indexOf('- A point worth making');
+  const to = text.indexOf('- And another') + '- And another'.length;
+  view.dispatch({ selection: { anchor: from, head: to } });
+  view.focus();
+});
+await page.click('#deck-columns');
+await page.waitForSelector('#deck-columns-menu:not([hidden])');
+ok('▥ Columns offers the layouts', (await page.$$eval('#deck-columns-blocks button', (bs) => bs.map((b) => b.dataset.columns))).join() === 'two,three,wide-left,wide-right');
+await page.click('#deck-columns-blocks [data-columns="two"]');
+const withBlock = await doc();
+ok('Two columns wraps the selected text in the first column, with a second beside it',
+  withBlock.includes('<div class="columns">\n<div>\n\n- A point worth making\n- And another\n\n</div>\n<div>\n\nSecond column\n\n</div>\n</div>'));
+const sideBySide = () => page.evaluate(() => {
+  const cols = [...document.querySelector('#deck-strip').shadowRoot.querySelectorAll('.columns > div')];
+  if (cols.length !== 2) return null;
+  const [a, b] = cols.map((c) => c.getBoundingClientRect());
+  return b.left > a.right - 1 && Math.abs(a.top - b.top) < 2;
+});
+await until(sideBySide, { timeout: 20000 }).catch(() => {});
+ok('and the slide draws the two side by side, in the default theme', await sideBySide());
+
+// The whole slide in columns: its class, set from the same menu, and back.
+await page.click('#deck-columns');
+ok('the menu offers the whole slide in two columns', (await page.textContent('#deck-columns-slide')).trim() === 'Whole slide in two columns');
+await page.click('#deck-columns-slide');
+await until(async () => (await doc()).includes('<!-- _class: columns -->'), { timeout: 5000 }).catch(() => {});
+ok('which sets the slide’s class to columns, as lead is set', (await doc()).includes('<!-- _class: columns -->'));
+ok('shown in the slide panel’s Class field', (await page.inputValue('#deck-slide-class')) === 'columns');
+await until(() => page.evaluate(() => !!document.querySelector('#deck-strip').shadowRoot.querySelector('section.columns')), { timeout: 20000 }).catch(() => {});
+ok('and the slide is laid out in columns', await page.evaluate(() => {
+  const section = document.querySelector('#deck-strip').shadowRoot.querySelector('section.columns');
+  return !!section && getComputedStyle(section).columnCount === '2';
+}));
+await page.click('#deck-columns');
+ok('then the menu offers it back to one column', (await page.textContent('#deck-columns-slide')).trim() === 'Whole slide back to one column');
+await page.click('#deck-columns-slide');
+await until(async () => !(await doc()).includes('_class: columns'), { timeout: 5000 }).catch(() => {});
+ok('and that takes the class away again', !(await doc()).includes('_class: columns'));
+ok('columns and columns-3 are among the Class field’s suggestions', await page.$$eval('#deck-classes option', (os) => ['columns', 'columns-3'].every((c) => os.some((o) => o.value === c))));
+await ctx.close();
+}
+
 if (want('Marp themes on Admin: edit Podium\'s own, customize Marp\'s, hide and restore')) {
 console.log('\n-- Marp themes on Admin: edit Podium\'s own, customize Marp\'s, hide and restore --');
 // This server has a data directory, as a deployed one does: themes made or

@@ -41,6 +41,7 @@ export const DIRECTIVES = [
   { name: 'backgroundColor', example: '<!-- _backgroundColor: #fff4e5 -->', about: 'One slide’s background; color sets its text.' },
   { name: 'backgroundImage', example: '![bg](picture.jpg)', about: 'A picture as the background; ![bg left](…) puts it beside the text.' },
   { name: 'size', example: 'size: 4:3', about: 'The slide shape: 16:9 (the default), 4:3, or a size the theme defines.' },
+  { name: 'columns', example: '<!-- _class: columns -->', about: 'Podium: lay this slide out in two columns (columns-3 for three); headings stay across the top.' },
   { name: 'build', example: '<!-- _class: build -->', about: 'Podium: reveal this slide’s bullets one at a time.' },
   { name: '_video', example: '<!-- _video: /media/…/clip.mp4 -->', about: 'Podium: make this a video slide.' },
   { name: 'mermaidTheme', example: '<!-- _mermaidTheme: dark -->', about: 'Podium: the look of ```mermaid diagrams.' },

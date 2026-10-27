@@ -750,3 +750,36 @@ function maskCodeFenceCount(raw) {
   }
   return n;
 }
+
+// --- columns (the deck editor's ▥ Columns; the CSS is COLUMNS_CSS in deck.js) ---
+
+/** The column layouts offered, and the <div> class each one is. */
+export const COLUMN_LAYOUTS = [
+  { id: 'two', label: 'Two columns', cls: 'columns', count: 2 },
+  { id: 'three', label: 'Three columns', cls: 'columns three', count: 3 },
+  { id: 'wide-left', label: 'Wide left, narrow right (text beside a picture)', cls: 'columns wide-left', count: 2 },
+  { id: 'wide-right', label: 'Narrow left, wide right (a picture beside text)', cls: 'columns wide-right', count: 2 },
+];
+
+/**
+ * A columns block: `first` (the selected text, if any) in the first column,
+ * a placeholder in the rest. Blank lines around each column's contents are
+ * what lets markdown inside it be markdown. Returns the block and where the
+ * cursor goes: the end of the first column's text.
+ */
+export function columnsMarkdown(id, first = '') {
+  const layout = COLUMN_LAYOUTS.find((l) => l.id === id) || COLUMN_LAYOUTS[0];
+  const own = String(first).trim() || 'First column';
+  const others = ['Second column', 'Third column'];
+  const head = `<div class="${layout.cls}">\n<div>\n\n`;
+  const parts = [`${head}${own}\n\n</div>`];
+  for (let i = 1; i < layout.count; i++) parts.push(`<div>\n\n${others[i - 1]}\n\n</div>`);
+  return { block: `${parts.join('\n')}\n</div>\n`, cursor: head.length + own.length };
+}
+
+/** A slide's class with `name` added (or, with `on` false, taken away); null for none left. */
+export function withSlideClass(current, name, on = true) {
+  const list = String(current || '').split(/\s+/).filter(Boolean).filter((c) => c !== name && !(on && /^columns(-3)?$/.test(c) && /^columns(-3)?$/.test(name)));
+  if (on) list.push(name);
+  return list.length ? list.join(' ') : null;
+}
