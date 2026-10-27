@@ -44,6 +44,7 @@ import { viewCodeForKey, viewLinkUrl, formatViewCode } from './view-link.js';
 import { formatPollCode } from './poll-link.js';
 import { pollLookPicker } from './poll-look-ui.js';
 import { normalizeLook } from './poll-look.js';
+import { uploadToLibrary } from './library-upload.js';
 
 const LIB_KEY = 'podium.library.v1';
 
@@ -6631,9 +6632,7 @@ $('#pdf-upload').addEventListener('change', async (ev) => {
     // upload route admin.html and the planner use - .pdf$ alone would leave
     // "Talk.pptx" as the title once it comes back named "Talk.pdf".
     const params = new URLSearchParams({ filename: file.name, title: file.name.replace(/\.[^.]+$/, ''), course: '', group: '' });
-    const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || 'that did not work');
+    const body = await uploadToLibrary(params, file);
     note.textContent = `Added “${body.item.title}” to the library.`;
     await loadLibrary();
     stage(body.item);

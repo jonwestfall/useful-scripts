@@ -20,6 +20,7 @@ import { wordKind, uploadWordFile } from './word-upload.js';
 import { createRosterPanel } from './roster-panel.js';
 import { createAttendanceReview } from './attendance-review.js';
 import { mountSessionSearch } from './session-search.js';
+import { uploadToLibrary } from './library-upload.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -350,7 +351,7 @@ async function upload(list) {
       continue;
     }
     const params = new URLSearchParams({ filename: file.name, title: file.name.replace(/\.[^.]+$/, ''), course, group: '' });
-    try { await api(`/api/library/upload?${params}`, { method: 'POST', raw: file }); done += 1; } catch (err) { failed.push(`${file.name}: ${err.message}`); }
+    try { await uploadToLibrary(params, file); done += 1; } catch (err) { failed.push(`${file.name}: ${err.message}`); }
   }
   note('#upload-note', [done && `Added ${done} file${done === 1 ? '' : 's'} to the library${course ? ` under ${COURSE(course)}` : ''}.`,
     ...reports, failed.length && `Not uploaded: ${failed.join(' · ')}`].filter(Boolean).join(' '), !!failed.length);
