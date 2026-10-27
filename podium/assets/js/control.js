@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, setText, setAttr, setHidden, guessItemFromUrl, throttle, wireDangerButton, wireRevealButtons, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
+import { $, $$, el, uid, fmtTime, setText, setAttr, setHidden, guessItemFromUrl, isNotebookLink, NOTEBOOK_ADVICE, throttle, wireDangerButton, wireRevealButtons, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, workingItem, PANEL_COUNT, panelOnScreen, deckStep,
@@ -6946,6 +6946,11 @@ setLibAddOpen((() => { try { return localStorage.getItem(LIB_ADD_KEY) === '1'; }
 $('#url-form').addEventListener('submit', (ev) => {
   ev.preventDefault();
   const input = $('#url-input');
+  const note = $('#url-note');
+  // Staging it would only put Google's refusal on the screen: say how instead.
+  note.hidden = !isNotebookLink(input.value);
+  note.textContent = note.hidden ? '' : `${NOTEBOOK_ADVICE} Then add it to the lecture in the planner, as a Video item, or to My Files.`;
+  if (!note.hidden) return;
   const item = guessItemFromUrl(input.value);
   if (!item) return;
   if ($('#url-save').checked) {

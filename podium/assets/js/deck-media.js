@@ -20,7 +20,7 @@
 // are made of. The display plays the video over it (see renderDeck in
 // renderers.js).
 
-import { $, $$, el } from './util.js';
+import { $, $$, el, isNotebookLink, NOTEBOOK_ADVICE } from './util.js';
 import { encodeToFit, downscaleImage } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
 import { parseTimecode, formatTimecode, pictureTag } from './deck-source.js';
@@ -378,7 +378,11 @@ export function createDeckMedia(deps) {
 
   const pickVideoFrom = wireTabs(videoDialog, (from) => {
     if (from === 'library') fillLibrary($('#deck-video-library'), $('#deck-video-search'), 'video', (item) => choseVideo({ item }));
-    else if (from === 'address') { choseVideo({ src: $('#deck-video-src').value.trim() }); $('#deck-video-src').focus(); }
+    else if (from === 'address') {
+      const typed = $('#deck-video-src').value.trim();
+      choseVideo(isNotebookLink(typed) ? {} : { src: typed });
+      $('#deck-video-src').focus();
+    }
     else choseVideo({ file: $('#deck-video-file').files?.[0] || null });
   });
 
@@ -403,7 +407,20 @@ export function createDeckMedia(deps) {
   }
 
   $('#deck-video-file').addEventListener('change', (ev) => choseVideo({ file: ev.target.files?.[0] || null }));
-  $('#deck-video-src').addEventListener('change', (ev) => choseVideo({ src: ev.target.value.trim() }));
+  // A Gemini Notebook link is Google's page, not a video (util.js): say how
+  // to get the video, and turn to where it can be added from.
+  function notebookAddress(src) {
+    if (!isNotebookLink(src)) return false;
+    choseVideo();
+    const upload = deps.canUpload();
+    $('#deck-video-note').textContent = `${NOTEBOOK_ADVICE} ${upload ? 'Then choose it here.' : 'Then put it on your server and give its address.'}`;
+    if (upload) pickVideoFrom('device');
+    return true;
+  }
+
+  $('#deck-video-src').addEventListener('change', (ev) => {
+    if (!notebookAddress(ev.target.value.trim())) choseVideo({ src: ev.target.value.trim() });
+  });
   $('#deck-video-start').addEventListener('change', (ev) => {
     const seconds = parseTimecode(ev.target.value);
     ev.target.value = ev.target.value.trim() ? formatTimecode(seconds) : '';
@@ -421,6 +438,7 @@ export function createDeckMedia(deps) {
     if (from === 'device' && !video.file) { note.textContent = 'Choose a video first.'; $('#deck-video-file').focus(); return; }
     if (from === 'library' && !video.item) { note.textContent = 'Pick a video first.'; return; }
     if (from === 'address' && !typed) { note.textContent = 'Give the video\'s address first.'; $('#deck-video-src').focus(); return; }
+    if (from === 'address' && notebookAddress(typed)) return;
     const start = parseTimecode($('#deck-video-start').value);
     const course = $('#deck-video-course').value;
     const deckName = deps.deckName();

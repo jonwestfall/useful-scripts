@@ -437,6 +437,22 @@ ok(`a picture dropped on a slide in the strip opens the dialog for that slide ("
   /^square\.png/.test(await desk.textContent('#deck-image-chosen')) && /^Slide 1/.test(await desk.textContent('#deck-slide-heading')));
 await desk.click('#deck-image-cancel');
 
+// A Gemini Notebook share link is Google's page, not a video: the dialog
+// says how to get the video and turns to "From this device", adding nothing.
+await pickSlide(desk, 2);
+await desk.click('.deck-toolbar [data-cmd="video"]');
+await desk.click('#deck-video-dialog [role="tab"][data-from="address"]');
+await desk.fill('#deck-video-src', 'https://notebook.google.com/notebook/45b35af0-aeae-48c4-b6c7-3f73573fcd8f/artifact/03629246-4dd3-4c47-ae74-3f088876078e?utm_source=nlm_web_share');
+const beforeNotebook = await markdown();
+await desk.click('#deck-video-go');
+await until(async () => /Gemini Notebook/.test(await desk.textContent('#deck-video-note')), { timeout: 5000 }).catch(() => {});
+ok(`a Gemini Notebook link says how to get its video ("${await desk.textContent('#deck-video-note')}")`,
+  /⋮ → Download/.test(await desk.textContent('#deck-video-note')));
+ok('and turns to adding it from this device, with nothing added to the slide',
+  (await desk.evaluate(() => document.querySelector('#deck-video-dialog').dataset.from)) === 'device'
+  && !(await desk.isHidden('#deck-video-dialog')) && (await markdown()) === beforeNotebook);
+await desk.click('#deck-video-cancel');
+
 // A video slide, from a file.
 await pickSlide(desk, 2);
 await desk.click('.deck-toolbar [data-cmd="video"]');

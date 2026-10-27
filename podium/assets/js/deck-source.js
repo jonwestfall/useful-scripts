@@ -20,6 +20,8 @@
 //
 // Pure: no DOM, no Marp, so it runs in Node and in the browser alike.
 
+import { isNotebookLink, NOTEBOOK_ADVICE } from './notebook-link.js';
+
 // Every directive Marp (and Marpit) understands. A comment made only of these
 // is a directive; any other comment is a presenter note - the same split
 // Marp itself makes when it renders.
@@ -698,6 +700,8 @@ export function checkDeck(md, { destination = 'file', pageProtocol = '' } = {}) 
       const src = slide.video.src;
       if (!/^(https?:|\/)/i.test(src)) {
         add(slide.index, at, 'warning', `The video "${src}" is not a full address, so the projector cannot find it. Add it from the library instead.`);
+      } else if (isNotebookLink(src)) {
+        add(slide.index, at, 'warning', `${NOTEBOOK_ADVICE} Then change this slide's video to it (🎬 Video).`);
       } else if (pageProtocol === 'https:' && /^http:/i.test(src)) {
         add(slide.index, at, 'warning', `The video "${src}" is http:, which an https: page will not load.`);
       }
