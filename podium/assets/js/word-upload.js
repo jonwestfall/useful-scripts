@@ -14,6 +14,7 @@ import { el } from './util.js';
 import { serverInfo } from './server.js';
 import { wordKind, wordToMarkdown, WORD_EXTS } from './word-import.js';
 import { uploadDeckMedia } from './deck-media.js';
+import { uploadToLibrary } from './library-upload.js';
 
 export { WORD_EXTS, wordKind };
 
@@ -102,21 +103,14 @@ export async function wordToLibraryDocument(file, { course = '', title = '' } = 
     placePicture: async (blob, pictureName) => (await uploadDeckMedia(blob, { filename: pictureName, course, deckName: name })).src,
   });
   const params = new URLSearchParams({ filename: `${file.name.replace(/\.[^.]+$/, '')}.md`, title: title || found || name, course, group: '' });
-  const res = await fetch(`/api/library/upload?${params}`, {
-    method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'text/markdown' },
-    body: new Blob([markdown], { type: 'text/markdown' }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || `the server said HTTP ${res.status}`);
+  const body = await uploadToLibrary(params, new Blob([markdown], { type: 'text/markdown' }), { contentType: 'text/markdown' });
   return { item: body.item, report };
 }
 
 /** Into the library on this server as a PDF, made by LibreOffice. */
 export async function wordToLibraryPdf(file, { course = '', title = '', group = '' } = {}) {
   const params = new URLSearchParams({ filename: file.name, title: title || file.name.replace(/\.[^.]+$/, ''), course, group, as: 'pdf' });
-  const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || `the server said HTTP ${res.status}`);
+  const body = await uploadToLibrary(params, file);
   return { item: body.item };
 }
 

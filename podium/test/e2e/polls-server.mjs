@@ -1708,6 +1708,37 @@ const uploadedPdfInLibrary = await pad.evaluate(async () => {
 });
 ok('and it is really on the server, filed as a pdf item', uploadedPdfInLibrary);
 
+// A video too big for the server: refused before it is sent, saying why -
+// not "That did not upload: that did not work".
+const tooBig = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'podium-e2e-big-')), 'lecture-recording.mp4');
+fs.writeFileSync(tooBig, '');
+fs.truncateSync(tooBig, 51 * 1024 * 1024);
+const uploadsSent = [];
+const countUploads = (req) => { if (/\/api\/library\/upload/.test(req.url())) uploadsSent.push(req.url()); };
+pad.on('request', countUploads);
+await pad.setInputFiles('#pdf-upload', tooBig);
+await pad.waitForFunction(() => /did not upload/.test(document.querySelector('#pdf-upload-note')?.textContent || ''), null, { timeout: 8000 });
+const tooBigNote = (await pad.textContent('#pdf-upload-note')).trim();
+pad.off('request', countUploads);
+fs.rmSync(path.dirname(tooBig), { recursive: true, force: true });
+ok(`a video too big for the server is refused with its size and the limit ("${tooBigNote}")`,
+  /lecture-recording\.mp4 is 51 MB/.test(tooBigNote) && /up to 50 MB/.test(tooBigNote) && !/did not work/.test(tooBigNote));
+ok('without sending it', uploadsSent.length === 0);
+// And sent anyway (an older page, say): the server refuses it before reading
+// it, and the answer arrives rather than a cut connection.
+expecting.uploadTooBig = true;
+const direct = await pad.evaluate(async () => {
+  try {
+    const res = await fetch('/api/library/upload?filename=big.mp4&title=big&course=&group=', {
+      method: 'POST', credentials: 'same-origin', body: new Blob([new Uint8Array(51 * 1024 * 1024)]),
+    });
+    return { status: res.status, error: (await res.json().catch(() => ({}))).error || '' };
+  } catch (err) { return { status: 0, error: String(err) }; }
+});
+await pad.waitForTimeout(300);   // the console line for that 413 can trail the answer
+expecting.uploadTooBig = false;
+ok(`the server refuses it from its stated size, and says so (${direct.status}: "${direct.error}")`, direct.status === 413 && /51 MB.*50 MB/.test(direct.error));
+
 // Now the controller, which has to merge it in beside the shipped manifest.
 await pad.reload();
 await pad.waitForSelector('#library .tile');

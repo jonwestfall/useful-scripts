@@ -22,6 +22,7 @@ import { parseColor, contrast } from './poll-look.js';
 import { wordKind, uploadWordFile } from './word-upload.js';
 import { mountSessionSearch } from './session-search.js';
 import { replayUrl } from './replay-model.js';
+import { uploadToLibrary } from './library-upload.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -184,13 +185,7 @@ async function upload() {
     group: $('#up-group').value.trim(),
   });
   try {
-    const res = await fetch(`/api/library/upload?${params}`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: file,
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || 'that did not work');
+    const body = await uploadToLibrary(params, file);
     say(`Added ${body.item.title}.`);
     $('#up-file').value = '';
     $('#up-title').value = '';

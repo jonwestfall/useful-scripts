@@ -198,6 +198,9 @@ function capabilities(ctx, user) {
     // Whether a display may offer to record the screen, and how much one
     // lecture may keep (Issue #132, phase 3).
     screenVideo: ctx.db && ctx.hasAccounts() ? lectures.screenVideo(ctx.db) : { enabled: false, mb: 0 },
+    // The largest file the library takes, so a page can refuse a bigger one
+    // before sending it, and say why (library-upload.js).
+    uploadBytes: ctx.db && ctx.hasAccounts() ? library.MAX_UPLOAD_BYTES : 0,
     // Word/RTF as a PDF, and old .doc files at all, need LibreOffice (#258).
     officeConvert: !!(ctx.db && ctx.hasAccounts() && pptxConvert.hasLibreOffice()),
     auth: {
@@ -1502,6 +1505,15 @@ async function receiveUpload(req, url, ctx, user) {
     throw Object.assign(new Error(
       `Podium does not take ${filename.includes('.') ? `${filename.split('.').pop()} files` : 'files without an extension'}`,
     ), { status: 415 });
+  }
+
+  // A body that says it is too big is refused before a byte of it is read:
+  // stopping a too-big upload partway cuts the connection, and the person
+  // uploading is then told nothing at all.
+  const declared = Number(req.headers['content-length']);
+  if (declared > library.MAX_UPLOAD_BYTES) {
+    const mb = (n) => `${(n / 1024 / 1024).toFixed(1).replace(/\.0$/, '')} MB`;
+    throw Object.assign(new Error(`${filename} is ${mb(declared)}, and this server takes files up to ${mb(library.MAX_UPLOAD_BYTES)}`), { status: 413 });
   }
 
   // Everything that can be checked without reading the body is checked BEFORE

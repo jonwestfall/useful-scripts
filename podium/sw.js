@@ -53,7 +53,7 @@ const WARM = [
   ...[
     'admin', 'assets', 'attendance-panel', 'attendance-review', 'bus', 'caption-log', 'caption-panel', 'config', 'control', 'crypto', 'deck', 'deck-checks',
     'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-qr', 'deck-source', 'deck-templates', 'defaults', 'display', 'doc', 'doc-reader',
-    'duration-probe', 'file-browser', 'gestures', 'index', 'live-browser', 'live-browser-panel', 'me', 'message-editor', 'mic-panel', 'notebook-link', 'pdf-writer', 'pip', 'plan',
+    'duration-probe', 'file-browser', 'gestures', 'index', 'library-upload', 'live-browser', 'live-browser-panel', 'me', 'message-editor', 'mic-panel', 'notebook-link', 'pdf-writer', 'pip', 'plan',
     'planfile', 'poll-link', 'poll-link-ui', 'poll-look', 'poll-look-theme', 'poll-look-ui', 'presentation-prefs', 'protocol', 'quicklook', 'quicklook-open', 'recap',
     'recap-pdf', 'renderers', 'replay', 'replay-model', 'roster-panel', 'rtc', 'screen-record', 'server', 'session-search', 'store', 'tab-bar', 'tabs', 'theme',
     'theme-boot', 'theme-sheet', 'theme-sheet-ui', 'thumbs', 'util', 'view-link', 'view-link-ui', 'watermark', 'word-import', 'word-upload', 'zip', 'zip-review', 'zoom',
