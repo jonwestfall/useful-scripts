@@ -180,6 +180,13 @@ export function miniMarkdown(str) {
 
 // Guess a content item from a pasted URL so the controller's "paste a link" box
 // does something sensible without the user picking a type first.
+/** A YouTube link's start time in seconds: `t=90`, `t=90s`, `t=1m30s`, `t=1h2m3s` or `start=90`. */
+function youTubeStart(url) {
+  const m = url.match(/[?&#](?:t|start)=(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?(?=$|[&#])/);
+  if (!m) return 0;
+  return (Number(m[1]) || 0) * 3600 + (Number(m[2]) || 0) * 60 + (Number(m[3]) || 0);
+}
+
 export function guessItemFromUrl(raw) {
   const url = raw.trim();
   if (!url) return null;
@@ -190,11 +197,10 @@ export function guessItemFromUrl(raw) {
     const stream = parseStreamSource(url);
     if (stream) return { type: 'stream', ...stream, show: 'both', title: streamLabel(stream) };
   }
-  const yt = url.match(/(?:youtube\.com\/(?:watch\?v=|live\/|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/);
-  if (yt) {
-    const t = url.match(/[?&#]t=(\d+)/);
-    return { type: 'youtube', videoId: yt[1], startAt: t ? Number(t[1]) : 0, title: 'YouTube' };
-  }
+  // `v=` anywhere in a watch link's query, not only first (YouTube's own
+  // share and app links put other parameters ahead of it).
+  const yt = url.match(/(?:youtube\.com\/(?:watch\?(?:[^#]*?&)?v=|live\/|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/);
+  if (yt) return { type: 'youtube', videoId: yt[1], startAt: youTubeStart(url), title: 'YouTube' };
   if (/\.(png|jpe?g|gif|webp|avif|svg|bmp)$/.test(lower)) return { type: 'image', src: url, fit: 'contain', title: 'Image' };
   if (/\.(mp4|webm|ogv|mov|m4v)$/.test(lower)) return { type: 'video', src: url, title: 'Video' };
   if (/\.(mp3|m4a|aac|wav|ogg|flac|opus)$/.test(lower)) return { type: 'audio', src: url, title: 'Audio' };

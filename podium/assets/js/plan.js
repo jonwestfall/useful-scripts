@@ -1079,6 +1079,7 @@ function fieldFor(item, spec) {
   if (spec.kind === 'number') {
     return field(spec.label, el('input', {
       type: 'number', min: String(spec.min ?? 0), max: String(spec.max ?? 9999), value: String(item[spec.key] ?? spec.def ?? 0),
+      'data-key': spec.key,
       oninput: (ev) => set(Number(ev.target.value), { label: true }),
     }), spec.hint);
   }
@@ -1116,26 +1117,49 @@ function fieldFor(item, spec) {
   if (spec.kind === 'server-upload') return serverUploadField(item, spec);
   if (spec.kind === 'image') return imageField(item, spec);
 
-  // Plain text, with one special case: a pasted YouTube URL is unpacked into
-  // the id and start time rather than left for you to dig out by hand.
+  if (spec.key === 'videoId') return youTubeField(item, spec);
   const input = el('input', {
-    type: 'text', value: item[spec.key] || '', placeholder: spec.placeholder || '',
-    oninput: (ev) => {
-      let value = ev.target.value;
-      if (spec.key === 'videoId') {
-        const guess = guessItemFromUrl(value);
-        if (guess?.type === 'youtube') {
-          value = guess.videoId;
-          item.startAt = guess.startAt || 0;
-          ev.target.value = value;
-          renderEditor();
-          return;
-        }
-      }
-      set(value, { remount: true, label: true });
-    },
+    type: 'text', value: item[spec.key] || '', placeholder: spec.placeholder || '', 'data-key': spec.key,
+    oninput: (ev) => set(ev.target.value, { remount: true, label: true }),
   });
   return field(spec.label, input, spec.hint);
+}
+
+// A YouTube item's video: an id, or any YouTube link, typed or pasted. A link
+// is read for its id (and start time, if it has one) as you go, without
+// touching what is in the box or where the cursor is - rebuilding the form
+// mid-keystroke is what used to lose a pasted link and the rest of a typed
+// one. Once you leave the box it shows just the id, so you can see it was
+// understood. The preview waits for a pause rather than loading a player for
+// every letter.
+let youTubePreviewTimer = null;
+function youTubeField(item, spec) {
+  const read = (text) => {
+    const guess = guessItemFromUrl(text);
+    return guess?.type === 'youtube' ? guess : null;
+  };
+  const input = el('input', {
+    type: 'text', value: item.videoId || '', placeholder: spec.placeholder || '', 'data-key': spec.key,
+    autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false',
+    oninput: (ev) => {
+      const text = ev.target.value.trim();
+      const link = read(text);
+      const before = item.videoId;
+      item.videoId = link ? link.videoId : text;
+      if (link?.startAt) {
+        item.startAt = link.startAt;
+        const start = $('#item-fields [data-key="startAt"]');
+        if (start) start.value = String(link.startAt);
+      }
+      touch();
+      renderOrder();
+      if (item.videoId === before && !link?.startAt) return;
+      clearTimeout(youTubePreviewTimer);
+      youTubePreviewTimer = setTimeout(() => { if (selected() === item) renderPreview({ remount: true }); }, 500);
+    },
+    onchange: (ev) => { if (read(ev.target.value.trim())) ev.target.value = item.videoId; },
+  });
+  return field(spec.label, input, spec.hint || 'A YouTube link is read for its video and start time.');
 }
 
 function uploadField(item, spec) {

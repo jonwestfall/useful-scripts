@@ -526,6 +526,9 @@ const expecting = {
   kioskOffscopeWarm: false,
   // Guest View (Issue #150): a viewer's pass being refused a page and the API.
   viewerRefused: false,
+  // The planner's every-field check types words into path fields, and the
+  // preview tries to load each one as it is typed: 404s, on purpose.
+  plannerTyping: false,
   // A viewer link planned in advance, opened before class: its code answers
   // 404 until the display goes live, and the viewer asks again.
   viewLinkWaiting: false,
@@ -618,6 +621,7 @@ const trap = (page, tag) => {
     if (expecting.attendRefused && /responded with a status of 40[34]/.test(text)) return;
     if (expecting.kioskOffscopeWarm && KIOSK_OFFSCOPE_WARM.test(text)) return;
     if (expecting.viewerRefused && /responded with a status of 401/.test(text)) return;
+    if (expecting.plannerTyping && /responded with a status of 404/.test(text)) return;
     if (expecting.viewLinkWaiting && /responded with a status of 404/.test(text) && (/\/view-code\//.test(where) || !m.location()?.url)) return;
     if (expecting.marpRetry && /marp\.esm\.js|ERR_FAILED/.test(where)) return;
     // A page that refuses to be framed, shown embedded on purpose (the live

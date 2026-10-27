@@ -2592,6 +2592,73 @@ ok('with three columns, nothing scrolls', await planner.evaluate(() => window.sc
 await pctx.close();
 }
 
+if (want('the planner: every field keeps what is typed or pasted')) {
+console.log('\n-- the planner: every field keeps what is typed or pasted --');
+// A YouTube link pasted into a YouTube item used to vanish: the field was
+// rewritten to the video id but the id never saved, and the form was rebuilt
+// mid-keystroke, so typing a link lost focus part-way too. Every text, number
+// and textarea field of every item type is checked here, typed and pasted.
+const fctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+// The preview's player is YouTube's; nothing here needs the real one.
+await fctx.route(/youtube(-nocookie)?\.com|ytimg\.com/, (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>player</title>' }));
+const fp = await fctx.newPage();
+trap(fp, 'planner fields');
+await fp.goto(`${BASE}/plan.html`);
+await fp.waitForSelector('#type-picker .type-btn');
+const fieldSel = '#item-fields input, #item-fields textarea';
+const SKIP = ['file', 'color', 'checkbox', 'radio', 'range', 'hidden', 'button'];
+const kinds = await fp.$$eval('#type-picker .type-btn', (els) => els.map((e) => e.dataset.type || e.textContent.trim()));
+const broken = [];
+expecting.plannerTyping = true;
+for (const [n, kind] of kinds.entries()) {
+  await fp.click(`#type-picker .type-btn >> nth=${n}`);
+  const fields = await fp.$$eval(fieldSel, (els, skip) => els.map((e, i) => ({ i, skip: skip.includes(e.type) || !e.offsetParent, number: e.type === 'number', name: e.dataset.key || e.closest('.field')?.querySelector('label')?.textContent || e.placeholder })), SKIP);
+  for (const f of fields.filter((x) => !x.skip)) {
+    // A link too: the original bug only showed with a pasted link.
+    for (const how of f.number ? ['typed', 'pasted'] : ['typed', 'pasted', 'pasted link']) {
+      const text = f.number ? '7' : how === 'pasted link' ? 'https://www.youtube.com/watch?v=ZMLzP1VCANo' : 'Words 123';
+      await fp.locator(fieldSel).nth(f.i).click();
+      await fp.keyboard.press('Control+A');
+      await fp.keyboard.press('Backspace');
+      if (how === 'typed') await fp.keyboard.type(text); else await fp.keyboard.insertText(text);
+      const got = await fp.evaluate(([sel, i]) => {
+        const e = document.querySelectorAll(sel)[i];
+        return { value: e?.value, focused: document.activeElement === e };
+      }, [fieldSel, f.i]);
+      if (got.value !== text || !got.focused) broken.push(`${kind} / ${f.name} ${how}: "${got.value}"${got.focused ? '' : ', lost focus'}`);
+    }
+  }
+}
+// A preview's last request can land a moment after the last key.
+await fp.waitForLoadState('networkidle');
+expecting.plannerTyping = false;
+ok(`every field of all ${kinds.length} item types keeps what is typed or pasted, and its focus${broken.length ? ` (${broken.slice(0, 4).join('; ')})` : ''}`, !broken.length);
+
+// YouTube: a link pasted, and a link typed key by key.
+await fp.click('#type-picker .type-btn:has-text("YouTube")');
+const yt = fp.locator('#item-fields [data-key="videoId"]');
+await yt.click();
+await fp.keyboard.insertText('https://www.youtube.com/watch?app=desktop&v=ZMLzP1VCANo&t=1m30s');
+ok('a pasted YouTube link stays in the box while you are in it', (await yt.inputValue()).startsWith('https://www.youtube.com/watch') && await yt.evaluate((e) => document.activeElement === e));
+ok('and its start time is read into "Start at"', (await fp.inputValue('#item-fields [data-key="startAt"]')) === '90');
+await fp.keyboard.press('Tab');
+ok('leaving the box shows the video id it was read as', (await yt.inputValue()) === 'ZMLzP1VCANo');
+await fp.waitForFunction(() => /ZMLzP1VCANo/.test(document.querySelector('#item-preview iframe')?.src || ''), null, { timeout: 5000 })
+  .then(() => ok('and the preview plays that video', true))
+  .catch(() => ok('and the preview plays that video', false));
+await yt.click();
+await fp.keyboard.press('Control+A');
+await fp.keyboard.press('Backspace');
+await fp.keyboard.type('https://youtu.be/ZMLzP1VCANo?t=42');
+ok('a link typed key by key keeps every key and the focus', (await yt.inputValue()) === 'https://youtu.be/ZMLzP1VCANo?t=42' && await yt.evaluate((e) => document.activeElement === e));
+await fp.keyboard.press('Tab');
+await fp.click('#order-settings');
+await fp.locator('#order li:has-text("YouTube") .order-open').last().click();
+ok('and the item keeps the video and start time when you come back to it',
+  (await fp.inputValue('#item-fields [data-key="videoId"]')) === 'ZMLzP1VCANo' && (await fp.inputValue('#item-fields [data-key="startAt"]')) === '42');
+await fctx.close();
+}
+
 if (want('a deck still renders after the engine download fails')) {
 console.log('\n-- a deck still renders after the engine download fails (Issue #221) --');
 // The first download of the 1.1 MB Marp bundle - and the immediate retry -
