@@ -24,6 +24,7 @@ import { $, $$, el } from './util.js';
 import { encodeToFit, downscaleImage } from './store.js';
 import { MAX_ASSET_CHARS } from './planfile.js';
 import { parseTimecode, formatTimecode, pictureTag } from './deck-source.js';
+import { uploadToLibrary } from './library-upload.js';
 
 // A projector is 1920 wide; a little more leaves room for zooming into a
 // detail. Nothing bigger is ever worth sending to one.
@@ -114,13 +115,7 @@ export async function uploadDeckMedia(blob, { filename, course = '', deckName = 
   const query = new URLSearchParams({
     filename, course, deckMedia: deckName || 'A deck', title: filename.replace(/\.\w+$/, ''),
   });
-  const res = await fetch(`/api/library/upload?${query}`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'content-type': blob.type || 'application/octet-stream' },
-    body: blob,
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || `the server said HTTP ${res.status}`);
+  const body = await uploadToLibrary(query, blob, { contentType: blob.type || 'application/octet-stream' });
   return body.item;
 }
 

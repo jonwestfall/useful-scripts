@@ -33,6 +33,7 @@ import { loadConfig } from './config.js';
 import { resolvePollBase, pollLinkBlock, pollLinksSummary, newPollKey, isPollKey } from './poll-link-ui.js';
 import { viewLinkBlock } from './view-link-ui.js';
 import { pollLookPicker } from './poll-look-ui.js';
+import { uploadToLibrary } from './library-upload.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -1282,9 +1283,7 @@ function serverUploadField(item, spec) {
         });
         // A Word or RTF file put into a PDF item was chosen as a PDF (#258).
         if (wordKind(file.name)) params.set('as', 'pdf');
-        const res = await fetch(`/api/library/upload?${params}`, { method: 'POST', credentials: 'same-origin', body: file });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error || 'that did not work');
+        const body = await uploadToLibrary(params, file);
         item[spec.key] = body.item.src;
         if (!item.title) item.title = body.item.title;
         touch();

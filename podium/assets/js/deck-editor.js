@@ -43,6 +43,7 @@ import {
 } from './deck-diagrams.js';
 import * as CM from '../vendor/codemirror.esm.js';
 import { startPageTheme } from './theme.js';
+import { uploadToLibrary } from './library-upload.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -1984,11 +1985,7 @@ function wireLibraryDialog() {
         filename, course: $('#deck-library-course').value, group: '',
         title: deck.frontMatter.fields.title || deck.slides[0]?.title || filename.replace(/\.\w+$/, ''),
       });
-      const res = await fetch(`/api/library/upload?${query}`, {
-        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'text/markdown; charset=utf-8' }, body: text(),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      const body = await uploadToLibrary(query, text(), { contentType: 'text/markdown; charset=utf-8' });
       const item = { ...body.item, editable: true };
       const fromPlan = params.get('plan') && params.get('item') ? { planId: params.get('plan'), itemId: params.get('item') } : null;
       origin = { kind: 'library', id: item.id, item, version: item.version, editable: true, name: item.filename, title: item.title, course: item.course };

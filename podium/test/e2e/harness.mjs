@@ -526,6 +526,8 @@ const expecting = {
   kioskOffscopeWarm: false,
   // Guest View (Issue #150): a viewer's pass being refused a page and the API.
   viewerRefused: false,
+  // A too-big upload sent to the server anyway, refused with a 413 on purpose.
+  uploadTooBig: false,
   // The planner's every-field check types words into path fields, and the
   // preview tries to load each one as it is typed: 404s, on purpose.
   plannerTyping: false,
@@ -622,6 +624,7 @@ const trap = (page, tag) => {
     if (expecting.kioskOffscopeWarm && KIOSK_OFFSCOPE_WARM.test(text)) return;
     if (expecting.viewerRefused && /responded with a status of 401/.test(text)) return;
     if (expecting.plannerTyping && /responded with a status of 404/.test(text)) return;
+    if (expecting.uploadTooBig && /responded with a status of 413/.test(text)) return;
     if (expecting.viewLinkWaiting && /responded with a status of 404/.test(text) && (/\/view-code\//.test(where) || !m.location()?.url)) return;
     if (expecting.marpRetry && /marp\.esm\.js|ERR_FAILED/.test(where)) return;
     // A page that refuses to be framed, shown embedded on purpose (the live
