@@ -53,6 +53,35 @@ export const FRAGMENT_CSS = `
   .podium-fragment.is-shown { opacity: 1; }
 `;
 
+// Columns in any theme (the deck editor's ▥ Columns): a block of text and
+// pictures side by side, <div class="columns"> with one <div> per column -
+// `three`, `wide-left` or `wide-right` beside it for other splits - or a
+// whole slide flowing in columns, as a class like lead: <!-- _class: columns -->
+// (or columns-3). The block's rules weigh nothing (:where), so a theme with
+// its own .columns keeps it; the slide classes are Podium's own, and are
+// written as strongly as a theme's section rules so a theme that lays its
+// slides out as flex still gets columns.
+export const COLUMNS_CSS = `
+  :where(section .columns) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6em 1.4em; align-items: start; }
+  :where(section .columns.three) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  :where(section .columns.wide-left) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+  :where(section .columns.wide-right) { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+  :where(section .columns > *) { min-width: 0; }
+  :where(section .columns > * > :first-child) { margin-top: 0; }
+  :where(section .columns img) { max-width: 100%; height: auto; }
+  div.marpit > svg > foreignObject > section.columns, section.columns,
+  div.marpit > svg > foreignObject > section.columns-3, section.columns-3 {
+    display: block; column-gap: 1.4em; column-fill: balance;
+  }
+  div.marpit > svg > foreignObject > section.columns, section.columns { columns: 2; }
+  div.marpit > svg > foreignObject > section.columns-3, section.columns-3 { columns: 3; }
+  section.columns > :is(h1, h2), section.columns-3 > :is(h1, h2) { column-span: all; }
+  /* A list's top margin would only push the first column down. */
+  section.columns > :is(ul, ol), section.columns-3 > :is(ul, ol) { margin-top: 0; }
+  section.columns :is(li, p, img, figure, pre, blockquote, table), section.columns-3 :is(li, p, img, figure, pre, blockquote, table) { break-inside: avoid; }
+  section.columns img, section.columns-3 img { max-width: 100%; height: auto; }
+`;
+
 export const MATH_CSS = `
   /* KaTeX math wrapping for Marp slides */
   div.marpit > svg > foreignObject > section .katex,
@@ -706,7 +735,7 @@ async function parseNow(source, key) {
   // html is one wrapping <div class="marpit"> holding every slide's <svg>.
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const root = doc.querySelector('.marpit') || doc.body;
-  const combinedCss = `${css}\n${MATH_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`;
+  const combinedCss = `${css}\n${COLUMNS_CSS}\n${MATH_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`;
   // ```mermaid blocks drawn as diagrams (Issue #235), first: they change
   // what fits, and a slide's title is never a diagram's source text.
   const diagrams = await drawDiagrams(root, combinedCss, slideSections);

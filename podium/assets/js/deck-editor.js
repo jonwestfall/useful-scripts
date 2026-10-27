@@ -70,7 +70,7 @@ Your name · Course
 `;
 
 const BUILT_IN_THEMES = ['default', 'gaia', 'uncover'];
-const BASE_CLASSES = ['lead', 'invert', 'build'];
+const BASE_CLASSES = ['lead', 'invert', 'build', 'columns', 'columns-3'];
 const DRAFT_PREFIX = 'podium.deckdraft.';
 const MAX_DRAFT_CHARS = 1024 * 1024;
 
@@ -1241,6 +1241,41 @@ function wireDiagrams() {
   });
 }
 
+// ▥ Columns: a block of columns where the cursor is (the selection in the
+// first one), or the whole slide flowing in two - its class, like lead.
+function wireColumns() {
+  const menu = $('#deck-columns-menu');
+  const toggle = $('#deck-columns');
+  const whole = $('#deck-columns-slide');
+  const close = () => { menu.hidden = true; toggle.setAttribute('aria-expanded', 'false'); };
+  const slideClass = () => deck.slides[current]?.spot.class ?? '';
+  const inColumns = () => /(^|\s)columns(-3)?(\s|$)/.test(slideClass());
+  $('#deck-columns-blocks').replaceChildren(...DS.COLUMN_LAYOUTS.map((layout) => el('button', {
+    type: 'button',
+    'data-columns': layout.id,
+    onclick: () => {
+      close();
+      const { from, to } = view.state.selection.main;
+      const { block, cursor } = DS.columnsMarkdown(layout.id, view.state.sliceDoc(from, to));
+      view.dispatch(blockChange(from, to, block, cursor));
+      view.focus();
+    },
+  }, layout.label)));
+  toggle.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    menu.hidden = !menu.hidden;
+    toggle.setAttribute('aria-expanded', String(!menu.hidden));
+    whole.textContent = inColumns() ? 'Whole slide back to one column' : 'Whole slide in two columns';
+  });
+  whole.addEventListener('click', () => {
+    close();
+    const cls = /(^|\s)columns-3(\s|$)/.test(slideClass()) ? 'columns-3' : 'columns';
+    applyText(DS.setSlideDirective(text(), current, 'class', DS.withSlideClass(slideClass(), cls, !inColumns())));
+  });
+  document.addEventListener('click', (ev) => { if (!menu.hidden && !ev.target.closest('.deck-columns-wrap')) close(); });
+  menu.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { close(); toggle.focus(); } });
+}
+
 function wireToolbar() {
   $$('.deck-toolbar [data-cmd]').forEach((button) => button.addEventListener('click', () => COMMANDS[button.dataset.cmd]?.()));
   $('#deck-add-slide').addEventListener('click', addSlide);
@@ -2081,6 +2116,7 @@ window.addEventListener('beforeunload', (ev) => {
 
 wireToolbar();
 wireDiagrams();
+wireColumns();
 wireSlidePanel();
 wireDeckSettings();
 wirePageDrops();

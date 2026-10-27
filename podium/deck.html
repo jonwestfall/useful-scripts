@@ -312,6 +312,16 @@
           <p class="hint">To bring one in from mermaid.live, copy the page's address (or its share link) and paste it into the slide.</p>
         </div>
       </div>
+      <!-- Text and pictures side by side, in any theme (COLUMNS_CSS in deck.js). -->
+      <div class="deck-menu-wrap deck-columns-wrap deck-only">
+        <button id="deck-columns" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="deck-columns-menu" title="Put text and pictures side by side">▥ Columns</button>
+        <div id="deck-columns-menu" class="deck-menu deck-menu-left" hidden>
+          <div id="deck-columns-blocks" class="deck-menu-group" role="group" aria-label="Add columns here"></div>
+          <hr>
+          <button id="deck-columns-slide" type="button">Whole slide in two columns</button>
+          <p class="hint">Columns here go where the cursor is, with any selected text in the first one; put a picture in any column. A whole slide in columns flows its text from one column into the next, like the Class field's <code>columns</code> (or <code>columns-3</code>).</p>
+        </div>
+      </div>
       <button type="button" data-cmd="math" title="Math (KaTeX)">∑ Math</button>
       <button type="button" data-cmd="code" title="Code block">&lt;/&gt; Code</button>
       <span class="spacer"></span>

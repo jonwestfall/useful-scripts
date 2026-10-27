@@ -11,9 +11,9 @@ import {
   parseDeck, serializeDeck, moveSlide, duplicateSlide, deleteSlide, insertSlide,
   setSlideDirective, setSlideBuild, setSlideNotes, setFrontMatter, slideAt, checkDeck, commentsIn,
   setSlideVideo, parseTimecode, formatTimecode, PODIUM_DIRECTIVES, mermaidFences, MERMAID_THEMES,
-  pictureAt, pictureTag,
+  pictureAt, pictureTag, columnsMarkdown, withSlideClass, COLUMN_LAYOUTS,
 } from '../assets/js/deck-source.js';
-import { deckLocation, markMermaidTheme } from '../assets/js/deck.js';
+import { deckLocation, markMermaidTheme, COLUMNS_CSS } from '../assets/js/deck.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
@@ -312,6 +312,26 @@ console.log('-- diagrams (Issue #235) --');
   chk('Marp splits the slide for "left 40%, whole picture showing"', /data-marpit-advanced-background-split="left"/.test(split.html)
     && /data-marpit-advanced-background-split="left"[^>]*style="[^"]*--marpit-advanced-background-split:\s*40%/.test(split.html));
   chk('and shows the whole picture in it', /background-size:\s*contain/.test(split.html));
+}
+
+// --- Columns: a block of <div>s, or the whole slide's class ---
+{
+  const two = columnsMarkdown('two', '- One\n- Two');
+  chk('two columns put the selection in the first, a placeholder in the second',
+    two.block === '<div class="columns">\n<div>\n\n- One\n- Two\n\n</div>\n<div>\n\nSecond column\n\n</div>\n</div>\n');
+  chk('and the cursor lands at the end of the first column', two.block.slice(0, two.cursor).endsWith('- Two'));
+  const three = columnsMarkdown('three');
+  chk('three columns have three, with placeholders', (three.block.match(/<div>/g) || []).length === 3
+    && three.block.startsWith('<div class="columns three">') && three.block.includes('Third column'));
+  chk('every layout has a class starting with columns', COLUMN_LAYOUTS.every((l) => l.cls.split(' ')[0] === 'columns'));
+  chk('an unknown layout falls back to two columns', columnsMarkdown('nope').block.startsWith('<div class="columns">\n'));
+  const md = newMarp().render(`# A\n\n${two.block}`).html;
+  chk('Marp keeps the divs and the markdown inside them', /<div class="columns">/.test(md) && /<li>One<\/li>/.test(md));
+  chk('adding columns to a slide keeps its other classes', withSlideClass('lead invert', 'columns') === 'lead invert columns');
+  chk('columns-3 replaces columns, not adds to it', withSlideClass('lead columns', 'columns-3') === 'lead columns-3');
+  chk('taking columns away leaves the rest', withSlideClass('lead columns', 'columns', false) === 'lead');
+  chk('and nothing left is no class at all', withSlideClass('columns', 'columns', false) === null && withSlideClass('', 'columns', false) === null);
+  chk('the columns CSS covers both slide classes', /columns:\s*2/.test(COLUMNS_CSS) && /columns:\s*3/.test(COLUMNS_CSS));
 }
 
 if (!ok) process.exit(1);
