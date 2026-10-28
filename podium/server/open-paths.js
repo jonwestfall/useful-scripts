@@ -24,7 +24,7 @@ const AUTH_OPEN_PATHS = new Set([
   // page: gate() still checks each request's own path, so control.html,
   // display.html, plan.html and admin.html are untouched by this.
   '/assets/css/podium.css', '/assets/js/server.js', '/assets/js/protocol.js', '/assets/js/zoom.js', '/assets/js/poll-look.js',
-  '/assets/js/util.js', '/assets/js/index.js', '/assets/icons/apple-touch-icon.png',
+  '/assets/js/util.js', '/assets/js/notebook-link.js', '/assets/js/index.js', '/assets/icons/apple-touch-icon.png',
   // Light or dark (theme.js): the landing page, the guide and a guest's
   // controller all start with it, and it is no more than a colour choice.
   '/assets/js/theme.js', '/assets/js/theme-boot.js',

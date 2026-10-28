@@ -2264,6 +2264,13 @@ ok('and its ⓘ explains where a kept item goes', /this device only/.test(await 
 await uPad.reload();
 await uPad.waitForSelector('#app:not([hidden])');
 ok('open or closed is remembered on this device', await uPad.isVisible('#url-input'));
+const notebookLink = 'https://notebook.google.com/notebook/45b35af0-aeae-48c4-b6c7-3f73573fcd8f/artifact/03629246-4dd3-4c47-ae74-3f088876078e';
+await uPad.fill('#url-input', notebookLink);
+await uPad.press('#url-input', 'Enter');
+ok(`a Gemini Notebook link is not shown, but answered with how to get its video ("${await uPad.textContent('#url-note')}")`,
+  await uPad.isVisible('#url-note') && /⋮ → Download/.test(await uPad.textContent('#url-note'))
+  && (await uPad.inputValue('#url-input')) === notebookLink);
+await uPad.fill('#url-input', '');
 await uPad.click('#lib-add-toggle');
 
 // #191 / #192: whole titles and thumbnails.
@@ -2656,6 +2663,19 @@ await fp.click('#order-settings');
 await fp.locator('#order li:has-text("YouTube") .order-open').last().click();
 ok('and the item keeps the video and start time when you come back to it',
   (await fp.inputValue('#item-fields [data-key="videoId"]')) === 'ZMLzP1VCANo' && (await fp.inputValue('#item-fields [data-key="startAt"]')) === '42');
+
+// A Gemini Notebook link in a Video item is Google's page, not a video: the
+// field keeps it, and says how to get the video. (Its preview cannot load it.)
+expecting.plannerTyping = true;
+await fp.click('#type-picker .type-btn:has-text("Video")');
+const videoSrc = fp.locator('#item-fields input[data-key="src"]');
+await videoSrc.click();
+await fp.keyboard.insertText('https://notebook.google.com/notebook/45b35af0-aeae-48c4-b6c7-3f73573fcd8f/artifact/03629246-4dd3-4c47-ae74-3f088876078e');
+await fp.waitForSelector('#item-fields .notebook-note:not([hidden])', { timeout: 5000 }).catch(() => {});
+ok(`a Gemini Notebook link in a Video item says how to get the video ("${await fp.locator('#item-fields .notebook-note').textContent().catch(() => '')}")`,
+  /⋮ → Download/.test(await fp.locator('#item-fields .notebook-note').textContent().catch(() => '')));
+await fp.waitForLoadState('networkidle');
+expecting.plannerTyping = false;
 await fctx.close();
 }
 

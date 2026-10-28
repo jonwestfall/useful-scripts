@@ -229,6 +229,14 @@ A web page can reach the projector in two ways.
 - **Embedded** works on every setup: the page sits in a frame on the display. It plays its own sound, but it can only be clicked or scrolled on the classroom computer itself. Many sites refuse to be framed at all (GitHub, Google, most news sites, most learning-management systems). The browser then shows its own *"… refused to connect"* face, and there is nothing a page can do about it. Podium knows the best-known of these sites and shows a card saying so instead.
 - **The live browser** 🖥️ runs the page in a real browser (Chromium) on your Podium server. The projector is shown the page as a live picture, laid out for exactly the panel it is in. **You drive it from the controller.** Because nothing is framed, nothing refuses: GitHub, Google Docs, a journal behind your library's sign-in, a simulation, a search.
 
+**Gemini Notebook (NotebookLM) videos.** A Video Overview's *Share* link is Google's page around the video, not the video itself. Google will not let another site frame that page, and the live browser has no sound, so neither way can play it in class. Podium recognises these links (`notebook.google.com/notebook/…` and the older `notebooklm.google.com`) wherever one is pasted, and says what to do instead: open the video in Gemini Notebook, choose **⋮ → Download** to get an `.mp4`, and add that file as a Video item, or as a video slide with 🎬 *Video*. It then plays like any other video, with sound, the Mixer and the transport.
+- **The controller's + Add** says so instead of showing the link.
+- **The planner** says so under a Video or Web page item's address.
+- **The deck editor's 🎬 Video dialog** says so and turns to *From this device*. The deck checks flag a `_video` that points at one.
+- **The display**, given one anyway, shows a card saying the same rather than Google's refusal (unless *Show it as* is set to one way on purpose).
+
+The upload limit is 50 MB. A longer overview may be bigger than that: export it at a smaller size first, or put it on YouTube (unlisted) and add the YouTube link.
+
 Where the server has the live browser, a page on another site opens there automatically. Change it per item with **Show it as** in the planner, or **Show this page as** on the Now tab: *Automatic*, *Live browser* or *Embedded page*. A page on your own Podium server (in `content/`) always embeds, because the server's browser is not signed in.
 
 **Driving it**, on the **Now** tab:

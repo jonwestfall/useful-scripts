@@ -28,6 +28,7 @@ import { contentRect, isZoomed } from './zoom.js';
 import { formatPollCode } from './poll-link.js';
 import { lookColors, lookVars } from './poll-look.js';
 import { browseMode, refusesFraming, watchLiveBrowser } from './live-browser.js';
+import { isNotebookLink } from './notebook-link.js';
 
 export const TYPES = {
   black:      { label: 'Black',      icon: '■' },
@@ -734,6 +735,9 @@ function renderWebItem(item, opts) {
   let inner = null;
 
   const choose = (it) => {
+    // Neither way plays a Gemini Notebook video with sound (notebook-link.js):
+    // say how to get it, unless the presenter asked for one way regardless.
+    if ((!it.browse || it.browse === 'auto') && isNotebookLink(it.src)) return 'card-notebook';
     if (live === null && browseMode(it, true) === 'live') return 'wait';
     const want = browseMode(it, live === true);
     if (want === 'live') return lb.role !== 'viewer' ? 'live' : lb.relayed ? 'relayed' : 'card-live';
@@ -749,7 +753,7 @@ function renderWebItem(item, opts) {
       : next === 'relayed' ? renderRelayedWeb(it, lb.relayed)
       : next === 'embed' ? renderWeb(it, opts)
         : next === 'wait' ? { el: el('div', { class: 'r-fill r-live' }), update() {}, reconcile() {}, destroy() {} }
-          : renderWebCard(it, next === 'card-live' ? 'live' : 'refused');
+          : renderWebCard(it, next === 'card-live' ? 'live' : next === 'card-notebook' ? 'notebook' : 'refused');
     node.replaceChildren(inner.el);
   };
   show(item);
@@ -774,15 +778,18 @@ function renderWebItem(item, opts) {
 const hostOf = (src) => { try { return new URL(src, location.href).host; } catch { return String(src || ''); } };
 
 // Said instead of a frame the browser would only replace with its sad face:
-// a site known to refuse being framed, or (to a Guest View viewer, who has no
-// key to the room's live browser) a page the projector is showing live.
+// a site known to refuse being framed, a Gemini Notebook link, or (to a Guest
+// View viewer, who has no key to the room's live browser) a page the
+// projector is showing live.
 // The refusal only ever shows where there is no live browser to turn to
 // (see choose() above), so it says where one would come from.
 function renderWebCard(item, why) {
   const host = hostOf(item.src);
   const note = why === 'live'
     ? 'On the classroom screen now, in a live browser.'
-    : `${host} does not let other sites show its pages inside them. A Podium server with Chromium installed shows it in its live browser; until then, open it in a tab of its own.`;
+    : why === 'notebook'
+      ? 'A Gemini Notebook video plays only on Google’s own page. To show it here, open it in Gemini Notebook, choose ⋮ → Download, and add the .mp4 to the lecture as a Video item.'
+      : `${host} does not let other sites show its pages inside them. A Podium server with Chromium installed shows it in its live browser; until then, open it in a tab of its own.`;
   const link = /^https?:/i.test(item.src || '') ? el('a', { class: 'r-webcard-url', href: item.src, target: '_blank', rel: 'noopener noreferrer' }, item.src) : el('div', { class: 'r-webcard-url' }, item.src || '');
   const node = el('div', { class: 'r-fill r-webcard' },
     el('div', { class: 'r-webcard-body' },

@@ -1,6 +1,9 @@
 // Small DOM + misc helpers shared by the display and controller.
 
 import { parseStreamSource, streamLabel } from './protocol.js';
+import { isNotebookLink } from './notebook-link.js';
+
+export { isNotebookLink, NOTEBOOK_ADVICE } from './notebook-link.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -191,6 +194,7 @@ export function guessItemFromUrl(raw) {
   const url = raw.trim();
   if (!url) return null;
   const lower = url.split('?')[0].toLowerCase();
+  if (isNotebookLink(url)) return { type: 'web', src: url, title: 'Gemini Notebook' };
   // Issue #175: a Twitch channel, or a YouTube live broadcast or channel, is
   // a live stream - with an audio/video/both choice - not a plain video.
   if (/twitch\.tv\//i.test(url) || /youtube\.com\/(?:live\/|channel\/|embed\/live_stream)/.test(url)) {

@@ -8,7 +8,7 @@
 // one. The one thing they share is the renderers: the preview here is the same
 // code the projector runs, so "it looks right in my office" means something.
 
-import { $, $$, el, uid, guessItemFromUrl, wireDangerButton, servedBuild, safeStorageSet } from './util.js';
+import { $, $$, el, uid, guessItemFromUrl, isNotebookLink, NOTEBOOK_ADVICE, wireDangerButton, servedBuild, safeStorageSet } from './util.js';
 import {
   PLAN_TYPES, emptyPlan, newItem, readPlan, planToJson, planFileName, planBytes,
   itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, pruneAssets, emptyAutoLaunch, emptyPip,
@@ -1119,11 +1119,29 @@ function fieldFor(item, spec) {
   if (spec.kind === 'image') return imageField(item, spec);
 
   if (spec.key === 'videoId') return youTubeField(item, spec);
+  if (spec.key === 'src' && (item.type === 'video' || item.type === 'web')) return linkField(item, spec, set);
   const input = el('input', {
     type: 'text', value: item[spec.key] || '', placeholder: spec.placeholder || '', 'data-key': spec.key,
     oninput: (ev) => set(ev.target.value, { remount: true, label: true }),
   });
   return field(spec.label, input, spec.hint);
+}
+
+// A video's or a web page's address, which says so when it is a Gemini
+// Notebook link (util.js): that would only ever show Google's refusal.
+function linkField(item, spec, set) {
+  const note = el('p', { class: 'hint notebook-note', role: 'status' });
+  const then = item.type === 'video' ? 'Then upload it above, or give the path where you put it.' : 'Then add it to the lecture as a Video item.';
+  const check = (value) => {
+    note.textContent = isNotebookLink(value) ? `${NOTEBOOK_ADVICE} ${then}` : '';
+    note.hidden = !note.textContent;
+  };
+  const input = el('input', {
+    type: 'text', value: item[spec.key] || '', placeholder: spec.placeholder || '', 'data-key': spec.key,
+    oninput: (ev) => { set(ev.target.value, { remount: true, label: true }); check(ev.target.value); },
+  });
+  check(input.value);
+  return el('div', {}, field(spec.label, input, spec.hint), note);
 }
 
 // A YouTube item's video: an id, or any YouTube link, typed or pasted. A link
