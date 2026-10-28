@@ -7,6 +7,8 @@
 //   Lectures           GET /api/plans, with #239's personal archive
 //   Deck templates     GET /api/deck-templates
 //   Recorded lectures  GET /api/lectures
+// Backups (server/backup.js): ticked files, ticked lectures with all their
+// files, a course, or everything of yours, as one ZIP.
 // Nothing here decides a permission itself. A button is offered only where
 // the server said it would allow it, and the server checks again either way.
 
@@ -21,6 +23,7 @@ import { createRosterPanel } from './roster-panel.js';
 import { createAttendanceReview } from './attendance-review.js';
 import { mountSessionSearch } from './session-search.js';
 import { uploadToLibrary } from './library-upload.js';
+import { runBackup } from './backup-ui.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -28,9 +31,11 @@ startPageTheme();
 let me = null;
 let profileCourses = [];      // where this account is a member, as the admin set it
 let fileCourses = [];         // where it may file things (the library's own list)
+let allCourses = [];          // every course, for an administrator's backups
 let files = [];
 let plans = [];
 const picked = new Set();
+const pickedPlans = new Set();
 
 const TYPE_LABEL = { ...Object.fromEntries(FILE_TYPES), slides: 'HTML slides', web: 'Web pages', text: 'Text cards', qr: 'QR codes', youtube: 'YouTube' };
 const kindName = (type) => (TYPE_LABEL[type] || type).replace(/s$/, '');
@@ -227,13 +232,13 @@ function fileRow(item) {
     day(item.createdAt),
   ].filter(Boolean).join(' · ');
   const small = (label, attrs) => el('button', { type: 'button', class: 'admin-small', ...attrs }, label);
+  // Anything you can see can be ticked: to download, at least. What you may
+  // move or delete as well, the bulk bar works out from `may`.
   return el('div', { class: 'me-row', role: 'listitem', 'data-id': String(item.id) },
-    may.delete
-      ? el('input', {
-        type: 'checkbox', 'aria-label': `Select ${item.title}`, checked: picked.has(item.id),
-        onchange: (ev) => { if (ev.target.checked) picked.add(item.id); else picked.delete(item.id); renderBulk(); },
-      })
-      : el('span', { class: 'me-nocheck' }),
+    el('input', {
+      type: 'checkbox', 'aria-label': `Select ${item.title}`, checked: picked.has(item.id),
+      onchange: (ev) => { if (ev.target.checked) picked.add(item.id); else picked.delete(item.id); renderBulk(); },
+    }),
     el('span', { class: 'fb-icon', 'aria-hidden': 'true' }, typeIcon(item.type)),
     el('span', { class: 'fb-what' },
       el('span', { class: 'fb-title' }, item.title),
@@ -272,8 +277,49 @@ function renderFiles() {
 
 function renderBulk() {
   for (const id of [...picked]) if (!files.some((f) => f.id === id)) picked.delete(id);
+  const chosen = files.filter((f) => picked.has(f.id));
+  const changeable = chosen.filter((f) => f.may?.delete).length;
   $('#files-bulk').hidden = !picked.size;
   $('#files-bulk-count').textContent = `${picked.size} selected`;
+  // Move and Delete act on the ones you may change, and say how many that is.
+  $('#files-bulk-move').hidden = !changeable;
+  $('#files-bulk-delete').hidden = !changeable;
+  $('#files-bulk-move').textContent = changeable < chosen.length ? `Move ${changeable} to…` : 'Move to…';
+  $('#files-bulk-delete').textContent = changeable < chosen.length ? `Delete ${changeable}` : 'Delete';
+  syncSelectAll($('#files-all'), shownFiles().map((f) => f.id), picked);
+}
+
+/** A "select all shown" box: ticked, unticked, or in between. */
+function syncSelectAll(box, shownIds, set) {
+  const on = shownIds.filter((id) => set.has(id)).length;
+  box.checked = !!shownIds.length && on === shownIds.length;
+  box.indeterminate = on > 0 && on < shownIds.length;
+  box.disabled = !shownIds.length;
+}
+
+const sayFiles = (text, bad) => note('#files-note', text, bad);
+
+/** What to back up, asked: everything of yours, or one of your courses. */
+function askBackup() {
+  const active = me.isAdmin ? allCourses : profileCourses.filter((c) => !c.archived);
+  return dialog('Back up as a ZIP', (card, done) => {
+    const mine = el('input', { type: 'radio', name: 'backup-what', value: 'mine', checked: true });
+    const course = el('input', { type: 'radio', name: 'backup-what', value: 'course', disabled: !active.length });
+    const pick = el('select', { 'aria-label': 'Course', disabled: !active.length },
+      ...active.map((c) => el('option', { value: c.code }, `${COURSE(c.code)} — ${c.title}`)));
+    pick.addEventListener('change', () => { course.checked = true; });
+    const recorded = el('input', { type: 'checkbox', id: 'backup-recorded' });
+    card.classList.add('backup-dialog');
+    card.append(
+      el('fieldset', {},
+        el('label', {}, mine, 'Everything of mine: the files I added and the lectures I wrote'),
+        el('label', {}, course, 'A whole course:', active.length ? pick : el('span', { class: 'hint' }, 'you are not in any yet'))),
+      el('label', {}, recorded, 'With recorded lectures (each session\'s record, photos, annotations and recordings)'),
+      el('p', { class: 'hint' }, 'Files are in folders by course, as they were uploaded. Each lecture has its plan file, which the planner opens, and the files it uses.'),
+      el('div', { class: 'admin-actions' },
+        el('button', { type: 'button', class: 'primary', onclick: () => done(course.checked ? { courses: [pick.value], recorded: recorded.checked } : { mine: true, recorded: recorded.checked }) }, 'Back up'),
+        el('button', { type: 'button', onclick: () => done(null) }, 'Cancel')));
+  });
 }
 
 async function loadFiles() {
@@ -374,8 +420,17 @@ function wireFiles() {
   });
   const chosen = () => files.filter((f) => picked.has(f.id));
   $('#files-bulk-move').addEventListener('click', () => moveFiles(chosen().filter((f) => f.may?.move)));
-  $('#files-bulk-delete').addEventListener('click', () => deleteFiles(chosen()));
+  $('#files-bulk-delete').addEventListener('click', () => deleteFiles(chosen().filter((f) => f.may?.delete)));
   $('#files-bulk-clear').addEventListener('click', () => { picked.clear(); renderFiles(); });
+  $('#files-bulk-zip').addEventListener('click', () => runBackup({ items: [...picked] }, { title: `Download ${picked.size} file${picked.size === 1 ? '' : 's'}`, say: sayFiles }));
+  $('#files-all').addEventListener('change', (ev) => {
+    for (const f of shownFiles()) { if (ev.target.checked) picked.add(f.id); else picked.delete(f.id); }
+    renderFiles();
+  });
+  $('#files-backup').addEventListener('click', async () => {
+    const spec = await askBackup();
+    if (spec) await runBackup(spec, { title: spec.mine ? 'Everything of mine' : `${COURSE(spec.courses[0])}, the whole course`, say: sayFiles });
+  });
 }
 
 // --- Lectures (plans) -----------------------------------------------------------
@@ -384,6 +439,10 @@ function lectureRow(plan) {
   const mine = plan.ownerId === me.id;
   const small = (label, attrs) => el('button', { type: 'button', class: 'admin-small', ...attrs }, label);
   return el('div', { class: `me-row${plan.archived ? ' is-archived' : ''}`, role: 'listitem', 'data-id': String(plan.id) },
+    el('input', {
+      type: 'checkbox', 'aria-label': `Select ${plan.title}`, checked: pickedPlans.has(plan.id),
+      onchange: (ev) => { if (ev.target.checked) pickedPlans.add(plan.id); else pickedPlans.delete(plan.id); renderPlanBulk(); },
+    }),
     el('span', { class: 'fb-icon', 'aria-hidden': 'true' }, '🗂'),
     el('span', { class: 'fb-what' },
       el('span', { class: 'fb-title' }, plan.title),
@@ -396,19 +455,36 @@ function lectureRow(plan) {
     el('span', { class: 'me-actions' },
       small('Open', { title: 'Open it in the planner', 'aria-label': `Open ${plan.title} in the planner`, onclick: () => window.open(`plan.html?open=${encodeURIComponent(plan.id)}`, '_blank') }),
       small('Present', { title: 'Open it in the controller', 'aria-label': `Present ${plan.title}`, onclick: () => window.open(`control.html?plan=${encodeURIComponent(plan.id)}`, '_blank') }),
+      small('Back up', {
+        title: 'This lecture and every file it uses, as a ZIP', 'aria-label': `Back up ${plan.title} with its files`,
+        onclick: () => runBackup({ plans: [plan.id] }, { title: `“${plan.title}” and its files`, say: (t, bad) => note('#lectures-note', t, bad) }),
+      }),
       small(plan.archived ? 'Unarchive' : 'Archive', { 'aria-label': `${plan.archived ? 'Unarchive' : 'Archive'} ${plan.title}`, onclick: () => archivePlan(plan, !plan.archived) }),
       mine || me.isAdmin ? small('Delete', { class: 'admin-small is-bad', 'aria-label': `Delete ${plan.title}`, onclick: () => deletePlan(plan) }) : null));
 }
 
-function renderLectures() {
+function shownPlans() {
   const needle = $('#lectures-search').value.trim().toLowerCase();
   const archived = $('#lectures-archived').checked;
-  const shown = plans.filter((p) => (archived || !p.archived)
+  return plans.filter((p) => (archived || !p.archived)
     && (!needle || `${p.title} ${p.course || ''} ${p.owner}`.toLowerCase().includes(needle)));
+}
+
+function renderPlanBulk() {
+  for (const id of [...pickedPlans]) if (!plans.some((p) => p.id === id)) pickedPlans.delete(id);
+  $('#lectures-bulk').hidden = !pickedPlans.size;
+  $('#lectures-bulk-count').textContent = `${pickedPlans.size} selected`;
+  syncSelectAll($('#lectures-all'), shownPlans().map((p) => p.id), pickedPlans);
+}
+
+function renderLectures() {
+  const archived = $('#lectures-archived').checked;
+  const shown = shownPlans();
   const hidden = plans.filter((p) => p.archived).length;
   $('#lectures-list').replaceChildren(...(shown.length ? shown.map(lectureRow) : [el('p', { class: 'hint' },
     plans.length ? 'Nothing matches that.' : 'No lectures on the server yet. Make one in the planner.')]));
   note('#lectures-note', !archived && hidden ? `${hidden} archived lecture${hidden === 1 ? '' : 's'} not shown.` : '');
+  renderPlanBulk();
 }
 
 async function loadLectures() {
@@ -599,8 +675,17 @@ async function start() {
       : 'Used on this device, but not saved to your account. Try again in a moment.';
   });
   wireFiles();
+  if (me.isAdmin) api('/api/courses').then((d) => { allCourses = (d.courses || []).filter((c) => !c.archived); }).catch(() => {});
   $('#lectures-search').addEventListener('input', renderLectures);
   $('#lectures-archived').addEventListener('change', renderLectures);
+  $('#lectures-all').addEventListener('change', (ev) => {
+    for (const p of shownPlans()) { if (ev.target.checked) pickedPlans.add(p.id); else pickedPlans.delete(p.id); }
+    renderLectures();
+  });
+  $('#lectures-bulk-clear').addEventListener('click', () => { pickedPlans.clear(); renderLectures(); });
+  $('#lectures-bulk-zip').addEventListener('click', () => runBackup({ plans: [...pickedPlans] }, {
+    title: `${pickedPlans.size} lecture${pickedPlans.size === 1 ? '' : 's'} and their files`, say: (t, bad) => note('#lectures-note', t, bad),
+  }));
   for (const tab of $$('.me-tabs .tab')) tab.addEventListener('click', () => showTab(tab.dataset.target));
   const wanted = `panel-${location.hash.slice(1).split(':')[0]}`;
   showTab(LOADERS[wanted] ? wanted : 'panel-files');

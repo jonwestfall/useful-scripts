@@ -89,8 +89,16 @@
       <input type="file" id="upload-file" multiple hidden>
       <span class="hint" id="upload-note" role="status">…or drop them here.</span>
     </div>
+    <!-- Backups (server/backup.js): what is ticked, a course, or everything
+         of yours, as one ZIP of ordinary files in folders. -->
+    <div class="me-selectbar">
+      <label class="me-check"><input type="checkbox" id="files-all"> Select all shown</label>
+      <span class="spacer"></span>
+      <button type="button" class="admin-small" id="files-backup">Back up…</button>
+    </div>
     <div class="me-bulk" id="files-bulk" hidden>
       <span id="files-bulk-count"></span>
+      <button type="button" class="admin-small" id="files-bulk-zip">Download as ZIP</button>
       <button type="button" class="admin-small" id="files-bulk-move">Move to…</button>
       <button type="button" class="admin-small is-bad" id="files-bulk-delete">Delete</button>
       <button type="button" class="admin-small" id="files-bulk-clear">Clear</button>
@@ -103,6 +111,14 @@
     <div class="me-filters">
       <input id="lectures-search" type="search" placeholder="Search by title, class or author" aria-label="Search lectures" autocomplete="off">
       <label class="me-check"><input type="checkbox" id="lectures-archived"> Show archived</label>
+    </div>
+    <div class="me-selectbar">
+      <label class="me-check"><input type="checkbox" id="lectures-all"> Select all shown</label>
+    </div>
+    <div class="me-bulk" id="lectures-bulk" hidden>
+      <span id="lectures-bulk-count"></span>
+      <button type="button" class="admin-small" id="lectures-bulk-zip">Back up with their files (ZIP)</button>
+      <button type="button" class="admin-small" id="lectures-bulk-clear">Clear</button>
     </div>
     <div class="me-list" id="lectures-list" role="list"><p class="hint">Looking…</p></div>
     <p class="hint" id="lectures-note" role="status"></p>
