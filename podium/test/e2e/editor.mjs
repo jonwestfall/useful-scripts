@@ -3054,6 +3054,105 @@ ok(`an administrator's Files start on Mine ("${await rootPage.inputValue('#files
 await root.close();
 }
 
+if (want('My Files: backups as ZIPs, of files, lectures and courses')) {
+console.log('\n-- My Files: backups as ZIPs, of files, lectures and courses --');
+// What a ZIP the page saved holds: its entry names, read back as an unzip
+// tool would read them.
+const { createRequire } = await import('node:module');
+const yauzl = createRequire(import.meta.url)(path.join(ROOT, 'server', 'node_modules', 'yauzl'));
+const zipNames = (file) => new Promise((resolve, reject) => yauzl.open(file, { lazyEntries: true }, (err, z) => {
+  if (err) { reject(err); return; }
+  const names = [];
+  z.on('entry', (e) => { names.push(e.fileName.split('/').slice(1).join('/')); z.readEntry(); });
+  z.on('end', () => resolve(names));
+  z.on('error', reject);
+  z.readEntry();
+}));
+const saved = async (page, click) => {
+  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), click()]);
+  const file = path.join(data, `backup-${Date.now()}-${Math.random().toString(36).slice(2)}.zip`);
+  await download.saveAs(file);
+  return { file, name: download.suggestedFilename() };
+};
+
+admin('course', 'add', 'zip101', '--title', 'Zip 101');
+admin('member', 'add', 'zip101', 'owen', '--role', 'owner');
+admin('member', 'add', 'zip101', 'tia', '--role', 'member');
+const owen = await signedIn('owen');
+const page = await owen.newPage();
+trap(page, 'my files backups');
+await page.goto(`${base}/index.html`);
+const pdf = [...fs.readFileSync(path.join(ROOT, 'content', 'sample.pdf'))];
+await page.evaluate(async (bytes) => {
+  const up = async (name, title, group = '') => (await (await fetch(`/api/library/upload?filename=${name}&course=zip101&title=${encodeURIComponent(title)}&group=${encodeURIComponent(group)}`,
+    { method: 'POST', body: new Uint8Array(bytes) })).json()).item;
+  const handout = await up('zip-handout.pdf', 'Zip handout', 'Handouts');
+  await up('zip-reading.pdf', 'Zip reading');
+  await fetch('/api/plans', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Zip week 1', course: 'zip101', doc: { podium: 'plan', v: 1, title: 'Zip week 1', items: [{ id: 'a', type: 'pdf', title: 'Handout', src: handout.src, page: 1 }] } }),
+  });
+}, pdf);
+
+await page.goto(`${base}/me.html`);
+await page.selectOption('#files-show', 'all');
+await page.selectOption('#files-course', 'zip101');
+const row = (title) => page.locator('#files-list .me-row', { hasText: title });
+await row('Zip handout').waitFor({ timeout: 10000 });
+await page.check('#files-all');
+ok(`Select all shown ticks every file shown ("${await page.textContent('#files-bulk-count')}")`,
+  (await page.textContent('#files-bulk-count')) === '2 selected' && await row('Zip reading').locator('input[type=checkbox]').isChecked());
+const both = await saved(page, () => page.click('#files-bulk-zip'));
+const bothNames = await zipNames(both.file);
+ok(`Download as ZIP saves them in one file (${both.name}: ${bothNames.filter((n) => /pdf$/.test(n)).join(', ')})`,
+  /^Podium backup \d{4}-\d\d-\d\d\.zip$/.test(both.name)
+  && bothNames.includes('ZIP101 — Zip 101/Library/Handouts/zip-handout.pdf') && bothNames.includes('ZIP101 — Zip 101/Library/zip-reading.pdf'));
+ok('with a README and a manifest', bothNames.includes('README.txt') && bothNames.includes('manifest.json'));
+ok(`and the page says what it saved ("${await page.textContent('#files-note')}")`, /Downloading .*2 library items/.test(await page.textContent('#files-note')));
+await page.uncheck('#files-all');
+ok('unticking it clears them', await page.isHidden('#files-bulk'));
+
+// A lecture and everything it uses.
+await page.click('.me-tabs .tab:has-text("Lectures")');
+const lecture = page.locator('#lectures-list .me-row', { hasText: 'Zip week 1' });
+await lecture.waitFor({ timeout: 10000 });
+const one = await saved(page, () => lecture.locator('button', { hasText: 'Back up' }).click());
+const oneNames = await zipNames(one.file);
+ok(`Back up on a lecture saves it with its files (${oneNames.join(', ')})`,
+  oneNames.includes('ZIP101 — Zip 101/Lectures/Zip week 1/zip-week-1.podium.json')
+  && oneNames.includes('ZIP101 — Zip 101/Lectures/Zip week 1/files/zip-handout.pdf'));
+await lecture.locator('input[type=checkbox]').check();
+ok('lectures can be ticked to back up together', !(await page.isHidden('#lectures-bulk')) && (await page.textContent('#lectures-bulk-count')) === '1 selected');
+await lecture.locator('input[type=checkbox]').uncheck();
+
+// A TA backs up the whole course; what they cannot change is still theirs to download.
+const tia = await signedIn('tia');
+const ta = await tia.newPage();
+trap(ta, 'my files backups (tia)');
+await ta.goto(`${base}/me.html`);
+const taRow = ta.locator('#files-list .me-row', { hasText: 'Zip handout' });
+await taRow.waitFor({ timeout: 10000 });
+await taRow.locator('input[type=checkbox]').check();
+ok('a TA can tick a file they may only view, to download it', !(await ta.isHidden('#files-bulk')) && await ta.isVisible('#files-bulk-zip'));
+ok('but is not offered Move or Delete for it', await ta.isHidden('#files-bulk-move') && await ta.isHidden('#files-bulk-delete'));
+await ta.click('#files-backup');
+await ta.waitForSelector('.backup-dialog');
+await ta.check('.backup-dialog input[value=course]');
+await ta.selectOption('.backup-dialog select', 'zip101');
+await ta.check('#backup-recorded');
+const course = await saved(ta, () => ta.click('.backup-dialog button:has-text("Back up")'));
+const courseNames = await zipNames(course.file);
+ok(`Back up… a whole course: its library and its lectures (${courseNames.length} entries)`,
+  courseNames.includes('ZIP101 — Zip 101/Library/Handouts/zip-handout.pdf')
+  && courseNames.includes('ZIP101 — Zip 101/Lectures/Zip week 1/zip-week-1.podium.json'));
+ok('the lecture points at the course\'s copy rather than holding a second one',
+  !courseNames.includes('ZIP101 — Zip 101/Lectures/Zip week 1/files/zip-handout.pdf')
+  && courseNames.includes('ZIP101 — Zip 101/Lectures/Zip week 1/Files used, elsewhere in this backup.txt'));
+ok('nothing from another course', !courseNames.some((n) => /^PSY415|^MINE101/.test(n)));
+await tia.close();
+await owen.close();
+}
+
 if (want('Searching past sessions (#159)')) {
 console.log('\n-- Searching past sessions (#159) --');
 // Two recorded sessions of Owen's, written over the same API a display uses:

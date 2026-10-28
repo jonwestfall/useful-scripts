@@ -2811,6 +2811,13 @@ body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { disp
 .me-upload { padding: 8px 10px; border: 1px dashed var(--line); border-radius: 6px; font-size: 13px; }
 .me-panel.is-drop .me-upload { border-color: var(--accent); background: var(--panel-2); }
 .me-bulk { padding: 6px 10px; background: var(--panel-2); border-radius: 6px; font-size: 13px; }
+/* Select all and Back up (backup-ui.js): one line above the list. */
+.me-selectbar { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 8px; }
+.me-selectbar .spacer { flex: 1; }
+.backup-dialog fieldset { border: 0; padding: 0; margin: 0 0 10px; display: grid; gap: 8px; }
+.backup-dialog label { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.backup-dialog label select { width: auto; flex: 1; min-width: 0; }
+.backup-skipped ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--dim); max-height: 12em; overflow: auto; }
 .me-list { display: flex; flex-direction: column; gap: 4px; }
 .me-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
 .me-row.is-archived { opacity: .7; }

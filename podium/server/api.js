@@ -41,6 +41,7 @@ const mail = require('./mail.js');
 const zipImport = require('./zip-import.js');
 const zipStaging = require('./zip-staging.js');
 const doctor = require('./doctor.js');
+const backup = require('./backup.js');
 
 const COOKIE = 'podium_session';
 const KIOSK_COOKIE = 'podium_kiosk';
@@ -720,6 +721,52 @@ async function handleApi(req, res, url, ctx) {
         'cache-control': 'no-store',
       });
       res.end(docx);
+      return true;
+    }
+
+    // --- backups you can open (server/backup.js) ---------------------------
+    //
+    // POST says what to back up and gets back what it holds, how big it is,
+    // and a ticket; GET export/<ticket> is the ZIP itself, streamed.
+    if (head === 'export' && !rest.length && req.method === 'POST') {
+      const spec = await readJson(req, 256 * 1024);
+      const found = backup.collect(ctx.db, user, { dataDir: ctx.dataDir, contentDir: content.resolveRoots(ctx).contentDir }, spec);
+      if (!found.summary.items && !found.summary.plans && !found.summary.lectures) {
+        json(res, 400, { error: found.summary.skipped.length ? `nothing you can back up: ${found.summary.skipped.map((x) => `${x.what} (${x.why})`).join(', ')}` : 'there is nothing to back up there', summary: found.summary });
+        return true;
+      }
+      json(res, 200, {
+        ticket: backup.ticketFor(user, spec),
+        fileName: found.fileName,
+        zipBytes: backup.zipSize(found),
+        summary: found.summary,
+      });
+      return true;
+    }
+    if (head === 'export' && rest.length === 1 && req.method === 'GET') {
+      const spec = backup.specForTicket(user, rest[0]);
+      if (!spec) { json(res, 404, { error: 'that backup link has run out; ask for the backup again' }); return true; }
+      const found = backup.collect(ctx.db, user, { dataDir: ctx.dataDir, contentDir: content.resolveRoots(ctx).contentDir }, spec);
+      auditLog(ctx, req, user, 'backup_exported', {
+        items: found.summary.items, plans: found.summary.plans, lectures: found.summary.lectures, bytes: found.summary.bytes,
+        ...(spec.everything ? { everything: true } : {}), ...(Array.isArray(spec.courses) && spec.courses.length ? { courses: spec.courses.slice(0, 50) } : {}),
+      });
+      res.writeHead(200, {
+        'content-type': 'application/zip',
+        'content-length': backup.zipSize(found),
+        'content-disposition': `attachment; filename="${found.fileName.replace(/[^\x20-\x7e]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(found.fileName)}`,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      try {
+        await backup.writeZip(res, found);
+        res.end();
+      } catch (err) {
+        // Headers are gone: all that is left is to cut the download short, so
+        // the browser says it failed rather than keeping a broken file.
+        if (!err.aborted) console.error(`podium: backup download failed (${err.message})`);
+        res.destroy();
+      }
       return true;
     }
 
