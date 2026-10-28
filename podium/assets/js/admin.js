@@ -23,6 +23,7 @@ import { wordKind, uploadWordFile } from './word-upload.js';
 import { mountSessionSearch } from './session-search.js';
 import { replayUrl } from './replay-model.js';
 import { uploadToLibrary } from './library-upload.js';
+import { runBackup } from './backup-ui.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -1461,6 +1462,14 @@ function sayLectures(text, bad = false) {
   note.classList.toggle('is-bad', !!bad);
 }
 
+const lecturePicked = new Set();
+
+function renderLectureBulk() {
+  for (const id of [...lecturePicked]) if (!serverLectures.some((p) => p.id === id)) lecturePicked.delete(id);
+  $('#lectures-bulk').hidden = !lecturePicked.size;
+  $('#lectures-bulk-count').textContent = `${lecturePicked.size} selected`;
+}
+
 async function refreshLectures() {
   try {
     const res = await fetch('/api/plans', { credentials: 'same-origin' });
@@ -1499,7 +1508,10 @@ function renderLectures() {
         el('option', { value: '' }, NO_CLASS),
         ...classes.map((c) => el('option', { value: c.code }, c.code)));
       pick.value = p.course || '';
+      const tick = el('input', { type: 'checkbox', 'aria-label': `Select ${p.title}`, checked: lecturePicked.has(p.id) });
+      tick.addEventListener('change', () => { if (tick.checked) lecturePicked.add(p.id); else lecturePicked.delete(p.id); renderLectureBulk(); });
       holder.append(el('div', { class: 'admin-row lecture-row' },
+        tick,
         el('span', { class: 'admin-title' }, p.title),
         el('span', { class: 'admin-meta' },
           [p.owner || 'unknown author', `saved ${new Date(p.updatedAt).toLocaleString()}`].join(' · ')),
@@ -1507,6 +1519,7 @@ function renderLectures() {
         pick));
     }
   }
+  renderLectureBulk();
 }
 
 async function fileLecture(p, code, select) {
@@ -1579,6 +1592,211 @@ function renderStoragePressure(disk) {
     ? `Low disk space: only ${bytes(disk.free)} free (${share}%) on this box. Free some up soon - a full disk stops logins before anything else.`
     : `Disk space is getting tight: ${bytes(disk.free)} free (${share}%) on this box. Worth a look before it becomes urgent.`;
   banner.hidden = false;
+}
+
+// --- space: where the disk went, backups, clearing out -----------------------
+//
+// server/space.js measures; server/backup.js packs. The Storage tab shows
+// what the server holds by kind, by course and by person, frees what nothing
+// uses, and - the end-of-term job - backs courses up and then takes their
+// files off the server.
+
+let spaceReport = null;
+const spacePicked = new Set();          // course codes; '' is No course
+const sizeOrDash = (n) => (n ? bytes(n) : '—');
+const courseName = (c) => (c.code ? c.code.toUpperCase() : 'No course');
+const SPACE_KINDS = [
+  ['library', 'Library files', 'Everything in the library now, deck pictures included.', '#5b8def'],
+  ['sessions', 'Recorded lecture files', 'Photos, annotations and recordings kept with sessions.', '#b07cd8'],
+  ['revisions', 'Earlier versions of decks', 'Kept so a deck can go back: the newest 20 of each.', '#6aa36f'],
+  ['deleted', 'Deleted from the library', 'Still on disk until it is freed below.', '#e0a33a', true],
+  ['unused', 'Not used by anything', 'Stored files nothing points at any more.', '#e06c5a', true],
+];
+
+function saySpace(text, bad = false) {
+  $('#space-note').textContent = text || '';
+  $('#space-note').classList.toggle('is-bad', !!bad);
+}
+
+async function refreshSpace() {
+  try {
+    const res = await fetch('/api/space', { credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `the server said ${res.status}`);
+    spaceReport = body;
+  } catch (err) {
+    $('#space-disk').textContent = `Could not measure: ${err.message}`;
+    return;
+  }
+  renderSpace();
+}
+
+function renderSpace() {
+  const r = spaceReport;
+  const held = SPACE_KINDS.reduce((n, [key]) => n + r.kinds[key].bytes, 0) + r.database;
+  $('#space-disk').textContent = r.disk?.ok
+    ? `${bytes(r.disk.total - r.disk.free)} used of ${bytes(r.disk.total)} on this disk, ${bytes(r.disk.free)} free. Podium's own: ${bytes(held)}, under ${r.dataDir}.`
+    : `Podium's own: ${bytes(held)}, under ${r.dataDir}.`;
+  const bar = $('#space-bar');
+  // What Podium's own share is made of; the disk as a whole is in the line above.
+  const whole = held || 1;
+  bar.replaceChildren(...SPACE_KINDS.map(([key, , , colour]) => el('span', {
+    style: `width:${(100 * r.kinds[key].bytes / whole).toFixed(2)}%;background:${colour}`,
+  })), el('span', { style: `width:${(100 * r.database / whole).toFixed(2)}%;background:var(--dim)` }));
+  bar.hidden = !held;
+
+  $('#space-kinds').replaceChildren(
+    el('tr', {}, el('th', {}, 'What'), el('th', { class: 'num' }, 'Files'), el('th', { class: 'num' }, 'Size')),
+    ...SPACE_KINDS.map(([key, label, sub, colour, spare]) => el('tr', { class: spare && r.kinds[key].bytes ? 'is-spare' : '' },
+      el('td', {}, el('span', { class: 'space-swatch', style: `background:${colour}` }), label, el('span', { class: 'space-sub' }, sub)),
+      el('td', { class: 'num' }, String(r.kinds[key].files)),
+      el('td', { class: 'num' }, sizeOrDash(r.kinds[key].bytes)))),
+    el('tr', {}, el('td', {}, el('span', { class: 'space-swatch', style: 'background:var(--dim)' }), 'Database',
+      el('span', { class: 'space-sub' }, 'Accounts, courses, lectures, timelines, attendance.')), el('td', { class: 'num' }, ''), el('td', { class: 'num' }, sizeOrDash(r.database))),
+    ...(r.content ? [el('tr', {}, el('td', {}, 'Global content folder', el('span', { class: 'space-sub' }, 'Global Content: the shipped library, themes and pre-load files.')),
+      el('td', { class: 'num' }, ''), el('td', { class: 'num' }, bytes(r.content)))] : []));
+
+  // The row stays while it has something to say, even once there is nothing left to free.
+  $('#space-tidy').hidden = !r.reclaimable.bytes;
+  $('#space-tidy-row').hidden = !r.reclaimable.bytes && !$('#space-tidy-note').textContent;
+  $('#space-tidy').textContent = `Free ${bytes(r.reclaimable.bytes)}`;
+
+  const all = el('input', { type: 'checkbox', 'aria-label': 'Select every course' });
+  const codes = r.courses.map((c) => c.code || '');
+  all.checked = codes.length > 0 && codes.every((c) => spacePicked.has(c));
+  all.indeterminate = !all.checked && codes.some((c) => spacePicked.has(c));
+  all.addEventListener('change', () => { for (const c of codes) { if (all.checked) spacePicked.add(c); else spacePicked.delete(c); } renderSpace(); });
+  $('#space-courses').replaceChildren(
+    el('tr', {}, el('th', {}, all), el('th', {}, 'Course'), el('th', { class: 'num' }, 'Library'), el('th', { class: 'num space-wide' }, 'Lectures'),
+      el('th', { class: 'num' }, 'Recorded'), el('th', { class: 'num space-wide' }, 'Last used'), el('th', { class: 'num' }, 'Frees')),
+    ...(r.courses.length ? r.courses.map((c) => {
+      const code = c.code || '';
+      const pick = el('input', { type: 'checkbox', 'aria-label': `Select ${courseName(c)}`, checked: spacePicked.has(code) });
+      pick.addEventListener('change', () => { if (pick.checked) spacePicked.add(code); else spacePicked.delete(code); renderSpace(); });
+      return el('tr', { 'data-course': code },
+        el('td', {}, pick),
+        el('td', {}, `${courseName(c)}${c.archived ? ' (archived)' : ''}`, el('span', { class: 'space-sub' }, c.code ? c.title : 'Library items filed under no course')),
+        el('td', { class: 'num' }, `${c.items} · ${sizeOrDash(c.libraryBytes)}`),
+        el('td', { class: 'num space-wide' }, String(c.plans)),
+        el('td', { class: 'num' }, `${c.lectures} · ${sizeOrDash(c.sessionBytes)}`),
+        el('td', { class: 'num space-wide' }, c.lastUsed ? new Date(c.lastUsed).toLocaleDateString() : '—'),
+        el('td', { class: 'num', title: c.sharedBytes ? `${bytes(c.sharedBytes)} more is also used by another course, so it stays` : '' }, sizeOrDash(c.freesBytes)));
+    }) : [el('tr', {}, el('td', { colspan: '7', class: 'hint' }, 'Nothing stored yet.'))]));
+  $('#space-bulk').hidden = !spacePicked.size;
+  $('#space-bulk-count').textContent = `${spacePicked.size} selected`;
+
+  $('#space-people').replaceChildren(
+    el('tr', {}, el('th', {}, 'Person'), el('th', { class: 'num' }, 'Library items'), el('th', { class: 'num' }, 'Lectures'), el('th', { class: 'num' }, 'Stored')),
+    ...(r.people.length ? r.people.map((p) => el('tr', {},
+      el('td', {}, p.name || p.username, p.name ? el('span', { class: 'space-sub' }, p.username) : null),
+      el('td', { class: 'num' }, String(p.items)), el('td', { class: 'num' }, String(p.plans)), el('td', { class: 'num' }, sizeOrDash(p.bytes))))
+      : [el('tr', {}, el('td', { colspan: '4', class: 'hint' }, 'Nobody has stored anything yet.'))]));
+}
+
+async function tidySpace() {
+  const r = spaceReport.reclaimable;
+  if (!confirm(`Free ${bytes(r.bytes)}? Library items deleted earlier are then gone for good, with the files nothing else uses, and stored files nothing points at are removed.`)) return;
+  $('#space-tidy').disabled = true;
+  try {
+    const res = await fetch('/api/space/tidy', { method: 'POST', credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `the server said ${res.status}`);
+    $('#space-tidy-note').textContent = `Freed ${sizeOrDash(body.bytes)} (${body.files} file${body.files === 1 ? '' : 's'}).`;
+    await refreshSpace();
+  } catch (err) {
+    $('#space-tidy-note').textContent = `Not freed: ${err.message}`;
+  } finally {
+    $('#space-tidy').disabled = false;
+  }
+}
+
+/** A backup spec for chosen courses ('' is the library items filed under no course). */
+const courseSpec = (codes, recorded) => ({
+  courses: codes.filter(Boolean), ...(codes.includes('') ? { noCourse: true } : {}), recorded,
+});
+
+/**
+ * The end-of-term job: back the chosen courses up, then take their files off
+ * the server. The server will not remove them until it has seen this person
+ * download a backup of them to the end, unless told none is wanted.
+ */
+function removeCourses(codes) {
+  const rows = spaceReport.courses.filter((c) => codes.includes(c.code || ''));
+  const label = rows.map(courseName).join(', ');
+  const frees = rows.reduce((n, c) => n + c.freesBytes, 0);
+  const count = (key) => rows.reduce((n, c) => n + c[key], 0);
+  const box = (label2, checked = true, disabled = false) => {
+    const input = el('input', { type: 'checkbox', checked, disabled });
+    return { input, row: el('label', {}, input, label2) };
+  };
+  const lib = box(`Library files (${count('items')})`);
+  const lectures = box(`Lectures, their plans (${count('plans')})`, true, !rows.some((c) => c.code));
+  const recorded = box(`Recorded lectures (${count('lectures')})`, true, !rows.some((c) => c.code));
+  const archive = box('Archive the course afterwards, so it is out of everyone\'s lists', true, !rows.some((c) => c.code));
+  const status = el('p', { class: 'hint', role: 'status' });
+  const typed = el('input', { type: 'text', autocomplete: 'off', 'aria-label': 'Type REMOVE to confirm', placeholder: 'REMOVE' });
+  const noBackup = box('I don\'t need a backup', false);
+  const go = el('button', { type: 'button', class: 'is-bad', disabled: true }, 'Remove from the server');
+  const sync = () => { go.disabled = typed.value.trim().toUpperCase() !== 'REMOVE' || (!lib.input.checked && !lectures.input.checked && !recorded.input.checked); };
+  typed.addEventListener('input', sync);
+  for (const b of [lib, lectures, recorded]) b.input.addEventListener('change', sync);
+  const card = el('div', { class: 'deck-dialog-card me-dialog backup-dialog space-confirm', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Remove ${label}` },
+    el('h2', {}, `Remove ${label} from the server`),
+    el('p', {}, `Frees about ${bytes(frees)}. A file another course also uses stays.`),
+    el('fieldset', {}, lib.row, lectures.row, recorded.row, archive.row),
+    el('p', {}, el('b', {}, '1. '), el('button', {
+      type: 'button',
+      onclick: () => runBackup(courseSpec(codes, recorded.input.checked), { title: `Back up ${label}`, say: (t, bad) => { status.textContent = t ? `${t} Remove once your browser says it has finished.` : ''; status.classList.toggle('is-bad', !!bad); } }),
+    }, 'Download a backup first')),
+    el('p', {}, el('b', {}, '2. '), 'Type REMOVE to confirm:'), typed, noBackup.row, status);
+  const wrap = el('div', { class: 'deck-dialog' }, card);
+  const close = () => wrap.remove();
+  go.addEventListener('click', async () => {
+    go.disabled = true;
+    status.classList.remove('is-bad');
+    status.textContent = 'Removing…';
+    try {
+      const res = await fetch('/api/space/remove', {
+        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          courses: codes, library: lib.input.checked, plans: lectures.input.checked, recorded: recorded.input.checked,
+          archive: archive.input.checked, withoutBackup: noBackup.input.checked,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 409 && body.needsBackup) {
+        throw new Error('Podium has not seen you finish downloading a backup of these yet. Wait until the download has finished, or tick “I don\'t need a backup”.');
+      }
+      if (!res.ok) throw new Error(body.error || `the server said ${res.status}`);
+      close();
+      for (const c of codes) spacePicked.delete(c);
+      saySpace(`Removed ${label}: ${body.items} library item${body.items === 1 ? '' : 's'}, ${body.plans} lecture${body.plans === 1 ? '' : 's'}, ${body.lectures} recorded lecture${body.lectures === 1 ? '' : 's'}; freed ${sizeOrDash(body.bytes)}.${body.archived.length ? ` Archived ${body.archived.map((c) => c.toUpperCase()).join(', ')}.` : ''}`);
+      // Its lectures are gone from the Lectures tab too.
+      await Promise.all([refreshSpace(), refreshCourses(), refreshStorage(), $('#tab-lectures').hidden ? null : refreshLectures()]);
+    } catch (err) {
+      status.classList.add('is-bad');
+      status.textContent = err.message;
+      sync();
+    }
+  });
+  card.append(el('div', { class: 'admin-actions' }, go, el('button', { type: 'button', onclick: close }, 'Cancel')));
+  wrap.addEventListener('click', (ev) => { if (ev.target === wrap) close(); });
+  wrap.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') close(); });
+  document.body.append(wrap);
+  typed.focus();
+}
+
+function wireSpace() {
+  $('#space-refresh').addEventListener('click', refreshSpace);
+  $('#space-tidy').addEventListener('click', tidySpace);
+  $('#space-backup-all').addEventListener('click', () => runBackup({ everything: true, noCourse: true, recorded: $('#space-recorded').checked },
+    { title: 'The whole server', say: saySpace }));
+  $('#space-bulk-backup').addEventListener('click', () => runBackup(courseSpec([...spacePicked], $('#space-recorded').checked),
+    { title: `${spacePicked.size} course${spacePicked.size === 1 ? '' : 's'}`, say: saySpace }));
+  $('#space-bulk-remove').addEventListener('click', () => removeCourses([...spacePicked]));
+  $('#space-bulk-clear').addEventListener('click', () => { spacePicked.clear(); renderSpace(); });
+  // Measured when the tab is first opened: on a big server it reads every row.
+  $('#tab-storage').addEventListener('click', () => { if (!spaceReport) refreshSpace(); }, { once: true });
 }
 
 // --- health: podium-admin doctor, from the browser -------------------------------
@@ -3047,6 +3265,7 @@ if (!info.features.includes('library')) {
       $('#people-search').addEventListener('input', renderPeople);
       $('#new-user-go').addEventListener('click', addPerson);
       $('#backup-go').addEventListener('click', downloadBackup);
+      wireSpace();
       $('#allow-poll-names-check')?.addEventListener('change', updateAllowPollNames);
       $('#max-zip-upload-mb')?.addEventListener('change', updateMaxZipUpload);
       $('#screen-video-check')?.addEventListener('change', (ev) => updateScreenVideo({ screenVideo: ev.target.checked }));
@@ -3068,6 +3287,10 @@ if (!info.features.includes('library')) {
   if (info.features.includes('plans') && me?.isAdmin) {
     $('#tab-lectures').hidden = false;
     $('#lectures-search').addEventListener('input', renderLectures);
+    $('#lectures-bulk-clear').addEventListener('click', () => { lecturePicked.clear(); renderLectures(); renderLectureBulk(); });
+    $('#lectures-bulk-zip').addEventListener('click', () => runBackup({ plans: [...lecturePicked] }, {
+      title: `${lecturePicked.size} lecture${lecturePicked.size === 1 ? '' : 's'} and their files`, say: sayLectures,
+    }));
     await refreshLectures();
   }
 
