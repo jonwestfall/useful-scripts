@@ -381,4 +381,33 @@ function specForTicket(user, key) {
   return t.spec;
 }
 
-module.exports = { collect, zipSize, writeZip, ticketFor, specForTicket, MEDIA_REF, DECK_REF };
+// --- what has been backed up lately ------------------------------------------
+//
+// Removing a course's files (space.js) is meant to come after backing them
+// up, so a backup that was downloaded to the end is remembered, for a day,
+// by who took it and what it covered. Kept in memory on purpose: after a
+// restart the removal simply asks for a backup again (or to be told none is
+// wanted), which is the safe way round.
+
+const DONE_MS = 24 * 60 * 60 * 1000;
+let done = [];
+
+function noteBackedUp(user, spec) {
+  const now = Date.now();
+  done = done.filter((d) => now - d.at < DONE_MS).slice(-200);
+  done.push({
+    userId: user.id, at: now, everything: !!spec.everything, recorded: !!spec.recorded,
+    courses: new Set((spec.courses || []).map((c) => String(c).trim().toLowerCase())),
+    noCourse: !!(spec.noCourse || spec.everything),
+  });
+}
+
+/** Whether this person downloaded, in the last day, a backup holding all of these courses ('' is No course). */
+function backedUp(user, codes, { recorded = false } = {}) {
+  const now = Date.now();
+  return codes.map((c) => String(c ?? '').trim().toLowerCase()).every((code) => done.some((d) => d.userId === user.id
+    && now - d.at < DONE_MS && (!recorded || d.recorded)
+    && (d.everything || (code === '' ? d.noCourse : d.courses.has(code)))));
+}
+
+module.exports = { collect, zipSize, writeZip, ticketFor, specForTicket, noteBackedUp, backedUp, MEDIA_REF, DECK_REF };

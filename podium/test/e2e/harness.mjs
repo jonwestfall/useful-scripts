@@ -558,6 +558,8 @@ const expecting = {
   attendRefused: false,
   // The live browser: a page that refuses framing, embedded on purpose.
   frameRefused: false,
+  // Admin › Storage: removing a course before backing it up, refused (409) on purpose.
+  removeNeedsBackup: false,
 };
 
 const trap = (page, tag) => {
@@ -620,6 +622,7 @@ const trap = (page, tag) => {
     if (expecting.lectureNotFound && /responded with a status of 404/.test(text)) return;
     if (expecting.wordRefused && /responded with a status of 4(15|22)/.test(text)) return;
     if (expecting.rosterConflict && /responded with a status of 409/.test(text)) return;
+    if (expecting.removeNeedsBackup && /responded with a status of 409/.test(text)) return;
     if (expecting.attendRefused && /responded with a status of 40[34]/.test(text)) return;
     if (expecting.kioskOffscopeWarm && KIOSK_OFFSCOPE_WARM.test(text)) return;
     if (expecting.viewerRefused && /responded with a status of 401/.test(text)) return;

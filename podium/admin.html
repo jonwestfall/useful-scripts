@@ -234,6 +234,11 @@
       <h2>Lectures</h2>
       <input id="lectures-search" type="search" placeholder="Filter by title, author or class" aria-label="Filter lectures">
     </div>
+    <div class="me-bulk" id="lectures-bulk" hidden>
+      <span id="lectures-bulk-count"></span>
+      <button type="button" class="admin-small" id="lectures-bulk-zip">Back up with their files (ZIP)</button>
+      <button type="button" class="admin-small" id="lectures-bulk-clear">Clear</button>
+    </div>
     <div id="lectures"></div>
     <span class="hint" id="lectures-note" role="status"></span>
   </section>
@@ -573,8 +578,53 @@
   <!-- What the box is holding, and the one button that gets a copy of it out.
        Administrators only. -->
   <div class="admin-panel" id="panel-storage" hidden>
+  <!-- Where the disk went, and getting it back (server/space.js), and backups
+       you can open (server/backup.js): the whole server, or chosen courses,
+       as a ZIP of ordinary files in folders - then, at the end of a term,
+       their files taken off the server. -->
+  <section class="card" id="space-card">
+    <div class="admin-head">
+      <h2>Space used</h2>
+      <button type="button" class="admin-small" id="space-refresh">Look again</button>
+    </div>
+    <p class="hint" id="space-disk"></p>
+    <div class="space-bar" id="space-bar" aria-hidden="true"></div>
+    <table class="space-table" id="space-kinds"></table>
+    <div class="admin-actions" id="space-tidy-row" hidden>
+      <button type="button" id="space-tidy">Free this space</button>
+      <span class="hint" id="space-tidy-note" role="status"></span>
+    </div>
+  </section>
+  <section class="card" id="space-courses-card">
+    <div class="admin-head">
+      <h2>Back up and clear out</h2>
+    </div>
+    <p class="hint">
+      A backup is a ZIP of ordinary files: a folder per course with its library, its lectures
+      (each plan file and the files it uses) and, if you include them, its recorded lectures.
+      At the end of a term, back a course up and then take its files off the server.
+      “Frees” is what removing a course would give back: not files another course also uses.
+    </p>
+    <div class="admin-actions">
+      <button type="button" id="space-backup-all">Back up the whole server (ZIP)</button>
+      <label class="check"><input type="checkbox" id="space-recorded" checked> With recorded lectures</label>
+      <span class="hint" id="space-note" role="status"></span>
+    </div>
+    <table class="space-table space-courses" id="space-courses"></table>
+    <div class="me-bulk" id="space-bulk" hidden>
+      <span id="space-bulk-count"></span>
+      <button type="button" class="admin-small" id="space-bulk-backup">Back up (ZIP)</button>
+      <button type="button" class="admin-small is-bad" id="space-bulk-remove">Back up and remove…</button>
+      <button type="button" class="admin-small" id="space-bulk-clear">Clear</button>
+    </div>
+  </section>
+  <section class="card" id="space-people-card">
+    <h2>People</h2>
+    <p class="hint">Who has the most on the server: the files they added, and the files kept by lectures they ran.</p>
+    <table class="space-table" id="space-people"></table>
+  </section>
   <section class="card" id="storage-card">
-    <h2>Storage</h2>
+    <h2>Database copy</h2>
     <p class="hint" id="storage-note"></p>
     <div class="admin-actions">
       <button id="backup-go" type="button">Download a copy of the database</button>

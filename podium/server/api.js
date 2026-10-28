@@ -42,6 +42,7 @@ const zipImport = require('./zip-import.js');
 const zipStaging = require('./zip-staging.js');
 const doctor = require('./doctor.js');
 const backup = require('./backup.js');
+const space = require('./space.js');
 
 const COOKIE = 'podium_session';
 const KIOSK_COOKIE = 'podium_kiosk';
@@ -698,6 +699,36 @@ async function handleApi(req, res, url, ctx) {
 
     // --- what the box is holding -------------------------------------------
 
+    // Where the disk went, and getting it back (server/space.js).
+    if (head === 'space') {
+      if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can see or change this' }); return true; }
+      if (!rest.length && req.method === 'GET') {
+        json(res, 200, space.report(ctx.db, { dataDir: ctx.dataDir, contentDir: content.resolveRoots(ctx).contentDir }));
+        return true;
+      }
+      if (rest.length === 1 && rest[0] === 'tidy' && req.method === 'POST') {
+        const result = space.tidy(ctx.db, ctx.dataDir);
+        auditLog(ctx, req, user, 'storage_tidied', result);
+        json(res, 200, result);
+        return true;
+      }
+      if (rest.length === 1 && rest[0] === 'remove' && req.method === 'POST') {
+        const body = await readJson(req, 64 * 1024);
+        const codes = Array.isArray(body.courses) ? body.courses.map((c) => String(c ?? '')) : [];
+        const what = { library: body.library !== false, plans: body.plans !== false, recorded: body.recorded !== false, archive: !!body.archive };
+        // Back up first: the page does it in the same dialog, and this is
+        // what holds if anything else asks.
+        if (!body.withoutBackup && !backup.backedUp(user, codes, { recorded: what.recorded })) {
+          json(res, 409, { error: 'download a backup of these courses first (or say you do not need one)', needsBackup: true });
+          return true;
+        }
+        const result = space.remove(ctx.db, user, ctx.dataDir, { courses: codes, ...what });
+        auditLog(ctx, req, user, 'storage_removed', { courses: codes.slice(0, 50), ...what, withoutBackup: !!body.withoutBackup, ...result });
+        json(res, 200, result);
+        return true;
+      }
+    }
+
     if (head === 'storage' && req.method === 'GET') {
       if (!user.isAdmin) { json(res, 403, { error: 'only an administrator can see this' }); return true; }
       json(res, 200, storageReport(ctx));
@@ -761,6 +792,7 @@ async function handleApi(req, res, url, ctx) {
       try {
         await backup.writeZip(res, found);
         res.end();
+        backup.noteBackedUp(user, spec);
       } catch (err) {
         // Headers are gone: all that is left is to cut the download short, so
         // the browser says it failed rather than keeping a broken file.

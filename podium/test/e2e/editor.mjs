@@ -3153,6 +3153,122 @@ await tia.close();
 await owen.close();
 }
 
+if (want('Admin › Storage: space used, backing up and clearing out a term')) {
+console.log('\n-- Admin › Storage: space used, backing up and clearing out a term --');
+const { createRequire } = await import('node:module');
+const yauzl = createRequire(import.meta.url)(path.join(ROOT, 'server', 'node_modules', 'yauzl'));
+const zipNames = (file) => new Promise((resolve, reject) => yauzl.open(file, { lazyEntries: true }, (err, z) => {
+  if (err) { reject(err); return; }
+  const names = [];
+  z.on('entry', (e) => { names.push(e.fileName.split('/').slice(1).join('/')); z.readEntry(); });
+  z.on('end', () => resolve(names));
+  z.readEntry();
+}));
+const saved = async (page, click) => {
+  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), click()])
+    .catch(async (err) => { throw new Error(`no download (${await page.textContent('#space-note').catch(() => '')}): ${err.message}`); });
+  const file = path.join(data, `admin-backup-${Date.now()}.zip`);
+  await download.saveAs(file);
+  return file;
+};
+
+admin('course', 'add', 'term1', '--title', 'Last term');
+admin('member', 'add', 'term1', 'owen', '--role', 'owner');
+const owen = await signedIn('owen');
+const desk = await owen.newPage();
+trap(desk, 'storage setup');
+await desk.goto(`${base}/index.html`);
+await desk.evaluate(async (bytes) => {
+  const up = async (name, title) => (await (await fetch(`/api/library/upload?filename=${name}&course=term1&title=${encodeURIComponent(title)}`,
+    { method: 'POST', body: new Uint8Array(bytes) })).json()).item;
+  const kept = await up('term1-notes.pdf', 'Term notes');
+  // Different bytes, so deleting it frees something.
+  const gone = await (await fetch('/api/library/upload?filename=term1-old.md&course=term1&title=Old%20draft',
+    { method: 'POST', body: '# An old draft\n\nnobody needs this now\n' })).json();
+  await fetch(`/api/library/${gone.item.id}`, { method: 'DELETE' });
+  await fetch('/api/plans', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Term week 1', course: 'term1', doc: { podium: 'plan', v: 1, title: 'Term week 1', items: [{ id: 'a', type: 'pdf', title: 'Notes', src: kept.src, page: 1 }] } }),
+  });
+}, [...fs.readFileSync(path.join(ROOT, 'content', 'sample.pdf'))].map((b, i) => (i === 400 ? (b + 7) % 256 : b)));
+await owen.close();
+
+const root = await signedIn('root');
+const page = await root.newPage();
+trap(page, 'admin storage');
+await page.goto(`${base}/admin.html`);
+await page.click('#tab-storage');
+await page.waitForSelector('#space-courses tr[data-course="term1"]', { timeout: 15000 });
+const termRow = page.locator('#space-courses tr[data-course="term1"]');
+ok(`the course is listed with its library, lectures and what removing it frees ("${(await termRow.textContent()).replace(/\s+/g, ' ')}")`,
+  /TERM1/.test(await termRow.textContent()) && /1 · \d+ KB/.test(await termRow.textContent()));
+ok(`space used is shown by kind (${await page.locator('#space-kinds tr').count()} rows)`,
+  /Library files/.test(await page.textContent('#space-kinds')) && /Database/.test(await page.textContent('#space-kinds')));
+ok(`a deleted file still on disk is counted as spare ("${await page.locator('#space-kinds tr.is-spare').first().textContent().catch(() => '')}")`,
+  await page.locator('#space-kinds tr.is-spare').count() >= 1);
+ok(`and can be freed ("${await page.textContent('#space-tidy')}")`, await page.isVisible('#space-tidy') && /^Free [\d.]+ (KB|MB|GB)$/.test(await page.textContent('#space-tidy')));
+page.once('dialog', (d) => d.accept());
+await page.click('#space-tidy');
+await page.waitForFunction(() => /Freed/.test(document.querySelector('#space-tidy-note').textContent), null, { timeout: 10000 }).catch(() => {});
+ok(`Free takes it back ("${await page.textContent('#space-tidy-note')}")`, /Freed [\d.]+ (KB|MB|GB)/.test(await page.textContent('#space-tidy-note')));
+ok('owen is among the people with files', /Owen Owner/.test(await page.textContent('#space-people')));
+
+// Back up the term, then clear it out.
+await termRow.locator('input[type=checkbox]').check();
+ok('ticking a course offers Back up and Back up and remove', await page.isVisible('#space-bulk-backup') && await page.isVisible('#space-bulk-remove'));
+await page.click('#space-bulk-remove');
+await page.waitForSelector('.space-confirm');
+await page.fill('.space-confirm input[type=text]', 'remove');
+expecting.removeNeedsBackup = true;
+await page.click('.space-confirm button:has-text("Remove from the server")');
+await page.waitForFunction(() => /has not seen you finish downloading/.test(document.querySelector('.space-confirm [role=status]')?.textContent || ''), null, { timeout: 10000 })
+  .then(() => ok('removing without a backup first is refused, and says why', true))
+  .catch(async () => ok(`removing without a backup first is refused ("${await page.textContent('.space-confirm [role=status]').catch(() => '')}")`, false));
+expecting.removeNeedsBackup = false;
+const file = await saved(page, () => page.click('.space-confirm button:has-text("Download a backup first")'));
+const names = await zipNames(file);
+ok(`the backup in that dialog holds the term (${names.filter((n) => /^TERM1/.test(n)).join(', ')})`,
+  names.includes('TERM1 — Last term/Library/term1-notes.pdf') && names.includes('TERM1 — Last term/Lectures/Term week 1/term-week-1.podium.json'));
+await page.click('.space-confirm button:has-text("Remove from the server")');
+await page.waitForSelector('.space-confirm', { state: 'detached', timeout: 10000 }).catch(() => {});
+ok(`once it has been downloaded, the term comes off the server ("${await page.textContent('#space-note')}")`,
+  /Removed TERM1: 1 library item, 1 lecture/.test(await page.textContent('#space-note')) && /Archived TERM1/.test(await page.textContent('#space-note')));
+await page.waitForFunction(() => /0 · —/.test(document.querySelector('#space-courses tr[data-course="term1"]')?.textContent || ''), null, { timeout: 10000 }).catch(() => {});
+ok('and its row says it holds nothing now', /\(archived\)/.test(await termRow.textContent()) && /0 · —/.test(await termRow.textContent()));
+ok('its files are gone from the library', !(await page.evaluate(() => fetch('/api/library').then((r) => r.json())))
+  .items.some((i) => i.course === 'term1'));
+
+// The whole server, and chosen lectures from the Lectures tab.
+await page.evaluate(async (bytes) => {
+  await fetch('/api/library/upload?filename=psy-handout.pdf&course=psy415&title=PSY%20handout', { method: 'POST', body: new Uint8Array(bytes) });
+  await fetch('/api/plans', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Kept lecture', course: 'psy415', doc: { podium: 'plan', v: 1, title: 'Kept lecture', items: [] } }),
+  });
+}, [...fs.readFileSync(path.join(ROOT, 'content', 'sample.pdf'))]);
+// A whole server may have something to leave out (a file missing from
+// disk, say): then it says so first, and Download goes on.
+const everything = await zipNames(await saved(page, async () => {
+  await page.click('#space-backup-all');
+  const asked = await page.waitForSelector('.backup-confirm', { timeout: 3000 }).catch(() => null);
+  if (asked) {
+    console.log(`     (the backup said first: ${(await asked.textContent()).replace(/\s+/g, ' ').slice(0, 300)})`);
+    await page.click('.backup-confirm button:has-text("Download")');
+  }
+}));
+ok(`Back up the whole server holds every course (${[...new Set(everything.map((n) => n.split('/')[0]))].join(', ')})`,
+  everything.some((n) => n.startsWith('PSY415 — PSY 415/')) && everything.includes('manifest.json'));
+await page.reload();
+await page.click('#tab-lectures');
+const lectureRow = page.locator('#lectures .lecture-row', { hasText: 'Kept lecture' });
+await lectureRow.waitFor({ timeout: 10000 });
+await lectureRow.locator('input[type=checkbox]').check();
+const picked = await zipNames(await saved(page, () => page.click('#lectures-bulk-zip')));
+ok(`ticked lectures back up with their files (${picked.filter((n) => /podium\.json$/.test(n)).length} plan file)`,
+  picked.filter((n) => /podium\.json$/.test(n)).length === 1);
+await root.close();
+}
+
 if (want('Searching past sessions (#159)')) {
 console.log('\n-- Searching past sessions (#159) --');
 // Two recorded sessions of Owen's, written over the same API a display uses:

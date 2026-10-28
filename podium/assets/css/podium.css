@@ -2811,6 +2811,18 @@ body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { disp
 .me-upload { padding: 8px 10px; border: 1px dashed var(--line); border-radius: 6px; font-size: 13px; }
 .me-panel.is-drop .me-upload { border-color: var(--accent); background: var(--panel-2); }
 .me-bulk { padding: 6px 10px; background: var(--panel-2); border-radius: 6px; font-size: 13px; }
+/* Admin › Storage (server/space.js). */
+.space-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.space-table th, .space-table td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: middle; }
+.space-table th { color: var(--dim); font-weight: 600; font-size: 12px; }
+.space-table td.num, .space-table th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.space-table tr.is-spare td { color: var(--cue); }
+.space-table .space-sub { display: block; color: var(--dim); font-size: 12px; }
+.space-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--panel-2); margin: 6px 0 4px; }
+.space-bar span { display: block; height: 100%; }
+.space-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.space-confirm input[type=text] { width: 100%; }
+@media (max-width: 640px) { .space-courses .space-wide { display: none; } }
 /* Select all and Back up (backup-ui.js): one line above the list. */
 .me-selectbar { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 8px; }
 .me-selectbar .spacer { flex: 1; }
