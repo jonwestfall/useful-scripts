@@ -13,10 +13,14 @@ on:
       - 'podium/**'
       - '.github/workflows/podium-tests.yml'
 
+# Every job on ubuntu-24.04 rather than ubuntu-latest: when ubuntu-latest
+# moved to 26.04, Playwright 1.56.1 (pinned below, to match the e2e
+# harness) refused to install Chromium there, and every browser job failed
+# before a test ran. Move this and the Playwright pin together.
 jobs:
   lint:
     name: Lint (ESLint)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +42,7 @@ jobs:
 
   unit:
     name: Unit tests (all test/*.test.mjs)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -77,7 +81,7 @@ jobs:
   # file LibreOffice cannot open - go untested.
   office:
     name: Conversion (LibreOffice)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -117,7 +121,7 @@ jobs:
   # in one does not hide the results of the others.
   e2e-group:
     name: End-to-end (${{ matrix.group }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -153,7 +157,7 @@ jobs:
     name: End-to-end (Playwright)
     needs: e2e-group
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Every group passed
