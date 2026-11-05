@@ -117,7 +117,8 @@ const colourOf = (value, palette = tokens) => {
 for (const [name, palette] of [['dark', tokens], ['light', lightTokens]]) {
   test(`the ${name} palette's text colours meet WCAG AA on the panels they sit on`, () => {
     for (const [fg, bg] of [['ink', 'bg'], ['ink', 'panel-2'], ['dim', 'bg'], ['dim', 'panel'], ['dim', 'panel-2'],
-      ['accent', 'bg'], ['live', 'bg'], ['live', 'panel-2'], ['cue', 'bg'], ['ok', 'bg']]) {
+      ['accent', 'bg'], ['live', 'bg'], ['live', 'panel-2'], ['cue', 'bg'], ['ok', 'bg'],
+      ['bad', 'bg'], ['bad', 'panel'], ['bad', 'panel-2'], ['warn', 'bg'], ['warn', 'panel'], ['warn', 'panel-2']]) {
       const ratio = contrast(palette[fg], palette[bg]);
       assert.ok(ratio >= 4.5, `${name}: --${fg} on --${bg} is ${ratio.toFixed(2)}:1`);
     }
@@ -145,6 +146,27 @@ test('no rule sets a text colour under 4.5:1 against its own background', () => 
     if (!fg || !bg) continue;
     const ratio = contrast(fg, bg);
     if (ratio < 4.5) failing.push(`line ${lineOf(css, m.index)} ${m[1].trim()}: ${fg} on ${bg} = ${ratio.toFixed(2)}:1`);
+  }
+  assert.deepEqual(failing, []);
+});
+
+// A pale text colour written into a rule with no background of its own
+// reads on the dark theme's panels and vanishes on the light theme's - the
+// pink "No display connected" did, on every controller tab. Such a rule
+// needs a token the light theme redefines (--bad, --warn, --dim...) or a
+// light-theme override of its own. The projector's stage (body.display,
+// .r-*, the replay stage) is never themed, so it is left out.
+test('no pale text colour is left for the light theme to show on white', () => {
+  const lightRules = [...css.matchAll(/([^{}]+)\{[^{}]*\}/g)].map((m) => m[1]).filter((sel) => /data-theme="light"/.test(sel)).join(' ');
+  const failing = [];
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selector = m[1].trim().replace(/\/\*[\s\S]*?\*\//g, '').trim();
+    if (/data-theme|data-sheet-theme|@media|body\.display|\.r-|\.rp-|#hud|:root\s*$/.test(selector)) continue;
+    const literal = m[2].match(/(?:^|[;\s])color:\s*(#[0-9a-f]{6})\b/i)?.[1];
+    if (!literal || /background/.test(m[2]) || contrast(literal, '#ffffff') >= 3) continue;
+    const parts = selector.split(',').map((p) => p.trim());
+    if (parts.every((p) => lightRules.includes(p))) continue;
+    failing.push(`line ${lineOf(css, m.index)} ${selector}: color ${literal}`);
   }
   assert.deepEqual(failing, []);
 });

@@ -2045,6 +2045,108 @@ ok('another person\'s choice is their own', (await owenPage.$eval('#me-theme', (
 await Promise.all([laptop.close(), tablet.close(), owenCtx.close()]);
 }
 
+if (want('light or dark stays as chosen: early clicks, leaving at once, signing in')) {
+console.log('\n-- light or dark stays as chosen: early clicks, leaving at once, signing in --');
+// The last choice made, anywhere, is the one that sticks - however soon
+// after the page opened it was made, however soon the page was left, and
+// whether or not anyone was signed in yet.
+const ctx = await signedIn('owen');
+const page = await ctx.newPage();
+trap(page, 'theme sticks');
+await page.emulateMedia({ colorScheme: 'dark' });
+const theme = () => page.evaluate(() => document.documentElement.dataset.theme);
+const account = () => page.evaluate(() => fetch('/api/capabilities').then((r) => r.json()).then((c) => c.user?.theme));
+const settle = () => page.waitForLoadState('networkidle').catch(() => {});
+
+// The account starts on Dark, so a choice that never reaches it is undone
+// the moment the page hears the account's - the flip back people see.
+await page.goto(`${base}/index.html`);
+await page.evaluate(() => fetch('/api/me/preferences', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ theme: 'dark' }) }));
+await page.evaluate(() => localStorage.setItem('podium.theme', 'dark'));
+
+// Clicked before the page has heard from the server who is signed in.
+await page.route('**/api/capabilities', async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue().catch(() => {}); });
+await page.goto(`${base}/plan.html`);
+await page.waitForSelector('.theme-toggle');
+await page.click('.theme-toggle');               // dark -> auto (a dark device: still dark)
+await page.click('.theme-toggle');               // auto -> light, while the server is still being asked
+await settle();
+ok(`a choice made before the page heard from the server stays (${await theme()})`, await theme() === 'light');
+await page.unroute('**/api/capabilities');
+ok(`and reaches the account (${await account()})`, await account() === 'light');
+await page.goto(`${base}/me.html`);
+await settle();
+ok(`and the next page has it too (${await theme()})`, await theme() === 'light');
+
+// Clicked, and the page left at once, before the account has been told.
+await page.route('**/api/me/preferences', async (route) => { await new Promise((r) => setTimeout(r, 800)); await route.continue().catch(() => {}); });
+await page.goto(`${base}/index.html`);
+await page.waitForSelector('.theme-toggle');
+await settle();
+await page.click('.theme-toggle');               // light -> dark
+await page.goto(`${base}/deck.html`);            // straight away
+await page.unroute('**/api/me/preferences');
+await settle();
+ok(`a choice made just before leaving the page stays on the next (${await theme()})`, await theme() === 'dark');
+await page.goto(`${base}/admin.html`);
+await settle();
+ok(`and on the one after (${await theme()}, account ${await account()})`, await theme() === 'dark' && await account() === 'dark');
+
+// Chosen on the sign-in page, then signed in: the choice made last wins.
+const fresh = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'dark' });
+const signin = await fresh.newPage();
+trap(signin, 'theme at sign in');
+await signin.goto(`${base}/login.html?next=/me.html`);
+await signin.click('#theme-toggle');             // auto -> light, before signing in
+await signin.fill('#username', 'owen');
+await signin.fill('#password', 'a good long password');
+await Promise.all([signin.waitForURL((u) => u.pathname === '/me.html'), signin.click('button[type=submit]')]);
+await signin.waitForLoadState('networkidle').catch(() => {});
+ok(`a choice made on the sign-in page is kept once signed in (${await signin.evaluate(() => document.documentElement.dataset.theme)})`,
+  await signin.evaluate(() => document.documentElement.dataset.theme) === 'light');
+ok(`and is now the account's (${await signin.evaluate(() => fetch('/api/capabilities').then((r) => r.json()).then((c) => c.user?.theme))})`,
+  await signin.evaluate(() => fetch('/api/capabilities').then((r) => r.json()).then((c) => c.user?.theme)) === 'light');
+await fresh.close();
+
+// What the room sees is never themed, and a controller in Light mode
+// previews it in the room's colours: a big-text card is light on black on
+// the iPad, as it is on the projector - not dark navy on black.
+{
+  const room = await ctx.newPage();
+  trap(room, 'theme room');
+  await room.goto(`${base}/display.html`);
+  await room.click('#arm-button');
+  await room.waitForSelector('#hud[data-status="online"]');
+  const pad = await ctx.newPage();
+  trap(pad, 'theme controller');
+  await pad.goto(`${base}/control.html`);
+  await pad.waitForSelector('.tile', { timeout: 15000 });
+  await pad.evaluate(() => { const s = document.querySelector('#pref-theme'); s.value = 'light'; s.dispatchEvent(new Event('change')); });
+  await pad.click('.tile:has(.tile-title:text-is("Opening slide"))');
+  const ink = (p) => p.evaluate(() => {
+    const body = [...document.querySelectorAll('.r-text-body')].find((n) => n.getBoundingClientRect().width > 0);
+    return body ? getComputedStyle(body).color : null;
+  });
+  await room.waitForSelector('.layer[data-role="program"] .r-text-body', { timeout: 10000 }).catch(() => {});
+  await pad.waitForFunction(() => [...document.querySelectorAll('.r-text-body')].some((n) => n.getBoundingClientRect().width > 0), null, { timeout: 10000 }).catch(() => {});
+  const light = (c) => !!c && c.match(/\d+/g).slice(0, 3).map(Number).reduce((a, b) => a + b, 0) > 600;
+  const [onPad, onRoom] = [await ink(pad), await ink(room)];
+  ok(`a controller in Light mode previews a big-text card as the room sees it (${onPad} on the iPad, ${onRoom} on the projector)`,
+    light(onPad) && light(onRoom) && await pad.evaluate(() => document.documentElement.dataset.theme) === 'light');
+  await pad.close();
+  await room.close();
+}
+
+// Another device that has not chosen since takes the account's, as before.
+const other = await signedIn('owen');
+const tablet = await other.newPage();
+await tablet.goto(`${base}/plan.html`);
+await tablet.waitForFunction(() => document.documentElement.dataset.theme === 'light', null, { timeout: 10000 })
+  .then(() => ok('a device that has not chosen since takes the account\'s', true))
+  .catch(async () => ok(`a device that has not chosen since takes the account's (${await tablet.evaluate(() => document.documentElement.dataset.theme)})`, false));
+await Promise.all([ctx.close(), other.close()]);
+}
+
 if (want('Quick Look: a finger scrolls a document on an iPad (#257)')) {
 console.log('\n-- Quick Look: a finger scrolls a document on an iPad (#257) --');
 const fixtures = path.join(ROOT, 'test', 'fixtures');
