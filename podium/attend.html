@@ -571,7 +571,9 @@
   }
   button.addEventListener('click', function () {
     var next = order[(order.indexOf(choice()) + 1) % order.length];
-    try { localStorage.setItem('podium.theme', next); } catch (_e) { /* this visit only */ }
+    // Marked unsaved: the next page with someone signed in gives it to their
+    // account rather than taking the account's older one (see theme.js).
+    try { localStorage.setItem('podium.theme', next); localStorage.setItem('podium.theme.unsaved', '1'); } catch (_e) { /* this visit only */ }
     paint();
   });
   if (window.matchMedia) window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', paint);

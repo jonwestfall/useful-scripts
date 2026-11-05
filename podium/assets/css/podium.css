@@ -26,6 +26,12 @@
   --on-accent: #07101f;
   --cue: #ffc94d;
   --ok: #45d483;
+  /* Words that say something went wrong (or is about to be destroyed), and
+     words that say something is out of date. One token each, so a new rule
+     can't pick a pink that only reads on dark again; the light theme
+     redefines both. */
+  --bad: #ffb3b3;
+  --warn: #ffd9a8;
   --radius: 12px;
   --tap: 46px;
   color-scheme: dark;
@@ -95,7 +101,7 @@ label { display: block; font-size: 13px; color: var(--dim); margin-bottom: 5px; 
 .deck-recall { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 6px 0 2px; }
 .deck-recall .hint { color: var(--cue); font-weight: 600; flex: 1 1 220px; }
 .deck-recall .big-button { flex: none; }
-.error { color: #ff8f8f; font-size: 13px; min-height: 18px; }
+.error { color: var(--bad); font-size: 13px; min-height: 18px; }
 
 /* ===================== DISPLAY ====================================
    Both pages share this stylesheet, so anything positioned or sized here is
@@ -615,7 +621,7 @@ body.control .topbar-status { min-width: 0; }
 #status[data-status='online']::before { color: var(--ok); }
 #status[data-status='offline']::before, #status[data-status='connecting']::before { color: var(--cue); }
 #status[data-status='error']::before, #status[data-status='mismatch']::before { color: var(--live); }
-#display-state.is-bad { color: #ffb3b3; }
+#display-state.is-bad { color: var(--bad); }
 .topbar button { min-height: 34px; padding: 0 10px; font-size: 13px; }
 
 .clock-widget {
@@ -702,7 +708,7 @@ body.guest {
 .admin-form { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); margin-top: 10px; }
 .admin-form .field { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
 .admin-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
-.admin-actions .is-bad { color: #ffb3b3; }
+.admin-actions .is-bad { color: var(--bad); }
 .admin-row {
   display: flex; align-items: center; gap: 12px;
   padding: 9px 0; border-top: 1px solid var(--line);
@@ -711,7 +717,7 @@ body.guest {
 .admin-meta { color: var(--dim); font-size: 12px; }
 /* Issue #155: a kiosk gone quiet longer than its own heartbeat should ever
    allow, in the same red every other .is-bad status already uses. */
-.admin-meta.is-bad { color: #ffb3b3; }
+.admin-meta.is-bad { color: var(--bad); }
 /* Admin -> Server -> Health: podium-admin doctor's findings, one a row. */
 .health-list { list-style: none; margin: 8px 0 12px; padding: 0; }
 .health-item {
@@ -865,7 +871,7 @@ body.guest {
 .panel-btn.is-offscreen { border-style: dashed; color: var(--dim); background: transparent; }
 .panel-btn.is-offscreen.is-on { color: var(--accent); }
 
-#build-note.is-stale, .stale-note { color: #ffd9a8; }
+#build-note.is-stale, .stale-note { color: var(--warn); }
 
 #arm-resume { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
 #arm-resume button { min-height: 32px; padding: 0 12px; font-size: 12px; }
@@ -1793,8 +1799,8 @@ body.plan .linkish:hover { text-decoration: underline; }
 .plan-col hr { border: 0; border-top: 1px solid var(--line); margin: 20px 0 14px; }
 .col-actions { display: flex; flex-direction: column; gap: 8px; }
 .sub-label { display: block; font-size: 12px; color: var(--dim); margin: 10px 0 4px; }
-#plan-size.is-warn { color: #ffd9a8; }
-#plan-build.is-stale { color: #ffd9a8; }
+#plan-size.is-warn { color: var(--warn); }
+#plan-build.is-stale { color: var(--warn); }
 
 /* Lectures on this machine */
 .plan-row {
@@ -1837,7 +1843,7 @@ body.plan button.linkish { background: none; border: 0; padding: 0; min-height: 
 body.plan button.linkish:hover { text-decoration: underline; }
 .plan-archive-bar { display: flex; justify-content: space-between; gap: 8px; margin: 2px 0 4px; font-size: 13px; }
 .plan-archive-undo { font-size: 13px; color: var(--dim); margin: 0 0 6px; }
-.plan-archived-note { font-size: 13px; color: #ffd9a8; margin: 0 0 10px; }
+.plan-archived-note { font-size: 13px; color: var(--warn); margin: 0 0 10px; }
 .plan-archive-card { width: min(620px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
 .plan-archive-card h3 { font-size: 14px; margin: 16px 0 6px; }
 .plan-archive-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -1892,7 +1898,7 @@ body.plan button.linkish:hover { text-decoration: underline; }
 .order-note { grid-area: note; font-size: 11.5px; color: var(--cue); margin-top: 3px; }
 .order-tools { flex: none; display: flex; gap: 3px; align-items: center; }
 .order-tools button { min-height: 30px; width: 30px; padding: 0; font-size: 13px; }
-.order-tools .order-del { color: #ff9d9d; }
+.order-tools .order-del { color: var(--bad); }
 
 /* Lecture pacing & budgeting (Issue #46) */
 .plan-pacing-wrap {
@@ -1901,7 +1907,7 @@ body.plan button.linkish:hover { text-decoration: underline; }
 }
 .plan-pacing-summary { font-size: 13px; color: var(--dim); }
 .plan-pacing-summary b { color: var(--ink); }
-.pacing-over { color: #ff8f8f; font-weight: 600; }
+.pacing-over { color: var(--bad); font-weight: 600; }
 .pacing-under { color: var(--ok); }
 .pacing-ok { color: var(--ok); font-weight: 600; }
 .plan-pacing-track {
@@ -2247,7 +2253,7 @@ body.plan button.linkish:hover { text-decoration: underline; }
 .zip-target { font-size: 12px; overflow-wrap: anywhere; }
 .zip-skipped summary { cursor: pointer; color: var(--dim); font-size: 13px; }
 .zip-skipped ul, .zip-result { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
-.zip-result .is-bad, .zip-status.is-bad { color: #ffb3b3; }
+.zip-result .is-bad, .zip-status.is-bad { color: var(--bad); }
 
 /* Issue #173: Settings -> Presentation -> "Start every lecture with". */
 .defaults-block .def-group { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; margin-top: 10px; }
@@ -2321,6 +2327,8 @@ details.help > .hint { margin-top: 4px; }
   --live: #b91c1c;
   --cue: #b45309;
   --ok: #15803d;
+  --bad: #b42318;
+  --warn: #92400e;
   --live-fill: #b91c1c;
   --on-accent: #ffffff;
   --field: #ffffff;
@@ -2472,6 +2480,26 @@ body.display[data-sheet-theme="light"] .sheet button.danger-outline {
   background: #fef3c7;
   border-color: #fcd34d;
   color: #92400e;
+}
+
+/* The other warning banners: the same amber, not a dark brown strip across a
+   light page. */
+:root[data-theme="light"] #update-banner,
+:root[data-theme="light"] #plan-warn,
+:root[data-theme="light"] #deck-warn,
+:root[data-theme="light"] .ql-warn {
+  background: #fef3c7;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+:root[data-theme="light"] .deck-problems li.is-warning { border-color: #fcd34d; color: #92400e; }
+
+/* TAKE, waiting to be armed: a pale red, as the light theme's other danger
+   buttons are. Armed, it is the --live-fill it always was. */
+:root[data-theme="light"] #take:not(.is-armed) {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
 }
 
 :root[data-theme="light"] .ink-tools .ink-tool-btn:hover {
@@ -2839,13 +2867,13 @@ body.quicklook:fullscreen .ql-private, body.quicklook:fullscreen .ql-warn { disp
 .me-chip.is-edit { border-color: #6aa36f; color: #8fd095; }
 .me-chip.is-view { color: var(--dim); }
 .me-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; flex: none; max-width: 50%; }
-.me-actions .is-bad { color: #ffb3b3; }
+.me-actions .is-bad { color: var(--bad); }
 .me-link { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); text-decoration: none; }
 .me-dialog { width: min(440px, 100%); }
 .me-dialog select { width: 100%; }
 .me-password { display: grid; gap: 10px; }
 .me-password label { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
-.hint.is-bad { color: #ffb3b3; }
+.hint.is-bad { color: var(--bad); }
 @media (max-width: 640px) {
   .me-row { flex-wrap: wrap; }
   .me-actions { max-width: none; width: 100%; justify-content: flex-start; }
@@ -2978,7 +3006,7 @@ body:not(.is-doc) .doc-only { display: none !important; }
 .attn-cell { font-weight: 700; font-family: ui-monospace, Menlo, monospace; }
 .attn-cell.is-present { color: var(--ok); }
 .attn-cell.is-late { color: var(--cue); }
-.attn-cell.is-absent { color: #ff8a8a; }
+.attn-cell.is-absent { color: var(--bad); }
 .attn-cell.is-excused { color: var(--dim); }
 :root[data-theme="light"] .attn-cell.is-absent, body[data-theme="light"] .attn-cell.is-absent { color: #b42318; }
 .attn-total { color: var(--dim); font-variant-numeric: tabular-nums; }
@@ -3103,7 +3131,7 @@ body.replay { display: flex; flex-direction: column; min-height: 100vh; backgrou
   padding: 4px 10px; border-radius: 999px; font: 600 12px/1.4 system-ui, sans-serif;
   background: rgba(0, 0, 0, .65); color: #e8ecf1; pointer-events: none;
 }
-.screen-rec.is-live { color: #ffb3b3; }
+.screen-rec.is-live { color: var(--bad); }
 .screen-rec[hidden] { display: none; }
 
 /* The deck editor's link dialog: the QR code it will add. */
