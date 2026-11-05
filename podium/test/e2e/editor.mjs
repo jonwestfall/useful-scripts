@@ -2108,6 +2108,35 @@ ok(`and is now the account's (${await signin.evaluate(() => fetch('/api/capabili
   await signin.evaluate(() => fetch('/api/capabilities').then((r) => r.json()).then((c) => c.user?.theme)) === 'light');
 await fresh.close();
 
+// What the room sees is never themed, and a controller in Light mode
+// previews it in the room's colours: a big-text card is light on black on
+// the iPad, as it is on the projector - not dark navy on black.
+{
+  const room = await ctx.newPage();
+  trap(room, 'theme room');
+  await room.goto(`${base}/display.html`);
+  await room.click('#arm-button');
+  await room.waitForSelector('#hud[data-status="online"]');
+  const pad = await ctx.newPage();
+  trap(pad, 'theme controller');
+  await pad.goto(`${base}/control.html`);
+  await pad.waitForSelector('.tile', { timeout: 15000 });
+  await pad.evaluate(() => { const s = document.querySelector('#pref-theme'); s.value = 'light'; s.dispatchEvent(new Event('change')); });
+  await pad.click('.tile:has(.tile-title:text-is("Opening slide"))');
+  const ink = (p) => p.evaluate(() => {
+    const body = [...document.querySelectorAll('.r-text-body')].find((n) => n.getBoundingClientRect().width > 0);
+    return body ? getComputedStyle(body).color : null;
+  });
+  await room.waitForSelector('.layer[data-role="program"] .r-text-body', { timeout: 10000 }).catch(() => {});
+  await pad.waitForFunction(() => [...document.querySelectorAll('.r-text-body')].some((n) => n.getBoundingClientRect().width > 0), null, { timeout: 10000 }).catch(() => {});
+  const light = (c) => !!c && c.match(/\d+/g).slice(0, 3).map(Number).reduce((a, b) => a + b, 0) > 600;
+  const [onPad, onRoom] = [await ink(pad), await ink(room)];
+  ok(`a controller in Light mode previews a big-text card as the room sees it (${onPad} on the iPad, ${onRoom} on the projector)`,
+    light(onPad) && light(onRoom) && await pad.evaluate(() => document.documentElement.dataset.theme) === 'light');
+  await pad.close();
+  await room.close();
+}
+
 // Another device that has not chosen since takes the account's, as before.
 const other = await signedIn('owen');
 const tablet = await other.newPage();

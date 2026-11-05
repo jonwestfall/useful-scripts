@@ -376,6 +376,16 @@ dl.keys dd { margin: 0; color: var(--dim); }
 
 .layer, #preview-stage, #item-preview, #message-preview-box { container-type: size; }
 .r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set, .r-poll, .r-att { position: absolute; inset: 0; }
+/* What the room sees is never themed (theme.js): the projector's page always
+   has the dark palette. Previews of it on a controller, planner or My Files
+   in Light mode get the same colours, so a big-text card is not drawn dark
+   navy on black on the iPad while the room sees it white. Each renderer's
+   own colours, further down, still win. */
+.r-fill, .r-black, .r-text, .r-qr, .r-timer, .r-whiteboard, .r-audio, .r-set, .r-poll, .r-att, .r-camera {
+  --bg: #0b0d10; --panel: #14181d; --panel-2: #1c2127; --line: #2a3038;
+  --ink: #e8ecf1; --dim: #97a2b0; --accent: #6ea8fe; --cue: #ffc94d; --ok: #45d483; --live: #ff4d4f;
+  color: var(--ink);
+}
 .r-black { background: #000; }
 .r-image, .r-video { width: 100%; height: 100%; display: block; background: #000; }
 .r-frame { width: 100%; height: 100%; border: 0; background: #fff; }
