@@ -3899,9 +3899,12 @@ console.log('\n-- the live browser: a site that refuses framing, driven from the
 // the projector would show the browser's "refused to connect" face; live, it
 // runs in the server's own Chromium and the controller drives it.
 const sitePages = {
+  // Laid out in parts of the window, not pixels: the live browser lays the
+  // page out for whatever panel shows it, so a pixel target that is a field
+  // on one panel is the gap above it on another.
   '/': '<!doctype html><title>Lab home</title><body style="margin:0;font:28px sans-serif;height:3000px;background:#fff">'
-    + '<a href="/two" style="position:absolute;left:0;top:0;width:400px;height:200px;background:#fd0">Page two</a>'
-    + '<form action="/echo"><input name="q" style="position:absolute;left:0;top:300px;width:400px;height:60px;font-size:28px"'
+    + '<a href="/two" style="position:fixed;left:0;top:0;width:40vw;height:30vh;background:#fd0">Page two</a>'
+    + '<form action="/echo"><input name="q" style="position:fixed;left:0;top:40vh;width:40vw;height:30vh;font-size:28px"'
     // Says so when it has the focus, so the test can wait for the tap to land.
     + ' onfocus="document.title=\'Lab home, typing\'"></form>',
   '/two': '<!doctype html><title>Page two</title><body style="margin:0;background:#0c0"><h1>Two</h1>',
@@ -3982,12 +3985,25 @@ try {
   ok('and one picture of it, not two', await pad.isHidden('#now-preview'));
 
   // A tap on the link, on the controller's screen, is a click on the page.
+  // A point on the page, as a part of its width and height, tapped where
+  // the canvas is once it has stopped moving: the controller's bars settle
+  // around it (a freeze lifting collapses the cue bar), and a tap measured
+  // mid-move lands beside what it was aimed at.
   const at = async (fx, fy) => {
-    const box = await pad.locator('#web-canvas').boundingBox();
-    await pad.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
+    const read = () => pad.evaluate(() => {
+      const r = document.querySelector('#web-canvas').getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+    let was = await read();
+    for (let still = 0, i = 0; still < 3 && i < 60; i++) {
+      await pad.waitForTimeout(100);
+      const now = await read();
+      still = Object.keys(now).every((k) => Math.abs(now[k] - was[k]) < 0.5) ? still + 1 : 0;
+      was = now;
+    }
+    await pad.mouse.click(was.x + was.width * fx, was.y + was.height * fy);
   };
-  const shape = await pad.evaluate(() => { const c = document.querySelector('#web-canvas'); return { w: c.width, h: c.height }; });
-  await at(100 / (shape.w || 1280), 100 / (shape.h || 720));
+  await at(0.2, 0.15);
   await pad.waitForFunction(() => document.querySelector('#web-url').value.endsWith('/two'), null, { timeout: 10000 })
     .then(() => ok('a tap on a link follows it', true))
     .catch(() => ok('a tap on a link follows it', false));
@@ -4012,10 +4028,16 @@ try {
 
   // Typing: tap the field on the page, then type in the box under it - once
   // the page says the field has the focus, which is what the typing needs.
-  await at(200 / (shape.w || 1280), 330 / (shape.h || 720));
-  await pad.waitForFunction(() => /typing/.test(document.querySelector('#web-status').textContent), null, { timeout: 10000 })
-    .then(() => ok('a tap on a field gives it the focus', true))
-    .catch(async () => ok(`a tap on a field gives it the focus ("${await pad.textContent('#web-status')}")`, false));
+  // The page says when a field has the focus. A tap that came in while the
+  // page was still being redrawn after the freeze is tapped again: tapping a
+  // field twice is what a person would do, and does no harm.
+  const typing = () => pad.waitForFunction(() => /typing/.test(document.querySelector('#web-status').textContent), null, { timeout: 4000 }).then(() => true, () => false);
+  let focused = false;
+  for (let i = 0; i < 3 && !focused; i++) {
+    await at(0.2, 0.55);
+    focused = await typing();
+  }
+  ok(`a tap on a field gives it the focus ("${await pad.textContent('#web-status')}")`, focused);
   await pad.fill('#web-text', 'mitochondria');
   await pad.click('#web-type button[type="submit"]');
   await pad.click('#web-type [data-key="Enter"]');
@@ -4023,7 +4045,9 @@ try {
     .then(() => ok('a tap on a field, typing and Enter submit a form', true))
     .catch(() => ok('a tap on a field, typing and Enter submit a form', false));
   await until(async () => blue(await wallColour())).catch(() => {});
-  ok('and the room sees the answer', blue(await wallColour()));
+  // The colour it saw, if not: an old frame (white) and none at all (null) are different faults.
+  const answer = await wallColour();
+  ok(`and the room sees the answer${blue(answer) ? '' : ` (${JSON.stringify(answer)})`}`, blue(answer));
 
   // The address bar goes anywhere; Home comes back.
   await pad.fill('#web-url', `${siteHome}two`);
