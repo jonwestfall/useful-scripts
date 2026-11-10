@@ -192,7 +192,7 @@ The deck editor writes and edits Marp decks without leaving Podium (Issue #226).
 The **Slides** tab provides an integrated confidence monitor:
 - **Now Box**: A 1:1 live mirror showing exactly what the audience is looking at.
 - **Next Box**: A preview of the upcoming slide or bullet point so you never have to turn around and look at the screen.
-- **Presenter Notes**: Scrollable, readable notes corresponding to the active slide.
+- **Presenter Notes**: Scrollable, readable notes corresponding to the active slide. **Hide** (or **N**) folds them away so Now and Next get the room, and **Show** brings them back; the choice holds while that deck is up, and the next deck starts with its notes showing. A deck with no notes at all starts folded and says *No presenter notes in this deck*.
 - **Confidence Split Toggle**: Tap to cycle the Now/Next pane split between 50/50, 75/25, and 25/75.
 - **Jump to Slide Grid**: Tap "Jump to a slide" to view thumbnails of the entire presentation with captions. Slides that have ink drawings display an indicator badge.
 - **Pop-out Preview**: **press and hold** a thumbnail to open that slide large, fully built, with its notes. Nothing is sent to the display, so it's safe mid-lecture. **Go to this slide** jumps there; **Close** (or Escape, or a tap outside) doesn't.
