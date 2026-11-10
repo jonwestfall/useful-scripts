@@ -2396,9 +2396,10 @@ ok('agreeing is remembered on this device, and the note stays reachable behind "
   await uPad.evaluate(() => localStorage.getItem('podium.ack.captions') === '1'
     && !!document.querySelector('#caption-privacy').closest('details.help')));
 
-// #195 / #196: the Slides tab.
+// #195 / #196: the Slides tab, on a deck with presenter notes (one with
+// none starts with them folded away - see "presenter notes fold away").
 await uPad.click('.tab[data-tab="library"]');
-await uPad.click('.tile[title="Day 6 — Weighing the Evidence"]');
+await uPad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
 await uPad.waitForFunction(() => document.querySelector('.tab[data-tab].is-on')?.dataset.tab === 'slides'
   && /Slide 1 \//.test(document.querySelector('#deck-count')?.textContent || ''), null, { timeout: 20000 });
 const progress = () => uPad.evaluate(() => ({
