@@ -21,6 +21,7 @@
 import { el, miniMarkdown, fmtTime } from './util.js';
 import { parseStreamSource, streamLabel } from './protocol.js';
 import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
+import { embedMathFonts } from './math-fonts.js';
 import { ASSET_REF } from './deck-source.js';
 import { renderDoc, measureDoc, DOC_WIDTH, DOC_VIEW } from './doc.js';
 import { BLANK_PIXEL } from './assets.js';
@@ -143,7 +144,7 @@ export function flattenSvgScaling(svg, width, height) {
 }
 
 /** An <svg> element, standalone, as a decoded image - the deck and QR route. */
-export function svgToImage(svg, css, width, height) {
+export async function svgToImage(svg, css, width, height) {
   const clone = svg.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   clone.setAttribute('width', String(width));
@@ -151,7 +152,9 @@ export function svgToImage(svg, css, width, height) {
   flattenSvgScaling(clone, width, height);
   if (css) {
     const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-    style.textContent = css;
+    // An SVG image loads nothing from outside itself, so math's fonts come
+    // inside it (math-fonts.js).
+    style.textContent = await embedMathFonts(css, clone.outerHTML);
     clone.insertBefore(style, clone.firstChild);
   }
   const xml = new XMLSerializer().serializeToString(clone);

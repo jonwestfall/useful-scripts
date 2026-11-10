@@ -71,6 +71,10 @@ function moduleGraph(entry) {
       if (target.endsWith('.js') || target.endsWith('.mjs')) {
         if (fs.existsSync(target) && !rel(target).startsWith('assets/vendor/')) visit(target);
         else extra.add(rel(target));
+      } else if (fs.existsSync(target) && fs.statSync(target).isDirectory()) {
+        // A folder of files a module loads by name (math-fonts.js's fonts):
+        // every one of them, its licence aside.
+        for (const name of fs.readdirSync(target)) if (!/^LICENSE/.test(name)) extra.add(rel(path.join(target, name)));
       } else {
         extra.add(rel(target));
       }

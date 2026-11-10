@@ -46,6 +46,11 @@ const WARM = [
   // Word files as documents (Issue #258), ~300 KB - converted in the browser,
   // so a lecture planned offline can still take one.
   'assets/vendor/mammoth.esm.js',
+  // KaTeX's fonts (math-fonts.js), ~300 KB: the slash in a slide's ≠ is a
+  // glyph of its own in one of them.
+  ...[
+    'AMS-Regular', 'Caligraphic-Bold', 'Caligraphic-Regular', 'Fraktur-Bold', 'Fraktur-Regular', 'Main-Bold', 'Main-BoldItalic', 'Main-Italic', 'Main-Regular', 'Math-BoldItalic', 'Math-Italic', 'SansSerif-Bold', 'SansSerif-Italic', 'SansSerif-Regular', 'Script-Regular', 'Size1-Regular', 'Size2-Regular', 'Size3-Regular', 'Size4-Regular', 'Typewriter-Regular',
+  ].map((name) => `assets/vendor/katex-fonts/KaTeX_${name}.woff2`),
   'assets/icons/icon-192.png', 'assets/icons/apple-touch-icon.png',
   // Kept complete by test/offline-shell.test.mjs: a module control.js,
   // display.js or deck-editor.js imports that is missing here fails the whole
@@ -53,7 +58,7 @@ const WARM = [
   ...[
     'admin', 'assets', 'attendance-panel', 'attendance-review', 'backup-ui', 'bus', 'caption-log', 'caption-panel', 'config', 'control', 'crypto', 'deck', 'deck-checks',
     'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-qr', 'deck-source', 'deck-templates', 'defaults', 'display', 'doc', 'doc-reader',
-    'duration-probe', 'file-browser', 'gestures', 'index', 'library-upload', 'live-browser', 'live-browser-panel', 'me', 'message-editor', 'mic-panel', 'notebook-link', 'pdf-writer', 'pip', 'plan',
+    'duration-probe', 'file-browser', 'gestures', 'index', 'library-upload', 'live-browser', 'live-browser-panel', 'math-fonts', 'me', 'message-editor', 'mic-panel', 'notebook-link', 'pdf-writer', 'pip', 'plan',
     'planfile', 'poll-link', 'poll-link-ui', 'poll-look', 'poll-look-theme', 'poll-look-ui', 'presentation-prefs', 'protocol', 'quicklook', 'quicklook-open', 'recap',
     'recap-pdf', 'renderers', 'replay', 'replay-model', 'roster-panel', 'rtc', 'screen-record', 'server', 'session-search', 'store', 'tab-bar', 'tabs', 'theme',
     'theme-boot', 'theme-sheet', 'theme-sheet-ui', 'thumbs', 'util', 'view-link', 'view-link-ui', 'watermark', 'word-import', 'word-upload', 'zip', 'zip-review', 'zoom',

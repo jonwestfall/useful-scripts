@@ -19,6 +19,7 @@ import { HTML_ALLOWLIST, BLANK, MARP_URL } from './deck.js';
 import { ASSET_REF, MERMAID_THEMES } from './deck-source.js';
 import { drawDiagrams, DIAGRAM_CSS } from './deck-mermaid.js';
 import { drawQrCodes, QR_CSS } from './deck-qr.js';
+import { localMathCss, installMathFonts } from './math-fonts.js';
 import { DOC_WIDTH, DOC_VIEW, DOC_STEP, clampDocAt, docMaxAt } from './protocol.js';
 
 // The page's width (about 70 characters of projector type), one screenful of
@@ -184,9 +185,8 @@ async function loadEngine() {
     }
     return linkOpen(tokens, i, options, env, self);
   };
-  // KaTeX's fonts from the same place a deck's come from (see vendor-build/README.md).
-  const fonts = `https://cdn.jsdelivr.net/npm/katex@${katex.version}/dist/fonts/`;
-  return { md, katexCss: katexCss.replace(/url\(fonts\//g, `url(${fonts}`) };
+  // KaTeX's fonts from the same place a deck's come from (math-fonts.js).
+  return { md, katexCss: localMathCss(katexCss) };
 }
 
 function engine() {
@@ -313,6 +313,7 @@ export async function renderDoc(source, id, { look = '' } = {}) {
   const wanted = MERMAID_THEMES.includes(meta.mermaidTheme) ? meta.mermaidTheme : '';
   const pageHtml = `<article class="podium-doc${shade === 'dark' ? ' is-dark' : ''}"${wanted ? ` data-mermaid-theme="${wanted}"` : ''}>${inner}</article>`;
   const css = `${katexCss}\n${DOC_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`;
+  if (inner.includes('class="katex')) installMathFonts(katexCss);
 
   let html = pageHtml;
   let diagrams = [];
