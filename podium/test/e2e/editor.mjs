@@ -298,6 +298,37 @@ await planner.waitForFunction(() => {
 await owen.close();
 }
 
+if (want('math draws its symbols in the deck editor and Quick Look')) {
+console.log('\n-- math draws its symbols in the deck editor and Quick Look --');
+// KaTeX draws ≠'s slash from KaTeX_Main alone: without the font a slide reads
+// "a = b". Every page that shows a deck needs the font on the page itself
+// (the faces in a shadow root are never loaded) and from Podium, not a CDN.
+const owen = await signedIn('owen');
+const desk = await owen.newPage();
+trap(desk, 'math (owen)');
+const cdn = [];
+desk.on('request', (r) => { if (/jsdelivr|katex@/i.test(r.url())) cdn.push(r.url()); });
+await desk.goto(`${base}/index.html`);
+const mathDeck = '---\nmarp: true\nmath: katex\n---\n\n# Not equal\n\n$a \\neq b$ and $x \\leq y$\n\n$$\n\\sum_{i=1}^{n} x_i \\neq \\int_0^1 f(x)\\,dx\n$$\n';
+const { item } = await desk.evaluate(async (md) => (await fetch('/api/library/upload?filename=math.md&course=psy415&title=Math', { method: 'POST', body: md })).json(), mathDeck);
+// The slash glyph, found in a shadow root, and whether the page can draw it.
+const slashDrawn = (page, host) => page.waitForFunction((sel) => {
+  const roots = [...document.querySelectorAll(sel)].map((h) => h.shadowRoot).filter(Boolean);
+  const glyph = roots.flatMap((r) => [...r.querySelectorAll('.katex span')]).find((s) => s.childElementCount === 0 && s.textContent === '');
+  return !!glyph && /KaTeX_Main/.test(getComputedStyle(glyph).fontFamily)
+    && [...document.fonts].some((f) => f.family.replace(/['"]/g, '') === 'KaTeX_Main' && f.style === 'normal' && f.weight === '400' && f.status === 'loaded')
+    && (document.querySelector('style[data-podium-math-fonts]')?.textContent || '').includes(`${location.origin}/assets/vendor/katex-fonts/`);
+}, host, { timeout: 20000 }).then(() => true, () => false);
+await desk.goto(`${base}/deck.html?library=${item.id}`);
+await desk.waitForFunction(() => document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length === 1, null, { timeout: 20000 });
+ok('the deck editor\'s strip draws ≠ in KaTeX\'s own font, from Podium', await slashDrawn(desk, '#deck-strip'));
+ok('and so does its projector preview', await slashDrawn(desk, '#deck-preview .r-deck'));
+await desk.goto(`${base}/quicklook.html?src=${encodeURIComponent(item.src)}`);
+ok('Quick Look draws it too', await slashDrawn(desk, 'body *'));
+ok(`nothing asked a CDN for KaTeX${cdn.length ? ` (${cdn[0]})` : ''}`, cdn.length === 0);
+await owen.close();
+}
+
 if (want('the deck editor: content/decks, for an administrator (#226)')) {
 console.log('\n-- the deck editor: content/decks, for an administrator (#226) --');
 const root = await signedIn('root');

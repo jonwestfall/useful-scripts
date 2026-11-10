@@ -73,7 +73,7 @@ The **Library** tab is where everything starts: tap a tile and it goes to the pr
 Podium natively renders [Marp](https://marp.app/) Markdown decks directly inside the browser using client-side Web Workers:
 
 - **Markdown Simplicity**: Write slides using standard markdown separated by `---`.
-- **KaTeX Math**: Include inline LaTeX math (`$E=mc^2$`) and block math (`$$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$`) with zero setup.
+- **KaTeX Math**: Include inline LaTeX math (`$E=mc^2$`) and block math (`$$\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$`) with zero setup. KaTeX's fonts are served by Podium itself, so symbols such as ≠ draw the same in the editor, the planner, Quick Look, on the projector and in exports, offline and on a network that blocks CDNs.
 - **Presenter Notes**: Use HTML comments (`<!-- presenter notes go here -->`) to display notes privately on your iPad that the audience never sees.
 - **Progressive Builds**: Put `<!-- _class: build -->` on a slide to reveal its list bullets one at a time, or mark exactly what should build with `class="build"` (see `content/decks/example-builds.md`). The planning page's *What the class sees* preview steps through each build the same way Next will in class, says what the current slide builds, lists which slides build at all, and flags a slide with the class but nothing to reveal or a near-miss class name such as `Build` (Issue #177).
 - **Custom CSS Themes**: Add custom styles and CSS themes to the top of your markdown files.

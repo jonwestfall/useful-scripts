@@ -349,6 +349,16 @@ const look = await display.evaluate(() => {
 });
 ok('the custom marp-themes/ CSS is applied on the projector', look.themed);
 ok('math renders through KaTeX', look.katex && look.math);
+// KaTeX draws ≠'s slash from its own font, so without it the wall reads
+// "a = b". The faces are declared in the shadow root, where Chromium never
+// loads them - so the page has to have them, and from Podium, not a CDN.
+const mathFonts = (page) => page.waitForFunction(() => {
+  const faces = document.querySelector('style[data-podium-math-fonts]')?.textContent || '';
+  return faces.includes(`${location.origin}/assets/vendor/katex-fonts/`)
+    && [...document.fonts].some((f) => f.family.replace(/['"]/g, '') === 'KaTeX_Main' && f.status === 'loaded');
+}, null, { timeout: 15000 }).then(() => true, () => false);
+ok('the projector has KaTeX\'s fonts, from Podium itself', await mathFonts(display));
+ok('and so does the controller', await mathFonts(control));
 
 // Upload: the markdown only exists on the controller and has to cross the bus.
 await control.click('.tab[data-tab="library"]');

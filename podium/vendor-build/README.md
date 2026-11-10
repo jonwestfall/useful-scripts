@@ -30,10 +30,13 @@ Two things are trimmed to keep it near a megabyte instead of four:
   `build-marp.mjs`; add to it and rebuild if you need another. An unlisted language
   renders as plain unhighlighted code.
 
-KaTeX's fonts are the one thing still fetched from a CDN (jsDelivr), because they
-are separate font files rather than CSS. Math renders without them, just in a
-fallback face. To self-host them, copy `node_modules/katex/dist/fonts/` somewhere
-under `podium/` and set `katexFontPath` in `assets/js/deck.js`.
+KaTeX's fonts are vendored beside the bundle, in `../assets/vendor/katex-fonts/`
+(the `.woff2` files from `node_modules/katex/dist/fonts/`, and KaTeX's licence).
+Math does not render without them: the slash through ≠ is a glyph of its own in
+KaTeX_Main, so a slide would read `a = b`. `assets/js/math-fonts.js` points Marp
+and documents at them and puts them on the page (see there for why). When the
+KaTeX version in the bundle changes, copy the new version's `.woff2` files over
+these; the list of names is in `sw.js` and `server/open-paths.js`.
 
 ## CodeMirror (the deck editor)
 

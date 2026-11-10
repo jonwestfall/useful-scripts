@@ -24,6 +24,7 @@ import { mountSessionSearch } from './session-search.js';
 import { replayUrl } from './replay-model.js';
 import { uploadToLibrary } from './library-upload.js';
 import { runBackup } from './backup-ui.js';
+import { MATH_FONT_DIR } from './math-fonts.js';
 
 // Light or dark, as chosen for every page (see theme.js).
 startPageTheme();
@@ -2493,7 +2494,8 @@ function updateThemePreview() {
           b: [], i: [], em: [], strong: [], u: [], s: [], small: [], mark: [],
           sup: [], sub: [], kbd: [], abbr: ['title'], br: [], hr: ['class'],
         },
-        math: 'katex',
+        // KaTeX's fonts from Podium, as a deck's are (math-fonts.js).
+        math: { lib: 'katex', katexFontPath: MATH_FONT_DIR },
       });
 
       let themeName = 'custom-theme';

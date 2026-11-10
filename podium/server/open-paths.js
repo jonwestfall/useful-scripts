@@ -50,7 +50,11 @@ const AUTH_PUBLIC_WITH_ACCOUNTS = new Set(['/', '/index.html', '/guide.html']);
 const DISPLAY_RUNTIME = [
   '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
-  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/screen-record.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-qr.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js',
+  // KaTeX's fonts, for math on a slide (math-fonts.js).
+  ...[
+    'AMS-Regular', 'Caligraphic-Bold', 'Caligraphic-Regular', 'Fraktur-Bold', 'Fraktur-Regular', 'Main-Bold', 'Main-BoldItalic', 'Main-Italic', 'Main-Regular', 'Math-BoldItalic', 'Math-Italic', 'SansSerif-Bold', 'SansSerif-Italic', 'SansSerif-Regular', 'Script-Regular', 'Size1-Regular', 'Size2-Regular', 'Size3-Regular', 'Size4-Regular', 'Typewriter-Regular',
+  ].map((name) => `/assets/vendor/katex-fonts/KaTeX_${name}.woff2`),
+  '/assets/js/display.js', '/assets/js/assets.js', '/assets/js/caption-log.js', '/assets/js/screen-record.js', '/assets/js/deck.js', '/assets/js/deck-mermaid.js', '/assets/js/deck-qr.js', '/assets/js/deck-source.js', '/assets/js/doc.js', '/assets/js/doc-reader.js', '/assets/js/duration-probe.js', '/assets/js/math-fonts.js',
   '/assets/js/planfile.js', '/assets/js/renderers.js', '/assets/js/live-browser.js', '/assets/js/rtc.js', '/assets/js/store.js', '/assets/js/theme.js',
   '/assets/js/zoom.js', '/assets/js/poll-link.js', '/assets/js/poll-look.js', '/assets/js/view-link.js',
 ];

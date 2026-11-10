@@ -11,6 +11,7 @@
 import { PODIUM_DIRECTIVES, MERMAID_DIRECTIVE, parseDeck, ASSET_REF } from './deck-source.js';
 import { drawDiagrams, DIAGRAM_CSS } from './deck-mermaid.js';
 import { drawQrCodes, QR_CSS } from './deck-qr.js';
+import { MATH_FONT_DIR, installMathFonts } from './math-fonts.js';
 
 // What an `asset:` picture this device has not been given is drawn as (Issue
 // #226) - the same blank as assets.js's, rather than an address no browser
@@ -211,7 +212,9 @@ export function markMermaidTheme(marp) {
 // and one deck's front matter should never leak into the next.
 async function createMarp() {
   const { Marp, themeCss } = await engine();
-  const marp = new Marp({ inlineSVG: true, html: HTML_ALLOWLIST, math: 'katex' });
+  // KaTeX's fonts from Podium itself, not a CDN a lecture hall may not reach
+  // (see math-fonts.js).
+  const marp = new Marp({ inlineSVG: true, html: HTML_ALLOWLIST, math: { lib: 'katex', katexFontPath: MATH_FONT_DIR } });
   // Podium's own directives (a video slide, Issue #226): known to Marp so the
   // comment holding one is a directive rather than a presenter note. They
   // change nothing Marp draws - render() reads them back out below.
@@ -736,6 +739,9 @@ async function parseNow(source, key) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const root = doc.querySelector('.marpit') || doc.body;
   const combinedCss = `${css}\n${COLUMNS_CSS}\n${MATH_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`;
+  // A deck with math puts KaTeX's fonts on the page, where the shadow root
+  // it is drawn in can use them (math-fonts.js).
+  if (html.includes('class="katex')) installMathFonts(css);
   // ```mermaid blocks drawn as diagrams (Issue #235), first: they change
   // what fits, and a slide's title is never a diagram's source text.
   const diagrams = await drawDiagrams(root, combinedCss, slideSections);
