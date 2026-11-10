@@ -370,11 +370,17 @@
             </div>
             </div>
             <div class="deck-stage-notes">
+              <!-- Hide/Show folds the notes away for the deck that is up, so
+                   Now/Next get the room; a deck with no notes at all starts
+                   folded and says so. -->
               <div class="notes-head notes-head-row">
-                <span>Presenter notes</span>
-                <span class="notes-size" role="group" aria-label="Presenter notes text size">
-                  <button id="notes-smaller" type="button" aria-label="Smaller notes text">A−</button>
-                  <button id="notes-larger" type="button" aria-label="Larger notes text">A+</button>
+                <span id="notes-label">Presenter notes</span>
+                <span class="notes-tools">
+                  <span class="notes-size" role="group" aria-label="Presenter notes text size">
+                    <button id="notes-smaller" type="button" aria-label="Smaller notes text">A−</button>
+                    <button id="notes-larger" type="button" aria-label="Larger notes text">A+</button>
+                  </span>
+                  <button id="notes-toggle" type="button" aria-controls="deck-notes" aria-expanded="true">Hide</button>
                 </span>
               </div>
               <div id="deck-notes" class="notes"></div>
@@ -1841,7 +1847,7 @@
       <dt><kbd>Esc</kbd></dt><dd>Close whatever is open</dd>
     </dl>
     <p class="hint">On the Ink tab: <kbd>1</kbd>-<kbd>5</kbd> or <kbd>E</kbd> <kbd>H</kbd> <kbd>L</kbd> <kbd>S</kbd> pick a tool, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Z</kbd> undoes.</p>
-    <p class="hint">On the Slides tab: <kbd>L</kbd> toggles the laser pointer, <kbd>S</kbd> toggles the spotlight.</p>
+    <p class="hint">On the Slides tab: <kbd>L</kbd> toggles the laser pointer, <kbd>S</kbd> toggles the spotlight, <kbd>N</kbd> hides or shows the presenter notes.</p>
     <button id="keys-close" style="margin-top:18px;width:100%">Done</button>
   </div>
 </div>

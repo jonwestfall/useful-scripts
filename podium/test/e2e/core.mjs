@@ -1865,6 +1865,84 @@ ok('a genuine slide/section change is still followed once, unlike the repeated r
 await notesCtx.close();
 }
 
+if (want('presenter notes fold away, and start folded for a deck with none')) {
+console.log('\n-- presenter notes fold away, and start folded for a deck with none --');
+// Wide enough for the notes to have a column of their own beside Now/Next,
+// which folding them hands back.
+const foldCtx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+await foldCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'notes-fold-room', passphrase: 'fold the notes, keep the slides' }));
+const foldDisplay = await foldCtx.newPage();
+trap(foldDisplay, 'notes-fold display');
+await foldDisplay.goto(`${BASE}/display.html`);
+await foldDisplay.click('#arm-button');
+await foldDisplay.waitForSelector('#hud[data-status="online"]');
+const pad = await foldCtx.newPage();
+trap(pad, 'notes-fold controller');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('#app:not([hidden])');
+await pad.waitForFunction(() => !document.querySelector('#display-state')?.textContent.includes('No display connected'), null, { timeout: 10000 });
+
+const withNotes = path.join(HERE, 'fixtures', 'fold-with-notes.md');
+const noNotes = path.join(HERE, 'fixtures', 'fold-no-notes.md');
+fs.writeFileSync(withNotes, '---\nmarp: true\n---\n\n# Has notes\n\n<!-- Remember to ask a question here. -->\n\n---\n\n# Second\n');
+fs.writeFileSync(noNotes, '---\nmarp: true\n---\n\n# No notes anywhere\n\n---\n\n# Still none\n\n---\n\n# Nor here\n');
+const load = async (file, slides) => {
+  await pad.click('.tab[data-tab="library"]');
+  await pad.setInputFiles('#deck-file', file);
+  await pad.waitForFunction((n) => document.querySelector('#deck-file-note')?.textContent.includes(`${n} slides`), slides, { timeout: 15000 });
+  await pad.click('.tab[data-tab="slides"]');
+};
+const fold = () => pad.evaluate(() => {
+  const stage = document.querySelector('.deck-stage');
+  const toggle = document.querySelector('#notes-toggle');
+  const now = document.querySelector('.confidence-row').getBoundingClientRect().width;
+  return {
+    folded: stage.classList.contains('is-notes-folded'),
+    notesShown: document.querySelector('#deck-notes').getBoundingClientRect().height > 0,
+    label: document.querySelector('#notes-label').textContent,
+    toggle: toggle.hidden ? null : toggle.textContent,
+    expanded: toggle.getAttribute('aria-expanded'),
+    share: now / document.querySelector('#deck-live').getBoundingClientRect().width,
+  };
+});
+
+await load(withNotes, 2);
+await pad.waitForFunction(() => document.querySelector('#deck-notes').textContent.includes('ask a question'), null, { timeout: 15000 });
+let seen = await fold();
+ok(`a deck with notes shows them, with Hide beside them (${JSON.stringify(seen)})`, !seen.folded && seen.notesShown && seen.toggle === 'Hide' && seen.expanded === 'true');
+const besideShare = seen.share;
+await pad.click('#notes-toggle');
+seen = await fold();
+ok(`Hide folds them away, and says so (${seen.label})`, seen.folded && !seen.notesShown && seen.toggle === 'Show' && seen.expanded === 'false' && /hidden/.test(seen.label));
+ok(`and Now/Next take the room back (${Math.round(besideShare * 100)}% → ${Math.round(seen.share * 100)}% of the panel)`, seen.share > besideShare + 0.15);
+await pad.click('#deck-next');
+await pad.waitForFunction(() => document.querySelector('#deck-count').textContent.startsWith('Slide 2'), null, { timeout: 10000 });
+ok('they stay folded on the next slide', (await fold()).folded);
+await pad.keyboard.press('n');
+seen = await fold();
+ok('N brings them back, as in Quick Look', !seen.folded && seen.notesShown && seen.toggle === 'Hide');
+await pad.keyboard.press('n');
+ok('and N again folds them', (await fold()).folded);
+
+await load(noNotes, 3);
+await pad.waitForFunction(() => /No presenter notes in this deck/.test(document.querySelector('#notes-label').textContent), null, { timeout: 15000 })
+  .catch(() => {});
+seen = await fold();
+ok(`a deck with no notes at all starts folded, and says why (${seen.label})`, seen.folded && !seen.notesShown && seen.toggle === null && seen.label === 'No presenter notes in this deck');
+await pad.keyboard.press('n');
+ok('N has nothing to show there', (await fold()).folded);
+
+await load(withNotes, 2);
+await pad.waitForFunction(() => document.querySelector('#deck-notes').textContent.includes('ask a question'), null, { timeout: 15000 });
+seen = await fold();
+ok('a deck with notes, put up again, shows them by default', !seen.folded && seen.notesShown && seen.toggle === 'Hide');
+
+fs.rmSync(withNotes, { force: true });
+fs.rmSync(noNotes, { force: true });
+await foldCtx.close();
+}
+
 if (want('Settings Save/Close reachable on a phone')) {
 console.log('\n-- Settings Save/Close reachable on a phone --');
 // Issue #96: the Settings sheet is long enough that on a phone, reaching

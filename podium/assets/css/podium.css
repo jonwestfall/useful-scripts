@@ -1191,6 +1191,12 @@ body.guest {
 .notes-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .notes-size { display: inline-flex; gap: 4px; }
 .notes-size button { min-height: 30px; padding: 0 10px; font-size: 13px; letter-spacing: 0; text-transform: none; }
+.notes-tools { display: inline-flex; align-items: center; gap: 8px; }
+#notes-toggle { min-height: 30px; padding: 0 12px; font-size: 13px; letter-spacing: 0; text-transform: none; }
+/* Folded: the notes and their size buttons are put away, and on a wide panel
+   Now/Next take the whole width back (the column layout below is undone). */
+.deck-stage.is-notes-folded #deck-notes,
+.deck-stage.is-notes-folded .notes-size { display: none; }
 /* 1300px, not less: below it, a notes column would take its room from the
    Now/Next previews - on a 1280px laptop, hiding the cue bar to make them
    bigger would have made them smaller. Above it there is room for both. */
@@ -1198,6 +1204,8 @@ body.guest {
   .deck-stage { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); align-items: start; }
   .deck-stage-notes { position: sticky; top: 0; }
   .deck-stage-notes .notes { max-height: calc(100vh - 260px); overflow: auto; }
+  .deck-stage.is-notes-folded { display: flex; align-items: stretch; }
+  .deck-stage.is-notes-folded .deck-stage-notes { position: static; }
 }
 
 /* How far through the deck (Issue #196). */

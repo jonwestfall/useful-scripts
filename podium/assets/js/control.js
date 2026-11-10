@@ -1612,6 +1612,32 @@ $('#notes-smaller').addEventListener('click', () => stepNotesSize(-1));
 $('#notes-larger').addEventListener('click', () => stepNotesSize(1));
 applyNotesSize();
 
+// Folding the notes away (Hide/Show): shown by default, folded for a deck
+// with no notes in it at all, and otherwise the presenter's choice for the
+// deck that is up - a deck they hid them on stays that way while it is up,
+// and the next deck starts with its notes showing again.
+let notesHiddenOn = null;  // the deck the presenter folded its notes on
+let notesFor = { deck: null, id: null };
+function applyNotesFold(deck, id) {
+  notesFor = { deck, id };
+  if (deck && notesHiddenOn !== id) notesHiddenOn = null;  // another deck: notes showing again
+  const none = !!deck && !(deck.notes || []).some((n) => String(n || '').trim());
+  const hidden = none || (!!deck && notesHiddenOn === id);
+  $('.deck-stage').classList.toggle('is-notes-folded', hidden);
+  $('#notes-label').textContent = none ? 'No presenter notes in this deck' : (hidden ? 'Presenter notes (hidden)' : 'Presenter notes');
+  const toggle = $('#notes-toggle');
+  toggle.hidden = none || !deck;
+  toggle.textContent = hidden ? 'Show' : 'Hide';
+  toggle.setAttribute('aria-expanded', String(!hidden));
+  toggle.setAttribute('aria-label', hidden ? 'Show presenter notes' : 'Hide presenter notes');
+}
+$('#notes-toggle').addEventListener('click', () => {
+  const { deck, id } = notesFor;
+  if (!deck) return;
+  notesHiddenOn = notesHiddenOn === id ? null : id;
+  applyNotesFold(deck, id);
+});
+
 function updateActiveSectionChip(slideIndex) {
   const container = $('#deck-grid-chips');
   if (!container || container.hidden) return;
@@ -2141,6 +2167,7 @@ function renderSlides() {
     }
     notesEl.classList.toggle('is-empty', !note);
   }
+  applyNotesFold(deck, item.deckId);
 
   // "Now" mirrors exactly what the projector shows, build step included.
   nowMirror.update(item);
@@ -7644,6 +7671,8 @@ document.addEventListener('keydown', (ev) => {
   if (!$('[data-panel="slides"]')?.hidden) {
     if (ev.key === 'l' || ev.key === 'L') { ev.preventDefault(); setLaserActive(!laserActive); return; }
     if (ev.key === 's' || ev.key === 'S') { ev.preventDefault(); setSpotlightActive(!spotlightActive); return; }
+    // N hides or shows the notes, as it does in Quick Look.
+    if ((ev.key === 'n' || ev.key === 'N') && !$('#notes-toggle').hidden) { ev.preventDefault(); $('#notes-toggle').click(); return; }
   }
 
   // Zoom and pan on the Now and Ink tabs (Issue #262) - zoomed in, the arrows
