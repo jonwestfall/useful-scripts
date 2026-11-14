@@ -21,7 +21,8 @@ import {
   trap,
   reportErrors,
   teardown,
-  exitWithResult
+  exitWithResult,
+  behindInkMore
 } from './harness.mjs';
 
 try {
@@ -126,6 +127,107 @@ await pad.click('#ink-clear');
 await screen.waitForFunction(() => !document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 ok('Clear wipes only the surface currently on screen', true);
 await ctx.close();
+}
+
+if (want('the Ink pad takes the room, with its tools in one bar or a rail (iPhone Duo)')) {
+console.log('\n-- the Ink pad takes the room, with its tools in one bar or a rail (iPhone Duo) --');
+// An iPhone Duo unfolded (about 626x890 upright, 890x626 sideways) and folded
+// (466x678), and an iPad held sideways. Before, the tools wrapped to as many
+// as six rows and the pad got what was left - 320x180 on the folded Duo and
+// in the unfolded one held sideways.
+const room = { transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'ink-duo-room', passphrase: 'fold it, unfold it' };
+const wallCtx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+await wallCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), JSON.stringify(room));
+const wall = await wallCtx.newPage();
+trap(wall, 'ink-duo display');
+await wall.goto(`${BASE}/display.html`);
+await wall.click('#arm-button');
+await wall.waitForSelector('#hud[data-status="online"]');
+
+const look = (pad) => pad.evaluate(() => {
+  const box = (n) => n.getBoundingClientRect();
+  const padBox = box(document.querySelector('#pad'));
+  const bar = box(document.querySelector('.bottombar'));
+  const tools = [...document.querySelectorAll('.ink-tool-btn, #ink-style, #ink-undo, #ink-clear, #ink-focus, #ink-more')].map(box);
+  return {
+    w: Math.round(padBox.width), h: Math.round(padBox.height),
+    aspect: padBox.width / padBox.height,
+    bottom: padBox.bottom <= bar.top + 1,
+    toolsOnScreen: tools.every((t) => t.width > 0 && t.top >= 0 && t.bottom <= bar.top + 1 && t.right <= innerWidth + 1),
+    toolRows: new Set(tools.map((t) => Math.round(t.top))).size,
+    rail: document.querySelector('[data-panel="ink"]').classList.contains('ink-rail'),
+    focus: document.body.classList.contains('ink-focus'),
+    tabsShown: !!document.querySelector('.tabs')?.offsetHeight,
+  };
+});
+const open = async (w, h) => {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: true, hasTouch: true });
+  await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), JSON.stringify(room));
+  const pad = await ctx.newPage();
+  trap(pad, `ink-duo controller ${w}x${h}`);
+  await pad.goto(`${BASE}/control.html`);
+  await pad.waitForSelector('.tile');
+  await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+  await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+  await wall.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 20000 });
+  await pad.evaluate(() => document.querySelector('.tab[data-tab="ink"]').click());
+  await pad.waitForFunction(() => !document.querySelector('#pad').classList.contains('is-pending') && document.querySelector('#pad').getBoundingClientRect().width > 100, null, { timeout: 15000 });
+  await pad.waitForTimeout(300);
+  return { ctx, pad };
+};
+const sixteenNine = (s) => Math.abs(s.aspect - 16 / 9) < 0.03;
+
+{
+  const { ctx, pad } = await open(626, 890);
+  const s = await look(pad);
+  ok(`unfolded, upright: the slide is the panel's whole width, shaped as the slide (${s.w}x${s.h})`, s.w >= 590 && sixteenNine(s) && s.bottom);
+  ok(`with every tool in one row under it, on screen (${s.toolRows} row)`, s.toolRows === 1 && s.toolsOnScreen && !s.rail && !s.focus);
+  // The colour dot and the ⋯ button.
+  await pad.click('#ink-style');
+  ok('the colour dot opens colour and thickness', await pad.isVisible('#ink-style-pop .swatch[data-color="#ff4d4f"]') && await pad.isVisible('#ink-width'));
+  await pad.click('#ink-style-pop .swatch[data-color="#ff4d4f"]');
+  ok('picking a colour closes it, and the dot takes the colour',
+    await pad.isHidden('#ink-style-pop') && /255, 77, 79/.test(await pad.$eval('#ink-style .ink-style-dot', (n) => getComputedStyle(n).backgroundColor)));
+  await pad.click('#ink-more');
+  ok('⋯ holds zoom, the mirror, Save a photo, Auto-save and Pencil only',
+    await pad.isVisible('#ink-fit-page') && await pad.isVisible('#ink-toggle-mirror') && await pad.isVisible('#ink-save')
+    && await pad.isVisible('#ink-autosave') && await pad.isVisible('#ink-pen-only'));
+  await pad.mouse.click(5, 5);
+  ok('and a tap anywhere else closes it', await pad.isHidden('#ink-more-pop'));
+  await ctx.close();
+}
+{
+  const { ctx, pad } = await open(890, 626);
+  let s = await look(pad);
+  ok(`unfolded, sideways: Ink opens in Focus, the bars above it put away (${s.w}x${s.h}; it was 320x180)`, s.focus && !s.tabsShown && s.w >= 840 && s.h >= 470 && sixteenNine(s) && s.bottom && s.toolsOnScreen);
+  await pad.click('#ink-focus');
+  // The pad is re-laid when the panel's size changes, a frame or so later.
+  await pad.waitForFunction(() => document.querySelector('[data-panel="ink"]').classList.contains('ink-rail'), null, { timeout: 5000 }).catch(() => {});
+  s = await look(pad);
+  ok(`Exit brings the bars back, and the tools go beside the pad, where it is bigger (${s.w}x${s.h})`, !s.focus && s.tabsShown && s.rail && s.w >= 600 && sixteenNine(s) && s.bottom && s.toolsOnScreen);
+  await pad.evaluate(() => document.querySelector('.tab[data-tab="slides"]').click());
+  await pad.evaluate(() => document.querySelector('.tab[data-tab="ink"]').click());
+  ok('and once turned off, coming back to Ink does not turn it on again', !(await look(pad)).focus);
+  await pad.keyboard.press('z');
+  ok('Z puts the bars away', (await look(pad)).focus);
+  await pad.keyboard.press('Escape');
+  ok('and Escape brings them back', !(await look(pad)).focus);
+  await ctx.close();
+}
+{
+  const { ctx, pad } = await open(466, 678);
+  const s = await look(pad);
+  ok(`folded: the slide is the panel's whole width (${s.w}x${s.h}; it was 320x180)`, s.w >= 430 && sixteenNine(s) && s.bottom);
+  ok(`with the tools in one row, on screen (${s.toolRows} row)`, s.toolRows === 1 && s.toolsOnScreen);
+  await ctx.close();
+}
+{
+  const { ctx, pad } = await open(1180, 820);
+  const s = await look(pad);
+  ok(`an iPad held sideways: the tools beside the pad, which is bigger for it (${s.w}x${s.h}; it was 661x372)`, s.rail && s.w >= 950 && sixteenNine(s) && s.bottom && s.toolsOnScreen && !s.focus);
+  await ctx.close();
+}
+await wallCtx.close();
 }
 
 if (want('portrait content: the pad and the preview take its shape (#262)')) {
@@ -525,7 +627,7 @@ for (let i = 0; i < 12; i++) await pad.mouse.move(pad1.x + 60 + i * 18, pad1.y +
 await pad.mouse.up();
 await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 8000 });
 
-await pad.click('#ink-save');
+await behindInkMore(pad, () => pad.click('#ink-save'));
 await pad.waitForSelector('#photo-strip .shot', { timeout: 20000 });
 ok('Save a photo on the Ink tab keeps the annotated board', true);
 const kept = await pad.evaluate(() => {
@@ -925,7 +1027,7 @@ await dab(0.5, 0.5);
 await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 ok('the same relative point still lands in the same place once zoomed', await pixelAt(0.5, 0.5));
 
-await pad.click('#ink-fit-page');
+await behindInkMore(pad, () => pad.click('#ink-fit-page'));
 await pad.waitForTimeout(700);
 ok('Fit page returns the pad to 100%', (await pad.textContent('#ink-zoom-level')) === '100%' && /scale\(1\)/.test(await pad.$eval('#pad-frame', (n) => n.style.transform)));
 await ctx.close();
@@ -1021,9 +1123,9 @@ await pad.click('.tab[data-tab="ink"]');
 await pad.waitForTimeout(500);
 ok('the ink pad mirrors the actual slide behind the canvas', await pad.evaluate(() => document.querySelector('#pad-mirror').querySelector('.r-deck') !== null));
 
-await pad.click('#ink-toggle-mirror');
+await behindInkMore(pad, () => pad.click('#ink-toggle-mirror'));
 ok('a toggle can hide that mirror', await pad.evaluate(() => document.querySelector('#pad-mirror').classList.contains('is-hidden')));
-await pad.click('#ink-toggle-mirror');
+await behindInkMore(pad, () => pad.click('#ink-toggle-mirror'));
 ok('and show it again', !(await pad.evaluate(() => document.querySelector('#pad-mirror').classList.contains('is-hidden'))));
 await ctx.close();
 }

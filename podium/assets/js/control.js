@@ -4219,7 +4219,7 @@ function fitFrame() {
   const aspect = computeContentAspect();
   // The window takes the content's own shape (Issue #262), so a portrait page
   // on an upright iPad gets the full width and a tall pad rather than a strip
-  // in the middle of a 16:9 box. capPadHeight still keeps the controls in
+  // in the middle of a 16:9 box. layoutInk still keeps the controls in
   // view; where that binds, the page is fit inside as before.
   padViewport.style.aspectRatio = String(viewAspect(aspect));
   const { w, h } = fitBox(padViewport, padFrame, aspect);
@@ -4319,6 +4319,7 @@ const padFrameTop = () => parseFloat(padFrame.style.top) || 0;
 
 function renderPadZoomLevel() {
   $('#ink-zoom-level').textContent = zoomPercent(zoom);
+  renderZoomChip(zoom);
   if (document.activeElement !== $('#ink-zoom-slider')) $('#ink-zoom-slider').value = String(zoomToSlider(zoom, ZOOM_MAX));
 }
 
@@ -4360,7 +4361,17 @@ function syncPadToRoom() {
   applyPadTransform();
   // The pad shows the room's zoom on a linked item, not its own.
   $('#ink-zoom-level').textContent = zoomPercent(item.zoom || 1);
+  renderZoomChip(item.zoom || 1);
   if (document.activeElement !== $('#ink-zoom-slider')) $('#ink-zoom-slider').value = String(zoomToSlider(item.zoom || 1));
+}
+
+// On the tool bar while zoomed in: how far, and one tap back to the whole page
+// - the zoom controls themselves live behind the ⋯ button.
+function renderZoomChip(z) {
+  const chip = $('#ink-zoom-chip');
+  const pct = zoomPercent(z);
+  chip.hidden = pct === '100%';
+  chip.textContent = `${pct} · Fit`;
 }
 
 function pan(dx, dy) {
@@ -4376,23 +4387,54 @@ function pan(dx, dy) {
 // the fraction-based drawing math in redrawPad()/padPoint() is the same at
 // any zoom level.
 let pendingPdfAspectRetry = null;
-// Never taller than the Ink tab has room for with its controls still in view
-// underneath. A full-width 16:9 pad grows with the panel's width, and once
-// the cue bar folds away when idle (Issue #186) a laptop's pad would push the
-// controls below the fold - and reaching for the eraser would then scroll the
-// top of the pad up under the top bar. Measured rather than guessed in CSS,
-// since how tall the controls are depends on how they wrap.
-function capPadHeight() {
+// The Ink tab's layout: the pad first, the tools where they cost it least.
+// The room the panel has is measured, then two arrangements are tried - the
+// tool bar under (or above) the pad, and the tools as a rail beside it - and
+// the one that leaves the bigger pad wins: beside it on a short, wide screen
+// (a phone or an unfolded iPhone Duo held sideways), under it on an upright
+// one. The pad is then sized to exactly the content's shape within that, so
+// there are no black bars to draw into by mistake, and the tools are always
+// on screen with it. Measured rather than guessed in CSS, since how big the
+// tools are depends on how they wrap.
+function layoutInk() {
   const panels = $('.panels');
   const panel = $('[data-panel="ink"]');
   if (!panels || panel.hidden) return;
+  const stage = panel.querySelector('.ink-stage');
+  const controls = $('#ink-controls');
   const cs = getComputedStyle(panels);
-  const room = panels.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  const below = panel.offsetHeight - padViewport.offsetHeight;
-  padViewport.style.maxHeight = `${Math.max(180, Math.floor(room - below))}px`;
+  const roomH = panels.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const roomW = panel.clientWidth;
+  const gap = parseFloat(getComputedStyle(panel).rowGap) || 0;
+  // What else the panel holds (a note that the ink is held), with its gap.
+  const others = [...panel.children].filter((c) => c !== stage && c.offsetHeight).reduce((h, c) => h + c.offsetHeight + gap, 0);
+  const availH = Math.max(120, roomH - others);
+  const aspect = viewAspect(computeContentAspect());
+  const spacing = parseFloat(getComputedStyle(stage).gap) || 0;
+  const share = panel.classList.contains('pad-gutter') ? 0.8 : 1;
+  const fit = (w, h) => {
+    let fw = Math.max(0, w);
+    let fh = fw / aspect;
+    if (fh > h) { fh = Math.max(0, h); fw = fh * aspect; }
+    return { w: fw, h: fh };
+  };
+  panel.classList.toggle('ink-rail', false);
+  const flat = fit(roomW * share, availH - controls.offsetHeight - spacing);
+  panel.classList.toggle('ink-rail', true);
+  const rail = fit((roomW - controls.offsetWidth - spacing) * share, availH);
+  const railFits = controls.offsetHeight <= availH;
+  const useRail = railFits && rail.w * rail.h > flat.w * flat.h * 1.1;
+  // Where neither leaves a pad worth drawing on (a phone held sideways, with
+  // every bar still up - Focus is the answer there), the pad keeps a usable
+  // size and the tools go under it, a scroll away.
+  const tooSmall = Math.max(flat.h, useRail ? rail.h : 0) < 150;
+  panel.classList.toggle('ink-rail', useRail && !tooSmall);
+  const best = tooSmall ? fit(roomW * share, Math.max(150, availH)) : (useRail ? rail : flat);
+  padViewport.style.width = `${Math.max(80, Math.floor(best.w))}px`;
+  padViewport.style.height = `${Math.max(45, Math.floor(best.h))}px`;
 }
 function sizePad() {
-  capPadHeight();
+  layoutInk();
   fitFrame();
   clampPan();
   applyPadTransform();
@@ -6193,6 +6235,8 @@ function tab(name) {
   // from that, so every "contain"-fit surface needs a nudge the moment its
   // panel actually has a size to fit into - it would otherwise sit blank
   // until whatever periodic update happens to land next.
+  if (name !== 'ink') { setInkFocus(false); setInkPop(null); }
+  if (name === 'ink' && !inkFocusDeclined && shortWideTouchScreen()) setInkFocus(true);
   if (name === 'ink') { syncInkFromState(); applyInkPreferences(); sizePad(); }
   if (name === 'now') renderNowPreview();
   if (name === 'slides') {
@@ -7328,6 +7372,77 @@ if (inkColorPicker && inkPickerLabel) {
   inkColorPicker.addEventListener('change', (ev) => onCustomColor(ev.target.value));
 }
 
+// The tool bar's two pop-overs: colour and thickness behind the colour dot,
+// and everything reached for less often (zoom, the mirror, photos, Pencil
+// only) behind the ⋯ button. One open at a time; a tap anywhere else, or
+// Escape, closes it. A colour is a one-tap choice, so picking one closes it.
+const inkPops = { style: [$('#ink-style'), $('#ink-style-pop')], more: [$('#ink-more'), $('#ink-more-pop')] };
+function setInkPop(name) {
+  for (const [key, [button, pop]] of Object.entries(inkPops)) {
+    const open = key === name;
+    pop.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+    button.classList.toggle('is-on', open);
+  }
+}
+const inkPopOpen = () => Object.values(inkPops).some(([, pop]) => !pop.hidden);
+for (const [key, [button, pop]] of Object.entries(inkPops)) {
+  button.addEventListener('click', () => setInkPop(pop.hidden ? key : null));
+}
+document.addEventListener('pointerdown', (ev) => {
+  if (inkPopOpen() && !ev.target.closest('#ink-controls')) setInkPop(null);
+});
+$('#ink-zoom-chip').addEventListener('click', () => $('#ink-fit-page').click());
+
+// The colour dot is the pen as it will draw: its colour, and bigger for a
+// thicker line.
+function syncInkStyleDot() {
+  const dot = $('#ink-style .ink-style-dot');
+  if (!dot) return;
+  dot.style.background = ink.color;
+  const size = Math.round(Math.min(26, Math.max(8, 6 + Number(ink.width || 6) * 0.9)));
+  dot.style.width = `${size}px`;
+  dot.style.height = `${size}px`;
+}
+$$('#ink-style-pop .swatch:not(.swatch-picker)').forEach((b) => b.addEventListener('click', () => { syncInkStyleDot(); setInkPop(null); }));
+inkColorPicker?.addEventListener('input', syncInkStyleDot);
+inkColorPicker?.addEventListener('change', () => setInkPop(null));
+$('#ink-width').addEventListener('input', syncInkStyleDot);
+$$('.ink-tool-btn').forEach((b) => b.addEventListener('click', syncInkStyleDot));
+syncInkStyleDot();
+
+// Focus: the bars above the pad put away, so the slide fills the screen. The
+// bottom bar stays (Freeze, Blank and whatever else is kept there), and so
+// does the cue bar while something is cued, since TAKE is on it. On by itself
+// the first time Ink opens on a short, wide touch screen - a phone, or an
+// unfolded iPhone Duo, held sideways - where the bars would otherwise leave
+// the pad a strip; not again on this page once it has been turned off.
+let inkFocusDeclined = false;
+function setInkFocus(on) {
+  document.body.classList.toggle('ink-focus', on);
+  $('#ink-focus').setAttribute('aria-pressed', String(on));
+  $('#ink-focus').setAttribute('aria-label', on ? 'Exit focus' : 'Focus');
+  if (!on) setInkPop(null);
+}
+function shortWideTouchScreen() {
+  return innerWidth > innerHeight && innerHeight <= 640 && !!window.matchMedia?.('(pointer: coarse)').matches;
+}
+function toggleInkFocus() {
+  const on = !document.body.classList.contains('ink-focus');
+  if (!on) inkFocusDeclined = true;
+  setInkFocus(on);
+}
+$('#ink-focus').addEventListener('click', toggleInkFocus);
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape' || ev.defaultPrevented) return;
+  if (inkPopOpen()) { setInkPop(null); ev.preventDefault(); return; }
+  if (document.body.classList.contains('ink-focus') && !$('[data-panel="ink"]').hidden) {
+    inkFocusDeclined = true;
+    setInkFocus(false);
+    ev.preventDefault();
+  }
+});
+
 $('#cam-start').addEventListener('click', async () => {
   if (cameraSender?.active) { await cameraSender.stop(); return; }
   await startCamera();
@@ -7656,6 +7771,7 @@ document.addEventListener('keydown', (ev) => {
 
   // When focused on the Ink tab, switch tools quickly
   if (!$('[data-panel="ink"]')?.hidden) {
+    if (ev.key === 'z' || ev.key === 'Z') { ev.preventDefault(); toggleInkFocus(); return; }
     if (ev.key === '1') { ev.preventDefault(); setInkTool('pen'); return; }
     if (ev.key === '2') { ev.preventDefault(); setInkTool('highlighter'); return; }
     if (ev.key === '3') { ev.preventDefault(); setInkTool('eraser'); return; }
