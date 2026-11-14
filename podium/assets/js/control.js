@@ -6218,6 +6218,11 @@ function tab(name) {
   // Which tab is in front, for the CSS that changes the bottom bar on a
   // phone's Slides tab (Issue #188).
   document.body.dataset.tab = name;
+  // Whether the strip steps aside on this tab - before anything below sizes
+  // itself against the room, which the strip coming or going changes. Done
+  // after, the Ink pad was sized for the old room and resized a frame later,
+  // and a stroke drawn in between landed short of where it was drawn.
+  syncStripRepeat();
   // The list of lectures on the server is asked for again every time the tab
   // carrying it is opened. Reading it once at startup would mean a lecture
   // sent from the desk five minutes ago was invisible here until a reload -
@@ -6257,7 +6262,6 @@ function tab(name) {
     quietChipFollow = true;
     renderSlides();
   }
-  syncStripRepeat();
 }
 
 // Only buttons that name a tab (Issue #178). Settings' own Connection and
