@@ -1107,11 +1107,17 @@ body.guest {
 }
 #deck-now-preview { border-color: var(--accent); }
 /* Issue #174: the Now tab's large live view of the focused pane. */
-.now-preview { margin: 10px auto 4px; border-color: var(--live); max-height: 52vh; }
-/* Issue #262: held upright, the screen is tall - the preview may use more of
-   it, and a portrait page or photo is read at a useful size. */
+/* Sized from JS (nowPreviewRoom in control.js): as big as the room between
+   the bars allows with the tab's own controls still on screen. */
+.now-preview { margin: 10px auto 4px; border-color: var(--live); }
+/* Short and wide: the picture on the left, the tab's controls in a column
+   beside it (fitNowPreview picks this when the picture is bigger for it). */
+.panel[data-panel="now"].now-side {
+  display: grid; grid-template-columns: minmax(0, 1fr) 260px; column-gap: 16px; align-content: start;
+}
+.panel[data-panel="now"].now-side > * { grid-column: 2; min-width: 0; }
+.panel[data-panel="now"].now-side > #now-preview { grid-column: 1; grid-row: 1 / span 12; margin: 0 auto; align-self: start; }
 @media (orientation: portrait) {
-  .now-preview { max-height: 64vh; }
   .ink-controls { gap: 10px; }
 }
 /* Issue #174: a held slide, read at a useful size. */
@@ -1782,14 +1788,20 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 .bottombar .bar-deck { display: none; }
 
 @media (max-width: 640px) {
-  /* Where a thumb rests, in place of the volume slider (mute stays). */
-  body[data-tab="slides"] .bottombar .bar-deck {
+  /* Where a thumb rests, in place of the volume slider (mute stays) - on the
+     Slides tab, and on the Now tab for anything that pages. */
+  body[data-tab="slides"] .bottombar .bar-deck,
+  body[data-tab="now"].now-paged .bottombar .bar-deck {
     display: inline-flex; align-items: center; justify-content: center;
     flex: 1; min-width: 0; font-size: 22px;
   }
-  body[data-tab="slides"] .bottombar .vol { flex: none; min-width: 0; }
-  body[data-tab="slides"] .bottombar .vol input[type=range] { display: none; }
+  body[data-tab="slides"] .bottombar .vol,
+  body[data-tab="now"].now-paged .bottombar .vol { flex: none; min-width: 0; }
+  body[data-tab="slides"] .bottombar .vol input[type=range],
+  body[data-tab="now"].now-paged .bottombar .vol input[type=range] { display: none; }
   body[data-tab="slides"] .deck-nav { display: none; }
+  /* The Now tab keeps saying where it is; the buttons are in the bar. */
+  body[data-tab="now"].now-paged #paging button { display: none; }
   /* Now and Next stay pinned while the notes and the grid scroll under them.
      Sticky only holds inside its own parent, so the wrappers between the pair
      and the rest of the tab are flattened here - #deck-live, which holds the
