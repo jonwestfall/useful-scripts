@@ -1943,6 +1943,93 @@ fs.rmSync(noNotes, { force: true });
 await foldCtx.close();
 }
 
+if (want('the Now tab fits the room between the bars (iPhone Duo)')) {
+console.log('\n-- the Now tab fits the room between the bars (iPhone Duo) --');
+// The Now preview was a share of the window (52% of its height sideways), so
+// on an unfolded iPhone Duo held sideways (890x626) it ran ~40px under the
+// bottom bar, under an "On screen" strip that only repeated it.
+const room = { transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'now-fit-room', passphrase: 'all of it, none hidden' };
+const wallCtx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+await wallCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), JSON.stringify(room));
+const wall = await wallCtx.newPage();
+trap(wall, 'now-fit display');
+await wall.goto(`${BASE}/display.html`);
+await wall.click('#arm-button');
+await wall.waitForSelector('#hud[data-status="online"]');
+const onWall = () => wall.evaluate(() => {
+  const svgs = [...(document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]') || [])];
+  return svgs.findIndex((s) => s.classList.contains('podium-on'));
+});
+const look = (pad) => pad.evaluate(() => {
+  const box = (sel) => document.querySelector(sel)?.getBoundingClientRect();
+  const p = box('#now-preview');
+  const bar = box('.bottombar');
+  const strip = box('#preview-pane');
+  return {
+    w: Math.round(p.width), h: Math.round(p.height),
+    clear: p.bottom <= bar.top + 1 && p.top >= 0,
+    strip: !!strip && strip.height > 0,
+    barNav: getComputedStyle(document.querySelector('#bar-next')).display !== 'none',
+  };
+});
+const open = async (w, h) => {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: true, hasTouch: true });
+  await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), JSON.stringify(room));
+  const pad = await ctx.newPage();
+  trap(pad, `now-fit controller ${w}x${h}`);
+  await pad.goto(`${BASE}/control.html`);
+  await pad.waitForSelector('.tile');
+  await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+  return { ctx, pad };
+};
+const nowTab = async (pad) => {
+  await pad.evaluate(() => document.querySelector('.tab[data-tab="now"]').click());
+  // Re-fit once the strip has stepped aside: the panels change size a frame later.
+  await pad.waitForFunction(() => {
+    const p = document.querySelector('#now-preview').getBoundingClientRect();
+    return p.width > 100 && p.bottom <= document.querySelector('.bottombar').getBoundingClientRect().top + 1;
+  }, null, { timeout: 5000 }).catch(() => {});
+};
+
+{
+  const { ctx, pad } = await open(890, 626);
+  await pad.click('.tile:has(.tile-title:text-is("Podium deck features (example)"))');
+  await wall.waitForFunction(() => document.querySelector('.layer[data-role="program"] .r-deck')?.shadowRoot?.querySelectorAll('svg[data-marpit-svg]').length === 4, null, { timeout: 20000 });
+  await nowTab(pad);
+  const s = await look(pad);
+  ok(`unfolded, sideways: the whole picture is between the bars, its controls beside it (${s.w}x${s.h})`,
+    s.clear && s.w >= 560 && await pad.evaluate(() => document.querySelector('[data-panel="now"]').classList.contains('now-side')));
+  ok('with no "On screen" strip over it repeating it', !s.strip);
+  // Frozen, the strip has a job again: the next pick lands in the cue.
+  await pad.click('#freeze');
+  await pad.waitForFunction(() => document.querySelector('#preview-pane').getBoundingClientRect().height > 0, null, { timeout: 5000 })
+    .then(() => ok('frozen, the cue bar is back over it', true))
+    .catch(() => ok('frozen, the cue bar is back over it', false));
+  await nowTab(pad);
+  ok('and the picture still fits under it', (await look(pad)).clear);
+  await pad.click('#freeze');
+  await ctx.close();
+}
+{
+  const { ctx, pad } = await open(466, 678);
+  await nowTab(pad);
+  const s = await look(pad);
+  ok(`folded: the picture is the width of the screen, and clear of the bars (${s.w}x${s.h})`, s.clear && s.w >= 430);
+  ok('on a phone, ◀ ▶ are in the bottom bar for a deck on the Now tab', s.barNav);
+  const before = await onWall();
+  await pad.click('#bar-next');
+  await wall.waitForFunction((was) => {
+    const svgs = [...document.querySelector('.layer[data-role="program"] .r-deck').shadowRoot.querySelectorAll('svg[data-marpit-svg]')];
+    return svgs.findIndex((x) => x.classList.contains('podium-on')) === was + 1;
+  }, before, { timeout: 10000 })
+    .then(() => ok('and ▶ there moves the room on', true))
+    .catch(() => ok('and ▶ there moves the room on', false));
+  ok('the Now tab still says where it is, without its own buttons', await pad.isVisible('#page-label') && await pad.isHidden('#next-page'));
+  await ctx.close();
+}
+await wallCtx.close();
+}
+
 if (want('Settings Save/Close reachable on a phone')) {
 console.log('\n-- Settings Save/Close reachable on a phone --');
 // Issue #96: the Settings sheet is long enough that on a phone, reaching

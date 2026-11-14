@@ -189,6 +189,9 @@ The deck editor writes and edits Marp decks without leaving Podium (Issue #226).
 
 ### The Presenter View (Now, Next & Notes)
 
+The **Now** tab is what the room sees, as big as the screen between the bars allows, with its own controls (Back/Next, play, zoom) still on screen. On a short, wide screen (an unfolded iPhone Duo or a phone held sideways) the picture goes on the left with the controls beside it. With nothing cued or frozen, the *On screen* strip steps aside there, as on the Slides tab, since it would only repeat the picture. On a phone, ◀ ▶ for a deck, a PDF or a document move into the bottom bar, where the thumb rests.
+
+
 The **Slides** tab provides an integrated confidence monitor:
 - **Now Box**: A 1:1 live mirror showing exactly what the audience is looking at.
 - **Next Box**: A preview of the upcoming slide or bullet point so you never have to turn around and look at the screen.

@@ -1428,11 +1428,15 @@ function renderPreview() {
 
 // On the Slides tab the strip says exactly what the Now box under it already
 // shows (Issue #188) - so while that is all it would say (nothing cued or
-// frozen, panel A, the deck live rather than kept), it steps aside.
+// frozen, panel A, the deck live rather than kept), it steps aside. The Now
+// tab is the same: it IS what is on screen, larger, so with nothing cued or
+// frozen the strip over it only repeats it.
 function syncStripRepeat() {
   const slidesOpen = !$('[data-panel="slides"]').hidden;
+  const nowOpen = !$('[data-panel="now"]').hidden;
   const view = slidesOpen ? slidesView() : null;
-  const repeats = !state.frozen && !hasCue() && state.focus === 0 && !!view && !view.recalled;
+  const repeats = !state.frozen && !hasCue()
+    && ((state.focus === 0 && !!view && !view.recalled) || nowOpen);
   $('.workspace').classList.toggle('strip-repeats', repeats);
 }
 
@@ -2069,6 +2073,13 @@ function slidesView() {
 }
 
 /** Next/Previous/a thumbnail on the Slides tab - local while the deck is only kept. */
+// The bottom bar's ◀ ▶ page the deck on the Slides tab, and on the Now tab
+// whatever it shows that pages - a PDF, a document, a picture set - the way
+// its own Back and Next do. A deck pages the same either way.
+function nowDrivesBar() {
+  return document.body.dataset.tab === 'now' && document.body.classList.contains('now-paged') && workItem()?.type !== 'deck';
+}
+
 function deckNav(dir, value) {
   const view = slidesView();
   if (!view?.recalled) { send(value === undefined ? { op: 'nav', dir } : { op: 'nav', dir, value }); return; }
@@ -2104,8 +2115,10 @@ function renderSlides() {
     // A document (Issue #240) pages from the bar too: Next and Previous scroll it.
     const doc = workItem();
     const isDoc = doc?.type === 'document';
-    $('#bar-prev').disabled = !isDoc || !(doc.at > 0);
-    $('#bar-next').disabled = !isDoc || (doc.at || 0) >= docMaxAt(doc.height);
+    if (!nowDrivesBar()) {
+      $('#bar-prev').disabled = !isDoc || !(doc.at > 0);
+      $('#bar-next').disabled = !isDoc || (doc.at || 0) >= docMaxAt(doc.height);
+    }
     return;
   }
 
@@ -2151,8 +2164,10 @@ function renderSlides() {
   // decide when the buttons actually go grey.
   $('#deck-prev').disabled = index === 0 && step === 0;
   $('#deck-next').disabled = index >= total - 1 && step >= fragCount;
-  $('#bar-prev').disabled = $('#deck-prev').disabled;
-  $('#bar-next').disabled = $('#deck-next').disabled;
+  if (!nowDrivesBar()) {
+    $('#bar-prev').disabled = $('#deck-prev').disabled;
+    $('#bar-next').disabled = $('#deck-next').disabled;
+  }
 
   const notesEl = $('#deck-notes');
   if (!deck) {
@@ -2801,6 +2816,40 @@ function currentTime() {
 // and only kept current while the tab is open - a video or a web page
 // mirrored into a hidden panel is work nobody is looking at.
 let nowTabMirror = null;
+// The Now preview's size and place: as big as the room between the bars
+// allows with the tab's own controls still on screen - measured, rather than
+// a share of the window, which on a short screen ran it under the bottom bar.
+// Two arrangements are tried, as on the Ink tab: the controls under the
+// picture, and (on a short, wide screen - an unfolded iPhone Duo or a phone
+// held sideways) the picture on the left with the controls in a column
+// beside it. The bigger picture wins. Stacked, it is never less than 40% of
+// the room: a tab with a lot under the picture scrolls rather than shrinking
+// it to a sliver. A live web page keeps the stacked layout, its tools are
+// wide.
+const NOW_SIDE_W = 260;
+function fitNowPreview(preview, aspect) {
+  const panels = $('.panels');
+  const panel = $('[data-panel="now"]');
+  if (!panels || panel.hidden) return null;
+  const cs = getComputedStyle(panels);
+  const roomH = panels.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const roomW = panel.clientWidth;
+  const fit = (w, h) => {
+    let fw = Math.max(0, w);
+    let fh = fw / aspect;
+    if (fh > h) { fh = Math.max(0, h); fw = fh * aspect; }
+    return { w: fw, h: fh };
+  };
+  panel.classList.toggle('now-side', false);
+  const others = panel.offsetHeight - preview.offsetHeight;
+  const stacked = fit(roomW, Math.max(roomH * 0.4, Math.min(roomH, roomH - others)));
+  const webLive = !$('#web-tools')?.hidden;
+  const side = fit(roomW - NOW_SIDE_W - 16, roomH - 16);
+  const useSide = !webLive && side.w * side.h > stacked.w * stacked.h * 1.15;
+  panel.classList.toggle('now-side', useSide);
+  return useSide ? side : stacked;
+}
+
 function renderNowPreview() {
   if ($('[data-panel="now"]').hidden) return;
   nowTabMirror ||= createLiveMirror($('#now-preview'));
@@ -2814,10 +2863,9 @@ function renderNowPreview() {
   const preview = $('#now-preview');
   preview.classList.toggle('is-zoomable', zoomableItem(live));
   const aspect = viewAspect(shownAspect);
-  const maxH = parseFloat(getComputedStyle(preview).maxHeight) || Infinity;
-  const room = preview.parentElement?.clientWidth || 0;
   preview.style.aspectRatio = String(aspect);
-  preview.style.width = room && Number.isFinite(maxH) ? `${Math.min(room, maxH * aspect)}px` : '';
+  const size = fitNowPreview(preview, aspect);
+  preview.style.width = size?.w ? `${Math.floor(size.w)}px` : '';
   nowTabMirror.update(live, shownAspect);
   const work = workItem();
   const note = $('#now-cued-note');
@@ -2874,6 +2922,9 @@ function renderNow() {
   // A page in the live browser scrolls with its own buttons, below.
   const webLive = webPanel.render(item);
   $('#paging').hidden = !isPaged || webLive;
+  // On a phone, Back/Next where a thumb rests, as on the Slides tab (Issue
+  // #188): the bottom bar's ◀ ▶ take the volume slider's place.
+  document.body.classList.toggle('now-paged', isPaged && !webLive);
   $('#page-label').textContent = type === 'pdf'
     ? `Page ${item.page || 1}`
     : type === 'deck' ? `Slide ${(item.slide || 0) + 1} / ${item.slideCount || 1}`
@@ -2887,6 +2938,10 @@ function renderNow() {
     $('#next-page').disabled = false;
   }
   renderDocControls(item);
+  if (nowDrivesBar()) {
+    $('#bar-prev').disabled = $('#prev-page').disabled;
+    $('#bar-next').disabled = $('#next-page').disabled;
+  }
 
   // Projector zoom: a PDF page, or (Issue #262) a photo shown whole.
   const zoomable = zoomableItem(item);
@@ -6194,7 +6249,7 @@ function tab(name) {
   // panel actually has a size to fit into - it would otherwise sit blank
   // until whatever periodic update happens to land next.
   if (name === 'ink') { syncInkFromState(); applyInkPreferences(); sizePad(); }
-  if (name === 'now') renderNowPreview();
+  if (name === 'now') renderNow();
   if (name === 'slides') {
     lastScrolledSlideIndex = null;
     lastScrolledSectionId = null;
@@ -6468,8 +6523,8 @@ $('#deck-open-editor').addEventListener('click', () => {
   const src = view && !view.recalled ? deckEditSrc(view.item) : null;
   if (src) openDeckEditor(src);
 });
-$('#bar-prev').addEventListener('click', () => deckNav('prev'));
-$('#bar-next').addEventListener('click', () => deckNav('next'));
+$('#bar-prev').addEventListener('click', () => (nowDrivesBar() ? $('#prev-page').click() : deckNav('prev')));
+$('#bar-next').addEventListener('click', () => (nowDrivesBar() ? $('#next-page').click() : deckNav('next')));
 $('#deck-export').addEventListener('click', exportDeck);
 $('#deck-grid-filter').addEventListener('input', filterGrid);
 
@@ -7691,7 +7746,10 @@ window.addEventListener('resize', () => renderNowPreview());
 // The cue bar folding to a strip and back (Issue #186) resizes the panels
 // without resizing the window.
 if (typeof ResizeObserver === 'function') {
-  new ResizeObserver(() => { if (!$('[data-panel="ink"]').hidden && !ink.drawing && !ink.erasing) sizePad(); }).observe($('.panels'));
+  new ResizeObserver(() => {
+    if (!$('[data-panel="ink"]').hidden && !ink.drawing && !ink.erasing) sizePad();
+    if (!$('[data-panel="now"]').hidden) renderNowPreview();
+  }).observe($('.panels'));
 }
 window.addEventListener('beforeunload', () => bus?.close());
 
