@@ -1943,6 +1943,82 @@ fs.rmSync(noNotes, { force: true });
 await foldCtx.close();
 }
 
+if (want('slimmer bars on a phone and a short screen held sideways (iPhone Duo)')) {
+console.log('\n-- slimmer bars on a phone and a short screen held sideways (iPhone Duo) --');
+// The bars around the content (top bar, cue bar, tabs, bottom bar) took 259px
+// of an unfolded iPhone Duo's 626 held sideways - 41% of the screen.
+const room = { transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'chrome-room', passphrase: 'more slide, less bar' };
+const wallCtx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+await wallCtx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), JSON.stringify(room));
+const wall = await wallCtx.newPage();
+trap(wall, 'chrome display');
+await wall.goto(`${BASE}/display.html`);
+await wall.click('#arm-button');
+await wall.waitForSelector('#hud[data-status="online"]');
+const open = async (w, h) => {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, isMobile: w < 1000, hasTouch: w < 1000 });
+  await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg), JSON.stringify(room));
+  const pad = await ctx.newPage();
+  trap(pad, `chrome controller ${w}x${h}`);
+  await pad.goto(`${BASE}/control.html`);
+  await pad.waitForSelector('.tile');
+  await pad.waitForFunction(() => document.querySelector('#display-state')?.textContent.startsWith('Display connected'));
+  return { ctx, pad };
+};
+const bars = (pad) => pad.evaluate(() => ['.topbar', '#preview-pane', '.tabs', '.bottombar']
+  .map((sel) => document.querySelector(sel)?.getBoundingClientRect().height || 0).reduce((a, b) => a + b, 0));
+const pickerInPop = (pad) => pad.evaluate(() => !!document.querySelector('#layout-pop #panel-picker'));
+
+{
+  const { ctx, pad } = await open(890, 626);
+  await pad.click('#freeze');
+  await pad.click('.tile:has(.tile-title:text-is("Opening slide"))');
+  await pad.waitForFunction(() => document.querySelector('#preview-pane').classList.contains('is-cued'), null, { timeout: 5000 });
+  const used = await bars(pad);
+  ok(`unfolded and sideways, with something cued, the bars take ${Math.round(used)}px of 626 (they took 259)`, used <= 195);
+  ok('TAKE is still on the cue bar, on screen', await pad.isVisible('#take'));
+  ok('the panel buttons are in the layout pop-over', await pickerInPop(pad));
+  await pad.click('#take');
+  await pad.click('#freeze');
+  await pad.click('.tab[data-tab="slides"]').catch(() => {});
+  await ctx.close();
+}
+{
+  const { ctx, pad } = await open(466, 678);
+  // The dot is the status's ::before (its own text is font-size 0 there).
+  await pad.waitForFunction(() => /Relay OK/.test(document.querySelector('.topbar-status').title), null, { timeout: 5000 }).catch(() => {});
+  const status = {
+    dot: await pad.evaluate(() => getComputedStyle(document.querySelector('#status'), '::before').content === '"●"' && document.querySelector('.topbar-status').getBoundingClientRect().width > 0),
+    line: await pad.isHidden('#display-state'),
+    title: await pad.getAttribute('.topbar-status', 'title'),
+  };
+  ok(`folded, the status is its dot, and the display line only when something is wrong (${JSON.stringify(status)})`,
+    status.dot && status.line && /Relay OK/.test(status.title || '') && /Display connected/.test(status.title || ''));
+  await pad.click('#freeze');
+  await pad.click('#blank');
+  const clipped = await pad.evaluate(() => ['#freeze', '#blank'].filter((s) => { const b = document.querySelector(s); return b.scrollWidth > b.clientWidth + 1; }));
+  ok(`"Frozen" and "Blanked" fit their buttons (${clipped.join(', ') || 'none cut'})`, clipped.length === 0);
+  await pad.click('#blank');
+  await pad.click('#freeze');
+  ok('the layout button says nothing extra while A is full screen', await pad.isHidden('#layout-focus'));
+  await pad.click('#layout-current');
+  ok('the layout pop-over holds the four panel buttons', await pickerInPop(pad) && (await pad.$$('#layout-pop .panel-btn')).length === 4);
+  await pad.click('#layout-pop .panel-btn:text-is("B")');
+  await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'B', null, { timeout: 5000 });
+  ok('working on B, the layout button says so', await pad.isVisible('#layout-focus') && (await pad.textContent('#layout-focus')) === 'B');
+  await pad.click('#layout-current');
+  await pad.click('#layout-pop .panel-btn:text-is("A")');
+  await pad.waitForFunction(() => document.querySelector('.panel-btn.is-on')?.textContent === 'A', null, { timeout: 5000 });
+  await ctx.close();
+}
+{
+  const { ctx, pad } = await open(1280, 800);
+  ok('on a laptop the panel buttons stay in the top bar', !(await pickerInPop(pad)) && await pad.isVisible('#panel-picker'));
+  await ctx.close();
+}
+await wallCtx.close();
+}
+
 if (want('Settings Save/Close reachable on a phone')) {
 console.log('\n-- Settings Save/Close reachable on a phone --');
 // Issue #96: the Settings sheet is long enough that on a phone, reaching

@@ -871,6 +871,10 @@ body.guest {
 .layout-icon-pip i:last-child { position: absolute; width: 45%; height: 45%; top: 1px; right: 1px; border: 1px solid var(--panel); }
 
 .panel-picker { display: flex; gap: 4px; }
+/* In the layout pop-over on a small screen (placePanelPicker in control.js). */
+.topbar-pop .panel-picker { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.topbar-pop .panel-picker .panel-btn { min-width: 44px; min-height: 40px; }
+.layout-focus { font-size: 12px; font-weight: 700; color: var(--accent); }
 .panel-btn {
   min-width: 30px; min-height: 30px; padding: 0 8px; font-weight: 700; font-size: 13px;
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
@@ -1734,6 +1738,51 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
     position: sticky; top: -12px; z-index: 3;
     background: var(--bg); padding: 6px 0 8px; margin-top: -6px;
   }
+}
+
+/* --- the bars on a small screen (iPhone Duo review) -------------------------
+   A phone, or a short screen held sideways (an unfolded iPhone Duo is about
+   890x626 that way, a phone 844x390): the bars around the content took 259px
+   of the Duo's 626, 41% of it. Slimmer here, and the panel buttons are in the
+   layout pop-over (see placePanelPicker in control.js). */
+@media (max-width: 640px) {
+  /* The status as its dot; the display's line only when something is wrong. */
+  .topbar-status { flex: 0 1 auto; min-width: 0; }
+  #status { font-size: 0; }
+  #status::before { font-size: 13px; margin-right: 0; }
+  #display-state:not(.is-bad), #plan-name { display: none; }
+  /* Frozen and Blanked fit, rather than being cut to "Froz". */
+  .bottombar #freeze, .bottombar #blank { width: auto; min-width: 54px; flex: none; font-size: 12px; padding: 0 6px; }
+  /* The cue bar already says it is cued, with TAKE on it. */
+  #deck-cued-note { display: none; }
+}
+@media (max-width: 640px), (max-height: 640px) and (orientation: landscape) {
+  .topbar { padding: 4px 12px; }
+  .topbar button, .layout-current, #topbar-more { min-height: 30px; }
+  /* The cue bar, one slim row: a small picture, what it is, and TAKE. */
+  #preview-pane { padding: 4px 12px; gap: 10px; }
+  #preview-stage { width: 72px; }
+  .workspace.cue-compact #preview-stage { width: 56px; }
+  #take { min-height: 40px; font-size: 15px; }
+  .bottombar { padding: 6px 12px; padding-bottom: calc(6px + env(safe-area-inset-bottom)); gap: 6px; }
+  .bottombar .bar-slot, #mute, .bottombar .bar-deck { height: 38px; }
+}
+@media (max-height: 640px) and (orientation: landscape) {
+  .tabs { padding: 6px 10px 0; gap: 4px; }
+  .tab { min-height: 34px; padding: 0 12px; font-size: 13px; }
+  .panels { padding-top: 8px; }
+  #deck-cued-note { display: none; }
+  /* Previous/Next where a thumb rests, as on a phone (Issue #188). */
+  body[data-tab="slides"] .bottombar .bar-deck,
+  body[data-tab="now"].now-paged .bottombar .bar-deck {
+    display: inline-flex; align-items: center; justify-content: center;
+    flex: 1; min-width: 0; height: 38px; font-size: 20px;
+  }
+  body[data-tab="slides"] .bottombar .vol,
+  body[data-tab="now"].now-paged .bottombar .vol { flex: none; min-width: 0; }
+  body[data-tab="slides"] .bottombar .vol input[type=range],
+  body[data-tab="now"].now-paged .bottombar .vol input[type=range] { display: none; }
+  body[data-tab="slides"] .deck-nav { display: none; }
 }
 
 /* Slides beside another tab, on a wide screen (toggled from the tab row). */
