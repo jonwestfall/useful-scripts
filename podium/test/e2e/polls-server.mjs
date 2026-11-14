@@ -30,7 +30,8 @@ import {
   bgMatches,
   reportErrors,
   teardown,
-  exitWithResult
+  exitWithResult,
+  behindInkMore
 } from './harness.mjs';
 import { createZip } from '../../assets/js/zip.js';
 
@@ -2179,7 +2180,7 @@ ok('ink drawn during a server-backed lecture reaches the display', true);
 // this controller's own Keep photos switch on (which would otherwise file a
 // second copy under photos/). Next and straight back, so everything below
 // still finds the same slide and the same ink.
-await pad.check('#ink-autosave');
+await behindInkMore(pad, () => pad.check('#ink-autosave'));
 await pad.click('.tab[data-tab="slides"]');
 await pad.click('#deck-next');
 await pad.waitForTimeout(500);
@@ -2200,7 +2201,7 @@ ok(`a marked-up slide left with Auto-save on is filed with the lecture (${keptSc
 ok('and only once - the controller does not file its own copy under photos/',
   !keptScreens.some((n) => n.startsWith('photos/') && /Marked-up/i.test(n)));
 await pad.click('.tab[data-tab="ink"]');
-await pad.uncheck('#ink-autosave');
+await behindInkMore(pad, () => pad.uncheck('#ink-autosave'));
 
 // Pin down WHICH lecture before standing down. Everything below reads the
 // list back, and once this one closes a later lecture can sit at index 0 -
