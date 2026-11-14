@@ -22,6 +22,7 @@ import {
   teardown,
   exitWithResult,
   until,
+  behindInkMore
 } from './harness.mjs';
 import { PLAN_VERSION } from '../../assets/js/planfile.js';
 
@@ -799,7 +800,7 @@ ok('with auto-save off, moving on keeps nothing', (await photoTitles()).length =
 
 await pad.click('.tile:has-text("Whiteboard")');
 await pad.click('.tab[data-tab="ink"]');
-await pad.check('#ink-autosave');
+await behindInkMore(pad, () => pad.check('#ink-autosave'));
 await screen.waitForFunction(() => document.querySelector('#ink').classList.contains('has-ink'), null, { timeout: 5000 });
 await pad.click('.tab[data-tab="library"]');
 await pad.click('.tile:has-text("Chalkboard")');

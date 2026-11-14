@@ -678,3 +678,17 @@ export {
   devices, PORT, BASE, CFG, browser, ok, errors, want, trap, expecting, writePortraitImageFixture,
   pollUntil, until, bgMatches, reportErrors, teardown, exitWithResult,
 };
+
+/**
+ * Do something with the Ink tab's less-used controls (zoom, Showing slide,
+ * Save a photo, Auto-save, Pencil only), which live behind its ⋯ button: open
+ * it, act, and close it again so it is not left over the pad.
+ */
+export async function behindInkMore(page, act) {
+  if (await page.isHidden('#ink-more-pop')) await page.click('#ink-more');
+  try {
+    return await act();
+  } finally {
+    if (await page.isVisible('#ink-more-pop')) await page.click('#ink-more');
+  }
+}
