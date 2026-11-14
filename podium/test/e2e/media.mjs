@@ -1658,7 +1658,9 @@ await screen.waitForFunction(() => document.querySelector('audio#music').paused,
 // The controller's own preview has no <audio> of its own, so it has to be
 // reading the broadcast musicNow rather than measuring anything locally.
 await pad.click('.tab[data-tab="now"]');
-await pad.waitForSelector('.r-timer', { timeout: 8000 });
+// The Now tab's own preview: the strip over it steps aside while it would
+// only repeat it, so its copy is not the one on screen.
+await pad.waitForSelector('#now-preview .r-timer', { timeout: 8000 });
 // Both ends settle on the paused position, but not in the same tick - the
 // display's element can still read the second before the pause at the moment
 // its own <audio> first reports paused, and the broadcast that follows is
@@ -1666,11 +1668,11 @@ await pad.waitForSelector('.r-timer', { timeout: 8000 });
 // display each time rather than holding the first value: a stale target is
 // how this waits out its whole timeout and then reports the drift anyway.
 let frozen = await screen.textContent('.r-timer-value');
-for (let i = 0; i < 40 && (await pad.textContent('.r-timer-value')) !== frozen; i++) {
+for (let i = 0; i < 40 && (await pad.textContent('#now-preview .r-timer-value')) !== frozen; i++) {
   await pad.waitForTimeout(100);
   frozen = await screen.textContent('.r-timer-value');
 }
-ok(`a controller previews the same real countdown, from musicNow (${frozen})`, (await pad.textContent('.r-timer-value')) === frozen);
+ok(`a controller previews the same real countdown, from musicNow (${frozen})`, (await pad.textContent('#now-preview .r-timer-value')) === frozen);
 await ctx.close();
 }
 
