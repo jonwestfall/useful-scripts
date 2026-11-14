@@ -2708,6 +2708,10 @@ ok('a phone of their own is not flagged, and one shared address (the room\'s Wi-
 ok('the guest is listed with their email', /guest · pat@elsewhere\.org/.test(await rowText('Pat Visitor')));
 await pad.selectOption('#att-list .att-row:has(.att-name:text-is("Ann Nophone")) select', 'present');
 await pad.waitForFunction(() => /Ann Nophone: present/.test(document.querySelector('#att-note').textContent), null, { timeout: 5000 });
+// The note says so as the mark is sent; the row itself is redrawn when the
+// list comes back with it, a moment later - so wait for the row.
+await pad.waitForFunction(() => [...document.querySelectorAll('#att-list .att-row')]
+  .some((r) => r.querySelector('.att-name')?.textContent === 'Ann Nophone' && /by hand/.test(r.textContent)), null, { timeout: 10000 }).catch(() => {});
 ok(`someone with no phone is marked by hand, unflagged (${await rowText('Ann Nophone')})`, /by hand/.test(await rowText('Ann Nophone')) && !/same/.test(await rowText('Ann Nophone')));
 await screen.waitForFunction(() => /5 checked in/.test(document.querySelector('.layer[data-role="program"] .r-att-count')?.textContent || ''), null, { timeout: 10000 })
   .then(() => ok('the projector counts them, and says late marking is on', true))
