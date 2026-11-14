@@ -3068,6 +3068,34 @@ const PANEL_LABELS = ['A', 'B', 'C', 'D'];
 // The layout picker mirrors state.layout; the panel picker (A/B/C/D) only
 // appears once there is more than one to choose between, and shows which
 // one Library taps, deck nav, transport, and Ink currently address.
+// The controller's bars on a small screen (iPhone Duo review): a phone, or a
+// short screen held sideways - an unfolded iPhone Duo or a phone on its side.
+// There the four panel buttons (Issue #215: all four, whatever the layout,
+// so B can be set up while A is full screen) move into the layout pop-over,
+// next to the layouts they belong with, rather than taking a quarter of the
+// top bar; and body.compact-chrome lets the CSS slim the bars.
+const COMPACT_CHROME = '(max-width: 640px), (max-height: 640px) and (orientation: landscape)';
+const compactChrome = typeof window.matchMedia === 'function' ? window.matchMedia(COMPACT_CHROME) : null;
+function placePanelPicker() {
+  const picker = $('#panel-picker');
+  const pop = $('#layout-pop');
+  const compact = !!compactChrome?.matches;
+  document.body.classList.toggle('compact-chrome', compact);
+  if (compact && picker.parentElement !== pop) pop.append(picker);
+  if (!compact && picker.parentElement === pop) $('#layout-pop-wrap').after(picker);
+}
+compactChrome?.addEventListener?.('change', () => { placePanelPicker(); renderLayoutBar(); });
+placePanelPicker();
+// On a phone the status shows as its dot alone (and the display's line only
+// when something is wrong with it), so the whole of it is kept as the status
+// group's title, to read on a long press.
+{
+  const status = $('.topbar-status');
+  const sync = () => setAttr(status, 'title', status.textContent.replace(/\s+/g, ' ').trim());
+  new MutationObserver(sync).observe(status, { subtree: true, childList: true, characterData: true });
+  sync();
+}
+
 function renderLayoutBar() {
   $$('.layout-btn').forEach((b) => {
     b.classList.toggle('is-on', b.dataset.layout === state.layout);
@@ -3087,6 +3115,12 @@ function renderLayoutBar() {
   }
   current.classList.toggle('is-cued', state.previewLayout !== null);
   $('#panel-promote').hidden = state.focus === 0;
+  // With the panel buttons tucked into this pop-over (a phone, or a short
+  // screen held sideways - see placePanelPicker), the button says which panel
+  // you are working on, whenever that is not simply the one full screen.
+  const focusLetter = $('#layout-focus');
+  focusLetter.textContent = PANEL_LABELS[state.focus] || '';
+  focusLetter.hidden = !document.body.classList.contains('compact-chrome') || (state.focus === 0 && shown === 'single');
   // All four, whatever the layout (Issue #215): B can be set up while A is
   // full screen. One the layout is not showing is drawn dimmed, so "the
   // panel you are working on" and "what the room sees" stay told apart.
