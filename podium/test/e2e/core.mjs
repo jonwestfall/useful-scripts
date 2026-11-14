@@ -2106,6 +2106,51 @@ const pickerInPop = (pad) => pad.evaluate(() => !!document.querySelector('#layou
 await wallCtx.close();
 }
 
+if (want('on a phone, four tabs and More (iPhone Duo)')) {
+console.log('\n-- on a phone, four tabs and More (iPhone Duo) --');
+// Thirteen tabs in a row that scrolls showed five or six of them on a phone,
+// and six on a folded iPhone Duo, 590px of the row off screen.
+const ctx = await browser.newContext({ viewport: { width: 466, height: 678 }, isMobile: true, hasTouch: true });
+await ctx.addInitScript((cfg) => localStorage.setItem('podium.config.v2', cfg),
+  JSON.stringify({ transport: 'ws', wsUrl: `ws://127.0.0.1:${PORT}/podium`, room: 'phone-tabs-room', passphrase: 'four and more' }));
+const pad = await ctx.newPage();
+trap(pad, 'phone tabs');
+await pad.goto(`${BASE}/control.html`);
+await pad.waitForSelector('.tile');
+const row = () => pad.evaluate(() => [...document.querySelectorAll('.tabs .tab[data-tab]:not([hidden])')].map((b) => b.dataset.tab).join(','));
+const fits = () => pad.evaluate(() => { const n = document.querySelector('.tabs'); return n.scrollWidth <= n.clientWidth + 1; });
+ok(`the row is Library, Slides, Now, Ink and More (${await row()})`, (await row()) === 'library,slides,now,ink' && await pad.isVisible('#tabs-more'));
+ok('and all of it is on screen, with nothing to scroll sideways for', await fits());
+await pad.click('#tabs-more');
+const sheet = await pad.evaluate(() => [...document.querySelectorAll('#tabs-more-menu .tabs-more-group')].map((g) => `${g.textContent}:${[...g.nextElementSibling.querySelectorAll('button')].map((b) => b.textContent).join('/')}`).join(' | '));
+ok(`More opens every other tab, by group (${sheet})`, /Present:Camera\/Photos/.test(sheet) && /Room:Say\/Timer\/Polls/.test(sheet) && /Sound:Music\/Mixer/.test(sheet) && /Setup:Setup/.test(sheet));
+const box = await pad.$eval('#tabs-more-menu', (n) => { const r = n.getBoundingClientRect(); return { left: r.left, right: r.right, w: innerWidth }; });
+ok('as a sheet across the screen', box.left >= 0 && box.right <= box.w && box.right - box.left > box.w * 0.9);
+const timerTap = await pad.$eval('#tabs-more-menu [data-more-tab="timer"]', (n) => n.getBoundingClientRect().height);
+ok(`with buttons a thumb can hit (${Math.round(timerTap)}px)`, timerTap >= 44);
+await pad.click('#tabs-more-menu [data-more-tab="timer"]');
+await pad.waitForFunction(() => !document.querySelector('[data-panel="timer"]').hidden, null, { timeout: 5000 });
+await pad.waitForFunction(() => /^Timer/.test(document.querySelector('#tabs-more').textContent), null, { timeout: 5000 }).catch(() => {});
+ok('picking Timer opens it, closes the sheet, and the More button says Timer',
+  await pad.isHidden('#tabs-more-menu') && /^Timer/.test(await pad.textContent('#tabs-more'))
+  && await pad.$eval('#tabs-more', (n) => n.classList.contains('is-on')));
+await pad.click('.tab[data-tab="slides"]');
+await pad.waitForFunction(() => /^More/.test(document.querySelector('#tabs-more').textContent), null, { timeout: 5000 }).catch(() => {});
+ok('back on a tab in the row, it is More again', /^More/.test(await pad.textContent('#tabs-more')) && !(await pad.$eval('#tabs-more', (n) => n.classList.contains('is-on'))));
+await pad.click('.tab[data-tab="ink"]');
+await pad.keyboard.press(']');
+await pad.waitForFunction(() => !/^More/.test(document.querySelector('#tabs-more').textContent), null, { timeout: 5000 })
+  .then(async () => ok(`] from Ink still reaches the tabs More holds (${(await pad.textContent('#tabs-more')).trim()})`, true))
+  .catch(() => ok('] from Ink still reaches the tabs More holds', false));
+await pad.setViewportSize({ width: 1280, height: 800 });
+await pad.waitForFunction(() => document.querySelectorAll('.tabs .tab[data-tab]:not([hidden])').length > 6, null, { timeout: 5000 }).catch(() => {});
+const wide = await row();
+ok(`on a wide screen the row is whole again (${wide})`, /library,slides,now,ink/.test(wide) && /say,timer,polls/.test(wide) && /music,mixer,setup/.test(wide));
+const moreHolds = await pad.evaluate(() => [...document.querySelectorAll('#tabs-more-menu [data-more-tab]')].map((b) => b.dataset.moreTab));
+ok(`and More holds only what this device has hidden (${moreHolds.join(',') || 'nothing'})`, moreHolds.every((id) => !wide.split(',').includes(id)));
+await ctx.close();
+}
+
 if (want('Settings Save/Close reachable on a phone')) {
 console.log('\n-- Settings Save/Close reachable on a phone --');
 // Issue #96: the Settings sheet is long enough that on a phone, reaching
