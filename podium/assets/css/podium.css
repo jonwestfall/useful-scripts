@@ -986,6 +986,23 @@ body.guest {
   min-height: 38px; padding: 0 10px; font-size: 14px;
 }
 .tabs-more-menu button:hover { background: var(--panel-2); }
+/* On a phone (tab-bar.js): the row keeps the first few tabs and More opens
+   the rest as a sheet of big buttons, by group, under the tabs. Fixed, so the
+   scrolling row cannot clip it; its top is set when it opens. */
+.tabs.is-phone .tab { padding: 0 12px; }
+.tabs-more-menu.is-sheet {
+  position: fixed; left: 8px; right: 8px; top: var(--more-top, 110px); z-index: 45;
+  max-height: calc(100vh - var(--more-top, 110px) - 16px); overflow: auto;
+  display: block; padding: 10px 12px 12px; min-width: 0;
+}
+.tabs-more-group { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin: 6px 2px 6px; }
+.tabs-more-group:first-child { margin-top: 0; }
+.tabs-more-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tabs-more-menu.is-sheet button {
+  min-height: 48px; padding: 0 8px; text-align: center; justify-content: center;
+  border: 1px solid var(--line); background: var(--panel-2); font-size: 15px;
+}
+.tabs-more-menu.is-sheet button.is-on { border-color: var(--accent); color: var(--accent); }
 
 .panels { flex: 1; min-height: 0; overflow: auto; padding: 12px; -webkit-overflow-scrolling: touch; }
 .panel { display: flex; flex-direction: column; gap: 14px; }
