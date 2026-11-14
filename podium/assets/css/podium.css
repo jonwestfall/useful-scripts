@@ -1302,10 +1302,11 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
    pixel grid never changes, so pointer capture (which reads the canvas's
    on-screen, already-transformed box) stays correct at any zoom level. */
 #pad-viewport {
-  width: 100%; aspect-ratio: 16 / 9; overflow: hidden; position: relative;
+  width: 100%; aspect-ratio: 16 / 9; overflow: hidden; position: relative; flex: none;
   background: #06090c; border: 1px solid var(--line); border-radius: var(--radius);
-  /* The height cap is set from JS (capPadHeight in control.js). */
-  min-height: 180px;
+  /* Its size is set from JS (layoutInk in control.js): the content's own
+     shape, as big as the room allows with the tools beside or under it. */
+  box-sizing: border-box;
 }
 /* Sized and positioned from JS (fitFrame in control.js): CSS aspect-ratio
    cannot win against the inset an absolutely-positioned element would
@@ -1356,8 +1357,9 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .ink-tools { display: inline-flex; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); vertical-align: middle; }
 .ink-tools .ink-tool-btn {
   border-radius: 0; border: none; border-right: 1px solid var(--line);
-  padding: 8px 13px; font-size: 13px; font-weight: 500; min-height: 42px;
+  padding: 0 11px; font-size: 13px; font-weight: 500; min-height: 42px; min-width: 44px;
   background: var(--panel-2); color: var(--dim);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
 }
 .ink-tools .ink-tool-btn:last-child { border-right: none; }
 .ink-tools .ink-tool-btn:hover { color: var(--ink); background: #1a2330; }
@@ -1423,9 +1425,74 @@ input[type=range] { accent-color: var(--accent); min-height: 40px; }
 .panel[data-panel="ink"].controls-top .hint {
   order: 3;
 }
-.ink-controls {
-  display: flex; flex-direction: column; gap: 14px;
+
+/* The Ink tab (iPhone Duo review): the pad and its tools, as one bar under
+   (or, with "tools above", over) the pad - or, where that leaves the pad
+   bigger, a rail beside it (.ink-rail, chosen by layoutInk in control.js).
+   Everything reached for less often is behind the colour dot and the ⋯
+   button. */
+.panel[data-panel="ink"] { container-type: inline-size; }
+.ink-stage { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.ink-controls { position: relative; align-self: stretch; }
+.ink-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ink-bar-btn {
+  min-height: 42px; min-width: 44px; padding: 0 10px; font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
 }
+.ink-icon { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#ink-more .ink-icon { fill: currentColor; stroke: none; }
+/* Words beside the icons only where the bar has room for them. */
+.ink-label { display: none; }
+@container (min-width: 760px) {
+  .panel[data-panel="ink"]:not(.ink-rail) .ink-label { display: inline; }
+}
+.ink-style-dot { display: block; width: 14px; height: 14px; border-radius: 50%; background: #ffd166; box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px var(--line); }
+#ink-more, #ink-focus { margin-left: auto; }
+#ink-more { margin-left: 0; }
+.ink-zoom-chip { font-variant-numeric: tabular-nums; }
+.ink-bar-btn.is-on { border-color: var(--accent); }
+#ink-focus .when-focused { display: none; }
+body.ink-focus #ink-focus .when-focused { display: inline; }
+body.ink-focus #ink-focus svg.when-focused { display: block; }
+body.ink-focus #ink-focus .when-unfocused { display: none; }
+@container (max-width: 759px) { #ink-focus .ink-label { display: none !important; } }
+/* A folded iPhone Duo (about 440px across) still gets the whole bar on one row. */
+@container (max-width: 520px) {
+  .ink-bar { gap: 4px; }
+  .ink-bar-btn, .ink-tools .ink-tool-btn { min-width: 40px; padding: 0; }
+}
+
+.ink-pop {
+  position: absolute; z-index: 30; right: 0; bottom: calc(100% + 8px);
+  width: min(380px, calc(100vw - 32px)); max-height: 70vh; overflow: auto;
+  display: flex; flex-direction: column; gap: 12px; padding: 14px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .35);
+}
+.ink-pop[hidden] { display: none; }
+.ink-pop .inline { flex-wrap: wrap; }
+.ink-swatches { gap: 10px; }
+.panel[data-panel="ink"].controls-top .ink-pop { bottom: auto; top: calc(100% + 8px); }
+
+/* The rail: two columns of tools beside the pad. */
+.panel[data-panel="ink"].ink-rail .ink-stage { flex-direction: row; align-items: flex-start; justify-content: center; }
+.panel[data-panel="ink"].ink-rail .ink-controls { align-self: flex-start; flex: none; }
+.panel[data-panel="ink"].ink-rail .ink-bar { display: grid; grid-template-columns: repeat(2, 44px); gap: 6px; }
+.panel[data-panel="ink"].ink-rail .ink-tools { display: contents; }
+.panel[data-panel="ink"].ink-rail .ink-tools .ink-tool-btn { border: 1px solid var(--line); border-radius: var(--radius); padding: 0; }
+.panel[data-panel="ink"].ink-rail .ink-bar-btn { padding: 0; margin: 0; }
+.panel[data-panel="ink"].ink-rail #ink-unclear,
+.panel[data-panel="ink"].ink-rail #ink-zoom-chip { grid-column: span 2; font-size: 12px; padding: 0 4px; }
+.panel[data-panel="ink"].ink-rail .ink-pop { bottom: auto; top: 0; right: calc(100% + 8px); }
+.panel[data-panel="ink"].ink-rail.controls-top .ink-pop { right: auto; left: calc(100% + 8px); }
+
+/* Focus: the bars above the Ink tab put away (the bottom bar stays, and the
+   cue bar while something is cued - TAKE is on it). */
+body.ink-focus .topbar,
+body.ink-focus .tabs,
+body.ink-focus .workspace.cue-compact #preview-pane,
+body.ink-focus .workspace.strip-repeats #preview-pane { display: none; }
+body.ink-focus #ink-focus { border-color: var(--accent); color: var(--accent); }
 
 #cam-local { width: 100%; max-width: 320px; border-radius: var(--radius); background: #000; }
 #cam-status { color: var(--dim); font-size: 14px; }
