@@ -20,12 +20,17 @@ import { assetRef, MAX_ASSET_CHARS } from './planfile.js';
  * @param {Function} deps.stage - puts an item on the controller's stage.
  * @param {Function} deps.resolveAssets - swaps asset:<id> references for the bytes this device holds.
  * @param {Map} deps.assetStore - this device's id -> bytes cache (see assets.js).
+ * @param {Function} deps.saveMessage - keeps a message in the Library: (item, savedId) -> the title it was saved as.
+ * @returns {{ open: Function }} opens the editor, empty or on a message to edit.
  */
-export function createMessageEditor({ stage, resolveAssets, assetStore }) {
+export function createMessageEditor({ stage, resolveAssets, assetStore, saveMessage }) {
   let messageImageSrc = '';  // '' or an asset:<id> reference
   let messageBg = '';        // '' (Default) or a #hex, from a preset or the custom picker
   let messageFg = '';        // the same, for the words themselves (Issue #222)
   let messagePreviewRenderer = null;
+  // The saved message being edited, when the editor was opened from one: Save
+  // then puts the new version in its place rather than adding a second.
+  let editingSavedId = null;
 
   function currentMessageItem() {
     return {
@@ -116,7 +121,31 @@ export function createMessageEditor({ stage, resolveAssets, assetStore }) {
     $(`#${id}`).addEventListener('input', updateMessagePreview);
   }
 
-  function openMessageEditor() {
+  // The swatch for a colour, if one of the presets is it; otherwise the
+  // custom picker, set to it.
+  function pickColour(value, swatches, attr, customInput, customLabel, select) {
+    const swatch = $$(`${swatches} .bg-swatch`).find((b) => (b.dataset[attr] || '') === (value || ''));
+    if (!swatch && value) {
+      $(customInput).value = value;
+      $(customLabel).style.setProperty('--custom-bg-color', value);
+    }
+    select(value || '', swatch || null);
+  }
+
+  /** Empty for a new message, or filled in from one to edit (a Library tile's ✎). */
+  function openMessageEditor(item = null) {
+    editingSavedId = item?.savedId || null;
+    if (item) {
+      $('#msg-body').value = item.body || '';
+      $('#msg-size').value = item.size || 'l';
+      $('#msg-align').value = item.align || 'center';
+      $('#msg-font').value = item.font || 'sans';
+      pickColour(item.bg, '#msg-bg-swatches', 'bg', '#msg-bg-custom', '#msg-bg-custom-label', selectMessageBg);
+      pickColour(item.color, '#msg-fg-swatches', 'fg', '#msg-fg-custom', '#msg-fg-custom-label', selectMessageFg);
+      setMessageImage(item.src || '', '');
+      $('#msg-caption').value = item.caption || '';
+    }
+    $('#message-editor-save').textContent = editingSavedId ? 'Save changes' : 'Save';
     $('#message-editor').hidden = false;
     updateMessagePreview();
     $('#msg-body').focus();
@@ -124,7 +153,16 @@ export function createMessageEditor({ stage, resolveAssets, assetStore }) {
   function closeMessageEditor() {
     $('#message-editor').hidden = true;
   }
-  $('#text-open-editor').addEventListener('click', openMessageEditor);
+  $('#text-open-editor').addEventListener('click', () => openMessageEditor());
+  $('#message-editor-save').addEventListener('click', () => {
+    const item = currentMessageItem();
+    if (!item.body.trim() && !item.src) { $('#msg-body').focus(); return; }
+    const title = saveMessage(item, editingSavedId);
+    $('#msg-saved-note').textContent = editingSavedId
+      ? `Saved your changes to “${title}”.`
+      : `Saved “${title}” to the Library, under Saved, to show when you want it.`;
+    closeMessageEditor();
+  });
   $('#message-editor-cancel').addEventListener('click', closeMessageEditor);
   $('#message-editor').addEventListener('click', (ev) => {
     if (ev.target === $('#message-editor')) closeMessageEditor();
@@ -137,4 +175,6 @@ export function createMessageEditor({ stage, resolveAssets, assetStore }) {
     stage(currentMessageItem());
     closeMessageEditor();
   });
+
+  return { open: openMessageEditor };
 }
