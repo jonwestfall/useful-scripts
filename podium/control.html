@@ -688,37 +688,31 @@
 
         <!-- Timer -->
         <section class="panel" data-panel="timer" hidden>
-          <!-- Up to four independent countdowns. The chips are the set, each
-               showing its own clock so you can see all of them at once; the
-               controls below act on whichever is selected. -->
-          <div class="inline" id="timer-chips"></div>
-          <div id="timer-readout">0:00</div>
-          <!-- Replaced by a loaded lecture plan's own saved timers; these are
-               the fallback when no plan is loaded. See renderTimerPresets(). -->
-          <div class="inline" id="timer-presets">
-            <button class="timer-preset" type="button" data-mins="1">1m</button>
-            <button class="timer-preset" type="button" data-mins="2">2m</button>
-            <button class="timer-preset" type="button" data-mins="5">5m</button>
-            <button class="timer-preset" type="button" data-mins="10">10m</button>
-            <button class="timer-preset" type="button" data-mins="15">15m</button>
+          <!-- One tap to a countdown on screen: 1, 2, 5 and 10 minutes start
+               the first timer that is free, and every timer with a name gets
+               a button of its own here too. -->
+          <div class="timer-quick">
+            <span class="recent-label">Quick start</span>
+            <div class="inline" id="timer-presets"></div>
           </div>
-          <div class="inline">
-            <input id="timer-mins" aria-label="Timer minutes" class="grow" type="number" min="1" max="180" value="5">
-            <input id="timer-label" aria-label="Timer label" class="grow" type="text" placeholder="Label, e.g. Group work">
-            <button id="timer-start" type="button">Start</button>
-            <button id="timer-stop" type="button">Stop</button>
-          </div>
-          <div class="inline">
-            <button id="timer-show" type="button">Put this one on screen</button>
-            <button id="timer-add" type="button">Add a timer</button>
-            <button id="timer-remove" type="button" hidden>Remove this timer</button>
-          </div>
+          <!-- The timers, a row each: its length, name and clock, and what
+               you can do to it. Up to four, each independent, so two can run
+               at once and two panels can each show one. -->
+          <ul id="timer-rows" class="timer-rows" aria-label="Timers"></ul>
+          <form id="timer-new" class="inline timer-new" autocomplete="off">
+            <input id="timer-label" class="grow" type="text" placeholder="Label, e.g. Group work" aria-label="New timer's label">
+            <input id="timer-length" class="timer-length" type="text" value="5" aria-label="New timer's length - minutes, or minutes:seconds" title="5 for five minutes, 4:30, or 30s">
+            <button id="timer-add" type="submit">+ Add a timer</button>
+          </form>
+          <p id="timer-note" class="hint" role="status"></p>
           <details class="help">
             <summary>How this works</summary>
             <p class="hint">
             Countdowns run on the display, so they stay accurate even if your iPad sleeps.
-            Each one is independent: split the screen and you can have two on the projector at once —
-            put this one on screen, switch panels, then put another one on the next.
+            A length is minutes (<b>5</b>) or minutes and seconds (<b>4:30</b>, <b>30s</b>).
+            Each timer is independent: start two, pause one, and each row shows what is left.
+            <b>Show</b> puts a timer on the panel you are working on - split the screen and two
+            panels can each show their own.
           </p>
           </details>
         </section>

@@ -1,6 +1,6 @@
 // Run with:  node podium/test/protocol.test.mjs
 // Pure state-machine tests - no DOM, no network.
-import { initialState, applyCommand, timerRemaining, timerById, inkSurfaceKey,
+import { initialState, applyCommand, timerRemaining, timerById, timerDuration, inkSurfaceKey,
   inkDigest, inkDigestsAgree, applyInkAction, distToSegmentSquared, strokeHitTest, MAX_TIMERS, BUILD, VERSION, COMMIT, versionStamp, LAYOUTS,
   watermarkForNewLecture, viewerState, viewChannel, isViewRoom, stripDeckNotes } from '../assets/js/protocol.js';
 const s = initialState();
@@ -116,6 +116,18 @@ chk('the two run independently', s.timers[0].running && s.timers[1].running
   && timerRemaining(s.timers[1]) < timerRemaining(s.timers[0]));
 applyCommand(s, {op:'timer', action:'stop', id:'brk'});
 chk('stopping one leaves the other alone', !s.timers[1].running && s.timers[0].running);
+applyCommand(s, {op:'timer', action:'reset', id:'brk'});
+chk('Reset puts it back to the length it was last started at, waiting', !s.timers[1].running && timerRemaining(s.timers[1]) === 60000);
+applyCommand(s, {op:'timer', action:'start', id:'brk'});
+chk('Start with no length runs the length it is set to', s.timers[1].running && timerRemaining(s.timers[1]) > 59000 && timerRemaining(s.timers[1]) <= 60000);
+applyCommand(s, {op:'timer', action:'set', id:'brk', seconds:30, label:'Pair share'});
+chk('Edit while running keeps it running, renamed, with the new length for next time',
+  s.timers[1].running && s.timers[1].label === 'Pair share' && timerDuration(s.timers[1]) === 30000 && timerRemaining(s.timers[1]) > 30000);
+applyCommand(s, {op:'timer', action:'reset', id:'brk'});
+applyCommand(s, {op:'timer', action:'set', id:'brk', seconds:45});
+chk('and a waiting one shows the new length (under a minute is fine)', timerRemaining(s.timers[1]) === 45000);
+applyCommand(s, {op:'timer', action:'start', id:'brk'});
+applyCommand(s, {op:'timer', action:'stop', id:'brk'});
 chk('a duplicate id is refused rather than shadowing the first',
   applyCommand(s, {op:'timer', action:'add', id:'brk'}) === false && s.timers.length === 2);
 while (s.timers.length < MAX_TIMERS) applyCommand(s, {op:'timer', action:'add'});
