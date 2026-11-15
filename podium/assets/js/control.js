@@ -221,7 +221,7 @@ const tabBar = createTabBar({ presentation, save: () => savePresentation(present
 // The Now tab's live browser controls (live-browser-panel.js).
 const webPanel = createLiveBrowserPanel({ send, stage, getState: () => state, workItem, haptic, liveWeb });
 // The full-screen message editor (Issue #103).
-createMessageEditor({ stage, resolveAssets, assetStore });
+const messageEditor = createMessageEditor({ stage, resolveAssets, assetStore, saveMessage });
 // Live captions (Issue #79), and this controller's own mic (Issue #147).
 createCaptionPanel({ send, confirmOnce });
 const micPanel = createMicPanel({
@@ -522,6 +522,30 @@ function loadCustom() {
   });
 }
 
+// A message's name in the Library: its first line, without the markdown.
+function messageTitle(body) {
+  const line = String(body || '').split('\n').map((l) => l.trim()).find(Boolean) || '';
+  const plain = line.replace(/^#+\s*|^[-*]\s+|^\d+\.\s+/, '').replace(/[*_`]/g, '').trim();
+  return plain.slice(0, 60) || 'Message';
+}
+
+/**
+ * A composed message, kept in the Library's Saved items to show later - or,
+ * given the id of one already there, put in its place. Returns the name it
+ * was saved under (its first line).
+ */
+function saveMessage(item, savedId = null) {
+  const title = messageTitle(item.body);
+  const saved = { ...item, title, savedId: savedId || `m${uid(8)}` };
+  const items = loadCustom();
+  const at = savedId ? items.findIndex((i) => i.savedId === savedId) : -1;
+  if (at >= 0) items[at] = saved;
+  else items.push(saved);
+  saveCustom(items);
+  loadLibrary();
+  return title;
+}
+
 function saveCustom(items) {
   const withBytes = items.map((item) => {
     if (typeof item.src !== 'string' || !item.src.startsWith('asset:')) return item;
@@ -672,7 +696,7 @@ function renderLibrary() {
           title: 'Remove from saved',
           onclick: (ev) => {
             ev.stopPropagation();
-            saveCustom(loadCustom().filter((i) => i.title !== item.title || i.src !== item.src));
+            saveCustom(loadCustom().filter((i) => (item.savedId ? i.savedId !== item.savedId : (i.title !== item.title || i.src !== item.src))));
             loadLibrary();
           },
         }, '×'));
@@ -681,6 +705,21 @@ function renderLibrary() {
       // #226) - in a new tab, so the lecture on this one is left alone.
       // A content/decks deck from the manifest too, for an administrator.
       const editAt = item.type === 'deck' || item.type === 'document' ? deckEditSrc(item) : null;
+      // A message opens in the message editor, to change and then show or
+      // save - over itself when it is one of yours, as a saved copy when it
+      // came with a plan.
+      if (item.type === 'text') {
+        tile.append(el('span', {
+          class: 'tile-edit',
+          title: item.custom ? 'Edit this message' : 'Edit a copy of this message',
+          role: 'button',
+          onclick: (ev) => {
+            ev.stopPropagation();
+            const { group: _g, custom: _c, order: _o, note: _n, planRow: _p, ...message } = item;
+            messageEditor.open(item.custom ? message : { ...message, savedId: null });
+          },
+        }, '✎'));
+      }
       if (editAt) {
         tile.append(el('span', {
           class: 'tile-edit',
@@ -695,7 +734,7 @@ function renderLibrary() {
       // it reaches the room.
       if (canQuickLook(item)) {
         tile.append(el('span', {
-          class: `tile-look${editAt || (item.type === 'audio' && item.src) ? ' is-beside' : ''}`,
+          class: `tile-look${editAt || item.type === 'text' || (item.type === 'audio' && item.src) ? ' is-beside' : ''}`,
           title: 'Quick Look: open it in a new tab, just for you',
           role: 'button',
           'aria-label': `Quick Look: ${itemTitle(item)}`,

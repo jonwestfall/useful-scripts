@@ -637,6 +637,7 @@
             </p>
             </details>
             <button id="text-open-editor" type="button" class="big-button">Compose a message…</button>
+            <p id="msg-saved-note" class="hint" role="status"></p>
           </div>
           <form id="overlay-form" class="stack">
             <label for="overlay-text">Caption along the bottom (stays over anything)</label>
@@ -1956,6 +1957,9 @@
       </div>
       <div class="row" style="margin-top:18px">
         <button id="message-editor-show" type="submit" class="is-on">Show</button>
+        <!-- Into the Library (Saved), to show later - or, opened from a saved
+             message's ✎, back over that one. -->
+        <button id="message-editor-save" type="button">Save</button>
         <button id="message-editor-cancel" type="button">Cancel</button>
       </div>
     </form>

@@ -2315,6 +2315,54 @@ ok('and so does the text colour, caption included (Issue #222)',
   (await msgScreen.$eval('.layer[data-role="program"] .r-text-body', (n) => getComputedStyle(n).color)) === 'rgb(255, 209, 102)'
   && (await msgScreen.$eval('.layer[data-role="program"] .r-text-caption', (n) => getComputedStyle(n).color)) === 'rgb(255, 209, 102)');
 
+// Save, rather than Show: into the Library to show later, nothing on screen.
+await msgPad.click('.tab[data-tab="library"]');
+await msgPad.click('.tile:has(.tile-title:text-is("Black"))');
+await msgScreen.waitForFunction(() => !document.querySelector('.layer[data-role="program"] .r-text'), null, { timeout: 5000 });
+await msgPad.click('.tab[data-tab="say"]');
+await msgPad.click('#text-open-editor');
+await msgPad.waitForSelector('#message-editor:not([hidden])');
+await msgPad.fill('#msg-body', '## Back in 5 minutes\nStretch, refill, breathe');
+await msgPad.click('#msg-bg-swatches .bg-swatch[title="Forest"]');
+await msgPad.click('#message-editor-save');
+ok('Save closes the editor, and says where it went', await msgPad.isHidden('#message-editor')
+  && /Saved “Back in 5 minutes” to the Library/.test(await msgPad.textContent('#msg-saved-note')));
+await msgPad.waitForTimeout(400);
+ok('without putting anything on screen', !(await msgScreen.evaluate(() => !!document.querySelector('.layer[data-role="program"] .r-text'))));
+await msgPad.click('.tab[data-tab="library"]');
+const savedTile = '.tile:has(.tile-title:text-is("Back in 5 minutes"))';
+ok('it is in the Library, under Saved, named by its first line', await msgPad.isVisible(savedTile)
+  && await msgPad.evaluate(() => [...document.querySelectorAll('.tile-title')].find((t) => t.textContent === 'Back in 5 minutes')
+    ?.closest('.tiles').previousElementSibling.textContent === 'Saved'));
+// Its ✎: change it, then save it back over itself.
+await msgPad.click(`${savedTile} .tile-edit`);
+await msgPad.waitForSelector('#message-editor:not([hidden])');
+ok('✎ opens it in the editor, as it was saved', (await msgPad.inputValue('#msg-body')).startsWith('## Back in 5 minutes')
+  && await msgPad.$eval('#msg-bg-swatches .bg-swatch[title="Forest"]', (n) => n.classList.contains('is-on'))
+  && (await msgPad.textContent('#message-editor-save')) === 'Save changes');
+await msgPad.fill('#msg-body', '## Back in 10 minutes\nStretch, refill, breathe');
+await msgPad.click('#message-editor-save');
+await msgPad.waitForSelector('.tile:has(.tile-title:text-is("Back in 10 minutes"))', { timeout: 5000 });
+ok('Save changes puts the new version in its place, not beside it',
+  !(await msgPad.isVisible(savedTile)) && (await msgPad.$$('.tile:has(.tile-title:text-is("Back in 10 minutes"))')).length === 1);
+// Or edit and show it straight away.
+await msgPad.click('.tile:has(.tile-title:text-is("Back in 10 minutes")) .tile-edit');
+await msgPad.waitForSelector('#message-editor:not([hidden])');
+await msgPad.click('#message-editor-show');
+await msgScreen.waitForSelector('.layer[data-role="program"] .r-text', { timeout: 5000 });
+ok('or Show puts it on screen from there', /Back in 10 minutes/.test(await msgScreen.textContent('.layer[data-role="program"] .r-text')));
+// And a tap on the tile shows it, as any Library item.
+await msgPad.click('.tile:has(.tile-title:text-is("Black"))');
+await msgScreen.waitForFunction(() => !document.querySelector('.layer[data-role="program"] .r-text'), null, { timeout: 5000 });
+await msgPad.click('.tile:has(.tile-title:text-is("Back in 10 minutes"))');
+await msgScreen.waitForSelector('.layer[data-role="program"] .r-text', { timeout: 5000 })
+  .then(() => ok('and a tap on its tile shows it, later', true))
+  .catch(() => ok('and a tap on its tile shows it, later', false));
+await msgPad.click('.tile:has(.tile-title:text-is("Back in 10 minutes")) .tile-del');
+await msgPad.waitForFunction(() => ![...document.querySelectorAll('.tile-title')].some((t) => t.textContent === 'Back in 10 minutes'), null, { timeout: 5000 })
+  .then(() => ok('× takes it out of the Library again', true))
+  .catch(() => ok('× takes it out of the Library again', false));
+
 await msgCtx.close();
 }
 
