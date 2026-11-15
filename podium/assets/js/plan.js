@@ -684,7 +684,7 @@ function renderTimers() {
     }),
     // Minutes as before ("5"), or minutes and seconds ("4:30", "30s").
     el('input', {
-      type: 'text', inputmode: 'text', style: 'width: 90px;',
+      type: 'text', inputmode: 'text', class: 'timer-length-field', style: 'width: 90px;',
       value: lengthField(timerSeconds(timer)), 'aria-label': `Length of timer ${i + 1} - minutes, or minutes:seconds`,
       title: '5 for five minutes, 4:30, or 30s',
       oninput: (ev) => {
