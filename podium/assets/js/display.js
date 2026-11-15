@@ -27,7 +27,7 @@ import {
 import { createRenderer, itemTitle, TYPES, blessMediaElements, liveKeyOf } from './renderers.js';
 import { initTheme, onThemeChange, setThemeChoice, THEME_KEY } from './theme.js';
 import { encodeToFit } from './store.js';
-import { MAX_ASSET_CHARS, itemForStage, readPlan } from './planfile.js';
+import { MAX_ASSET_CHARS, itemForStage, readPlan, timerSeconds } from './planfile.js';
 import { createCameraReceiver, createMicReceiver } from './rtc.js';
 import { serverInfo } from './server.js';
 import { liveBrowserOptions, liveBrowserAvailableNow } from './live-browser.js';
@@ -2996,7 +2996,7 @@ async function adoptPlanLocally(plan) {
     apply({ op: 'pip', main, inset, corner, size });
   }
   if (plan.timers.length) {
-    apply({ op: 'timer', action: 'define', timers: plan.timers.map((t) => ({ id: t.id, label: t.label, seconds: t.mins * 60 })) });
+    apply({ op: 'timer', action: 'define', timers: plan.timers.map((t) => ({ id: t.id, label: t.label, seconds: timerSeconds(t) })) });
   }
 
   if (plan.autoLaunch?.enabled) {
@@ -3077,7 +3077,7 @@ async function adoptPlanLocally(plan) {
 
     if (plan.autoLaunch.timer?.timerId) {
       const timer = plan.timers.find((t) => t.id === plan.autoLaunch.timer.timerId);
-      if (timer) apply({ op: 'timer', action: 'start', id: timer.id, seconds: timer.mins * 60, label: timer.label || '' });
+      if (timer) apply({ op: 'timer', action: 'start', id: timer.id, seconds: timerSeconds(timer), label: timer.label || '' });
     }
   }
 

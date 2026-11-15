@@ -161,11 +161,11 @@
          is selected, rather than stacked under the running order. -->
     <div id="lecture-settings" hidden>
       <h3>Timers</h3>
-      <p class="hint">Saved countdowns. These replace the iPad's 1/2/5/10/15 buttons.</p>
+      <p class="hint">Saved countdowns. Each is a timer on the iPad's Timer tab, with a quick-start button of its own beside 1, 2, 5 and 10 minutes. A length is minutes (5) or minutes and seconds (4:30, 30s).</p>
       <ul id="timers"></ul>
       <div class="inline">
         <input id="timer-new-label" class="grow" type="text" placeholder="Label, e.g. Group work">
-        <input id="timer-new-mins" type="number" min="1" max="180" value="5" aria-label="Minutes">
+        <input id="timer-new-mins" type="text" value="5" aria-label="Length - minutes, or minutes:seconds" title="5 for five minutes, 4:30, or 30s" style="width: 90px;">
         <button id="timer-add" type="button">Add timer</button>
       </div>
 

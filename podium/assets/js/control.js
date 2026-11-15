@@ -5,7 +5,7 @@
 import { $, $$, el, uid, fmtTime, setText, setAttr, setHidden, guessItemFromUrl, isNotebookLink, NOTEBOOK_ADVICE, throttle, wireDangerButton, wireRevealButtons, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
-import { initialState, applyCommand, timerRemaining, timerById, LAYOUTS, MAX_TIMERS, focusedItem, workingItem, PANEL_COUNT, panelOnScreen, deckStep,
+import { initialState, applyCommand, timerRemaining, timerById, timerDuration, LAYOUTS, MAX_TIMERS, focusedItem, workingItem, PANEL_COUNT, panelOnScreen, deckStep,
   inkDigest, inkDigestsAgree, inkSurfaceKey, applyInkAction, strokeHitTest, BUILD, VERSION, versionStamp, MAX_SET_ENTRIES,
   detectAndSnapShape, snapStraightLine, snapArrow, snapBox, snapEllipse, isPlayable, deckVideoHere } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, pdfAspectFor, svgToImage, drawSvgImage } from './renderers.js';
@@ -13,7 +13,7 @@ import { createCameraSender } from './rtc.js';
 import { render as renderDeckSource, parse as parseDeckSource, slideHtml, deckId, srcDeckId, srcOfDeckId, frontMatterTitle, themeReport, applyFits, cssForStandaloneSlide, applyPolyfill, videoSlides, deckLocation } from './deck.js';
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg } from './pdf-writer.js';
-import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS, planToJson } from './planfile.js';
+import { readPlan, itemForStage, itemLabel, assetIdOf, assetRef, MAX_ASSET_CHARS, planToJson, timerSeconds, fmtTimerLength, parseTimerLength } from './planfile.js';
 import { assetRefsIn, ASSET_REF } from './deck-source.js';
 import { docTitle, notesInView, headingAt, headingAtTop, docMaxAt, docInkSpace, DOC_WIDTH, DOC_VIEW, DOC_STEP } from './doc.js';
 import { openQuickLook, canQuickLook } from './quicklook-open.js';
@@ -824,15 +824,28 @@ const thumbnails = createThumbnailer(async (item) => {
 
 // --- lecture plans ----------------------------------------------------------
 
-const DEFAULT_TIMER_PRESETS = [1, 2, 5, 10, 15].map((mins) => ({ mins, label: '' }));
+// The quick-start row: 1, 2, 5 and 10 minutes, then a button for each timer
+// with a name - a plan's countdowns, or one added here. Drawn from the
+// state, so it follows the set wherever it changes.
+const QUICK_TIMER_SECONDS = [60, 120, 300, 600];
+let timerPresetsKey = '';
 
 function renderTimerPresets() {
-  const presets = currentPlan?.timers?.length ? currentPlan.timers : DEFAULT_TIMER_PRESETS;
-  $('#timer-presets').replaceChildren(...presets.map((preset) => el('button', {
-    class: 'timer-preset',
-    type: 'button',
-    dataset: { mins: String(preset.mins), label: preset.label || '' },
-  }, preset.label ? `${preset.label} · ${preset.mins}m` : `${preset.mins}m`)));
+  const timers = state?.timers || [];
+  const named = timers.filter((t) => t.label && timerDuration(t) > 0);
+  const key = named.map((t) => `${t.id}:${t.label}:${timerDuration(t)}`).join('|');
+  if (key === timerPresetsKey && $('#timer-presets').childElementCount) return;
+  timerPresetsKey = key;
+  $('#timer-presets').replaceChildren(
+    ...QUICK_TIMER_SECONDS.map((secs) => el('button', {
+      class: 'timer-preset', type: 'button', dataset: { secs: String(secs) },
+      title: `Start a ${fmtTimerLength(secs)} countdown on the first free timer, on screen`,
+    }, fmtTimerLength(secs))),
+    ...named.map((t) => el('button', {
+      class: 'timer-preset is-named', type: 'button', dataset: { id: t.id },
+      title: `Start “${t.label}” from the top, on screen`,
+    }, `${t.label} · ${fmtTimerLength(Math.round(timerDuration(t) / 1000))}`)),
+  );
 }
 
 function renderPlanBar() {
@@ -910,7 +923,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
     send({
       op: 'timer',
       action: 'define',
-      timers: plan.timers.slice(0, MAX_TIMERS).map((t) => ({ id: t.id, label: t.label, seconds: t.mins * 60 })),
+      timers: plan.timers.slice(0, MAX_TIMERS).map((t) => ({ id: t.id, label: t.label, seconds: timerSeconds(t) })),
     });
   }
 
@@ -1042,7 +1055,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
             op: 'timer',
             action: 'start',
             id: timer.id,
-            seconds: timer.mins * 60,
+            seconds: timerSeconds(timer),
             label: timer.label || '',
           });
         }
@@ -2975,62 +2988,144 @@ function renderNow() {
   document.body.classList.toggle('is-frozen', state.frozen);
 }
 
-// Which of the countdowns the controls below the chips are driving. Held as an
-// id rather than an index so a timer being removed elsewhere cannot silently
-// re-point it at a different one; timerById falls back to the first.
+// The timer the bottom bar's Timer button and R drive: the one last touched
+// here, or the first. Held as an id so a timer removed elsewhere cannot
+// silently re-point it at another; timerById falls back to the first.
 let currentTimerId = null;
-let timerChipsKey = '';
-
 const currentTimer = () => timerById(state, currentTimerId);
+
+// Which row is open for editing, and the set as last drawn. The rows are
+// rebuilt only when the set changes (or one opens for editing); the clocks
+// and buttons in them update in place, four times a second, so a tap is
+// never lost to a rebuild.
+let editingTimerId = null;
+let timerRowsKey = '';
+
+/** Where a timer is: running, paused part-way, done, or waiting to start. */
+function timerPhase(timer, now = Date.now()) {
+  const left = timerRemaining(timer, now);
+  const length = timerDuration(timer);
+  if (timer.running) return left > 0 ? 'running' : 'done';
+  if (left > 0 && left < length) return 'paused';
+  return 'idle';
+}
+
+/** Which timers are on screen right now: shown on a panel the layout shows. */
+function timersOnScreen() {
+  const ids = new Set();
+  [state.program, ...(state.panels || [])].forEach((item, i) => {
+    if (item?.type === 'timer' && panelOnScreen(state, i)) ids.add(timerById(state, item.timerId)?.id);
+  });
+  return ids;
+}
+
+/** A timer, on the panel you are working on. */
+function showTimer(timer) {
+  if (!timer) return;
+  currentTimerId = timer.id;
+  // Carries the id, so this panel keeps showing THIS clock whatever happens to
+  // the others - which is the whole point of having more than one.
+  stage({ type: 'timer', title: timer.label || 'Timer', timerId: timer.id, label: timer.label || '' });
+}
+
+function timerRow(timer, i) {
+  const name = timer.label || `Timer ${i + 1}`;
+  const act = (action, extra = {}) => { currentTimerId = timer.id; send({ op: 'timer', action, id: timer.id, ...extra }); };
+  const button = (cls, text, onclick, title = '') => el('button', { class: cls, type: 'button', onclick, title }, text);
+  const row = el('li', { class: 'timer-line', dataset: { id: timer.id } },
+    el('div', { class: 'timer-line-head' },
+      el('span', { class: 'timer-line-name' }, name),
+      el('span', { class: 'timer-line-shown' }, 'On screen'),
+      el('span', { class: 'timer-line-len' }, '')),
+    el('div', { class: 'timer-line-clock' },
+      el('span', { class: 'timer-line-time' }, '0:00'),
+      el('span', { class: 'timer-line-gone' }, '')),
+    el('div', { class: 'timer-line-btns' },
+      button('timer-line-start', 'Start', () => {
+        if (!timerDuration(timer)) { editingTimerId = timer.id; renderTimers(); return; }
+        act('start');
+      }),
+      button('timer-line-pause', 'Pause', () => {
+        const phase = timerPhase(timerById(state, timer.id));
+        if (phase === 'running') act('pause');
+        else if (phase === 'paused') act('resume');
+      }),
+      button('timer-line-reset', 'Reset', () => act('reset'), 'Back to its full length, waiting to start'),
+      button('timer-line-show', 'Show', () => showTimer(timerById(state, timer.id)), 'Put this timer on the panel you are working on'),
+      button('timer-line-edit', 'Edit', () => { editingTimerId = timer.id; renderTimers(); }),
+      button('timer-line-remove', 'Remove', () => {
+        send({ op: 'timer', action: 'remove', id: timer.id });
+        if (currentTimerId === timer.id) currentTimerId = null;
+      })));
+  if (editingTimerId === timer.id) {
+    const secs = Math.round(timerDuration(timer) / 1000);
+    const label = el('input', { type: 'text', class: 'grow timer-edit-label', value: timer.label || '', placeholder: `Timer ${i + 1}`, 'aria-label': `Name for ${name}` });
+    const length = el('input', {
+      type: 'text', class: 'timer-length timer-edit-length', 'aria-label': `Length of ${name} - minutes, or minutes:seconds`,
+      value: secs ? (secs % 60 ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}` : String(secs / 60)) : '5',
+      title: '5 for five minutes, 4:30, or 30s',
+    });
+    row.append(el('form', {
+      class: 'inline timer-line-edit',
+      onsubmit: (ev) => {
+        ev.preventDefault();
+        const seconds = parseTimerLength(length.value);
+        if (!seconds) { length.classList.add('is-invalid'); length.focus(); return; }
+        currentTimerId = timer.id;
+        send({ op: 'timer', action: 'set', id: timer.id, label: label.value.trim(), seconds });
+        editingTimerId = null;
+        renderTimers();
+      },
+    }, label, length,
+    el('button', { type: 'submit', class: 'primary' }, 'Save'),
+    el('button', { type: 'button', onclick: () => { editingTimerId = null; renderTimers(); } }, 'Cancel')));
+    queueMicrotask(() => label.focus());
+  }
+  return row;
+}
 
 function renderTimers() {
   const timers = state.timers || [];
-  const active = currentTimer();
-  // Deliberately NOT written back into currentTimerId. Adding a timer names it
-  // here and selects it a beat before the display's echo carries it back, and
-  // a render landing in that gap would "correct" the selection to the first
-  // timer - so the next tap on Start would pause THAT one instead of starting
-  // the one you just made. The selection is what you asked for; the fallback
-  // is only for what is drawn.
-  const shownId = timers.some((t) => t.id === currentTimerId) ? currentTimerId : timers[0]?.id;
-
-  // The chips are rebuilt only when the SET changes. This runs four times a
-  // second; replacing the buttons that often would eat taps that land between
-  // a render and the tap finishing.
-  const row = $('#timer-chips');
-  const key = `${timers.map((t) => `${t.id}\u0000${t.label}`).join('|')}#${shownId}`;
-  if (key !== timerChipsKey) {
-    timerChipsKey = key;
-    row.replaceChildren(...timers.map((timer, i) => el('button', {
-      class: `timer-chip${timer.id === shownId ? ' is-on' : ''}`,
-      type: 'button',
-      dataset: { id: timer.id },
-      onclick: () => { currentTimerId = timer.id; syncTimerFields(); renderTimers(); },
-    },
-      el('span', { class: 'timer-chip-name' }, timer.label || `Timer ${i + 1}`),
-      el('span', { class: 'timer-chip-time' }, '0:00'))));
+  if (editingTimerId && !timers.some((t) => t.id === editingTimerId)) editingTimerId = null;
+  const list = $('#timer-rows');
+  const key = `${timers.map((t) => `${t.id}\u0000${t.label}\u0000${timerDuration(t)}`).join('|')}#${editingTimerId}`;
+  if (key !== timerRowsKey) {
+    timerRowsKey = key;
+    list.replaceChildren(...timers.map(timerRow));
   }
-
-  // ...while the times themselves are text updates, every tick.
+  const shown = timersOnScreen();
+  const now = Date.now();
   timers.forEach((timer, i) => {
-    const chip = row.children[i];
-    if (!chip) return;
-    const left = timerRemaining(timer);
-    setText(chip.querySelector('.timer-chip-time'), fmtTime(Math.ceil(left / 1000)));
-    chip.classList.toggle('is-running', timer.running);
-    chip.classList.toggle('is-urgent', timer.running && left > 0 && left <= 30000);
+    const row = list.children[i];
+    if (!row) return;
+    const left = timerRemaining(timer, now);
+    const length = timerDuration(timer);
+    const phase = timerPhase(timer, now);
+    setText(row.querySelector('.timer-line-time'), fmtTime(Math.ceil(left / 1000)));
+    setText(row.querySelector('.timer-line-len'), length ? `of ${fmtTime(Math.round(length / 1000))}` : 'no length yet');
+    const gone = length && phase !== 'idle' ? Math.max(0, length - left) : 0;
+    setText(row.querySelector('.timer-line-gone'), phase === 'done' ? 'time is up' : (gone ? `${fmtTime(Math.floor(gone / 1000))} gone` : ''));
+    row.classList.toggle('is-running', phase === 'running');
+    row.classList.toggle('is-paused', phase === 'paused');
+    row.classList.toggle('is-done', phase === 'done');
+    row.classList.toggle('is-urgent', phase === 'running' && left <= 30000);
+    row.classList.toggle('is-shown', shown.has(timer.id));
+    const start = row.querySelector('.timer-line-start');
+    setText(start, !length ? 'Set length' : (phase === 'idle' ? 'Start' : 'Restart'));
+    const pause = row.querySelector('.timer-line-pause');
+    setText(pause, phase === 'paused' ? 'Resume' : 'Pause');
+    pause.disabled = phase !== 'running' && phase !== 'paused';
+    row.querySelector('.timer-line-reset').disabled = phase === 'idle' && left === length;
+    // The first is what every timer item falls back to, so it is the one that
+    // stays.
+    const remove = row.querySelector('.timer-line-remove');
+    remove.disabled = i === 0;
+    setAttr(remove, 'title', i === 0 ? 'The first timer always stays' : `Remove ${timer.label || `Timer ${i + 1}`}`);
   });
-
-  checkTimerCompletions(timers);
-
-  const ms = active ? timerRemaining(active) : 0;
-  setText($('#timer-readout'), fmtTime(Math.ceil(ms / 1000)));
-  $('#timer-readout').classList.toggle('is-urgent', !!active?.running && ms <= 30000);
-  setText($('#timer-start'), active?.running ? 'Pause' : ((active?.remainingMs || 0) > 0 ? 'Resume' : 'Start'));
   $('#timer-add').disabled = timers.length >= MAX_TIMERS;
-  // The first is what every timer item falls back to, so it is the one that
-  // cannot go away.
-  setHidden($('#timer-remove'), timers.length <= 1 || timers[0]?.id === shownId);
+  setAttr($('#timer-add'), 'title', timers.length >= MAX_TIMERS ? `${MAX_TIMERS} timers is as many as the display holds` : '');
+  renderTimerPresets();
+  checkTimerCompletions(timers);
 }
 
 const runningTimers = new Set();
@@ -3051,16 +3146,6 @@ function checkTimerCompletions(timers = state?.timers || []) {
       runningTimers.delete(timer.id);
     }
   }
-}
-
-// Only on selection, never on a tick: copying a running clock into the minutes
-// box four times a second would fight whatever you were typing there.
-function syncTimerFields() {
-  const timer = currentTimer();
-  if (!timer) return;
-  $('#timer-label').value = timer.label || '';
-  const seconds = Math.round(timerRemaining(timer) / 1000);
-  if (seconds > 0) $('#timer-mins').value = String(Math.max(1, Math.round(seconds / 60)));
 }
 
 const PANEL_LABELS = ['A', 'B', 'C', 'D'];
@@ -7304,47 +7389,56 @@ function confirmOnce(key, note, confirmLabel) {
 const watermarkPanel = createWatermarkPanel({ $, uid, downscaleImage, MAX_ASSET_CHARS, assetRef, assetStore, send });
 const pipPanel = createPipPanel({ $, el, send });
 
-$('#timer-start').addEventListener('click', () => {
-  const timer = currentTimer();
-  const id = timer?.id;
-  if (timer?.running) send({ op: 'timer', action: 'pause', id });
-  else if ((timer?.remainingMs || 0) > 0) send({ op: 'timer', action: 'resume', id });
-  else send({ op: 'timer', action: 'start', id, seconds: Number($('#timer-mins').value) * 60, label: $('#timer-label').value });
-});
-$('#timer-stop').addEventListener('click', () => send({ op: 'timer', action: 'stop', id: currentTimer()?.id }));
-
-$('#timer-show').addEventListener('click', () => {
-  const timer = currentTimer();
-  // Carries the id, so this panel keeps showing THIS clock even once another
-  // is selected here - which is the whole point of having more than one.
-  stage({ type: 'timer', title: timer?.label || 'Timer', timerId: timer?.id, label: timer?.label || '' });
-});
-
-$('#timer-add').addEventListener('click', () => {
+// Adds a row, waiting to start: a name and a length, then Start (or its
+// quick-start button) when it is time.
+$('#timer-new').addEventListener('submit', (ev) => {
+  ev.preventDefault();
   if ((state.timers?.length || 0) >= MAX_TIMERS) return;
-  // Named here rather than on the display, so this controller can select the
-  // new timer immediately instead of waiting a round trip to learn its id.
+  const seconds = parseTimerLength($('#timer-length').value);
+  if (!seconds) {
+    $('#timer-note').textContent = 'Give it a length: 5 for five minutes, 4:30, or 30s.';
+    $('#timer-length').classList.add('is-invalid');
+    return;
+  }
+  $('#timer-length').classList.remove('is-invalid');
+  // Named here rather than on the display, so this controller knows the new
+  // timer at once instead of waiting a round trip to learn its id.
   const id = `t${uid(6)}`;
   currentTimerId = id;
-  send({ op: 'timer', action: 'add', id, label: $('#timer-label').value, seconds: Number($('#timer-mins').value) * 60 });
+  send({ op: 'timer', action: 'add', id, label: $('#timer-label').value.trim(), seconds });
+  $('#timer-note').textContent = `Added ${$('#timer-label').value.trim() || 'a timer'} (${fmtTimerLength(seconds)}).`;
+  $('#timer-label').value = '';
 });
+$('#timer-length').addEventListener('input', () => $('#timer-length').classList.remove('is-invalid'));
 
-$('#timer-remove').addEventListener('click', () => {
-  const id = currentTimer()?.id;
-  if (!id || state.timers?.[0]?.id === id) return;
-  send({ op: 'timer', action: 'remove', id });
-  currentTimerId = state.timers?.[0]?.id || null;
-});
-// Delegated: a loaded plan replaces these buttons with its own saved timers,
-// so binding the ones in the markup would leave the plan's dead.
+// Quick start. A length starts the first timer that is not running or paused
+// (adding one when every timer is busy and there is room); a named timer's
+// button starts that one from the top. Either way it goes on screen.
+// Delegated: the buttons are redrawn as the set changes.
 $('#timer-presets').addEventListener('click', (ev) => {
   const b = ev.target.closest('.timer-preset');
   if (!b) return;
-  $('#timer-mins').value = b.dataset.mins;
-  if (b.dataset.label) $('#timer-label').value = b.dataset.label;
-  const timer = currentTimer();
-  send({ op: 'timer', action: 'start', id: timer?.id, seconds: Number(b.dataset.mins) * 60, label: b.dataset.label || $('#timer-label').value });
-  stage({ type: 'timer', title: b.dataset.label || 'Timer', timerId: timer?.id, label: b.dataset.label || '' });
+  const timers = state.timers || [];
+  if (b.dataset.id) {
+    const timer = timerById(state, b.dataset.id);
+    send({ op: 'timer', action: 'start', id: timer.id });
+    showTimer(timer);
+    return;
+  }
+  const seconds = Number(b.dataset.secs);
+  let timer = timers.find((t) => timerPhase(t) === 'idle' || timerPhase(t) === 'done');
+  if (!timer && timers.length < MAX_TIMERS) {
+    const id = `t${uid(6)}`;
+    send({ op: 'timer', action: 'add', id, seconds });
+    timer = { id, label: '' };
+  }
+  if (!timer) {
+    $('#timer-note').textContent = `All ${MAX_TIMERS} timers are running or paused - reset one, or use its own Start.`;
+    return;
+  }
+  send({ op: 'timer', action: 'start', id: timer.id, seconds });
+  showTimer(timer);
+  $('#timer-note').textContent = '';
 });
 
 $('#ink-undo').addEventListener('click', () => {
@@ -8291,16 +8385,15 @@ function executeSlotAction(type) {
       break;
 
     case 'timer': {
+      // The timer last touched on the Timer tab (or the first): pause it if
+      // it is running, carry on if it is paused, otherwise start it - for the
+      // length it is set to, or five minutes if it has none yet.
       const timer = currentTimer();
-      const id = timer?.id;
-      if (timer?.running) {
-        send({ op: 'timer', action: 'pause', id });
-      } else if ((timer?.remainingMs || 0) > 0) {
-        send({ op: 'timer', action: 'resume', id });
-      } else {
-        const mins = Number($('#timer-mins')?.value) || 5;
-        send({ op: 'timer', action: 'start', id, seconds: mins * 60, label: timer?.label || `${mins}m` });
-      }
+      if (!timer) break;
+      const phase = timerPhase(timer);
+      if (phase === 'running') send({ op: 'timer', action: 'pause', id: timer.id });
+      else if (phase === 'paused') send({ op: 'timer', action: 'resume', id: timer.id });
+      else send({ op: 'timer', action: 'start', id: timer.id, ...(timerDuration(timer) ? {} : { seconds: 300 }) });
       break;
     }
 
