@@ -257,8 +257,10 @@ ok(`a deck carried inside the plan renders on the projector (${deckOnWall?.slide
   deckOnWall?.slides === 13 && deckOnWall.showing && deckOnWall.status === '');
 
 await pad.click('.tab[data-tab="timer"]');
-ok(`the plan's saved timers replace the stock presets ("${(await pad.$$eval('#timer-presets .timer-preset', (n) => n.map((x) => x.textContent))).join(', ')}")`,
-  (await pad.$$eval('#timer-presets .timer-preset', (n) => n.map((x) => x.textContent))).join() === 'Group work · 8m');
+const presets = await pad.$$eval('#timer-presets .timer-preset', (n) => n.map((x) => x.textContent));
+ok(`the plan's saved timers become timers, each with a quick-start button beside the stock ones ("${presets.join(', ')}")`,
+  presets.join() === '1m,2m,5m,10m,Group work · 8m'
+  && /^Group work/.test(await pad.textContent('.timer-line .timer-line-name')) && /8:00/.test(await pad.textContent('.timer-line .timer-line-len')));
 
 // A tablet gets locked and reopened mid-lecture. Losing the running order at
 // that moment would be the worst possible time for it.
@@ -273,8 +275,8 @@ await pad.waitForFunction(() => document.querySelector('#library h3.group')?.tex
 ok('removing the plan puts the Library back to this device\u2019s own items',
   (await pad.$$eval('#library h3.group', (n) => n.map((x) => x.textContent)))[0] === 'Quick');
 await pad.click('.tab[data-tab="timer"]');
-ok('and the stock timer presets come back',
-  (await pad.$$eval('#timer-presets .timer-preset', (n) => n.map((x) => x.textContent))).join() === '1m,2m,5m,10m,15m');
+ok('and the stock quick-start buttons are still first',
+  (await pad.$$eval('#timer-presets .timer-preset', (n) => n.map((x) => x.textContent))).slice(0, 4).join() === '1m,2m,5m,10m');
 
 // A file that is not a plan must say so rather than half-loading.
 fs.writeFileSync(path.join(HERE, 'fixtures', 'not-a-plan.json'), '{"hello":"world"}');
@@ -508,7 +510,7 @@ ok('a fifth Countdown item finds no free slot left, and asks which of the four t
 // The Timers list is with the lecture's own settings (Issue #205).
 await desk.click('#order-settings');
 await desk.fill('#timers .timer-row:nth-child(1) input[type=text]', 'Group work');
-await desk.fill('#timers .timer-row:nth-child(1) input[type=number]', '12');
+await desk.fill('#timers .timer-row:nth-child(1) .timer-length-field', '12');
 await desk.click('#order .order-row:first-child .order-open');
 ok(`renaming and resizing a timer in place reaches every item's picker (${(await timerPickOptions()).join(', ')})`,
   (await timerPickOptions()).includes('Group work · 12m'));

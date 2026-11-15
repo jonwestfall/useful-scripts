@@ -376,6 +376,8 @@ Good to know:
 - Playlists come from `content/music.json` (or the admin page's **Music Playlists** on a server), and each track can live anywhere reachable, including your own server. Track lengths show in the picker and the queue; they are looked up a couple of tracks at a time, so a long queue never slows the controller down.
 - The queue belongs to the room, not to one lecture, but it does not outlive the day: when a room has had no commands for 3 hours, the next one starts with an empty queue (music level and Pause Queue are kept, and a queue that is playing is never cleared).
 - **Load**, **Add to queue**, or paste a link to any audio file and **Queue it**. **Auto-play** runs the queue on its own, **Shuffle the rest** mixes up what's left, and **Pause Queue** holds after the current track.
+- **From this lecture** is the audio in the lecture's plan and whatever you have played or queued from the Music tab since the lecture began, one tap each. It starts empty for each lecture (a new session, or another plan loaded) and survives a reload in the middle of one.
+- **From My Files** lists every audio file in My Files and your courses' files, newest first, with **▶ Play** and **Add to queue**, for the track from three weeks ago. It is read again each time the Music tab opens, and is there on a server with a library.
 - **Fade out & stop** takes the room quiet over three seconds when class begins.
 - **⏳ Show "We begin in…" on screen** puts up a panel counting down to the end of the current track, with editable text, so the room can see when you're starting.
 - Music keeps playing while you teach. Picking content, freezing and blanking don't touch it.
@@ -406,10 +408,11 @@ The small things a lecture needs, one tap away.
 
 ### Countdown Timers
 
-- **Up to four independent countdowns**, each shown as a chip with its own clock, so you can see all of them at once.
-- Preset buttons (1, 2, 5, 10, 15 minutes), replaced by a lecture plan's own saved timers when one is loaded.
-- **Put this one on screen** stages the selected timer. Split the screen and two can be on the projector at once.
-- Countdowns run on the display, so they stay accurate even if your iPad sleeps. The **R** key and the **Quick Countdown** bottom-bar slot start, pause or resume the selected one.
+- **Quick start**: **1m**, **2m**, **5m** and **10m** start a countdown on the first timer that is free and put it on screen. Every timer with a name (one you added, or a plan's) gets a quick-start button of its own beside them.
+- **A row per timer**, up to four: its name, its length, the time left in big digits and how long it has run, and **Start** (from the top; *Restart* once it has run), **Pause** / **Resume**, **Reset** (back to its full length, waiting), **Show** (on the panel you are working on), **Edit** (name and length) and **Remove**. A row says **On screen** while a panel is showing it. The first timer always stays, since a countdown with no timer of its own falls back to it.
+- Start two at once, pause one, and each row keeps its own time. Split the screen and two panels can each show a different one.
+- **Add a timer** with a name and a length. A length is minutes (**5**), or minutes and seconds (**4:30**, **30s**, **1m 30s**), so a countdown can be under a minute.
+- Countdowns run on the display, so they stay accurate even if your iPad sleeps. The **R** key and the **Quick Countdown** bottom-bar slot start, pause or resume the timer you last used on the Timer tab.
 
 ### Full-Screen Messages
 
@@ -672,7 +675,7 @@ The **Plan** page (`plan.html`) is designed for your office computer:
 - Drag-and-drop your slides, PDFs, YouTube URLs, and notes into an ordered running order.
 - Set a **target length** (30 minutes to 3 hours) and watch the running order's planned minutes add up against it.
 - **Lecture settings** (Issue #205): the pinned row at the top of the running order opens what applies to the whole lecture (its countdowns, the screen layout to start in, auto-launch and notes to yourself) in the right-hand column, where an item's details go when you pick one.
-- Save **countdowns** for this lecture; each *Countdown* item gets its own timer, up to the room's four. They replace the iPad's preset buttons.
+- Save **countdowns** for this lecture, in minutes or minutes and seconds (*4:30*, *30s*); each *Countdown* item gets its own timer, up to the room's four. On the iPad each is a timer on the Timer tab, with a quick-start button of its own beside 1, 2, 5 and 10 minutes.
 - Write **notes to yourself** per item, and optional [pre-scripted captions](#pre-scripted-captions).
 - **Auto-launch on plan load**: stage what each pane shows, start background music and a countdown, and choose whether it all opens **live**, **staged in the cue** (behind Freeze), or **blacked out**.
 - Upload files straight to the server library from an item 🖥️, and start a new lecture from your course's **template** 🖥️.

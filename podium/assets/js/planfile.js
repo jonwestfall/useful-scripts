@@ -257,6 +257,56 @@ export const PLAN_TYPES = {
 
 export const PLANNABLE = Object.keys(PLAN_TYPES);
 
+// --- countdown lengths ----------------------------------------------------------
+// A plan's timers used to be whole minutes (`mins`), so a 30-second countdown
+// could not be planned. They carry `seconds` now, with `mins` still written
+// (rounded, at least 1) for a controller or display from before.
+export const MIN_TIMER_SECONDS = 5;
+export const MAX_TIMER_SECONDS = 180 * 60;
+
+/** A plan timer's length in seconds, whichever way it was saved. */
+export function timerSeconds(timer) {
+  const s = Number(timer?.seconds);
+  if (Number.isFinite(s) && s > 0) return Math.round(s);
+  const m = Number(timer?.mins);
+  return Number.isFinite(m) && m > 0 ? Math.round(m * 60) : 0;
+}
+
+/** A length as people say it: "5m", "45s", "1m 30s". */
+export function fmtTimerLength(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  if (!m) return `${rest}s`;
+  return rest ? `${m}m ${rest}s` : `${m}m`;
+}
+
+/**
+ * What someone typed as a countdown's length, in seconds, or null. A bare
+ * number is minutes ("5"), as it always was; "4:30" is minutes and seconds;
+ * "30s", "2m", "1m 30s" and "90 sec" say which.
+ */
+export function parseTimerLength(text) {
+  const t = String(text ?? '').trim().toLowerCase();
+  if (!t) return null;
+  let secs = null;
+  let m;
+  if ((m = /^(\d+):(\d{1,2})$/.exec(t))) secs = Number(m[1]) * 60 + Number(m[2]);
+  else if ((m = /^(\d+(?:\.\d+)?)$/.exec(t))) secs = Number(m[1]) * 60;
+  else if ((m = /^(?:(\d+)\s*m(?:in(?:ute)?s?)?)?\s*(?:(\d+)\s*s(?:ec(?:ond)?s?)?)?$/.exec(t)) && (m[1] || m[2])) {
+    secs = Number(m[1] || 0) * 60 + Number(m[2] || 0);
+  }
+  if (secs === null || !Number.isFinite(secs)) return null;
+  secs = Math.round(secs);
+  if (secs < MIN_TIMER_SECONDS || secs > MAX_TIMER_SECONDS) return null;
+  return secs;
+}
+
+/** A plan timer for this length: `seconds`, and `mins` for older readers. */
+export function planTimer(id, label, seconds) {
+  return { id, label, seconds, mins: Math.max(1, Math.round(seconds / 60)) };
+}
+
 export function assetRef(id) { return `asset:${id}`; }
 export function isAssetRef(value) { return typeof value === 'string' && value.startsWith('asset:'); }
 export function assetIdOf(value) { return isAssetRef(value) ? value.slice(6) : null; }
@@ -369,7 +419,11 @@ export function itemLabel(item, plan = null) {
   if (item.type === 'timer') {
     const timer = plan?.timers?.find((t) => t.id === item.timerId) || plan?.timers?.[0] || null;
     const name = timer?.label || item.label || '';
-    if (timer) return `${timer.mins} min${name ? ` — ${name}` : ''}`;
+    if (timer) {
+      const secs = timerSeconds(timer);
+      const length = secs % 60 ? fmtTimerLength(secs) : `${secs / 60} min`;
+      return `${length}${name ? ` — ${name}` : ''}`;
+    }
     return name || 'Countdown';
   }
   if (item.type === 'qr' && item.caption) return item.caption;
@@ -486,12 +540,12 @@ export function readPlan(raw) {
   for (const raw3 of Array.isArray(data.timers) ? data.timers : []) {
     // A preset with no length is not a preset - clamping it up to one minute
     // would put a button on the tablet that nobody meant to be there.
-    const asked = Number(raw3?.mins);
-    if (!Number.isFinite(asked) || asked < 1) continue;
+    const asked = timerSeconds(raw3);
+    if (asked < MIN_TIMER_SECONDS) continue;
     // No more than the display can hold, so a plan cannot promise a clock that
     // will never exist.
     if (timers.length >= MAX_TIMERS) break;
-    timers.push({ id: str(raw3.id, 40) || uid(6), label: str(raw3.label, 60), mins: Math.min(180, Math.round(asked)) });
+    timers.push(planTimer(str(raw3.id, 40) || uid(6), str(raw3.label, 60), Math.min(MAX_TIMER_SECONDS, asked)));
   }
 
   const items = [];

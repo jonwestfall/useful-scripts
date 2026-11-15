@@ -4,7 +4,7 @@
 import {
   emptyPlan, newItem, readPlan, planToJson, pruneAssets, referencedAssets,
   itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, PLAN_TYPES, PLAN_VERSION,
-  emptyAutoLaunch,
+  emptyAutoLaunch, parseTimerLength, fmtTimerLength, timerSeconds,
 } from '../assets/js/planfile.js';
 
 let ok = true;
@@ -367,6 +367,22 @@ console.log('-- a text sign\'s colour survives the plan file (Issue #222) --');
   p.items.push({ ...newItem('text'), body: 'Group work', bg: '#0b1e3d', color: '#ffd166' });
   const back = readPlan(planToJson(p)).plan.items[0];
   chk('the text colour round-trips with the background', back.color === '#ffd166' && back.bg === '#0b1e3d');
+}
+
+console.log('-- countdown lengths: minutes, or minutes and seconds --');
+{
+  const read = (t) => parseTimerLength(t);
+  chk('a bare number is minutes, as it always was', read('5') === 300 && read('90') === 5400);
+  chk('4:30 is minutes and seconds', read('4:30') === 270 && read('0:45') === 45);
+  chk('30s, 2m, 1m 30s and 90 sec say which', read('30s') === 30 && read('2m') === 120 && read('1m 30s') === 90 && read('90 sec') === 90);
+  chk('nothing, nonsense, under 5 seconds or over 3 hours is no length', [null, '', 'soon', '2s', '0:03', '181'].every((t) => read(t) === null));
+  chk('a length reads the way people say it', fmtTimerLength(300) === '5m' && fmtTimerLength(45) === '45s' && fmtTimerLength(90) === '1m 30s');
+  const p = readPlan(JSON.stringify({ podium: 'plan', v: 1, title: 'Short ones', items: [],
+    timers: [{ id: 'a', label: 'Pair share', seconds: 45 }, { id: 'b', label: 'Old style', mins: 3 }] })).plan;
+  chk('a plan keeps a 45-second countdown, in seconds', timerSeconds(p.timers[0]) === 45 && p.timers[0].seconds === 45);
+  chk('with whole minutes alongside for a controller from before', p.timers[0].mins === 1);
+  chk('and a plan from before, in minutes, still reads', timerSeconds(p.timers[1]) === 180);
+  chk('its countdown items say how long', itemLabel({ type: 'timer', timerId: 'a' }, p) === '45s — Pair share');
 }
 
 console.log(ok ? '\nALL PASS' : '\nFAILURES');

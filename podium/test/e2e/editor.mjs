@@ -329,6 +329,67 @@ ok(`nothing asked a CDN for KaTeX${cdn.length ? ` (${cdn[0]})` : ''}`, cdn.lengt
 await owen.close();
 }
 
+if (want('music: this lecture\'s own audio, and anything from My Files')) {
+console.log('\n-- music: this lecture\'s own audio, and anything from My Files --');
+// "From this lecture" was every audio file the library held - My Files and
+// every course's - so tracks uploaded for lectures weeks ago turned up there.
+// A second of silence as a WAV, built here.
+const wav = (() => {
+  const rate = 8000; const n = rate; const data = Buffer.alloc(n * 2);
+  const head = Buffer.alloc(44);
+  head.write('RIFF', 0); head.writeUInt32LE(36 + data.length, 4); head.write('WAVE', 8); head.write('fmt ', 12);
+  head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22); head.writeUInt32LE(rate, 24);
+  head.writeUInt32LE(rate * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34); head.write('data', 36); head.writeUInt32LE(data.length, 40);
+  return [...Buffer.concat([head, data])];
+})();
+const owen = await signedIn('owen');
+const screen = await owen.newPage();
+trap(screen, 'music display');
+await screen.goto(`${base}/display.html`);
+await screen.click('#arm-button');
+await screen.waitForSelector('#hud[data-status="online"]');
+const pad = await owen.newPage();
+trap(pad, 'music controller');
+await pad.goto(`${base}/index.html`);
+for (const title of ['Week 2 walk-in', 'Week 9 walk-in']) {
+  const res = await pad.evaluate(async ({ bytes, title }) => (await fetch(`/api/library/upload?filename=${encodeURIComponent(title)}.wav&course=psy415&title=${encodeURIComponent(title)}`, { method: 'POST', body: new Uint8Array(bytes) })).status, { bytes: wav, title });
+  if (res !== 200 && res !== 201) ok(`uploading "${title}" (${res})`, false);
+  await pad.waitForTimeout(20); // two distinct upload times, so "newest first" means something
+}
+await pad.goto(`${base}/control.html`);
+await pad.waitForSelector('.tile', { timeout: 15000 });
+await pad.evaluate(() => document.querySelector('.tab[data-tab="music"]').click());
+await pad.waitForSelector('#music-files-row:not([hidden])', { timeout: 10000 });
+ok('with no plan and nothing played yet, "From this lecture" shows nothing - though the library holds audio',
+  await pad.isHidden('#music-quick-bar'));
+const options = await pad.$$eval('#music-files option', (os) => os.map((o) => o.textContent));
+ok(`"From My Files" lists the audio there, newest first (${options.join(' | ')})`,
+  options.length >= 2 && /^Week 9 walk-in — PSY415/.test(options[0]) && options.some((o) => /^Week 2 walk-in/.test(o)));
+await pad.selectOption('#music-files', { label: options.find((o) => /^Week 2 walk-in/.test(o)) });
+const week2 = await pad.evaluate(async () => (await (await fetch('/api/library')).json()).items.find((i) => i.title === 'Week 2 walk-in')?.src);
+await pad.click('#music-files-play');
+await screen.waitForFunction((src) => decodeURIComponent(document.querySelector('audio#music')?.src || '').endsWith(decodeURIComponent(src)), week2, { timeout: 10000 })
+  .then(() => ok('a track from weeks ago plays from there', true))
+  .catch(() => ok('a track from weeks ago plays from there', false));
+await pad.waitForSelector('#music-quick-bar:not([hidden]) .music-quick-chip', { timeout: 5000 }).catch(() => {});
+ok('and is then one of this lecture\'s', (await pad.$$eval('.music-quick-chip', (cs) => cs.map((c) => c.textContent))).join('|') === 'Week 2 walk-in');
+await pad.reload();
+await pad.waitForSelector('.tile', { timeout: 15000 });
+await pad.evaluate(() => document.querySelector('.tab[data-tab="music"]').click());
+ok('a reload in the middle of the lecture keeps it', await pad.isVisible('.music-quick-chip:has-text("Week 2 walk-in")'));
+await owen.close();
+// A new session is a new lecture.
+const later = await signedIn('owen');
+const pad2 = await later.newPage();
+trap(pad2, 'music controller, next lecture');
+await pad2.goto(`${base}/control.html`);
+await pad2.waitForSelector('.tile', { timeout: 15000 });
+await pad2.evaluate(() => document.querySelector('.tab[data-tab="music"]').click());
+await pad2.waitForSelector('#music-files-row:not([hidden])', { timeout: 10000 });
+ok('the next lecture starts with "From this lecture" empty again', await pad2.isHidden('#music-quick-bar'));
+await later.close();
+}
+
 if (want('the deck editor: content/decks, for an administrator (#226)')) {
 console.log('\n-- the deck editor: content/decks, for an administrator (#226) --');
 const root = await signedIn('root');

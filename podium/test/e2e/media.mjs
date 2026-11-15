@@ -311,10 +311,11 @@ await pad.waitForFunction(() => document.querySelectorAll('.music-row').length =
   .catch(() => ok('and it lands in the background queue from there', false));
 ok('queued rather than already playing', await screen.evaluate(() => document.querySelector('audio#music').paused));
 
-await pad.waitForSelector('.music-quick-chip');
-ok('the Music tab also offers it as a quick-push button',
-  /Waiting music/.test(await pad.textContent('.music-quick-chip')));
-await pad.click('.music-quick-chip');
+// Among this lecture's other audio (the links queued above count too).
+const waitingChip = '.music-quick-chip:has-text("Waiting music")';
+await pad.waitForSelector(waitingChip);
+ok('the Music tab also offers it as a quick-push button', await pad.isVisible(waitingChip));
+await pad.click(waitingChip);
 await screen.waitForFunction(() => {
   const el = document.querySelector('audio#music');
   return el && !el.paused && el.currentTime > 0;
@@ -323,7 +324,7 @@ await screen.waitForFunction(() => {
   .catch(() => ok('tapping the quick-push chip plays it as background music', false));
 ok('without duplicating the track it had already queued',
   (await pad.$$('.music-row')).length === 1);
-await pad.waitForFunction(() => document.querySelector('.music-quick-chip').classList.contains('is-on'), null, { timeout: 8000 })
+await pad.waitForFunction(() => [...document.querySelectorAll('.music-quick-chip')].some((c) => /Waiting music/.test(c.textContent) && c.classList.contains('is-on')), null, { timeout: 8000 })
   .then(() => ok('and marks the chip as the one currently playing', true))
   .catch(() => ok('and marks the chip as the one currently playing', false));
 
@@ -347,7 +348,7 @@ await screen.waitForFunction(() => document.querySelector('audio#music').paused,
   .catch(() => ok('standing down stops the background music, rather than leaving it playing to an empty room', false));
 // And the controllers are told, so the Music tab does not still offer Pause
 // for something that is no longer playing.
-await pad.waitForFunction(() => !document.querySelector('.music-quick-chip')?.classList.contains('is-on'), null, { timeout: 8000 })
+await pad.waitForFunction(() => ![...document.querySelectorAll('.music-quick-chip')].some((c) => /Waiting music/.test(c.textContent) && c.classList.contains('is-on')), null, { timeout: 8000 })
   .then(() => ok('and every controller is told it stopped', true))
   .catch(() => ok('and every controller is told it stopped', false));
 // Background music is not the only thing that can still be sounding: the
@@ -1483,34 +1484,62 @@ await pad.waitForSelector('.tile');
 // A class runs more than one clock: eight minutes of group work inside the
 // session, a five-minute break with its own end. They have to be independent,
 // and you have to be able to see both.
-const chips = () => pad.$$eval('.timer-chip', (n) => n.map((x) => x.textContent.trim()));
+// Each timer is a row: its name and length, its clock, and Start, Pause,
+// Reset, Show, Edit and Remove.
+const rows = () => pad.$$eval('.timer-line', (n) => n.map((r) => `${r.querySelector('.timer-line-name').textContent}|${r.querySelector('.timer-line-time').textContent}`));
+const row = (i) => `.timer-line:nth-child(${i})`;
 await pad.click('.tab[data-tab="timer"]');
-ok(`a room starts with one unnamed countdown, so "the timer" needs no setting up ("${(await chips())[0]}")`,
-  (await chips()).length === 1);
+ok(`a room starts with one unnamed timer, so "the timer" needs no setting up ("${(await rows())[0]}")`,
+  (await rows()).length === 1);
 
-await pad.fill('#timer-label', 'Group work');
-await pad.fill('#timer-mins', '8');
-await pad.click('#timer-start');
+// The first one, named and given a length with Edit, then started.
+await pad.click(`${row(1)} .timer-line-edit`);
+await pad.fill(`${row(1)} .timer-edit-label`, 'Group work');
+await pad.fill(`${row(1)} .timer-edit-length`, '8');
+await pad.click(`${row(1)} .timer-line-edit button[type=submit]`);
+await pad.waitForFunction(() => /Group work\|8:00/.test(`${document.querySelector('.timer-line-name')?.textContent}|${document.querySelector('.timer-line-time')?.textContent}`), null, { timeout: 10000 })
+  .then(() => ok('Edit names a timer and sets its length, waiting to start', true))
+  .catch(() => ok('Edit names a timer and sets its length, waiting to start', false));
+await pad.click(`${row(1)} .timer-line-start`);
+// A second, under a minute - which the old minutes box could not do.
 await pad.fill('#timer-label', 'Break');
-await pad.fill('#timer-mins', '2');
+await pad.fill('#timer-length', '0:45');
 await pad.click('#timer-add');
-await pad.waitForFunction(() => document.querySelectorAll('.timer-chip').length === 2, null, { timeout: 10000 });
-await pad.click('#timer-start');
-await settle(async () => { const c = await chips(); return /Group work7:5/.test(c[0]) && /Break1:5/.test(c[1]); });
-const both = await chips();
-ok(`both clocks are on screen at once, each with its own name and time ("${both.join('", "')}")`,
-  both.length === 2 && /Group work7:5/.test(both[0]) && /Break1:5/.test(both[1]));
-ok('and they run independently, not as one clock shown twice',
-  both[0] !== both[1]);
+await pad.waitForFunction(() => document.querySelectorAll('.timer-line').length === 2, null, { timeout: 10000 });
+ok('"Add a timer" adds a row, under a minute if asked', /^Break\|0:45$/.test((await rows())[1]));
+ok('and a quick-start button of its own, beside 1, 2, 5 and 10 minutes',
+  (await pad.$$eval('#timer-presets .timer-preset', (n) => n.map((x) => x.textContent))).join() === '1m,2m,5m,10m,Group work · 8m,Break · 45s');
+await pad.click(`${row(2)} .timer-line-start`);
+await settle(async () => { const r = await rows(); return /Group work\|7:5/.test(r[0]) && /Break\|0:4/.test(r[1]); });
+const both = await rows();
+ok(`both run at once, each row with its own name and time ("${both.join('", "')}")`,
+  both.length === 2 && /Group work\|7:5/.test(both[0]) && /Break\|0:4/.test(both[1]));
+ok('with how long it has run', /gone/.test(await pad.textContent(`${row(1)} .timer-line-gone`)));
+// Pause one: it holds, and the other carries on.
+await pad.click(`${row(2)} .timer-line-pause`);
+await pad.waitForFunction((sel) => document.querySelector(sel)?.classList.contains('is-paused'), row(2), { timeout: 5000 });
+const held = (await rows())[1];
+await pad.waitForTimeout(1300);
+ok(`Pause holds it ("${held}"), while the other keeps going`, (await rows())[1] === held
+  && await pad.$eval(row(1), (n) => n.classList.contains('is-running')) && (await pad.textContent(`${row(2)} .timer-line-pause`)) === 'Resume');
+await pad.click(`${row(2)} .timer-line-pause`);
+await pad.waitForFunction((sel) => document.querySelector(sel)?.classList.contains('is-running'), row(2), { timeout: 5000 })
+  .then(() => ok('and Resume carries on from there', true))
+  .catch(() => ok('and Resume carries on from there', false));
+await pad.click(`${row(2)} .timer-line-reset`);
+await pad.waitForFunction((sel) => /^Break\|0:45$/.test(`${document.querySelector(`${sel} .timer-line-name`).textContent}|${document.querySelector(`${sel} .timer-line-time`).textContent}`)
+  && document.querySelector(`${sel} .timer-line-start`).textContent === 'Start', row(2), { timeout: 5000 })
+  .then(() => ok('Reset puts it back to its full length, waiting to start', true))
+  .catch(() => ok('Reset puts it back to its full length, waiting to start', false));
+await pad.click(`${row(2)} .timer-line-start`);
 
 // Two panels, two different countdowns - which is the point of having more
 // than one, and is why a timer item carries the id of the clock it shows.
-await pad.click('#timer-show');
+await pad.click(`${row(2)} .timer-line-show`);
 await pad.click('#layout-current'); await pad.click('.layout-btn[data-layout="2h"]');
 await pad.waitForTimeout(300);
 await pad.click('.panel-btn:nth-child(2)');
-await pad.click('.timer-chip:nth-child(1)');
-await pad.click('#timer-show');
+await pad.click(`${row(1)} .timer-line-show`);
 await pad.waitForTimeout(900);
 const onWall = await screen.$$eval('.r-timer', (nodes) => nodes.map((n) => ({
   label: n.querySelector('.r-timer-label').textContent,
@@ -1520,14 +1549,13 @@ ok(`the projector shows two different countdowns side by side (${onWall.map((t) 
   onWall.length === 2 && onWall[0].label === 'Break' && onWall[1].label === 'Group work'
   && onWall[0].value !== onWall[1].value);
 
-await pad.click('.timer-chip:nth-child(1)');
-ok('the first countdown offers no Remove - it is what everything with no id falls back to',
-  await pad.$eval('#timer-remove', (n) => n.hidden));
-await pad.click('.timer-chip:nth-child(2)');
-ok('...while a later one does', await pad.$eval('#timer-remove', (n) => !n.hidden));
-await pad.click('#timer-remove');
-await pad.waitForFunction(() => document.querySelectorAll('.timer-chip').length === 1, null, { timeout: 10000 }).catch(() => {});
-ok('a countdown can be removed once you are done with it', (await chips()).length === 1);
+ok('each row says it is on screen', await pad.$$eval('.timer-line', (n) => n.every((r) => r.classList.contains('is-shown'))));
+ok('the first timer cannot be removed - it is what everything with no id falls back to',
+  await pad.$eval(`${row(1)} .timer-line-remove`, (n) => n.disabled));
+ok('...while a later one can', await pad.$eval(`${row(2)} .timer-line-remove`, (n) => !n.disabled));
+await pad.click(`${row(2)} .timer-line-remove`);
+await pad.waitForFunction(() => document.querySelectorAll('.timer-line').length === 1, null, { timeout: 10000 }).catch(() => {});
+ok('a timer can be removed once you are done with it', (await rows()).length === 1);
 
 // --- laser colour ---------------------------------------------------------
 // Red disappears into a dark slide or a photograph, which is most of a

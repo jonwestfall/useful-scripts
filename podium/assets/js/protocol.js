@@ -25,7 +25,7 @@
 import { ZOOM_MAX } from './zoom.js';
 import { normalizeLook } from './poll-look.js';
 
-export const BUILD = 162;
+export const BUILD = 164;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -41,7 +41,7 @@ export const BUILD = 162;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.3';
-export const COMMIT = 'de06afa';
+export const COMMIT = '9b1edfc';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -110,8 +110,17 @@ export function newTimer(id, label = '', seconds = 0) {
     running: false,
     endsAt: 0,
     remainingMs: ms,
+    // How long it is, as set: what Reset goes back to and Start starts from
+    // when no length is given.
+    durationMs: ms,
     mode: 'countdown',
   };
+}
+
+/** How long a timer is set to run - its full length, not what is left. */
+export function timerDuration(timer) {
+  if (!timer) return 0;
+  return Number.isFinite(timer.durationMs) && timer.durationMs > 0 ? timer.durationMs : (timer.remainingMs || 0);
 }
 
 /**
@@ -1873,10 +1882,28 @@ function applyOp(state, cmd) {
       if (cmd.label !== undefined) t.label = String(cmd.label).slice(0, 80);
       if (cmd.mode) t.mode = cmd.mode;
       if (cmd.action === 'start') {
-        const ms = Math.max(0, (Number(cmd.seconds) || 0) * 1000);
+        // From the top: of the length given, or the one it is set to.
+        const given = cmd.seconds !== undefined && cmd.seconds !== null;
+        const ms = given ? Math.max(0, Math.round((Number(cmd.seconds) || 0) * 1000)) : timerDuration(t);
+        if (given) t.durationMs = ms;
         t.running = true;
         t.remainingMs = ms;
         t.endsAt = Date.now() + ms;
+      } else if (cmd.action === 'reset') {
+        // Back to its full length, waiting to start.
+        t.running = false;
+        t.endsAt = 0;
+        t.remainingMs = timerDuration(t);
+      } else if (cmd.action === 'set') {
+        // A new length (and, above, label). One that is waiting - not started,
+        // or reset - shows the new length; one running or paused keeps going,
+        // and its next Start or Reset uses it.
+        if (cmd.seconds !== undefined) {
+          const was = timerDuration(t);
+          const ms = Math.max(0, Math.round((Number(cmd.seconds) || 0) * 1000));
+          t.durationMs = ms;
+          if (!t.running && (t.remainingMs === was || t.remainingMs === 0)) t.remainingMs = ms;
+        }
       } else if (cmd.action === 'pause') {
         if (!t.running) return true;
         t.remainingMs = Math.max(0, t.endsAt - Date.now());

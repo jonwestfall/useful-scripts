@@ -1574,6 +1574,8 @@ body.ink-focus #ink-focus { border-color: var(--accent); color: var(--accent); }
    is true right now: which track, how far in, and whether it is currently
    ducked under something else. */
 #music-quick-bar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+#music-files-row { align-items: center; }
+#music-files { min-width: 0; }
 .music-quick-chip {
   flex: none; max-width: 46vw; padding: 8px 12px; font-size: 13px; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1701,22 +1703,42 @@ button.set-row.is-on { border-color: var(--accent); background: #16202c; }
 .toast { transition: opacity .2s ease; opacity: 0; pointer-events: none; }
 .toast.is-on { opacity: 1; }
 
-/* The set of countdowns, each showing its own clock: you can see all four at
-   a glance, and the controls below drive whichever is selected. */
-#timer-chips { gap: 6px; }
-.timer-chip {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
-  min-height: 40px; padding: 5px 11px; font-size: 13px;
-}
-.timer-chip.is-on { border-color: var(--accent); background: #16202c; color: var(--ink); }
-.timer-chip-name { font-weight: 600; }
-.timer-chip-time { font-size: 11.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
-.timer-chip.is-running .timer-chip-time { color: var(--ok); }
-.timer-chip.is-urgent .timer-chip-time { color: var(--cue); }
-
-#timer-readout { font-size: 54px; font-weight: 700; font-variant-numeric: tabular-nums; }
-#timer-readout.is-urgent { color: var(--cue); }
 .timer-preset { min-width: 62px; }
+.timer-preset.is-named { font-weight: 600; }
+
+/* The Timer tab: quick start, then a row per timer (renderTimers in
+   control.js) - its name and length, its clock, and what can be done to it. */
+.timer-quick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.timer-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.timer-line {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center;
+  padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius);
+}
+.timer-line-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.timer-line-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timer-line-len { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.timer-line-shown {
+  display: none; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--live); border: 1px solid var(--live); border-radius: 999px; padding: 1px 7px;
+}
+.timer-line.is-shown .timer-line-shown { display: inline-block; }
+.timer-line-clock { grid-row: span 2; display: flex; flex-direction: column; align-items: flex-end; }
+.timer-line-time { font-size: 34px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.timer-line-gone { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; min-height: 1em; }
+.timer-line.is-running .timer-line-time { color: var(--ok); }
+.timer-line.is-paused .timer-line-time { color: var(--dim); }
+.timer-line.is-urgent .timer-line-time, .timer-line.is-done .timer-line-time { color: var(--cue); }
+.timer-line.is-shown { border-color: var(--live); }
+.timer-line-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.timer-line-btns button { min-height: 40px; padding: 0 12px; font-size: 14px; }
+.timer-line-edit { grid-column: 1 / -1; flex-wrap: wrap; }
+input.timer-length { width: 90px; flex: none; }
+.timer-length.is-invalid, .timer-edit-length.is-invalid { border-color: var(--bad); }
+.timer-new { flex-wrap: wrap; }
+@media (max-width: 520px) {
+  .timer-line { grid-template-columns: minmax(0, 1fr); }
+  .timer-line-clock { grid-row: auto; flex-direction: row; align-items: baseline; justify-content: space-between; }
+}
 
 /* Bottom bar */
 .bottombar {
@@ -2583,11 +2605,6 @@ body.display[data-sheet-theme="light"] .sheet button.danger-outline {
 :root[data-theme="light"] .order-settings.is-on,
 :root[data-theme="light"] .plan-row.is-on,
 :root[data-theme="light"] .music-quick-chip.is-on,
-:root[data-theme="light"] .timer-chip.is-on {
-  border-color: var(--accent);
-  background: #e0f2fe;
-  color: var(--ink);
-}
 
 :root[data-theme="light"] #deck-now-preview,
 :root[data-theme="light"] #deck-next-preview,

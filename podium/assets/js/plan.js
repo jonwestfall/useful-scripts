@@ -12,7 +12,7 @@ import { $, $$, el, uid, guessItemFromUrl, isNotebookLink, NOTEBOOK_ADVICE, wire
 import {
   PLAN_TYPES, emptyPlan, newItem, readPlan, planToJson, planFileName, planBytes,
   itemLabel, itemForStage, assetRef, assetIdOf, isAssetRef, pruneAssets, emptyAutoLaunch, emptyPip,
-  MAX_ASSET_CHARS, MAX_PLAN_BYTES, withoutPollLinks,
+  MAX_ASSET_CHARS, MAX_PLAN_BYTES, withoutPollLinks, timerSeconds, fmtTimerLength, parseTimerLength, planTimer,
 } from './planfile.js';
 import {
   allPlans, savePlan, loadPlan, removePlan,
@@ -639,7 +639,7 @@ function renderTypePicker() {
       // field below asks which, rather than silently picking one.
       if (type === 'timer') {
         if (plan.timers.length < MAX_TIMERS) {
-          const timer = { id: uid(6), label: '', mins: 5 };
+          const timer = planTimer(uid(6), '', 300);
           plan.timers.push(timer);
           item.timerId = timer.id;
         } else {
@@ -670,6 +670,11 @@ function afterTimerEdit() {
   renderAutoLaunch();
 }
 
+/** A length as it goes in a field: "5" for whole minutes, "4:30" otherwise. */
+function lengthField(secs) {
+  return secs % 60 ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}` : String(secs / 60);
+}
+
 function renderTimers() {
   $('#timers').replaceChildren(...plan.timers.map((timer, i) => el('li', { class: 'timer-row' },
     el('input', {
@@ -677,13 +682,16 @@ function renderTimers() {
       'aria-label': `Name for timer ${i + 1}`,
       oninput: (ev) => { timer.label = ev.target.value; afterTimerEdit(); },
     }),
+    // Minutes as before ("5"), or minutes and seconds ("4:30", "30s").
     el('input', {
-      type: 'number', min: '1', max: '180', step: '1', style: 'width: 80px;',
-      value: String(timer.mins), 'aria-label': `Minutes for timer ${i + 1}`,
+      type: 'text', inputmode: 'text', class: 'timer-length-field', style: 'width: 90px;',
+      value: lengthField(timerSeconds(timer)), 'aria-label': `Length of timer ${i + 1} - minutes, or minutes:seconds`,
+      title: '5 for five minutes, 4:30, or 30s',
       oninput: (ev) => {
-        const mins = Number(ev.target.value);
-        if (!Number.isFinite(mins) || mins < 1) return;
-        timer.mins = Math.min(180, Math.round(mins));
+        const secs = parseTimerLength(ev.target.value);
+        ev.target.classList.toggle('is-invalid', !secs);
+        if (!secs) return;
+        Object.assign(timer, planTimer(timer.id, timer.label, secs));
         afterTimerEdit();
       },
     }),
@@ -700,7 +708,7 @@ function renderTimers() {
         renderAutoLaunch();
       },
     }, '×'))));
-  if (!plan.timers.length) $('#timers').append(el('li', { class: 'empty' }, 'None yet — the iPad will show one unnamed countdown and the 1/2/5/10/15 buttons.'));
+  if (!plan.timers.length) $('#timers').append(el('li', { class: 'empty' }, 'None yet — the iPad starts with one unnamed timer and the 1, 2, 5 and 10 minute buttons.'));
 }
 
 // A countdown item pointed at a timer that no longer exists is worse than
@@ -1112,7 +1120,7 @@ function fieldFor(item, spec) {
       ...plan.timers.map((timer, i) => el('option', {
         value: timer.id,
         selected: known && item.timerId === timer.id,
-      }, `${timer.label || `Timer ${i + 1}`} · ${timer.mins}m`))), spec.hint);
+      }, `${timer.label || `Timer ${i + 1}`} · ${fmtTimerLength(timerSeconds(timer))}`))), spec.hint);
   }
   if (spec.kind === 'upload') return uploadField(item, spec);
   if (spec.kind === 'server-upload') return serverUploadField(item, spec);
@@ -1553,7 +1561,7 @@ function renderPreview({ remount = false } = {}) {
       // rather than a permanent 0:00. Reads the timer the item points at.
       getTimer: (id) => {
         const timer = plan.timers.find((t) => t.id === (id || item.timerId)) || plan.timers[0] || null;
-        return { running: false, remainingMs: (timer?.mins || 5) * 60000, endsAt: 0, label: timer?.label || item.label || '' };
+        return { running: false, remainingMs: (timerSeconds(timer) || 300) * 1000, endsAt: 0, label: timer?.label || item.label || '' };
       },
     });
     $('#item-preview').append(preview.renderer.el);
@@ -1695,10 +1703,10 @@ $('#plan-layout').addEventListener('click', (ev) => {
 });
 
 $('#timer-add').addEventListener('click', () => {
-  const mins = Number($('#timer-new-mins').value);
-  if (!Number.isFinite(mins) || mins < 1) return;
+  const secs = parseTimerLength($('#timer-new-mins').value);
+  if (!secs) { warn('Give the countdown a length: 5 for five minutes, 4:30, or 30s.'); return; }
   if (plan.timers.length >= MAX_TIMERS) { warn(`A lecture can have ${MAX_TIMERS} countdowns; the display holds no more.`); return; }
-  plan.timers.push({ id: uid(6), label: $('#timer-new-label').value.trim(), mins: Math.min(180, Math.round(mins)) });
+  plan.timers.push(planTimer(uid(6), $('#timer-new-label').value.trim(), secs));
   $('#timer-new-label').value = '';
   touch();
   renderTimers();
@@ -1818,7 +1826,7 @@ function renderAutoLaunch() {
       el('option', { value: '' }, 'None'),
       ...(plan.timers || []).map((t, i) => el('option', {
         value: t.id,
-      }, `⏱️ ${t.label || `Timer ${i + 1}`} (${t.mins}m)`)),
+      }, `⏱️ ${t.label || `Timer ${i + 1}`} (${fmtTimerLength(timerSeconds(t))})`)),
     );
     timerSelect.value = (plan.timers || []).some((t) => t.id === val) ? val : '';
   }

@@ -108,7 +108,7 @@ ok('caption overlay appears on the display', (await display.textContent('#overla
 
 // --- timer runs on the display
 await control.click('.tab[data-tab="timer"]');
-await control.click('.timer-preset[data-mins="5"]');
+await control.click('.timer-preset[data-secs="300"]');
 await display.waitForFunction(() => !!document.querySelector('.layer[data-role="program"] .r-timer-value'), null, { timeout: 5000 });
 const t1 = await display.textContent('.r-timer-value');
 await display.waitForTimeout(1200);
@@ -1747,16 +1747,13 @@ await kScreen.waitForFunction(() => document.querySelector('audio#music').paused
 ok('and M again pauses it', true);
 
 await kPad.click('.tab[data-tab="timer"]');
-await kPad.fill('#timer-mins', '3');
-// fill() leaves the field focused, and a shortcut must not fire out of a
-// field the way B/F/P never have - so blur it first, same as a real hand
-// leaving the keyboard for the field and coming back to the keys.
-await kPad.click('.tab[data-tab="timer"]');
 await kPad.keyboard.press('r');
-await kPad.waitForFunction(() => document.querySelector('#timer-start')?.textContent === 'Pause', null, { timeout: 5000 });
-ok('R starts the current timer, the same as the Start/Pause button', true);
+await kPad.waitForFunction(() => document.querySelector('.timer-line')?.classList.contains('is-running')
+  && document.querySelector('.timer-line .timer-line-pause')?.textContent === 'Pause', null, { timeout: 5000 });
+ok('R starts the current timer, the same as its row\'s Start', true);
 await kPad.keyboard.press('r');
-await kPad.waitForFunction(() => document.querySelector('#timer-start')?.textContent === 'Resume', null, { timeout: 5000 });
+await kPad.waitForFunction(() => document.querySelector('.timer-line')?.classList.contains('is-paused')
+  && document.querySelector('.timer-line .timer-line-pause')?.textContent === 'Resume', null, { timeout: 5000 });
 ok('and R again pauses it rather than starting a second one', true);
 
 await kc.close();
