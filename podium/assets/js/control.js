@@ -716,6 +716,7 @@ function renderLibrary() {
           onclick: (ev) => {
             ev.stopPropagation();
             send({ op: 'music', action: 'add', tracks: [{ src: item.src, title: item.title, artist: item.artist }] });
+            noteLectureAudio(item);
             musicBtn.textContent = '✓';
             clearTimeout(musicBtn._resetTimer);
             musicBtn._resetTimer = setTimeout(() => { musicBtn.textContent = '♪+'; }, 1400);
@@ -881,6 +882,7 @@ async function adoptPlan(plan, { persist = true, applyToDisplay = true } = {}) {
   }
 
   currentPlan = plan;
+  startLectureAudio(plan);
   if (persist) {
     try { await saveCurrentPlan(plan); } catch (err) { reportStorageFailure('current plan', err); }
   }
@@ -5549,14 +5551,41 @@ function updateMusicTrackSelect(tracks) {
 
 let musicQuickDrawn = '';
 
-// Whatever is in the library right now - plan items and manifest entries
-// both flow through the same `library` array - is what this offers as
-// one-tap background music. It reflects `library` live, so a plan loading
-// or clearing is enough to change the row; no separate hook needed, since
-// this redraws on the same heartbeat as everything else.
+// "From this lecture": the audio in this lecture's plan, and what has been
+// played from the Music tab since the lecture began. It used to be every
+// audio item in `library` - which holds the whole server library, My Files
+// and every course's files - so tracks uploaded for lectures weeks ago turned
+// up here. The played list is kept for this browser session (a reload in the
+// middle of a lecture keeps it) and starts again when another plan is loaded
+// or the plan is cleared. Audio from earlier is in "From My Files", below it.
+const LECTURE_AUDIO_KEY = 'podium.lectureAudio.v1';
+const lecturePlanKey = (plan) => (plan ? plan.server?.id || plan.title || 'plan' : '');
+let lectureAudio = (() => {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(LECTURE_AUDIO_KEY) || 'null');
+    if (saved && Array.isArray(saved.tracks)) return saved;
+  } catch { /* private browsing: kept in memory only */ }
+  return { plan: null, tracks: [] };
+})();
+function saveLectureAudio() { safeStorageSet(sessionStorage, LECTURE_AUDIO_KEY, JSON.stringify(lectureAudio)); }
+/** A new plan (or none) is a new lecture: what was played for the last one goes. */
+function startLectureAudio(plan) {
+  const key = lecturePlanKey(plan);
+  if (lectureAudio.plan === key) return;
+  lectureAudio = { plan: key, tracks: [] };
+  saveLectureAudio();
+}
+/** Played or queued from the Music tab: it belongs to this lecture now. */
+function noteLectureAudio(track) {
+  if (!track?.src || lectureAudio.tracks.some((t) => t.src === track.src)) return;
+  lectureAudio.tracks.push({ src: track.src, title: track.title || '', artist: track.artist || '' });
+  saveLectureAudio();
+  renderMusicQuick();
+}
+
 function renderMusicQuick() {
   const seen = new Set();
-  const items = library.filter((item) => {
+  const items = [...planLibraryItems(), ...lectureAudio.tracks.map((t) => ({ ...t, type: 'audio' }))].filter((item) => {
     if (item.type !== 'audio' || !item.src || seen.has(item.src)) return false;
     seen.add(item.src);
     return true;
@@ -6313,6 +6342,7 @@ function tab(name) {
   if (name === 'library' && !$('#plan-server').hidden) refreshServerPlans();
   if (name === 'attendance') attendancePanel?.opened();
   else attendancePanel?.closed();
+  if (name === 'music') refreshMusicFiles();
   // The Now tab is drawn as it opens (its live page connects then), and the
   // live page it was driving is let go as it closes. Only then: a tab switch
   // during startup (applyDualPane) comes before what renderNow reads exists.
@@ -7583,12 +7613,60 @@ $('#music-track-play').addEventListener('click', () => {
   } else {
     send({ op: 'music', action: 'playnow', track });
   }
+  noteLectureAudio(track);
   $('#music-note').textContent = `Playing “${track.title || 'Track'}”.`;
+});
+
+// "From My Files": every audio file in My Files and the courses' files, newest
+// first, for a track from weeks ago. Read again each time the tab opens, so a
+// file uploaded from the desk a minute ago is there. Not on a Podium with no
+// server library.
+let musicFiles = [];
+async function refreshMusicFiles() {
+  const row = $('#music-files-row');
+  try {
+    const info = await serverInfo();
+    if (!info.features.includes('library')) { row.hidden = true; return; }
+    const res = await fetch('/api/library', { credentials: 'same-origin' });
+    if (!res.ok) { row.hidden = true; return; }
+    const { items } = await res.json();
+    musicFiles = (items || []).filter((i) => i.type === 'audio' && i.src)
+      .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  } catch {
+    row.hidden = true;
+    return;
+  }
+  row.hidden = !musicFiles.length;
+  const select = $('#music-files');
+  const keep = select.value;
+  const day = (t) => (t ? new Date(Number(t)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+  select.replaceChildren(...musicFiles.map((item, i) => el('option', { value: String(i) },
+    [item.title || item.filename || 'Track', [item.course ? String(item.course).toUpperCase() : 'My Files', day(item.createdAt)].filter(Boolean).join(' · ')].join(' — '))));
+  if (keep && Number(keep) < musicFiles.length) select.value = keep;
+}
+function chosenMusicFile() {
+  const item = musicFiles[Number($('#music-files').value) || 0];
+  return item ? { src: item.src, title: item.title || item.filename || 'Track', artist: item.artist || '' } : null;
+}
+$('#music-files-play').addEventListener('click', () => {
+  const track = chosenMusicFile();
+  if (!track) return;
+  send({ op: 'music', action: 'playnow', track });
+  noteLectureAudio(track);
+  $('#music-note').textContent = `Playing “${track.title}”.`;
+});
+$('#music-files-add').addEventListener('click', () => {
+  const track = chosenMusicFile();
+  if (!track) return;
+  send({ op: 'music', action: 'add', tracks: [track] });
+  noteLectureAudio(track);
+  $('#music-note').textContent = `Added “${track.title}” to the end of the queue.`;
 });
 $('#music-track-add').addEventListener('click', () => {
   const idx = Number($('#music-track-select').value) || 0;
   const track = loadedTracks[idx];
   if (!track) return;
+  noteLectureAudio(track);
   send({ op: 'music', action: 'add', tracks: [{ src: track.src, title: track.title, artist: track.artist }] });
   $('#music-note').textContent = `Added “${track.title || 'Track'}” to the end of the queue.`;
 });
@@ -7600,6 +7678,7 @@ $('#music-url-form').addEventListener('submit', (ev) => {
   // URL carries and without the extension: "sonata.mp3?token=…" is "sonata".
   const title = decodeURIComponent((src.split('/').pop() || 'Track').split(/[?#]/)[0]).replace(/\.[a-z0-9]+$/i, '') || 'Track';
   send({ op: 'music', action: 'add', tracks: [{ src, title }] });
+  noteLectureAudio({ src, title });
   $('#music-url').value = '';
   $('#music-note').textContent = `Queued “${title}”. It plays from wherever it is hosted; the display fetches it directly.`;
 });
@@ -8732,6 +8811,7 @@ serverInfo().then(async (info) => {
 
 $('#plan-clear').addEventListener('click', async () => {
   currentPlan = null;
+  startLectureAudio(null);
   forgetPlanAssets();
   try { await clearCurrentPlan(); } catch { /* nothing was stored */ }
   resetViewPlan();

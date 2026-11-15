@@ -376,6 +376,8 @@ Good to know:
 - Playlists come from `content/music.json` (or the admin page's **Music Playlists** on a server), and each track can live anywhere reachable, including your own server. Track lengths show in the picker and the queue; they are looked up a couple of tracks at a time, so a long queue never slows the controller down.
 - The queue belongs to the room, not to one lecture, but it does not outlive the day: when a room has had no commands for 3 hours, the next one starts with an empty queue (music level and Pause Queue are kept, and a queue that is playing is never cleared).
 - **Load**, **Add to queue**, or paste a link to any audio file and **Queue it**. **Auto-play** runs the queue on its own, **Shuffle the rest** mixes up what's left, and **Pause Queue** holds after the current track.
+- **From this lecture** is the audio in the lecture's plan and whatever you have played or queued from the Music tab since the lecture began, one tap each. It starts empty for each lecture (a new session, or another plan loaded) and survives a reload in the middle of one.
+- **From My Files** lists every audio file in My Files and your courses' files, newest first, with **▶ Play** and **Add to queue**, for the track from three weeks ago. It is read again each time the Music tab opens, and is there on a server with a library.
 - **Fade out & stop** takes the room quiet over three seconds when class begins.
 - **⏳ Show "We begin in…" on screen** puts up a panel counting down to the end of the current track, with editable text, so the room can see when you're starting.
 - Music keeps playing while you teach. Picking content, freezing and blanking don't touch it.

@@ -311,10 +311,11 @@ await pad.waitForFunction(() => document.querySelectorAll('.music-row').length =
   .catch(() => ok('and it lands in the background queue from there', false));
 ok('queued rather than already playing', await screen.evaluate(() => document.querySelector('audio#music').paused));
 
-await pad.waitForSelector('.music-quick-chip');
-ok('the Music tab also offers it as a quick-push button',
-  /Waiting music/.test(await pad.textContent('.music-quick-chip')));
-await pad.click('.music-quick-chip');
+// Among this lecture's other audio (the links queued above count too).
+const waitingChip = '.music-quick-chip:has-text("Waiting music")';
+await pad.waitForSelector(waitingChip);
+ok('the Music tab also offers it as a quick-push button', await pad.isVisible(waitingChip));
+await pad.click(waitingChip);
 await screen.waitForFunction(() => {
   const el = document.querySelector('audio#music');
   return el && !el.paused && el.currentTime > 0;
@@ -323,7 +324,7 @@ await screen.waitForFunction(() => {
   .catch(() => ok('tapping the quick-push chip plays it as background music', false));
 ok('without duplicating the track it had already queued',
   (await pad.$$('.music-row')).length === 1);
-await pad.waitForFunction(() => document.querySelector('.music-quick-chip').classList.contains('is-on'), null, { timeout: 8000 })
+await pad.waitForFunction(() => [...document.querySelectorAll('.music-quick-chip')].some((c) => /Waiting music/.test(c.textContent) && c.classList.contains('is-on')), null, { timeout: 8000 })
   .then(() => ok('and marks the chip as the one currently playing', true))
   .catch(() => ok('and marks the chip as the one currently playing', false));
 
@@ -347,7 +348,7 @@ await screen.waitForFunction(() => document.querySelector('audio#music').paused,
   .catch(() => ok('standing down stops the background music, rather than leaving it playing to an empty room', false));
 // And the controllers are told, so the Music tab does not still offer Pause
 // for something that is no longer playing.
-await pad.waitForFunction(() => !document.querySelector('.music-quick-chip')?.classList.contains('is-on'), null, { timeout: 8000 })
+await pad.waitForFunction(() => ![...document.querySelectorAll('.music-quick-chip')].some((c) => /Waiting music/.test(c.textContent) && c.classList.contains('is-on')), null, { timeout: 8000 })
   .then(() => ok('and every controller is told it stopped', true))
   .catch(() => ok('and every controller is told it stopped', false));
 // Background music is not the only thing that can still be sounding: the
