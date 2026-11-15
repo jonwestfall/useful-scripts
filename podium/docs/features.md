@@ -420,6 +420,8 @@ Put words on the projector without touching your slides — "Back in 5", a discu
 - Pick a background from five presets or a custom colour picker, and a **text colour** the same way (Issue #222); a picture's caption takes the text colour too. A planner's **Text sign** item has the same two colours.
 - Optionally attach a picture with a caption underneath the text — the same resizing pipeline as any other photo in Podium, so it survives the trip over the relay.
 - Tap **Show** to stage it; **Cancel** or Escape closes the editor without changing what's on screen.
+- Or tap **Save** to keep it in the Library under *Saved*, named by its first line, to show later with a tap on its tile. Nothing goes on screen.
+- A message tile's **✎** opens it in the editor again, to change and then **Show** or **Save changes** (in place of the saved one). A message that came with a lecture plan is saved as a copy, leaving the plan alone.
 
 ### QR Code for the Class
 
