@@ -326,7 +326,7 @@ The Library's **Whiteboard** and **Chalkboard** give you a blank surface to draw
 Turn your iPad screen into a virtual laser pointer:
 - Tap **Laser** in the Slides tab (or use the bottom-bar shortcut slot).
 - Drag your finger across the Now preview box. A bright, focused laser dot follows your finger on the classroom projector.
-- Available in red, green (for dark slides/photos), or blue (for bright slides).
+- Available in red, green (for dark slides/photos), or blue (for bright slides). Pick it beside **Laser** on the Slides tab, or behind the Ink tab's colour dot; it is one choice, so either place changes both, and with the laser in hand the Ink tab's dot shows it.
 - Automatically disappears the moment you lift your finger.
 
 ### Spotlight

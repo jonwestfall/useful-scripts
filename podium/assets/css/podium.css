@@ -1482,6 +1482,9 @@ body.ink-focus #ink-focus .when-unfocused { display: none; }
 .ink-pop[hidden] { display: none; }
 .ink-pop .inline { flex-wrap: wrap; }
 .ink-swatches { gap: 10px; }
+.ink-laser-row { align-items: center; gap: 10px; }
+.ink-laser-label { font-size: 13px; color: var(--dim); min-width: 4.5em; }
+.ink-laser-row .laser-swatch { width: 36px; min-height: 36px; }
 .panel[data-panel="ink"].controls-top .ink-pop { bottom: auto; top: calc(100% + 8px); }
 
 /* The rail: two columns of tools beside the pad. */
@@ -2689,7 +2692,13 @@ body.display[data-sheet-theme="light"] .sheet button.danger-outline {
   color: #ffffff;
 }
 
-:root[data-theme="light"] .laser-swatch {
+/* The swatch IS its colour: the light theme's own button colours (a pale
+   grey, the accent once chosen) must not paint over it - they did, and the
+   three read white, white and blue. */
+:root[data-theme="light"] .laser-swatch,
+:root[data-theme="light"] .laser-swatch:hover,
+:root[data-theme="light"] .laser-swatch.is-on {
+  background: rgb(var(--laser));
   border-color: #cbd5e1;
 }
 :root[data-theme="light"] .laser-swatch.is-on {
