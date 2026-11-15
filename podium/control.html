@@ -723,9 +723,18 @@
             whisper by itself while a video or a clip with sound is playing.
           </p>
           </details>
+          <!-- This lecture's audio: what its plan holds, and what has been
+               played from here since it began - not every track ever uploaded. -->
           <div id="music-quick-bar" hidden>
             <span class="recent-label">From this lecture</span>
             <div id="music-quick" class="recent-strip"></div>
+          </div>
+          <!-- Audio from weeks ago: anything in My Files or a course's files. -->
+          <div id="music-files-row" class="inline" hidden>
+            <span class="recent-label">From My Files</span>
+            <select id="music-files" class="grow" aria-label="Audio from My Files and course files"></select>
+            <button id="music-files-play" type="button">▶ Play</button>
+            <button id="music-files-add" type="button">Add to queue</button>
           </div>
           <div class="inline">
             <select id="music-playlist" aria-label="Playlist"></select>

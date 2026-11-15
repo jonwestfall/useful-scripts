@@ -1571,6 +1571,8 @@ body.ink-focus #ink-focus { border-color: var(--accent); color: var(--accent); }
    is true right now: which track, how far in, and whether it is currently
    ducked under something else. */
 #music-quick-bar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+#music-files-row { align-items: center; }
+#music-files { min-width: 0; }
 .music-quick-chip {
   flex: none; max-width: 46vw; padding: 8px 12px; font-size: 13px; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
