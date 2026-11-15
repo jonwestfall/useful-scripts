@@ -6697,7 +6697,11 @@ function setLaserColor(color) {
   // The button wears the colour too, so you can tell at a glance what the
   // class is about to see without pressing it first.
   $('#deck-laser').dataset.color = laserColor;
-  $$('.laser-swatch').forEach((b) => b.classList.toggle('is-on', b.dataset.color === laserColor));
+  $$('.laser-swatch').forEach((b) => {
+    b.classList.toggle('is-on', b.dataset.color === laserColor);
+    b.setAttribute('aria-pressed', String(b.dataset.color === laserColor));
+  });
+  syncInkStyleDot();
 }
 
 function setLaserActive(on) {
@@ -7528,10 +7532,13 @@ $('#ink-zoom-chip').addEventListener('click', () => $('#ink-fit-page').click());
 
 // The colour dot is the pen as it will draw: its colour, and bigger for a
 // thicker line.
+const LASER_DOT = { red: 'rgb(255, 64, 64)', green: 'rgb(60, 235, 120)', blue: 'rgb(90, 165, 255)' };
 function syncInkStyleDot() {
   const dot = $('#ink-style .ink-style-dot');
   if (!dot) return;
-  dot.style.background = ink.color;
+  // With the laser in hand, the dot is the laser's colour - that is what the
+  // pop-over behind it changes then.
+  dot.style.background = ink.tool === 'laser' ? LASER_DOT[laserColor] : ink.color;
   const size = Math.round(Math.min(26, Math.max(8, 6 + Number(ink.width || 6) * 0.9)));
   dot.style.width = `${size}px`;
   dot.style.height = `${size}px`;
