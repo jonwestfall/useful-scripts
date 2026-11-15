@@ -6341,8 +6341,8 @@ function tab(name) {
   // wants to find out they have to do.
   if (name === 'library' && !$('#plan-server').hidden) refreshServerPlans();
   if (name === 'attendance') attendancePanel?.opened();
-  if (name === 'music') refreshMusicFiles();
   else attendancePanel?.closed();
+  if (name === 'music') refreshMusicFiles();
   // The Now tab is drawn as it opens (its live page connects then), and the
   // live page it was driving is let go as it closes. Only then: a tab switch
   // during startup (applyDualPane) comes before what renderNow reads exists.
