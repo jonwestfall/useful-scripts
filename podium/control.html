@@ -586,6 +586,16 @@
                 <label for="ink-width">Thickness</label>
                 <input id="ink-width" class="grow" type="range" min="2" max="24" value="6">
               </div>
+              <!-- The laser's colour, here as well as on the Slides tab: the
+                   same choice, so picking it in either place changes both. -->
+              <div class="inline ink-laser-row">
+                <span class="ink-laser-label">Laser</span>
+                <div class="laser-picker" role="group" aria-label="Laser colour">
+                  <button class="laser-swatch laser-red is-on" type="button" data-color="red" title="Red" aria-label="Red laser"></button>
+                  <button class="laser-swatch laser-green" type="button" data-color="green" title="Green — reads on a dark slide or a photo" aria-label="Green laser"></button>
+                  <button class="laser-swatch laser-blue" type="button" data-color="blue" title="Blue — reads on a bright slide" aria-label="Blue laser"></button>
+                </div>
+              </div>
             </div>
             <div id="ink-more-pop" class="ink-pop" role="dialog" aria-label="More ink settings" hidden>
               <!-- Issue #262: pinch or two-finger drag on the pad (one finger

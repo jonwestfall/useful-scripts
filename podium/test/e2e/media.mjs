@@ -1542,9 +1542,9 @@ await pad.waitForFunction(() => {
   const r = document.querySelector('#deck-now-preview .mirror-frame')?.getBoundingClientRect();
   return r && r.width > 0 && r.height > 0;
 }, null, { timeout: 15000 });
-ok('three colours to choose from', (await pad.$$('.laser-swatch')).length === 3);
+ok('three colours to choose from', (await pad.$$('[data-panel="slides"] .laser-swatch')).length === 3);
 
-await pad.click('.laser-swatch[data-color="green"]');
+await pad.click('[data-panel="slides"] .laser-swatch[data-color="green"]');
 await pad.click('#deck-laser');
 const frame = await pad.$eval('#deck-now-preview .mirror-frame', (n) => {
   const r = n.getBoundingClientRect();
@@ -1564,17 +1564,17 @@ ok('and the dot on the controller matches it, so you are aiming with the same th
   (await pad.$eval('.laser-dot', (n) => n.dataset.color)) === 'green');
 await pad.mouse.up();
 
-await pad.click('.laser-swatch[data-color="blue"]');
+await pad.click('[data-panel="slides"] .laser-swatch[data-color="blue"]');
 await pad.reload();
 await pad.waitForSelector('.tile');
 ok('the choice is remembered - whoever needs green today needs it all term',
-  (await pad.$eval('.laser-swatch.is-on', (n) => n.dataset.color)) === 'blue');
+  (await pad.$eval('[data-panel="slides"] .laser-swatch.is-on', (n) => n.dataset.color)) === 'blue');
 
 // Switching back mid-lecture has to actually reach the projector, not leave
 // the last colour stuck on the wall.
 await pad.click('.tab[data-tab="slides"]');
 await pad.waitForSelector('#deck-live:not([hidden])');
-await pad.click('.laser-swatch[data-color="red"]');
+await pad.click('[data-panel="slides"] .laser-swatch[data-color="red"]');
 await pad.click('#deck-laser');
 await pad.mouse.move(frame.x + frame.w * 0.4, frame.y + frame.h * 0.4);
 await pad.mouse.down();
@@ -1583,6 +1583,30 @@ await pad.waitForTimeout(400);
 const back = await screen.$eval('#laser', (n) => n.dataset.color);
 await pad.mouse.up();
 ok(`changing colour again reaches the projector rather than sticking ("${back}")`, back === 'red');
+
+// The Ink tab has the same choice, behind its colour dot, and it is one
+// choice: picking it there changes the Slides tab's too, and the dot shows it
+// while the laser is the tool in hand.
+await pad.click('.tab[data-tab="ink"]');
+await pad.click('#ink-tool-laser');
+await pad.click('#ink-style');
+ok('the Ink tab\'s colour pop-over offers the laser\'s colours', (await pad.$$('#ink-style-pop .laser-swatch')).length === 3
+  && await pad.isVisible('#ink-style-pop .laser-swatch[data-color="green"]'));
+await pad.click('#ink-style-pop .laser-swatch[data-color="green"]');
+ok('picking one there is the Slides tab\'s choice too',
+  (await pad.$eval('[data-panel="slides"] .laser-swatch.is-on', (n) => n.dataset.color)) === 'green');
+ok('and the dot is the laser\'s colour while the laser is in hand',
+  /60, 235, 120/.test(await pad.$eval('#ink-style .ink-style-dot', (n) => getComputedStyle(n).backgroundColor)));
+// Light, each swatch is still its own colour - not the theme's grey, and
+// not its accent once picked.
+const before = await pad.evaluate(() => document.documentElement.getAttribute('data-theme'));
+await pad.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
+const swatches = (await pad.$$eval('[data-panel="slides"] .laser-swatch', (bs) => bs.map((b) => `${b.dataset.color}=${getComputedStyle(b).backgroundColor}`))).join(' ');
+ok(`in the light theme the swatches are red, green and blue (${swatches})`,
+  /red=rgb\(255, 64, 64\)/.test(swatches) && /green=rgb\(60, 235, 120\)/.test(swatches) && /blue=rgb\(90, 165, 255\)/.test(swatches));
+await pad.evaluate((t) => document.documentElement.setAttribute('data-theme', t || 'dark'), before);
+await pad.click('#ink-style-pop .laser-swatch[data-color="red"]').catch(() => {});
+await pad.keyboard.press('Escape');
 
 await tablet.close();
 await room.close();
