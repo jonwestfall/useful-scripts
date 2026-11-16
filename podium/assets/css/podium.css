@@ -976,11 +976,16 @@ body.guest {
 .tab.is-on { background: var(--panel-2); border-color: var(--accent); color: var(--ink); }
 
 /* "More", for tabs hidden via Settings -> Presentation -> Controller tabs.
-   Positioned relative to the wrap (not .tabs, which scrolls) so the menu
-   stays anchored to the button instead of scrolling out from under it. */
+   Fixed to the screen, not absolute: the menu lives inside .tabs, and a row
+   that scrolls sideways (overflow-x: auto) clips whatever hangs out of it
+   downwards too - so an absolute drop-down was cut off at the bottom of the
+   row and its items could not be seen or pressed. tab-bar.js sets
+   --more-top/--more-left from the button as it opens, and closes it if the
+   row scrolls or the window changes size, so it never drifts from the button. */
 .tabs-more-wrap { position: relative; flex: none; }
 .tabs-more-menu {
-  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+  position: fixed; top: var(--more-top, 110px); left: var(--more-left, 8px); z-index: 45;
+  max-height: calc(100vh - var(--more-top, 110px) - 12px); overflow: auto;
   display: flex; flex-direction: column; min-width: 10rem;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
@@ -991,12 +996,12 @@ body.guest {
 }
 .tabs-more-menu button:hover { background: var(--panel-2); }
 /* On a phone (tab-bar.js): the row keeps the first few tabs and More opens
-   the rest as a sheet of big buttons, by group, under the tabs. Fixed, so the
-   scrolling row cannot clip it; its top is set when it opens. */
+   the rest as a sheet of big buttons, by group, across the screen under the
+   tabs; its top is set when it opens, as the drop-down's is. */
 .tabs.is-phone .tab { padding: 0 12px; }
 .tabs-more-menu.is-sheet {
-  position: fixed; left: 8px; right: 8px; top: var(--more-top, 110px); z-index: 45;
-  max-height: calc(100vh - var(--more-top, 110px) - 16px); overflow: auto;
+  left: 8px; right: 8px;
+  max-height: calc(100vh - var(--more-top, 110px) - 16px);
   display: block; padding: 10px 12px 12px; min-width: 0;
 }
 .tabs-more-group { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin: 6px 2px 6px; }
@@ -2705,6 +2710,16 @@ body.display[data-sheet-theme="light"] .sheet button.danger-outline {
 }
 :root[data-theme="light"] .laser-swatch.is-on {
   border-color: #0f172a;
+}
+
+/* The More drop-down's items are rows of a menu, not buttons: the theme's
+   button grey would box each one. (The phone sheet's are boxed on purpose.) */
+:root[data-theme="light"] .tabs-more-menu:not(.is-sheet) button {
+  background: transparent;
+  color: #0f172a;
+}
+:root[data-theme="light"] .tabs-more-menu:not(.is-sheet) button:hover {
+  background: #e2e8f0;
 }
 
 :root[data-theme="light"] .tile-music:active {
