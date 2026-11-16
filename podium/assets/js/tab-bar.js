@@ -170,15 +170,37 @@ export function createTabBar({ presentation, save, tabAvailable, tab }) {
     new MutationObserver(syncMoreLabel).observe(document.body, { attributes: true, attributeFilter: ['data-tab'] });
   }
 
+  /**
+   * Where the open menu goes on screen (it is position: fixed - see podium.css
+   * for why). The phone sheet spans the screen just under the row of tabs;
+   * the drop-down hangs under the More button, moved left if it would run off
+   * the right-hand edge.
+   */
+  function placeMoreMenu(menu) {
+    const btn = $('#tabs-more').getBoundingClientRect();
+    if (menu.classList.contains('is-sheet')) {
+      menu.style.setProperty('--more-top', `${Math.round($('.tabs').getBoundingClientRect().bottom + 6)}px`);
+      return;
+    }
+    menu.style.setProperty('--more-top', `${Math.round(btn.bottom + 4)}px`);
+    const left = Math.min(btn.left, window.innerWidth - menu.offsetWidth - 8);
+    menu.style.setProperty('--more-left', `${Math.round(Math.max(8, left))}px`);
+  }
+  function closeMoreMenu() {
+    const menu = $('#tabs-more-menu');
+    if (menu && !menu.hidden) menu.hidden = true;
+  }
+
   $('#tabs-more')?.addEventListener('click', (ev) => {
     ev.stopPropagation();
     const menu = $('#tabs-more-menu');
     menu.hidden = !menu.hidden;
-    // The sheet hangs just under the row of tabs, wherever that is on screen.
-    if (!menu.hidden && menu.classList.contains('is-sheet')) {
-      menu.style.setProperty('--more-top', `${Math.round($('.tabs').getBoundingClientRect().bottom + 6)}px`);
-    }
+    if (!menu.hidden) placeMoreMenu(menu);
   });
+  // Fixed to the screen, so it would stay put while the button moved: the
+  // row scrolling sideways, or the window (or a phone turned) changing size.
+  $('.tabs')?.addEventListener('scroll', closeMoreMenu, { passive: true });
+  window.addEventListener('resize', closeMoreMenu);
   // Same dismissal a modal card gets elsewhere: tapping anything outside the
   // open menu closes it, so it never sits open over a tab you meant to press.
   document.addEventListener('click', (ev) => {

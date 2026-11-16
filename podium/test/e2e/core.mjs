@@ -716,6 +716,29 @@ ok('"More" appears now that Camera is really out of the bar', await pad.isVisibl
 await pad.click('#tabs-more');
 ok('More lists the hidden tab by name', await pad.evaluate(() =>
   Array.from(document.querySelectorAll('#tabs-more-menu button')).some((b) => b.textContent === 'Camera')));
+// Seen, not just in the page: the menu lives inside the tab row, which scrolls
+// sideways and so clipped the drop-down at its own bottom edge - every item
+// was cut off. (A click still worked here, as Playwright scrolls the row to
+// reach it; a person cannot.) So: is each item what is actually under a
+// finger at its middle, with the row unscrolled?
+const moreSeen = await pad.evaluate(() => {
+  document.querySelector('.tabs').scrollTop = 0;
+  const btn = document.querySelector('#tabs-more').getBoundingClientRect();
+  const items = [...document.querySelectorAll('#tabs-more-menu button')];
+  return {
+    below: Math.round(document.querySelector('#tabs-more-menu').getBoundingClientRect().top - btn.bottom),
+    seen: items.filter((b) => {
+      const r = b.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === b;
+    }).length,
+    of: items.length,
+  };
+});
+ok(`and the menu opens under the button, every item in it on screen and pressable (${moreSeen.seen} of ${moreSeen.of}, ${moreSeen.below}px below)`,
+  moreSeen.of > 0 && moreSeen.seen === moreSeen.of && moreSeen.below >= 0 && moreSeen.below < 20);
+await pad.evaluate(() => { document.querySelector('.tabs').scrollLeft = 40; document.querySelector('.tabs').dispatchEvent(new Event('scroll')); });
+ok('scrolling the row closes it, rather than leaving it behind the button', await pad.isHidden('#tabs-more-menu'));
+await pad.click('#tabs-more');
 await pad.click('#tabs-more-menu button:has-text("Camera")');
 ok('picking it from the menu actually switches to it, same as tapping a visible tab would',
   await pad.evaluate(() => !document.querySelector('[data-panel="camera"]').hidden));
