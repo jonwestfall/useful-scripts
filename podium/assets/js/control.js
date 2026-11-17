@@ -6247,8 +6247,9 @@ function renderConnection() {
   else if (state.soundBlocked) label = 'The display’s browser blocked this clip’s sound — click once on the display';
   else label = `Display connected${display.rtt ? ` · ${display.rtt} ms` : ''} · build ${BUILD}`;
 
+  // (The status group's title, all of it, is kept by the observer beside
+  // placePanelPicker: setting it to this line alone dropped the relay's.)
   setText($('#display-state'), label);
-  setAttr($('.topbar-status'), 'title', label);
   announce('display', label.replace(/ · \d+ ms/, ''));
   $('#display-state').classList.toggle('is-bad', !display || !!mismatch || (!!display && !!state.soundBlocked));
   setText($('#peer-count'), [
