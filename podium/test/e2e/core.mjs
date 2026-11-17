@@ -351,10 +351,14 @@ ok('the custom marp-themes/ CSS is applied on the projector', look.themed);
 ok('math renders through KaTeX', look.katex && look.math);
 // KaTeX draws ≠'s slash from its own font, so without it the wall reads
 // "a = b". The faces are declared in the shadow root, where Chromium never
-// loads them - so the page has to have them, and from Podium, not a CDN.
+// loads them - so the page has to have them, and from Podium, not a CDN:
+// every face's file on this origin, in the vendored font folder (under the
+// release's address when Podium's own server sent the page, Issue #340).
 const mathFonts = (page) => page.waitForFunction(() => {
   const faces = document.querySelector('style[data-podium-math-fonts]')?.textContent || '';
-  return faces.includes(`${location.origin}/assets/vendor/katex-fonts/`)
+  const urls = [...faces.matchAll(/url\('([^']+)'\)/g)].map((m) => m[1]);
+  return urls.length > 0 && urls.every((u) => u.startsWith(`${location.origin}/`)
+    && /^\/(?:b\/[\w-]+\/)?assets\/vendor\/katex-fonts\/KaTeX_/.test(new URL(u).pathname))
     && [...document.fonts].some((f) => f.family.replace(/['"]/g, '') === 'KaTeX_Main' && f.status === 'loaded');
 }, null, { timeout: 15000 }).then(() => true, () => false);
 ok('the projector has KaTeX\'s fonts, from Podium itself', await mathFonts(display));
