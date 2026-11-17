@@ -34,7 +34,13 @@ const chk = (label, cond) => {
 const SHELL_PAGES = ['control.html', 'display.html', 'index.html', 'plan.html'];
 
 // The one on-demand bundle kept in the shell anyway.
-const KEPT_ON_DEMAND = new Set(['assets/vendor/marp.esm.js']);
+const KEPT_ON_DEMAND = new Set([
+  'assets/vendor/marp.esm.js',
+  // The face most slides are laid out in (slide-font.js): offline without it,
+  // the iPad and the projector each fall back to their own and break lines
+  // in different places, which puts ink drawn on one off on the other.
+  ...['400-normal', '400-italic', '700-normal', '700-italic'].map((face) => `assets/vendor/slide-fonts/arimo-latin-${face}.woff2`),
+]);
 
 // What the shell must not grow past, gzipped (it was 2.8 MB).
 const BUDGET_BYTES = 1024 * 1024;

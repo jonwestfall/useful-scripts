@@ -71,9 +71,13 @@ const WARM = [
     'deck-source', 'defaults', 'display', 'doc', 'doc-reader', 'duration-probe', 'file-browser', 'gestures', 'index', 'library-upload', 'live-browser',
     'live-browser-panel', 'math-fonts', 'message-editor', 'mic-panel', 'notebook-link', 'pdf-writer', 'pdfjs', 'pip', 'plan', 'planfile', 'poll-link',
     'poll-link-ui', 'poll-look', 'poll-look-theme', 'poll-look-ui', 'presentation-prefs', 'protocol', 'quicklook-open', 'renderers', 'rtc', 'screen-record',
-    'server', 'store', 'tab-bar', 'tabs', 'theme', 'theme-boot', 'thumbs', 'util', 'view-link', 'view-link-ui', 'watermark', 'word-import', 'word-upload',
+    'server', 'slide-font', 'store', 'tab-bar', 'tabs', 'theme', 'theme-boot', 'thumbs', 'util', 'view-link', 'view-link-ui', 'watermark', 'word-import', 'word-upload',
     'zip', 'zip-review', 'zoom',
   ].map((name) => `assets/js/${name}.js`),
+  // The face most slides are laid out in (slide-font.js), 48 KB: without it
+  // offline, a slide falls back to each device's own Helvetica or Arial and
+  // the iPad and the projector break its lines in different places again.
+  ...['400-normal', '400-italic', '700-normal', '700-italic'].map((face) => `assets/vendor/slide-fonts/arimo-latin-${face}.woff2`),
   // Loaded by import() as a page starts - whichever relay it uses.
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),
 ];

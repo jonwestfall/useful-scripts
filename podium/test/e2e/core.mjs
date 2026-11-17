@@ -363,6 +363,21 @@ const mathFonts = (page) => page.waitForFunction(() => {
 }, null, { timeout: 15000 }).then(() => true, () => false);
 ok('the projector has KaTeX\'s fonts, from Podium itself', await mathFonts(display));
 ok('and so does the controller', await mathFonts(control));
+// The theme's "Helvetica Neue", Arial was Helvetica Neue on an iPad and Arial
+// on a Windows projector: the iPad wrapped a table more, and ink drawn under
+// a line there landed on empty space on the wall. Both now lay the slide out
+// in Podium's own Arial-wide face (slide-font.js), from Podium itself.
+const slideFont = (page, deck) => page.waitForFunction((sel) => {
+  const faces = document.querySelector('style[data-podium-slide-font]')?.textContent || '';
+  const urls = [...faces.matchAll(/url\('([^']+)'\)/g)].map((m) => m[1]);
+  const sec = document.querySelector(sel)?.shadowRoot?.querySelector('svg[data-marpit-svg] section');
+  return urls.length === 8 && urls.every((u) => u.startsWith(`${location.origin}/`)
+    && /^\/(?:b\/[\w-]+\/)?assets\/vendor\/slide-fonts\/arimo-/.test(new URL(u).pathname))
+    && !!sec && /^['"]?Podium Sans['"]?\s*,/.test(getComputedStyle(sec).fontFamily)
+    && [...document.fonts].some((f) => f.family.replace(/['"]/g, '') === 'Podium Sans' && f.status === 'loaded');
+}, deck, { timeout: 15000 }).then(() => true, () => false);
+ok('the projector lays the theme\'s slides out in Podium\'s own face', await slideFont(display, '.layer[data-role="program"] .r-deck'));
+ok('and so does the controller, so both break every line in the same place', await slideFont(control, '#deck-grid'));
 
 // Upload: the markdown only exists on the controller and has to cross the bus.
 await control.click('.tab[data-tab="library"]');
