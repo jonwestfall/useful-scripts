@@ -760,7 +760,35 @@ async function handleViewCode(req, res, url) {
   pollJson(res, 405, { error: 'not something a viewer code can do' });
 }
 
+// A request line is whatever a stranger chose to send. `GET //` does not
+// parse as a URL at all, and `GET /%FF` parses but will not decode; either
+// one used to throw straight out of the handler below, where nothing caught
+// it, and take the whole process down - every room and every open poll with
+// it - for as long as someone cared to keep sending one. So both are
+// checked, as a 400, and the handlers themselves run inside a net that
+// answers 500 (or drops the socket) rather than letting anything else that
+// slips through end the process.
+function requestUrl(raw) {
+  try { return new URL(raw, 'http://x'); } catch { return null; }
+}
+function decodedPath(pathname) {
+  try { return decodeURIComponent(pathname); } catch { return null; }
+}
+function badRequest(res) {
+  res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+  res.end('bad request');
+}
+
 const server = http.createServer((req, res) => {
+  try {
+    handleRequest(req, res);
+  } catch (err) {
+    console.error(`podium: a request for ${String(req.url).slice(0, 200)} failed (${err.message})`);
+    if (!res.headersSent) { try { res.writeHead(500); res.end('server error'); } catch { res.destroy(); } } else res.destroy();
+  }
+});
+
+function handleRequest(req, res) {
   if (req.url === '/healthz') {
     res.writeHead(200, { 'content-type': 'text/plain' });
     // "build N" stays spelled exactly this way: doctor's checkBuild reads it
@@ -768,7 +796,8 @@ const server = http.createServer((req, res) => {
     res.end(`ok Podium ${SERVED.version ?? '?'}, build ${SERVED.build ?? '?'}, ${rooms.size} rooms, ${polls.size} polls\n`);
     return;
   }
-  const url = new URL(req.url, 'http://x');
+  const url = requestUrl(req.url);
+  if (!url) { badRequest(res); return; }
   if (url.pathname === '/view-pass') {
     handleViewPass(req, res).catch(() => {
       try { api.json(res, 500, { error: 'viewer pass failed' }); } catch { /* response already begun */ }
@@ -817,7 +846,8 @@ const server = http.createServer((req, res) => {
 
   if (!STATIC) { res.writeHead(404); res.end('not found'); return; }
 
-  const requested = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  const requested = decodedPath(url.pathname);
+  if (requested === null) { badRequest(res); return; }
   if (!api.gate(req, res, requested, authContext)) return;
   // Themes are two folders merged - the release's and the administrators'
   // own in the data directory (see content.js) - not one on disk.
@@ -835,7 +865,7 @@ const server = http.createServer((req, res) => {
       serveStatic(req, res, file, info);
     });
   });
-});
+}
 
 // --- the app's own files ----------------------------------------------------------
 //
@@ -964,7 +994,7 @@ function serveMedia(req, res, url) {
   // whichever type arrived first. Deriving it from the requested filename, and
   // only ever through the same allow-list the upload went through, gives each
   // item the type its own name implies.
-  const byName = library.uploadKindFor(decodeURIComponent(url.pathname.split('/').at(-1) || ''));
+  const byName = library.uploadKindFor(decodedPath(url.pathname.split('/').at(-1) || '') || '');
 
   fs.stat(file, (err, info) => {
     if (err || !info.isFile()) { res.writeHead(404); res.end('not found'); return; }
@@ -1159,7 +1189,17 @@ function upgradeThrottled(ip, now = Date.now()) {
 }
 
 server.on('upgrade', (req, socket, head) => {
-  const url = new URL(req.url, 'http://x');
+  try {
+    handleUpgrade(req, socket, head);
+  } catch (err) {
+    console.error(`podium: an upgrade for ${String(req.url).slice(0, 200)} failed (${err.message})`);
+    socket.destroy();
+  }
+});
+
+function handleUpgrade(req, socket, head) {
+  const url = requestUrl(req.url);
+  if (!url) { socket.destroy(); return; }
   if (url.pathname === '/browser') { upgradeLiveBrowser(req, socket, head); return; }
   const room = (url.searchParams.get('room') || '').slice(0, 64);
   const origin = req.headers.origin;
@@ -1233,7 +1273,7 @@ server.on('upgrade', (req, socket, head) => {
     });
     ws.on('error', () => ws.terminate());
   });
-});
+}
 
 // The live browser's socket (browser.js). Stricter than the relay's: always
 // a signed-in person or a provisioned kiosk, never an anonymous viewer, and
