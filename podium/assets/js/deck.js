@@ -41,6 +41,31 @@ export const HTML_ALLOWLIST = {
   sup: [], sub: [], kbd: [], abbr: ['title'], br: [], hr: ['class'],
 };
 
+// A link in a deck's raw HTML (the allowlist above lets <a href> through, for
+// a reading list) goes only somewhere a link should: a web page, an email, a
+// phone number, or a place on this site. Marp's own HTML filter let
+// `javascript:` through, and a deck is shared - a TA's deck, a downloaded
+// one - so a link in it ran script as whoever clicked it, in Quick Look,
+// the deck editor or on the controller. Whitespace and control characters
+// are dropped before the scheme is read, as a browser does when it follows
+// the link, so "java\tscript:" is caught too.
+const LINK_SCHEMES = new Set(['http', 'https', 'mailto', 'tel']);
+
+/** Whether a link's href is one a deck may keep. */
+export function safeLinkHref(href) {
+  // eslint-disable-next-line no-control-regex
+  const bare = String(href ?? '').replace(/[\u0000-\u0020\u007f]/g, '');
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(bare);
+  return !scheme || LINK_SCHEMES.has(scheme[1].toLowerCase());
+}
+
+/** Takes the href off every link in a rendered deck that may not keep it. */
+function dropUnsafeLinks(root) {
+  for (const link of root.querySelectorAll('a[href], area[href]')) {
+    if (!safeLinkHref(link.getAttribute('href'))) link.removeAttribute('href');
+  }
+}
+
 let enginePromise = null;
 export const themeReport = { loaded: [], failed: [] };
 
@@ -738,6 +763,7 @@ async function parseNow(source, key) {
   // html is one wrapping <div class="marpit"> holding every slide's <svg>.
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const root = doc.querySelector('.marpit') || doc.body;
+  dropUnsafeLinks(root);
   const combinedCss = `${css}\n${COLUMNS_CSS}\n${MATH_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`;
   // A deck with math puts KaTeX's fonts on the page, where the shadow root
   // it is drawn in can use them (math-fonts.js).
