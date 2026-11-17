@@ -639,8 +639,115 @@ async function contentSettled(root) {
  * seen reflowing a slide it has already put up. One measurement, cached with
  * the deck, applied everywhere.
  */
+// --- Tables: the same columns on every device -------------------------------
+//
+// A table left to the browser ("table-layout: auto") shares its width out
+// between its columns by that browser's own rules, and Safari's are not
+// Chrome's: with the same text, in the same face, at the same width, the
+// iPad gave a two-column table's first column 20% of it and a Windows
+// projector 24.5%. Its labels wrapped onto a second line on the iPad only,
+// the table grew, and everything under it sat lower there - so ink drawn
+// under a sentence on the iPad landed on empty space on the wall.
+//
+// So Podium decides. Each column's narrowest (min-content) and widest
+// (max-content) size is measured where the deck is measured for fitting,
+// by the browser at hand - those two are the text's own widths, the same
+// everywhere now that slides share one face (slide-font.js) - and the
+// width is shared out by the CSS Tables rule Chrome follows: each column
+// gets its minimum, and the room left over is shared in proportion to how
+// much more each would take; a table with room for every column's widest
+// gives each its widest and shares the rest in proportion to it. The
+// result goes into the deck as fixed percentage columns, so every device
+// lays out exactly that table, and the projector the table it showed before.
+
+/**
+ * The share of a table's width each column gets, from each column's
+ * min-content and max-content widths and the width the table has.
+ */
+export function shareColumns(min, max, width) {
+  const n = min.length;
+  if (!n || max.length !== n) return null;
+  const lo = min.reduce((a, b) => a + b, 0);
+  const hi = max.reduce((a, b) => a + b, 0);
+  let widths;
+  if (!(hi > 0)) widths = min.map(() => 1);
+  else if (width >= hi) widths = max.map((m) => m * width / hi);
+  else if (width <= lo || hi - lo <= 0) widths = min.slice();
+  else widths = min.map((m, i) => m + (max[i] - m) * (width - lo) / (hi - lo));
+  const total = widths.reduce((a, b) => a + b, 0);
+  if (!(total > 0)) return null;
+  return widths.map((w) => Math.round(w / total * 1e6) / 1e4);
+}
+
+/** A table Podium may lay out itself: plain rows of cells, nothing spanning, no widths of its own. */
+function plainColumns(table) {
+  const rows = Array.from(table.rows || []);
+  const n = rows[0]?.cells.length || 0;
+  if (n < 2 || table.querySelector('col, colgroup')) return 0;
+  for (const row of rows) {
+    if (row.cells.length !== n) return 0;
+    for (const cell of row.cells) {
+      if (cell.colSpan > 1 || cell.rowSpan > 1 || cell.hasAttribute('width') || cell.style.width) return 0;
+    }
+  }
+  return n;
+}
+
+const cellWidths = (table) => Array.from(table.rows[0].cells, (cell) => cell.getBoundingClientRect().width);
+
+/** Measure one table as this browser lays it out: null if it is not Podium's to lay out. */
+function measureColumns(table) {
+  if (!plainColumns(table) || getComputedStyle(table).tableLayout === 'fixed') return null;
+  const width = cellWidths(table).reduce((a, b) => a + b, 0);
+  const before = table.style.width;
+  // Widest: the table at its max-content width (unprefixed in Safari 11+).
+  table.style.width = CSS.supports?.('width', 'max-content') === false ? '-webkit-max-content' : 'max-content';
+  const max = cellWidths(table);
+  // Narrowest: a table can be no narrower than its columns' minimums, so
+  // asking for 1px gets every column at its minimum, in any browser.
+  table.style.width = '1px';
+  const min = cellWidths(table);
+  table.style.width = before;
+  return shareColumns(min, max, width);
+}
+
+/** Lay a table out in the columns measured for it. */
+function fixColumns(table, shares) {
+  if (!shares || plainColumns(table) !== shares.length) return;
+  const doc = table.ownerDocument;
+  const group = doc.createElement('colgroup');
+  group.dataset.podiumColumns = '';
+  for (const share of shares) {
+    const col = doc.createElement('col');
+    col.style.width = `${share}%`;
+    group.append(col);
+  }
+  table.insertBefore(group, table.firstChild);
+  table.style.tableLayout = 'fixed';
+}
+
+/** Each slide's tables, in order, in the columns measured for them (see measureFits). */
+export function applyColumns(root, columns) {
+  if (!columns?.some((slide) => slide?.length)) return;
+  Array.from(root.querySelectorAll('svg[data-marpit-svg]')).forEach((svg, i) => {
+    const section = contentSection(svg);
+    const shares = columns[i];
+    if (!section || !shares?.length) return;
+    Array.from(section.querySelectorAll('table')).forEach((table, j) => fixColumns(table, shares[j]));
+  });
+}
+
+/** A deck's markup with its tables' columns fixed in it, so every view of it has them. */
+function withColumns(html, columns) {
+  if (!columns?.some((slide) => slide?.some(Boolean)) || typeof DOMParser === 'undefined') return html;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const root = doc.querySelector('.marpit') || doc.body;
+  applyColumns(root, columns);
+  return root.outerHTML;
+}
+
 async function measureFits(html, css) {
-  if (typeof document === 'undefined' || !document.body) return [];
+  if (typeof document === 'undefined' || !document.body) return { fits: [], columns: [] };
   const host = document.createElement('div');
   host.setAttribute('aria-hidden', 'true');
   // Off-screen and invisible, but still laid out - `display: none` would make
@@ -672,16 +779,28 @@ async function measureFits(html, css) {
     // the same margin any "wait for an observer's first pass" needs.
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     await contentSettled(shadow);
-    return Array.from(shadow.querySelectorAll('svg[data-marpit-svg]')).map((svg) => {
+    const columns = [];
+    const fits = Array.from(shadow.querySelectorAll('svg[data-marpit-svg]')).map((svg, i) => {
       const section = contentSection(svg);
+      // Tables first, at the slide's own size: their columns change how
+      // tall they are, and so what fits.
+      if (section) {
+        const tables = Array.from(section.querySelectorAll('table'));
+        const shares = tables.map((table) => {
+          try { return measureColumns(table); } catch { return null; }
+        });
+        tables.forEach((table, j) => fixColumns(table, shares[j]));
+        if (shares.some(Boolean)) columns[i] = shares;
+      }
       // `<!-- _class: nofit -->` on a slide (or `class: nofit` on the deck) is
       // the way to say "leave my slide alone, I meant it to be cropped".
       if (!section || section.classList.contains('nofit')) return 1;
       const scale = fitOne(svg, section);
       return Number.isFinite(scale) ? scale : 1;
     });
+    return { fits, columns };
   } catch {
-    return [];  // a deck that renders is worth showing even if fitting failed
+    return { fits: [], columns: [] };  // a deck that renders is worth showing even if fitting failed
   } finally {
     // The polyfill's own correction loop runs on requestAnimationFrame for
     // as long as it thinks there is a target worth correcting - it has no
@@ -828,7 +947,12 @@ export function describeBuild(build) {
 export async function render(source, id) {
   const key = id || await deckId(source);
   if (!renders.has(key)) {
-    const job = parse(source, key).then(async (deck) => ({ ...deck, fits: await measureFits(deck.html, deck.css) }));
+    const job = parse(source, key).then(async (deck) => {
+      const { fits, columns } = await measureFits(deck.html, deck.css);
+      // Tables' columns go into the markup itself (see shareColumns), so
+      // every view of the deck - projector, pad, thumbnails, export - has them.
+      return { ...deck, html: withColumns(deck.html, columns), fits };
+    });
     renders.set(key, job);
     // Kept only as long as the parse it came from is (see parse).
     job.then(() => { if (!parses.has(key)) renders.delete(key); }, () => renders.delete(key));
