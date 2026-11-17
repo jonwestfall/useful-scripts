@@ -276,9 +276,105 @@ export function cssForStandaloneSlide(css) {
   return String(css || '').replace(/div\.marpit\s*>\s*/g, '');
 }
 
+// --- Safari: where a slide's content sits inside its box --------------------
+//
+// WebKit lays out the HTML inside a slide's <foreignObject> without the
+// viewBox's scale, so Marp's polyfill (`browser` below) puts it right with a
+// transform on each <section>, every animation frame. It works that transform
+// out from the foreignObject's getScreenCTM(): the scale, and the offset into
+// the slide's box as `ctm.e - box.left`, `ctm.f - box.top`.
+//
+// WebKit's getScreenCTM() is not to be trusted for that offset. It is known to
+// leave out a transformed ancestor and the page's scroll (WebKit bugs 209220,
+// 44083, 314578), and the Ink pad's mirror sits inside both: #pad-frame always
+// carries a translate/scale for zoom and pan, and the controller page scrolls.
+// Any error lands as a constant shift of the slide's content inside its box,
+// while the pad's canvas over it stays put - so on an iPad a circle drawn
+// around something on the pad came out lower on the projector, by the same
+// amount everywhere on the slide.
+//
+// Nothing about that offset needs the screen. It is where the viewBox puts
+// its origin inside the <svg>'s own laid-out box: a uniform scale, plus the
+// letterbox that preserveAspectRatio leaves. So each foreignObject Podium
+// renders answers getScreenCTM() from its own layout box, giving Marp's
+// formula exactly what it would get from a correct CTM on an unscrolled,
+// untransformed page - the case it was written and tested for. The
+// transforms of the pad's frame then apply on top, as they do to the canvas.
+
+/**
+ * The viewBox-to-box transform of a slide's <svg>, in the box's own CSS px.
+ * `box` is its laid-out { width, height }, `view` its viewBox
+ * { x, y, width, height }, `align`/`slice` its preserveAspectRatio.
+ */
+export function slideMatrix(box, view, { align = 'xMidYMid', slice = false } = {}) {
+  const vw = view?.width > 0 ? view.width : box.width;
+  const vh = view?.height > 0 ? view.height : box.height;
+  const vx = view?.x || 0;
+  const vy = view?.y || 0;
+  if (!(vw > 0 && vh > 0)) return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  let sx = box.width / vw;
+  let sy = box.height / vh;
+  let ox = 0;
+  let oy = 0;
+  if (align !== 'none') {
+    const s = slice ? Math.max(sx, sy) : Math.min(sx, sy);
+    sx = s; sy = s;
+    const spareX = box.width - vw * s;
+    const spareY = box.height - vh * s;
+    ox = /xMid/.test(align) ? spareX / 2 : /xMax/.test(align) ? spareX : 0;
+    oy = /YMid/.test(align) ? spareY / 2 : /YMax/.test(align) ? spareY : 0;
+  }
+  return { a: sx, b: 0, c: 0, d: sy, e: ox - vx * sx, f: oy - vy * sy };
+}
+
+const ALIGNS = ['', 'none', 'xMinYMin', 'xMidYMin', 'xMaxYMin', 'xMinYMid', 'xMidYMid', 'xMaxYMid', 'xMinYMax', 'xMidYMax', 'xMaxYMax'];
+const LAYOUT_CTM = Symbol('podiumLayoutCTM');
+
+/** The CTM Marp's polyfill should see for one foreignObject: see above. */
+function layoutCTM(fo) {
+  const svg = fo.ownerSVGElement || fo.parentNode;
+  const rect = svg.getBoundingClientRect();
+  // clientWidth/Height are the box as laid out, before any ancestor's
+  // transform; the transform still applies to the section, as to the rest.
+  const box = { width: svg.clientWidth || rect.width, height: svg.clientHeight || rect.height };
+  const vb = svg.viewBox?.baseVal;
+  const par = svg.preserveAspectRatio?.baseVal;
+  const m = slideMatrix(box, vb && vb.width > 0 ? vb : null, {
+    align: ALIGNS[par?.align] || 'xMidYMid',
+    slice: par?.meetOrSlice === 2,
+  });
+  // Marp subtracts the box's screen position again; this leaves m.e/m.f.
+  return { ...m, e: rect.left + m.e, f: rect.top + m.f };
+}
+
+function useLayoutCTM(root) {
+  for (const fo of root.querySelectorAll('svg[data-marpit-svg] > foreignObject')) {
+    if (fo[LAYOUT_CTM]) continue;
+    Object.defineProperty(fo, LAYOUT_CTM, { value: true });
+    Object.defineProperty(fo, 'getScreenCTM', { configurable: true, value: () => layoutCTM(fo) });
+  }
+}
+
+/** Marp's polyfill is only ever on in WebKit (the same test it makes itself). */
+const isWebKit = () => typeof navigator !== 'undefined' && navigator.vendor === 'Apple Computer, Inc.';
+
 export async function applyPolyfill(root) {
   const { browser } = await engine();
-  try { return browser(root); } catch { return null; }
+  let watch = null;
+  if (isWebKit() && root?.querySelectorAll) {
+    // Slides that arrive later (a deck re-rendered into the same root) get
+    // the same answer before Marp's next frame reads them.
+    useLayoutCTM(root);
+    try {
+      watch = new MutationObserver(() => useLayoutCTM(root));
+      watch.observe(root, { childList: true, subtree: true });
+    } catch { watch = null; }
+  }
+  let marp;
+  try { marp = browser(root); } catch { marp = null; }
+  if (!watch) return marp;
+  const cleanup = () => { watch.disconnect(); marp?.cleanup?.(); };
+  return { cleanup, update: () => marp?.update?.() };
 }
 
 /**
