@@ -134,7 +134,7 @@ function render() {
     const feed = $('#qna-feed');
     const questions = (current.qnaFeed || [])
       .filter((q) => !q.hidden)
-      .sort((a, b) => (b.upvotes?.length || 0) - (a.upvotes?.length || 0));
+      .sort((a, b) => votesOf(b) - votesOf(a));
     
     feed.replaceChildren(...questions.map((q) => {
       const item = document.createElement('div');
@@ -147,10 +147,10 @@ function render() {
       const upvote = document.createElement('button');
       upvote.type = 'button';
       upvote.className = 'qna-item-upvote';
-      const upvoted = (q.upvotes || []).includes(voter);
+      const upvoted = q.upvoted ?? (q.upvotes || []).includes(voter);
       upvote.setAttribute('aria-pressed', String(upvoted));
       upvote.disabled = !current.open;
-      upvote.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 4l-8 8h16z"/></svg><span>${q.upvotes?.length || 0}</span>`;
+      upvote.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 4l-8 8h16z"/></svg><span>${votesOf(q)}</span>`;
       upvote.addEventListener('click', () => send({ action: 'upvote', id: q.id }));
       
       item.append(text, upvote);
@@ -163,6 +163,11 @@ function render() {
   
   if (!tickTimer) tickTimer = setInterval(tick, 1000);
   tick();
+}
+
+// A count from the relay (votes), or from an older relay's list of upvoters.
+function votesOf(q) {
+  return Number.isInteger(q.votes) ? q.votes : (q.upvotes?.length || 0);
 }
 
 let tickTimer = null;
@@ -212,7 +217,9 @@ function listen() {
   clearTimeout(waitTimer);
   stream?.close();
   everConnected = false;
-  stream = new EventSource(`poll/${encodeURIComponent(code)}/stream`);
+  // Our own id rides along so a Q&A feed can say which questions this phone
+  // upvoted; nobody else's is ever sent to us (see phoneFeed on the relay).
+  stream = new EventSource(`poll/${encodeURIComponent(code)}/stream?voter=${encodeURIComponent(voter)}`);
 
   stream.addEventListener('open', () => {
     everConnected = true;

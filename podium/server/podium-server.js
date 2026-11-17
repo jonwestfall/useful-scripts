@@ -267,6 +267,13 @@ const MAX_ANSWER_CHARS = 200;
 const MAX_OPTIONS = 8;
 const POLL_TTL_MS = 12 * 60 * 60 * 1000;
 const SSE_KEEPALIVE_MS = 25000;
+// Opening a poll needs no account - a controller on GitHub Pages pointed at
+// this relay has no cookie to send - so nothing stopped one address from
+// opening all MAX_POLLS at once and leaving every instructor on the box with
+// "too many polls open" for the next twelve hours. A signed-in person (or a
+// kiosk) is not counted; anyone else may hold this many open at a time from
+// one address, which is a few classrooms behind one campus NAT, not fifty.
+const MAX_ANON_POLLS_PER_IP = Number(process.env.MAX_ANON_POLLS_PER_IP || 8);
 
 const polls = new Map();
 
@@ -302,22 +309,49 @@ const { readJson } = api;
 // What a phone is told: the question, and nothing else. Whether the room sees
 // the answers is the presenter's call, made on the display - so the tally
 // never goes anywhere near the devices doing the answering.
-function questionPayload(poll) {
+//
+// A Q&A feed is the questions the room may see, each with how many upvoted
+// it and whether THIS phone did - never who asked, under what name, or who
+// upvoted. It used to be the host's whole feed: every asker's device id (the
+// one thing that stands for a phone here, so holding it is voting as them),
+// their typed name, every upvoter's id, and the questions the presenter had
+// hidden. So it is built per phone, from the voter id the phone's stream
+// was opened with.
+function phoneFeed(poll, voter) {
+  if (!poll.qnaFeed) return [];
+  return poll.qnaFeed.filter((q) => !q.hidden).map((q) => ({
+    id: q.id, text: q.text, answered: !!q.answered, projected: !!q.projected,
+    votes: q.upvotes.size, upvoted: !!voter && q.upvotes.has(voter),
+  }));
+}
+
+function questionPayload(poll, voter = '') {
   return JSON.stringify({
     seq: poll.seq, open: poll.open, kind: poll.kind,
     question: poll.question, options: poll.options, closesAt: poll.closesAt,
     askName: !!poll.askName,
     namePrompt: poll.namePrompt || 'Name:',
-    qnaFeed: poll.qnaFeed ? poll.qnaFeed.map(q => ({ ...q, upvotes: Array.from(q.upvotes) })) : [],
+    qnaFeed: phoneFeed(poll, voter),
   });
 }
 
 function pushQuestion(poll) {
-  const data = questionPayload(poll);
+  // One payload for every phone, unless the feed differs phone to phone.
+  const shared = poll.kind === 'qna' ? null : questionPayload(poll);
   for (const listener of poll.listeners) {
+    const data = shared ?? questionPayload(poll, listener.podiumVoter);
     try { listener.write(`data: ${data}\n\n`); } catch { poll.listeners.delete(listener); }
   }
 }
+
+/** Whether this request is from someone signed in here (or a kiosk). */
+function signedInHere(req) {
+  if (!hasAccounts()) return false;
+  return !!(accounts.sessionUser(db, api.cookieToken(req)) || kiosks.sessionKiosk(db, api.kioskCookieToken(req)));
+}
+
+/** Polls open right now that this address opened without signing in. */
+const anonPollsFrom = (ip) => [...polls.values()].filter((p) => p.anonIp === ip).length;
 
 function reapPolls() {
   const cutoff = Date.now() - POLL_TTL_MS;
@@ -353,6 +387,8 @@ async function handlePoll(req, res, url) {
     reapPolls();
     let body;
     try { body = await readJson(req, 1024); } catch { pollJson(res, 400, { error: 'bad body' }); return; }
+    const anonIp = signedInHere(req) ? null : api.clientIp(req);
+    const overLimit = () => anonIp !== null && anonPollsFrom(anonIp) >= MAX_ANON_POLLS_PER_IP;
     // A planned link's key (see pollCodeForKey). Starting it again - the next
     // run of the lecture, or the same question a second time - is a fresh
     // question under the same code: no answers carried over, and any phone
@@ -375,9 +411,10 @@ async function handlePoll(req, res, url) {
         return;
       }
       if (polls.size >= MAX_POLLS) { pollJson(res, 503, { error: 'too many polls open' }); return; }
+      if (overLimit()) { pollJson(res, 429, { error: 'too many polls open from here - end one first' }); return; }
       const token = crypto.randomBytes(24).toString('base64url');
       polls.set(linked, {
-        token, keyHash: keyHash(key), seq: 0, open: false, kind: 'choice', question: '', options: [],
+        anonIp, token, keyHash: keyHash(key), seq: 0, open: false, kind: 'choice', question: '', options: [],
         askName: false, namePrompt: 'Name:',
         votes: new Map(), qnaFeed: [], listeners: new Set(), touched: Date.now(),
       });
@@ -385,11 +422,12 @@ async function handlePoll(req, res, url) {
       return;
     }
     if (polls.size >= MAX_POLLS) { pollJson(res, 503, { error: 'too many polls open' }); return; }
+    if (overLimit()) { pollJson(res, 429, { error: 'too many polls open from here - end one first' }); return; }
     const fresh = makePollCode();
     if (!fresh) { pollJson(res, 503, { error: 'no code available' }); return; }
     const token = crypto.randomBytes(24).toString('base64url');
     polls.set(fresh, {
-      token, seq: 0, open: false, kind: 'choice', question: '', options: [],
+      anonIp, token, seq: 0, open: false, kind: 'choice', question: '', options: [],
       askName: false, namePrompt: 'Name:',
       votes: new Map(), qnaFeed: [], listeners: new Set(), touched: Date.now(),
     });
@@ -418,7 +456,9 @@ async function handlePoll(req, res, url) {
       // stream means the phone hears nothing until the buffer fills.
       'x-accel-buffering': 'no',
     });
-    res.write(`data: ${questionPayload(poll)}\n\n`);
+    // The phone's own id, so its feed can say which questions it upvoted.
+    res.podiumVoter = String(url.searchParams.get('voter') || '').slice(0, 64);
+    res.write(`data: ${questionPayload(poll, res.podiumVoter)}\n\n`);
     poll.listeners.add(res);
     const keepalive = setInterval(() => {
       try { res.write(': keepalive\n\n'); } catch { /* closing */ }
