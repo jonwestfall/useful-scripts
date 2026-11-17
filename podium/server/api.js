@@ -1872,5 +1872,5 @@ function gate(req, res, pathname, ctx) {
 }
 
 module.exports = {
-  handleApi, gate, readJson, json, parseCookies, setCookie, safeNext, cookieToken, kioskCookieToken, clientIp, COOKIE, API_VERSION,
+  handleApi, gate, readJson, json, parseCookies, setCookie, safeNext, cookieToken, kioskCookieToken, clientIp, isSecureRequest, COOKIE, API_VERSION,
 };

@@ -246,6 +246,40 @@ async function until(check, { timeout = 5000, interval = 50 } = {}) {
   proc.kill();
 }
 
+// --- what the pages say about how they may be used -------------------------
+{
+  const { port, proc } = await startRelay({});
+  const head = async (route, headers = {}) => {
+    const res = await fetch(`http://127.0.0.1:${port}${route}`, { headers });
+    await res.arrayBuffer();
+    return res.headers;
+  };
+  const control = await head('/control.html');
+  const csp = control.get('content-security-policy-report-only') || '';
+  ok('a page may only be framed by this site', control.get('x-frame-options') === 'SAMEORIGIN' && /frame-ancestors 'self'/.test(csp));
+  ok('it carries a content security policy, report-only for now', /script-src 'self'/.test(csp) && /object-src 'none'/.test(csp)
+    && /report-uri \/csp-report/.test(csp) && !control.get('content-security-policy'));
+  ok('which never allows inline script wholesale', !/'unsafe-inline'[^;]*;/.test(csp.split('; ').find((d) => d.startsWith('script-src')) + ';'));
+  const login = await head('/login.html');
+  const loginHtml = await (await fetch(`http://127.0.0.1:${port}/login.html`)).text();
+  const firstInline = /<script>([\s\S]*?)<\/script>/.exec(loginHtml)?.[1] ?? '';
+  const { createHash } = await import('node:crypto');
+  const want = `'sha256-${createHash('sha256').update(firstInline, 'utf8').digest('base64')}'`;
+  ok('a page\'s own inline scripts are allowed by their hash', !!firstInline && (login.get('content-security-policy-report-only') || '').includes(want));
+  const join = await head('/join.html');
+  ok('an audience page may be framed anywhere (an LMS page, say)', !join.get('x-frame-options')
+    && /frame-ancestors \*/.test(join.get('content-security-policy-report-only') || ''));
+  ok('everything is nosniff', (await head('/assets/js/util.js')).get('x-content-type-options') === 'nosniff' && control.get('x-content-type-options') === 'nosniff');
+  ok('HSTS only over HTTPS', !control.get('strict-transport-security')
+    && /max-age=\d+/.test((await head('/control.html', { 'x-forwarded-proto': 'https' })).get('strict-transport-security') || ''));
+  const report = await fetch(`http://127.0.0.1:${port}/csp-report`, {
+    method: 'POST', headers: { 'content-type': 'application/csp-report' },
+    body: JSON.stringify({ 'csp-report': { 'violated-directive': 'script-src-elem', 'blocked-uri': 'inline', 'document-uri': 'http://x/join.html' } }),
+  });
+  ok('and a browser\'s violation report is taken quietly', report.status === 204);
+  proc.kill();
+}
+
 // --- a request line nobody could parse: answered, never fatal --------------
 //
 // `GET //` is not a URL at all and `GET /%FF` will not decode. Each used to

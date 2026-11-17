@@ -798,6 +798,10 @@ function handleRequest(req, res) {
   }
   const url = requestUrl(req.url);
   if (!url) { badRequest(res); return; }
+  if (url.pathname === '/csp-report') {
+    handleCspReport(req, res).catch(() => { /* a report that could not be read is no report */ });
+    return;
+  }
   if (url.pathname === '/view-pass') {
     handleViewPass(req, res).catch(() => {
       try { api.json(res, 500, { error: 'viewer pass failed' }); } catch { /* response already begun */ }
@@ -908,11 +912,103 @@ function gzipOf(file, etag) {
   return entry.job;
 }
 
+// --- what every page says about how it may be used -------------------------
+//
+// nosniff on everything this serves; HSTS on anything that came over HTTPS
+// (directly or through the proxy, see api.isSecureRequest), so a browser
+// that has been here once never tries plain HTTP again.
+//
+// A page may only be framed by this site - except the audience's pages,
+// which an instructor may well put inside an LMS page.
+//
+// And a Content-Security-Policy, for now REPORT-ONLY: scripts only from this
+// site, never inline (each page's own inline scripts are allowed by hash,
+// worked out here from the file itself, so editing one never breaks it);
+// no plugins; no <base>. Pictures, video, frames, connections, styles and
+// fonts stay open to anywhere, because a lecture shows any web page, any
+// image link, any relay, and a slide theme may import any web font. What a browser would have refused is POSTed to /csp-report and
+// logged once each, so a deployment can see what enforcing would break
+// before it does. Enforcing it is a later change.
+const AUDIENCE_PAGES = new Set(['join.html', 'attend.html', 'view.html']);
+const MAX_HASHED_PAGES = 64;
+const inlineScriptHashes = new Map();   // file + etag -> "'sha256-…' …"
+
+function scriptHashesOf(file, etag) {
+  const id = `${file}\n${etag}`;
+  if (inlineScriptHashes.has(id)) return inlineScriptHashes.get(id);
+  let hashes = '';
+  try {
+    const html = fs.readFileSync(file, 'utf8');
+    hashes = [...html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
+      .filter(([, attrs = '']) => !/\ssrc\s*=/i.test(attrs))
+      .map(([, , body]) => `'sha256-${crypto.createHash('sha256').update(body, 'utf8').digest('base64')}'`)
+      .join(' ');
+  } catch { /* unreadable: no inline scripts allowed, which is the safe answer */ }
+  if (inlineScriptHashes.size >= MAX_HASHED_PAGES) inlineScriptHashes.delete(inlineScriptHashes.keys().next().value);
+  inlineScriptHashes.set(id, hashes);
+  return hashes;
+}
+
+function contentSecurityPolicy(file, etag, audience) {
+  return [
+    "default-src 'self'",
+    `script-src 'self'${(() => { const h = scriptHashesOf(file, etag); return h ? ` ${h}` : ''; })()}`,
+    // A slide theme may @import web fonts from anywhere (Bunny, Google).
+    "style-src * 'unsafe-inline' data: blob:",
+    'img-src * data: blob:',
+    'media-src * data: blob:',
+    'font-src * data: blob:',
+    'connect-src * ws: wss: data: blob:',
+    'frame-src * data: blob:',
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    `frame-ancestors ${audience ? '*' : "'self'"}`,
+    'report-uri /csp-report',
+  ].join('; ');
+}
+
+function securityHeaders(req, file, etag) {
+  const headers = { 'x-content-type-options': 'nosniff' };
+  if (api.isSecureRequest(req)) headers['strict-transport-security'] = 'max-age=15552000';
+  if (path.extname(file).toLowerCase() === '.html') {
+    const audience = AUDIENCE_PAGES.has(path.basename(file));
+    if (!audience) headers['x-frame-options'] = 'SAMEORIGIN';
+    headers['content-security-policy-report-only'] = contentSecurityPolicy(file, etag, audience);
+  }
+  return headers;
+}
+
+// Where a browser reports what the policy above would have refused. Open, as
+// a browser sends these without credentials; each distinct report is logged
+// once, and only the first few hundred, so it cannot be used to fill a log.
+const MAX_CSP_REPORTS = 300;
+const cspReportsSeen = new Set();
+async function handleCspReport(req, res) {
+  res.writeHead(204, { 'cache-control': 'no-store' });
+  res.end();
+  if (req.method !== 'POST' || cspReportsSeen.size >= MAX_CSP_REPORTS) return;
+  let body;
+  try { body = await readJson(req, 16 * 1024); } catch { return; }
+  const reports = Array.isArray(body) ? body.map((r) => r?.body || {}) : [body?.['csp-report'] || {}];
+  for (const r of reports) {
+    const directive = String(r['violated-directive'] || r.effectiveDirective || r['effective-directive'] || '').slice(0, 60);
+    const blocked = String(r['blocked-uri'] || r.blockedURL || '').slice(0, 200);
+    const page = String(r['document-uri'] || r.documentURL || '').replace(/[?#].*$/, '').slice(0, 200);
+    const key = `${directive} ${blocked} ${page}`;
+    if (!directive || cspReportsSeen.has(key) || cspReportsSeen.size >= MAX_CSP_REPORTS) continue;
+    cspReportsSeen.add(key);
+    console.warn(`podium: content security policy (report-only) would refuse ${blocked || 'an inline script'} for ${directive} on ${page}`);
+  }
+}
+
 function serveStatic(req, res, file, info) {
   const etag = `W/"${info.size.toString(36)}-${Math.floor(info.mtimeMs).toString(36)}"`;
   const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
   const compress = COMPRESSIBLE.test(type) && info.size > 1024;
-  const vary = compress ? { vary: 'accept-encoding' } : {};
+  const vary = { ...(compress ? { vary: 'accept-encoding' } : {}), ...securityHeaders(req, file, etag) };
   const asked = String(req.headers['if-none-match'] || '').split(',').map((tag) => tag.trim());
   if (asked.includes(etag) || asked.includes('*')) {
     res.writeHead(304, { etag, 'cache-control': 'no-cache', ...vary });
