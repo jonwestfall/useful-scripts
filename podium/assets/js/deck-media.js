@@ -73,6 +73,18 @@ function pictureName(file) {
   return /\.\w+$/.test(raw) ? raw : `${raw}${ext}`;
 }
 
+/**
+ * Resolves once the video has presented a frame (requestVideoFrameCallback),
+ * or after a short wait where the browser cannot say or has presented it
+ * already - so it never holds a poster up for long.
+ */
+const framePresented = (video, ms = 250) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  if (typeof video.requestVideoFrameCallback === 'function') {
+    video.requestVideoFrameCallback(() => { clearTimeout(timer); resolve(); });
+  }
+});
+
 const waitFor = (target, event, ms) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { target.removeEventListener(event, done); reject(new Error(`the video did not get to ${event}`)); }, ms);
   const done = () => { clearTimeout(timer); resolve(); };
@@ -89,12 +101,22 @@ export async function grabPoster(video, seconds) {
   if (video.readyState < 1) await waitFor(video, 'loadedmetadata', 15000);
   const end = Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.05) : seconds;
   const at = Math.min(Math.max(0, seconds), end);
+  // A seek already under way - the start field's own, as a time is typed -
+  // is let finish first. Until it does, currentTime already reads the new
+  // time while the element can still be showing the old frame, so the test
+  // below would pass and the poster be the frame before the start.
+  if (video.seeking) await waitFor(video, 'seeked', 15000);
+  let sought = false;
   if (Math.abs(video.currentTime - at) > 0.01 || video.readyState < 2) {
     const seeked = waitFor(video, 'seeked', 15000);
     video.currentTime = at;
     await seeked;
+    sought = true;
   }
   if (video.readyState < 2) await waitFor(video, 'loadeddata', 5000);
+  // And 'seeked' can arrive a moment before the new frame is the one
+  // drawImage reads, on a busy machine: wait for it to be presented.
+  if (sought) await framePresented(video);
   const scale = Math.min(1, POSTER_EDGE / Math.max(video.videoWidth || 1, video.videoHeight || 1));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round((video.videoWidth || 1280) * scale));
