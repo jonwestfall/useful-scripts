@@ -305,6 +305,34 @@ valid login page — which would then be cached *under `control.html`'s key* and
 served offline forever after. `sw.js` must refuse to cache any response that
 was redirected.
 
+### What the pages say about how they may be used
+
+Every page the server sends carries a few security headers of its own, so a
+deployment gets them whether or not nginx is in front:
+
+- **`X-Content-Type-Options: nosniff`** on everything.
+- **`Strict-Transport-Security`** on anything that came over HTTPS (directly,
+  or through the proxy's `X-Forwarded-Proto`).
+- **`X-Frame-Options: SAMEORIGIN`**: only this site may frame its pages. The
+  audience's pages (`join.html`, `attend.html`, `view.html`) are left out, so
+  an instructor can put them inside an LMS page.
+- **A Content-Security-Policy, in report-only mode for now.** Scripts only from
+  this site, never inline (each page's own inline scripts are allowed by their
+  hash, worked out from the file as it is served); no plugins; no `<base>`.
+  Pictures, video, frames, connections, styles and fonts stay open to
+  anywhere, because a lecture can show any of them. Nothing is refused yet:
+  a browser reports what the policy *would* refuse to `/csp-report`, and the
+  server logs each distinct report once:
+
+  ```
+  podium: content security policy (report-only) would refuse … for script-src-elem on …/control.html
+  ```
+
+  A handful of these after a few lectures is the information needed to switch
+  the policy to enforcing. A line naming an inline script or a `javascript:`
+  link on a page nobody edited is worth a closer look: that is what the
+  policy exists to stop.
+
 ## Phases
 
 Each phase is meant to be independently shippable and independently useful.

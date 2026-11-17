@@ -231,6 +231,10 @@ const download = (name, text, type) => {
   setTimeout(() => URL.revokeObjectURL(a.href), 30000);
 };
 
+// Wired here rather than with an inline onclick, which the pages' content
+// security policy does not allow (see securityHeaders in podium-server.js).
+$('#logs-download')?.addEventListener('click', () => { window.location.href = 'api/logs/download'; });
+
 const csvText = (rows) =>
   rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
 
