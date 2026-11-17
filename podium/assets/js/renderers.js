@@ -18,7 +18,8 @@
 //                        drifted. Never part of `state`: the room's own seek
 //                        is seekTo/seekNonce, and a viewer must not fake one.
 
-import { el, miniMarkdown, fmtTime, pdfSource } from './util.js';
+import { el, miniMarkdown, fmtTime } from './util.js';
+import { loadPdfjs, pdfSource } from './pdfjs.js';
 import { parseStreamSource, streamLabel } from './protocol.js';
 import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
 import { embedMathFonts } from './math-fonts.js';
@@ -996,7 +997,11 @@ function renderPdf(item) {
     // path lands) - render nothing rather than an iframe whose src is the
     // literal string "undefined", which the browser dutifully fetches.
     if (!src) { cancelRender(); releaseDoc(); node.replaceChildren(); return; }
-    if (!window.pdfjsLib) {
+    // pdf.js arrives with the first PDF (pdfjs.js). Should it not load at
+    // all, the browser's own viewer shows the page instead.
+    const pdfjs = await loadPdfjs().catch(() => null);
+    if (isDestroyed) return;
+    if (!pdfjs) {
       node.replaceChildren(el('iframe', {
         class: 'r-frame',
         src: `${src}#page=${pageNumber}&toolbar=0&navpanes=0&statusbar=0&view=FitH`,
@@ -1005,15 +1010,11 @@ function renderPdf(item) {
       return;
     }
 
-    if (window.pdfjsLib.GlobalWorkerOptions && !window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'assets/vendor/pdf.worker.min.js';
-    }
-
     if (docSrc !== src) {
       cancelRender();
       releaseDoc();
       docSrc = src;
-      loadingTask = window.pdfjsLib.getDocument(pdfSource(src));
+      loadingTask = pdfjs.getDocument(pdfSource(src));
     }
     const task = loadingTask;
     // Destroyed, or switched to another file, while this render was waiting:

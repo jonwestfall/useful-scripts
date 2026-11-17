@@ -964,9 +964,8 @@ const filled = await desk.evaluate(async (picture) => {
   const md = `---\nmarp: true\n---\n\n<!-- _backgroundColor: #123456 -->\n\n# Short\n\n---\n\n<!-- _backgroundColor: #123456 -->\n\n# Long\n\n${Array.from({ length: 18 }, (_, i) => `- Point ${i + 1} with enough words to need fitting`).join('\n')}\n\n---\n\n![bg](${picture})\n`;
   const rendered = await render(md, `fill-${Date.now()}`);
   const blob = await exportPdf(rendered, { title: 'fill' });
-  const { pdfjsLib } = window;
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '/assets/vendor/pdf.worker.min.js';
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+  const { openPdf } = await import('/assets/js/pdfjs.js');
+  const doc = await (await openPdf(new Uint8Array(await blob.arrayBuffer()))).promise;
   const pixels = [];
   for (let i = 1; i <= doc.numPages; i += 1) {
     const page = await doc.getPage(i);

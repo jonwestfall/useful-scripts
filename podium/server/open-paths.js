@@ -48,7 +48,11 @@ const AUTH_PUBLIC_WITH_ACCOUNTS = new Set(['/', '/index.html', '/guide.html']);
 // display.js starts importing is open to both at once.
 // test/kiosk-open-paths.test.mjs checks it against what the pages really load.
 const DISPLAY_RUNTIME = [
-  '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js', '/assets/vendor/pdf.min.js', '/assets/vendor/pdf.worker.min.js',
+  '/assets/vendor/marp.esm.js', '/assets/vendor/mermaid.esm.js',
+  // pdf.js (assets/js/pdfjs.js) and the image decoders it fetches for a PDF.
+  '/assets/js/pdfjs.js', '/assets/vendor/pdfjs/pdf.min.mjs', '/assets/vendor/pdfjs/pdf.worker.min.mjs',
+  ...['openjpeg.wasm', 'openjpeg_nowasm_fallback.js', 'jbig2.wasm', 'jbig2_nowasm_fallback.js', 'qcms_bg.wasm']
+    .map((name) => `/assets/vendor/pdfjs/wasm/${name}`),
   '/assets/vendor/qrcode.js', '/assets/icons/icon-192.png',
   // KaTeX's fonts, for math on a slide (math-fonts.js).
   ...[

@@ -230,6 +230,10 @@ function isAuthorized(req) {
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  // pdf.js 6 is ES modules named .mjs; a module served as anything but
+  // JavaScript is refused by the browser. And its image decoders are wasm.
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.wasm': 'application/wasm',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.webmanifest': 'application/manifest+json; charset=utf-8',
@@ -880,7 +884,7 @@ function handleRequest(req, res) {
 // which shrinks the scripts and styles to about a quarter. Each release is a
 // new directory (deploy/update.sh), so a file's size and time are a fair
 // stand-in for its contents.
-const COMPRESSIBLE = /^(text\/|application\/(javascript|json|manifest\+json)|image\/svg\+xml)/;
+const COMPRESSIBLE = /^(text\/|application\/(javascript|json|manifest\+json|wasm)|image\/svg\+xml)/;
 const GZIP_CACHE_BYTES = 64 * 1024 * 1024;
 const gzipped = new Map();   // file + etag -> Promise<Buffer>, oldest first
 let gzippedBytes = 0;

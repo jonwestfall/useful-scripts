@@ -5,10 +5,11 @@
 //     (safeLinkHref in deck.js; the deck render drops any other href);
 //   - a CSV cell, which must not be a spreadsheet formula (server/csv.js
 //     and csvCell in util.js, kept to the same rule);
-//   - a PDF, opened with pdf.js's eval-based font path off (pdfSource).
+//   - a PDF, opened with what pdf.js needs to decode its pictures (pdfSource).
 import { createRequire } from 'node:module';
 import { safeLinkHref } from '../assets/js/deck.js';
-import { csvCell, pdfSource } from '../assets/js/util.js';
+import { csvCell } from '../assets/js/util.js';
+import { pdfSource } from '../assets/js/pdfjs.js';
 
 const require = createRequire(import.meta.url);
 const csv = require('../server/csv.js');
@@ -50,11 +51,13 @@ chk('the pages\' exports guard a formula the same way', csvCell('=1+1') === `"'=
 chk('and leave numbers and text alone', csvCell(-5) === '"-5"' && csvCell('Yes') === '"Yes"' && csvCell('say "hi"') === '"say ""hi"""');
 
 // --- PDFs ---------------------------------------------------------------------------
-chk('a PDF by address is opened with eval off', JSON.stringify(pdfSource('/media/x/a.pdf')) === JSON.stringify({ url: '/media/x/a.pdf', isEvalSupported: false }));
+const decoders = pdfSource('/media/x/a.pdf').wasmUrl;
+chk(`a PDF by address is opened with pdf.js's decoders beside it (${decoders})`,
+  pdfSource('/media/x/a.pdf').url === '/media/x/a.pdf' && /\/assets\/vendor\/pdfjs\/wasm\/$/.test(decoders));
 const bytes = new Uint8Array([37, 80, 68, 70]);
-chk('so is one given as bytes', pdfSource(bytes).data === bytes && pdfSource(bytes).isEvalSupported === false);
+chk('so is one given as bytes', pdfSource(bytes).data === bytes && pdfSource(bytes).wasmUrl === decoders);
 chk('and one already given as options keeps them', pdfSource({ url: 'a.pdf', withCredentials: true }).withCredentials === true
-  && pdfSource({ url: 'a.pdf' }).isEvalSupported === false);
+  && pdfSource({ url: 'a.pdf' }).wasmUrl === decoders);
 
 console.log(ok ? '\nALL PASS' : '\nSOME FAILED');
 process.exit(ok ? 0 : 1);

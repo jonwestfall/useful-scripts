@@ -456,19 +456,6 @@ export function createRelayLog(limit = 8) {
  * app works without it.
  */
 /**
- * What pdf.getDocument is handed, for every PDF Podium opens: the file, with
- * pdf.js's eval-based font path turned off. The vendored pdf.js (3.11) is in
- * the range of CVE-2024-4367, where a crafted font runs script through that
- * path - and a PDF here can be anything someone uploaded or linked. Off, the
- * same fonts are drawn by the slower interpreted path; nothing looks
- * different. Upgrading pdf.js is the real fix; this closes the hole until then.
- */
-export function pdfSource(src) {
-  const base = typeof src === 'string' || src instanceof URL ? { url: String(src) } : (src?.url || src?.data ? src : { data: src });
-  return { ...base, isEvalSupported: false };
-}
-
-/**
  * One CSV cell, always quoted, and never a spreadsheet formula: a poll
  * answer typed as `=HYPERLINK(...)` is written with a leading apostrophe,
  * which spreadsheets read as "this is text". A plain number (-3, +1.5) is

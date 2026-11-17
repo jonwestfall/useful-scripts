@@ -13,7 +13,8 @@
 //                      a deck kept in a lecture plan, the deck editor's
 //                      unsaved text. A reload uses the copy kept in this tab.
 
-import { $, el, fmtTime, pdfSource } from './util.js';
+import { $, el, fmtTime } from './util.js';
+import { loadPdfjs, pdfSource } from './pdfjs.js';
 import { createRenderer, TYPES } from './renderers.js';
 import { render as renderDeckSource, deckId, forgetDeck, applyFits, applyPolyfill, deckLocation } from './deck.js';
 import { deckStep, DOC_VIEW, DOC_STEP } from './protocol.js';
@@ -367,9 +368,8 @@ async function showDocument(pkg) {
 // --- a PDF ----------------------------------------------------------------------
 
 async function pdfDocument(src) {
-  const pdfjs = window.pdfjsLib;
+  const pdfjs = await loadPdfjs().catch(() => null);
   if (!pdfjs) return null;
-  if (pdfjs.GlobalWorkerOptions && !pdfjs.GlobalWorkerOptions.workerSrc) pdfjs.GlobalWorkerOptions.workerSrc = 'assets/vendor/pdf.worker.min.js';
   return pdfjs.getDocument(pdfSource(src)).promise;
 }
 

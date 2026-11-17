@@ -23,9 +23,13 @@ const chk = (label, cond) => {
 };
 
 // Loaded only once a PDF is actually rendered, and PDFs themselves are never
-// cached (SHELL in sw.js is app-shell file types only) - warming a 1 MB worker
-// could not make an offline PDF work.
-const NOT_NEEDED_OFFLINE = new Set(['assets/vendor/pdf.worker.min.js']);
+// cached (SHELL in sw.js is app-shell file types only) - warming a 1 MB worker,
+// or the image decoders it fetches, could not make an offline PDF work.
+const NOT_NEEDED_OFFLINE = new Set([
+  'assets/vendor/pdfjs/pdf.worker.min.mjs',
+  ...['openjpeg.wasm', 'openjpeg_nowasm_fallback.js', 'jbig2.wasm', 'jbig2_nowasm_fallback.js', 'qcms_bg.wasm', 'LICENSE_JBIG2', 'LICENSE_OPENJPEG', 'LICENSE_PDFJS_JBIG2', 'LICENSE_PDFJS_OPENJPEG', 'LICENSE_PDFJS_QCMS', 'LICENSE_QCMS']
+    .map((name) => `assets/vendor/pdfjs/wasm/${name}`),
+]);
 
 function warmList() {
   const source = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
