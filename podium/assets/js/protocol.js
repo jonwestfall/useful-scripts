@@ -677,9 +677,16 @@ function viewerPoll(item) {
     safe.answers = [];
     safe.correct = -1;
   }
-  // Who upvoted a question is not on the screen - only how many did.
+  // A Q&A feed as the projector shows it: the questions not hidden, each
+  // with how many upvoted it - never who, never the asker's device id, and
+  // the asker's name only while the presenter is showing names. Written as
+  // an allow-list for the same reason VIEWER_KEYS is.
   if (Array.isArray(item.qnaFeed)) {
-    safe.qnaFeed = item.qnaFeed.map((q) => ({ ...q, upvotes: Array.from({ length: q.upvotes?.length || 0 }, () => '') }));
+    safe.qnaFeed = item.qnaFeed.filter((q) => q && !q.hidden).map((q) => ({
+      id: q.id, text: q.text, answered: !!q.answered, projected: !!q.projected,
+      upvotes: Array.from({ length: q.upvotes?.length || 0 }, () => ''),
+      ...(item.showNames && q.authorName ? { authorName: q.authorName } : {}),
+    }));
   }
   return safe;
 }
