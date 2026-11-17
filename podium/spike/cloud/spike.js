@@ -87,9 +87,8 @@ async function showMedia(area, blob, name) {
     return;
   }
   if (blob.type === 'application/pdf' || /\.pdf$/i.test(name)) {
-    const { pdfjsLib } = window;
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '../../assets/vendor/pdf.worker.min.js';
-    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+    const { openPdf } = await import('../../assets/js/pdfjs.js');
+    const doc = await (await openPdf(new Uint8Array(await blob.arrayBuffer()))).promise;
     const page = await doc.getPage(1);
     const viewport = page.getViewport({ scale: 1 });
     const canvas = document.createElement('canvas');

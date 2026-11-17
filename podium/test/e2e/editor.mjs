@@ -956,7 +956,6 @@ ok(`"Download as a PDF" makes one page a slide (${pages} pages for ${slideCount}
 // (1280 wide on a 1920 page, the rest blank) and left the pictures out, so
 // the SVG's own scaling is taken out before it is drawn (flattenSvgScaling).
 const picture = /\/media\/[0-9a-f]{64}\/green\.png/.exec(reopened)?.[0];
-await desk.addScriptTag({ url: '/assets/vendor/pdf.min.js' });
 const filled = await desk.evaluate(async (picture) => {
   const { render } = await import('/assets/js/deck.js');
   const { exportPdf } = await import('/assets/js/deck-export.js');
@@ -964,9 +963,8 @@ const filled = await desk.evaluate(async (picture) => {
   const md = `---\nmarp: true\n---\n\n<!-- _backgroundColor: #123456 -->\n\n# Short\n\n---\n\n<!-- _backgroundColor: #123456 -->\n\n# Long\n\n${Array.from({ length: 18 }, (_, i) => `- Point ${i + 1} with enough words to need fitting`).join('\n')}\n\n---\n\n![bg](${picture})\n`;
   const rendered = await render(md, `fill-${Date.now()}`);
   const blob = await exportPdf(rendered, { title: 'fill' });
-  const { pdfjsLib } = window;
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '/assets/vendor/pdf.worker.min.js';
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise;
+  const { openPdf } = await import('/assets/js/pdfjs.js');
+  const doc = await (await openPdf(new Uint8Array(await blob.arrayBuffer()))).promise;
   const pixels = [];
   for (let i = 1; i <= doc.numPages; i += 1) {
     const page = await doc.getPage(i);

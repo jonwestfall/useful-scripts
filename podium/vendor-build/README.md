@@ -77,3 +77,30 @@ serve or cache. Nothing is trimmed: the biggest part is the ELK layout engine
 (1.4 MB), which a diagram only uses if it asks for `layout: elk`, but stubbing
 it out would turn such a diagram into an error on the projector. `mermaid` is
 pinned to an exact version in `package.json`.
+
+## pdf.js (PDFs everywhere)
+
+`../assets/vendor/pdfjs/` is [pdf.js](https://mozilla.github.io/pdf.js/), copied
+from `pdfjs-dist` (pinned in `package.json`) by `build-pdfjs.mjs`. Its version is
+in `../assets/vendor/pdfjs/VERSION`. `assets/js/pdfjs.js` loads it the first time
+a PDF is shown, on any page (Issues #335, #341).
+
+```bash
+cd podium/vendor-build
+npm install
+npm run build:pdfjs
+```
+
+It is the **legacy** build. The modern one calls methods only the newest
+browsers have (`Map.prototype.getOrInsertComputed`, `Math.sumPrecise`,
+`URL.parse`) without checking for them, so an iPad a version or two behind
+would show nothing; the legacy build carries polyfills and runs on Safari 16.4 /
+iPadOS 16.4 and later.
+
+Beside it, in `wasm/`, are the image decoders pdf.js fetches when a PDF needs one
+(JPEG 2000, JBIG2, ICC colour), each with its non-WebAssembly fallback. Left out:
+QuickJS (PDF form scripts, which Podium never runs), and the CJK character maps
+and standard fonts (which Podium has never shipped, so PDFs that rely on them
+draw as they always have). The files are listed by name in `server/open-paths.js`
+(kiosks and Guest View) and `test/offline-shell.test.mjs`; keep those in step if
+a new pdf.js adds or renames one.

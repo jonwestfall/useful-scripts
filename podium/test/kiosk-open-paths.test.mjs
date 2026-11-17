@@ -83,7 +83,7 @@ function moduleGraph(entry) {
 // ever go missing from KIOSK_OPEN_PATHS) is not what leaves a kiosk stuck.
 // It is listed in KIOSK_OPEN_PATHS anyway, so this exists only to keep this
 // test's requirement matching offline-shell.test.mjs's own carve-out.
-const NOT_STRICTLY_NEEDED_TO_LOAD = new Set(['assets/vendor/pdf.worker.min.js']);
+const NOT_STRICTLY_NEEDED_TO_LOAD = new Set(['assets/vendor/pdfjs/pdf.worker.min.mjs']);
 
 const { AUTH_OPEN_PATHS, KIOSK_OPEN_PATHS } = openPaths;
 chk(`KIOSK_OPEN_PATHS has entries (${KIOSK_OPEN_PATHS.size})`, KIOSK_OPEN_PATHS.size > 5);

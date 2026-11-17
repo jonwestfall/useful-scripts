@@ -37,7 +37,7 @@ const WARM = [
   './', 'index.html', 'display.html', 'control.html', 'plan.html', 'deck.html', 'quicklook.html', 'replay.html', 'admin.html', 'me.html', 'config.json',
   'manifest-control.webmanifest', 'manifest-display.webmanifest',
   'assets/css/podium.css',
-  'assets/vendor/qrcode.js', 'assets/vendor/marp.esm.js', 'assets/vendor/pdf.min.js',
+  'assets/vendor/qrcode.js', 'assets/vendor/marp.esm.js', 'assets/vendor/pdfjs/pdf.min.mjs',
   // The deck editor's code editor (Issue #226), ~600 KB.
   'assets/vendor/codemirror.esm.js',
   // Diagrams in decks (Issue #235), 5 MB - only ever loaded by a deck with a
@@ -58,7 +58,7 @@ const WARM = [
   ...[
     'admin', 'assets', 'attendance-panel', 'attendance-review', 'backup-ui', 'bus', 'caption-log', 'caption-panel', 'config', 'control', 'crypto', 'deck', 'deck-checks',
     'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-qr', 'deck-source', 'deck-templates', 'defaults', 'display', 'doc', 'doc-reader',
-    'duration-probe', 'file-browser', 'gestures', 'index', 'library-upload', 'live-browser', 'live-browser-panel', 'math-fonts', 'me', 'message-editor', 'mic-panel', 'notebook-link', 'pdf-writer', 'pip', 'plan',
+    'duration-probe', 'file-browser', 'gestures', 'index', 'library-upload', 'live-browser', 'live-browser-panel', 'math-fonts', 'me', 'message-editor', 'mic-panel', 'notebook-link', 'pdf-writer', 'pdfjs', 'pip', 'plan',
     'planfile', 'poll-link', 'poll-link-ui', 'poll-look', 'poll-look-theme', 'poll-look-ui', 'presentation-prefs', 'protocol', 'quicklook', 'quicklook-open', 'recap',
     'recap-pdf', 'renderers', 'replay', 'replay-model', 'roster-panel', 'rtc', 'screen-record', 'server', 'session-search', 'store', 'tab-bar', 'tabs', 'theme',
     'theme-boot', 'theme-sheet', 'theme-sheet-ui', 'thumbs', 'util', 'view-link', 'view-link-ui', 'watermark', 'word-import', 'word-upload', 'zip', 'zip-review', 'zoom',
