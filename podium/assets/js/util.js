@@ -469,8 +469,12 @@ export function csvCell(value) {
 
 export function installOfflineShell() {
   if (!('serviceWorker' in navigator)) return;
+  // The release this page's modules came from, when Podium's own server sent
+  // them under b/<id>/ (Issue #340): the worker warms the same addresses, and
+  // a new release - a new address to register - is a new worker.
+  const release = /\/b\/([A-Za-z0-9_-]{1,32})\/assets\//.exec(import.meta.url)?.[1];
   const go = () => navigator.serviceWorker
-    .register('sw.js', { scope: './', updateViaCache: 'none' })
+    .register(release ? `sw.js?release=${release}` : 'sw.js', { scope: './', updateViaCache: 'none' })
     .catch(() => { /* plain http, private mode, or blocked by policy */ });
   // Not simply window.addEventListener('load', ...): both pages that call this
   // use top-level await, so their module can finish evaluating AFTER load has

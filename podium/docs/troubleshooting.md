@@ -79,7 +79,7 @@ Because the controller and display run as independent web clients, one device ma
 *   **Manual Cache Busting**: Perform a hard refresh:
     *   **macOS**: `Cmd + Shift + R`
     *   **Windows / Linux**: `Ctrl + Shift + R`
-*   **Server Caching Header**: When hosting Podium via Nginx, Caddy, or Node, ensure HTML and JavaScript files are served with:
+*   **Server Caching Header**: Podium's own server handles this: pages are `no-cache`, and their scripts and styles come from a per-release address (`b/<id>/assets/…`) that the browser may keep for good, because a new release is a new address. When hosting the files some other way (Caddy, a plain static host), serve HTML and JavaScript with:
     ```http
     Cache-Control: no-cache
     ```
@@ -102,7 +102,9 @@ Clicking **Clear settings & reload** at the bottom of the Settings sheet safely 
 
 ### Offline Shell (`sw.js`)
 
-Podium uses a **network-first** service worker. Under normal conditions, assets are retrieved from the network. If the device loses connectivity, cached core assets (`display.html`, `control.html`, `podium.css`, `protocol.js`, etc.) allow the controller to operate offline.
+Podium uses a **network-first** service worker. Under normal conditions, assets are retrieved from the network (or the browser's own cache, for a release's versioned assets). If the device loses connectivity, cached core assets allow the controller and display to operate offline.
+
+On a device's first visit it downloads only the shell (Issue #342): `control.html`, `display.html`, `plan.html`, the front page, what they import as they load, and the Marp engine, about 0.9 MB gzipped. Everything else (Mermaid, the deck editor, Word import, KaTeX's fonts, pdf.js, Admin, My Files, Replay) is kept the first time it is used online, and works offline from then on.
 
 If an asset fails to update despite refreshing:
 1. Open Developer Tools (`F12`).

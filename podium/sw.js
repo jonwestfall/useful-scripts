@@ -10,12 +10,29 @@
 // Here the cache only ever answers when the network does not, which is exactly
 // the case it is for.
 //
-// There is no version to bump, and no precache list to keep in step with the
-// file tree: entries are written as they are fetched and overwritten by the
-// next successful fetch of the same URL. "Clear settings & reload" unregisters
+// Entries are written as they are fetched and overwritten by the next
+// successful fetch of the same file. "Clear settings & reload" unregisters
 // this worker and drops the cache (see resetDevice in config.js).
+//
+// Served by Podium's own server, a page asks for its assets under the
+// release's address - b/<id>/assets/... (Issue #340, see assetVersion in
+// podium-server.js) - which the browser keeps for good, so asking the network
+// first costs nothing for them: the browser's own cache answers. They are
+// filed here under their plain path, assets/..., so whichever release is in
+// the cache is what an offline page gets - one copy of each file, not one per
+// release. The page registers this worker with its release (?release=<id>,
+// see installOfflineShell), so warming asks for the same addresses the page
+// itself just loaded, and a new release is a new worker that warms again.
 
-const CACHE = 'podium-shell';
+// A new name (it was podium-shell) so a device drops the 2.8 MB the old,
+// longer warm list put there; see activate below.
+const CACHE = 'podium-shell-v2';
+const RELEASE = (() => {
+  try { return new URL(self.location.href).searchParams.get('release') || ''; } catch { return ''; }
+})();
+const VERSIONED = /\/b\/[A-Za-z0-9_-]{1,32}(?=\/assets\/)/;
+/** A request's file under its plain path: b/<id>/assets/x.js -> assets/x.js. */
+const plainUrl = (url) => String(url).replace(VERSIONED, '');
 
 // What a page needs to start. Deliberately not content: a lecture's decks,
 // photos and video belong to whatever storage that feature already uses, and
@@ -30,39 +47,34 @@ const SHELL = /\.(?:html|css|js|mjs|webmanifest|json|woff2?)$/;
 //
 // This list is a hint, not a contract: anything missing simply fails its fetch
 // and is skipped, and network-first means a file absent from the cache costs
-// nothing until you are offline. marp.esm.js is 1.1 MB and deliberately
-// included - a deck that cannot render is the difference between a lecture and
-// no lecture.
+// nothing until you are offline.
+//
+// Only the shell (Issue #342): the four pages a lecture starts from and what
+// they import as they load - about 0.9 MB gzipped. It used to be everything,
+// 2.8 MB on a device's first visit, editor tools included. The rest - Mermaid,
+// the deck editor's CodeMirror, mammoth, KaTeX's fonts, pdf.js and the pages
+// only an author opens - is cached the first time it is used online, by the
+// fetch handler below, and from then on draws offline like the rest.
 const WARM = [
-  './', 'index.html', 'display.html', 'control.html', 'plan.html', 'deck.html', 'quicklook.html', 'replay.html', 'admin.html', 'me.html', 'config.json',
+  './', 'index.html', 'display.html', 'control.html', 'plan.html', 'config.json',
   'manifest-control.webmanifest', 'manifest-display.webmanifest',
-  'assets/css/podium.css',
-  'assets/vendor/qrcode.js', 'assets/vendor/marp.esm.js', 'assets/vendor/pdfjs/pdf.min.mjs',
-  // The deck editor's code editor (Issue #226), ~600 KB.
-  'assets/vendor/codemirror.esm.js',
-  // Diagrams in decks (Issue #235), 5 MB - only ever loaded by a deck with a
-  // diagram in it, but that deck has to draw offline like any other.
-  'assets/vendor/mermaid.esm.js',
-  // Word files as documents (Issue #258), ~300 KB - converted in the browser,
-  // so a lecture planned offline can still take one.
-  'assets/vendor/mammoth.esm.js',
-  // KaTeX's fonts (math-fonts.js), ~300 KB: the slash in a slide's ≠ is a
-  // glyph of its own in one of them.
-  ...[
-    'AMS-Regular', 'Caligraphic-Bold', 'Caligraphic-Regular', 'Fraktur-Bold', 'Fraktur-Regular', 'Main-Bold', 'Main-BoldItalic', 'Main-Italic', 'Main-Regular', 'Math-BoldItalic', 'Math-Italic', 'SansSerif-Bold', 'SansSerif-Italic', 'SansSerif-Regular', 'Script-Regular', 'Size1-Regular', 'Size2-Regular', 'Size3-Regular', 'Size4-Regular', 'Typewriter-Regular',
-  ].map((name) => `assets/vendor/katex-fonts/KaTeX_${name}.woff2`),
+  'assets/css/podium.css', 'assets/vendor/qrcode.js',
+  // 1.1 MB (340 KB gzipped), and kept: decks are most of what goes on
+  // screen, and a deck that cannot render is the difference between a lecture
+  // and no lecture.
+  'assets/vendor/marp.esm.js',
   'assets/icons/icon-192.png', 'assets/icons/apple-touch-icon.png',
-  // Kept complete by test/offline-shell.test.mjs: a module control.js,
-  // display.js or deck-editor.js imports that is missing here fails the whole
-  // page offline.
+  // Everything those pages import as they load; test/offline-shell.test.mjs
+  // keeps this complete, since one missing fails the whole page offline.
   ...[
-    'admin', 'assets', 'attendance-panel', 'attendance-review', 'backup-ui', 'bus', 'caption-log', 'caption-panel', 'config', 'control', 'crypto', 'deck', 'deck-checks',
-    'deck-diagrams', 'deck-editor', 'deck-export', 'deck-media', 'deck-mermaid', 'deck-qr', 'deck-source', 'deck-templates', 'defaults', 'display', 'doc', 'doc-reader',
-    'duration-probe', 'file-browser', 'gestures', 'index', 'library-upload', 'live-browser', 'live-browser-panel', 'math-fonts', 'me', 'message-editor', 'mic-panel', 'notebook-link', 'pdf-writer', 'pdfjs', 'pip', 'plan',
-    'planfile', 'poll-link', 'poll-link-ui', 'poll-look', 'poll-look-theme', 'poll-look-ui', 'presentation-prefs', 'protocol', 'quicklook', 'quicklook-open', 'recap',
-    'recap-pdf', 'renderers', 'replay', 'replay-model', 'roster-panel', 'rtc', 'screen-record', 'server', 'session-search', 'store', 'tab-bar', 'tabs', 'theme',
-    'theme-boot', 'theme-sheet', 'theme-sheet-ui', 'thumbs', 'util', 'view-link', 'view-link-ui', 'watermark', 'word-import', 'word-upload', 'zip', 'zip-review', 'zoom',
+    'assets', 'attendance-panel', 'bus', 'caption-log', 'caption-panel', 'config', 'control', 'crypto', 'deck', 'deck-media', 'deck-mermaid', 'deck-qr',
+    'deck-source', 'defaults', 'display', 'doc', 'doc-reader', 'duration-probe', 'file-browser', 'gestures', 'index', 'library-upload', 'live-browser',
+    'live-browser-panel', 'math-fonts', 'message-editor', 'mic-panel', 'notebook-link', 'pdf-writer', 'pdfjs', 'pip', 'plan', 'planfile', 'poll-link',
+    'poll-link-ui', 'poll-look', 'poll-look-theme', 'poll-look-ui', 'presentation-prefs', 'protocol', 'quicklook-open', 'renderers', 'rtc', 'screen-record',
+    'server', 'store', 'tab-bar', 'tabs', 'theme', 'theme-boot', 'thumbs', 'util', 'view-link', 'view-link-ui', 'watermark', 'word-import', 'word-upload',
+    'zip', 'zip-review', 'zoom',
   ].map((name) => `assets/js/${name}.js`),
+  // Loaded by import() as a page starts - whichever relay it uses.
   ...['index', 'mqtt', 'supabase', 'ws'].map((name) => `assets/js/transport/${name}.js`),
 ];
 
@@ -72,9 +84,14 @@ const WARM = [
 // under control.html's key, index.html's key, and so on. Fetching and checking
 // before storing is the same guard the fetch handler applies, for the same
 // reason.
+//
+// An asset is asked for under this release's address, the one the page that
+// registered this worker just loaded it from - so the browser's cache answers
+// and nothing is downloaded twice - and filed under its plain path.
 async function warm(cache, path) {
   try {
-    const res = await fetch(path, { credentials: 'same-origin' });
+    const from = RELEASE && path.startsWith('assets/') ? `b/${RELEASE}/${path}` : path;
+    const res = await fetch(from, { credentials: 'same-origin' });
     if (res.ok && !res.redirected && res.type === 'basic') await cache.put(path, res);
   } catch { /* offline, or behind a gate: there is simply nothing to warm */ }
 }
@@ -89,7 +106,15 @@ self.addEventListener('install', (event) => {
     await self.skipWaiting();
   })());
 });
-self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+// Any older cache goes: the previous worker's, or the long warm list's.
+self.addEventListener('activate', (event) => event.waitUntil((async () => {
+  for (const name of await caches.keys()) if (name !== CACHE) await caches.delete(name);
+  await self.clients.claim();
+})()));
+
+// Versioned assets already filed by this worker: their bytes cannot change, so
+// a page load that finds them in the browser's cache need not write them again.
+const filed = new Set();
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
@@ -119,8 +144,12 @@ self.addEventListener('fetch', (event) => {
       // be stored under CONTROL.HTML's key and served in its place, offline,
       // forever. A redirect is never the thing that was asked for.
       if (fresh && fresh.ok && fresh.type === 'basic' && !fresh.redirected) {
-        const cache = await caches.open(CACHE);
-        cache.put(request, fresh.clone()).catch(() => {});
+        const versioned = VERSIONED.test(request.url);
+        if (!versioned || !filed.has(request.url)) {
+          if (versioned) filed.add(request.url);
+          const cache = await caches.open(CACHE);
+          cache.put(plainUrl(request.url), fresh.clone()).catch(() => { filed.delete(request.url); });
+        }
       }
       // A redirected response may not be handed back for a navigation at all:
       // the document would be the login page while the address bar still said
@@ -135,7 +164,8 @@ self.addEventListener('fetch', (event) => {
       // A static file's query string never changes what it is - a retry of
       // a failed module import asks under ?retry=… (see importMarp in
       // deck.js) and must still find the copy cached under its plain name.
-      const hit = await caches.match(request, { ignoreSearch: true });
+      // And a versioned asset finds the copy filed under its plain path.
+      const hit = await caches.match(plainUrl(request.url), { ignoreSearch: true });
       if (hit) return hit;
       throw err;
     }

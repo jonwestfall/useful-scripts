@@ -49,7 +49,7 @@ podium/test/
 ├── deck-templates.test.mjs # Deck templates: built-in, course and personal, and who may change which (Issue #226)
 ├── deck-mermaid.test.mjs # Mermaid diagrams in decks: which theme each is drawn in, and what a broken one says (Issue #235)
 ├── deck-diagrams.test.mjs # Diagrams in the deck editor: mermaid.live links in and out, starters, pictures in a .zip (Issue #235)
-├── offline-shell.test.mjs # The offline shell warms everything the pages load at startup (Issue #130)
+├── offline-shell.test.mjs # The offline shell warms what the shell pages load at startup (Issue #130), and no more (#342)
 ├── a11y.test.mjs         # Accessibility guard rails: labels, names, live regions, contrast, focus (Issue #156)
 ├── kiosk-open-paths.test.mjs # Kiosk and Guest View open-path lists match what the pages load (Issues #151, #150)
 ├── pptx-convert.test.mjs # PowerPoint-to-PDF conversion via LibreOffice (Issue #107)

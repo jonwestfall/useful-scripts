@@ -725,12 +725,20 @@ that it is fine. The relay deliberately logs nothing per request or per message 
 it moves ciphertext for rooms it cannot read, and a record of who connected when
 is one it has no business keeping.
 
-**The app's own files** are sent `no-cache`, so a deploy reaches every open
-page on its next load, but with a validator (an ETag from the file's size and
-time; each release is a new directory) so asking again costs a 304, and
-gzipped for text types: the Marp engine goes from 1.1 MB to about 340 KB, and
-after the first load it is a 304. nginx passes the compressed answer through
-as it is. Library media (`/media/…`) is `private, no-cache` with its own hash
+**The app's own files** are kept by the browser for good, and a deploy still
+reaches every open page on its next load (Issue #340). Each page is sent with
+its asset references rewritten to the release's own address,
+`b/<id>/assets/…`, where the id is a hash of every file under `assets/` (name,
+size and time). Modules import each other by relative path, so a page's whole
+module graph comes from under that address, served
+`private, max-age=31536000, immutable`: a reload asks for none of it. A new
+release, or any edited file, is a new id and so a new set of addresses. An
+address under an older id still gets today's file, sent `no-cache`. The pages
+themselves, and anything asked for by its plain path, are still `no-cache` with
+an ETag, so asking again costs a 304. Text types are gzipped (the Marp engine
+goes from 1.1 MB to about 340 KB), and nginx passes the compressed answer
+through as it is. Pages served from anywhere else (GitHub Pages) are sent as
+they are, unversioned, as before. Library media (`/media/…`) is `private, no-cache` with its own hash
 as the ETag, so access is checked every time it is used.
 
 ### Phase 7 — Guest View codes, kiosks and recaps ✅

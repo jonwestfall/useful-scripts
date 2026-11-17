@@ -313,6 +313,35 @@ async function until(check, { timeout = 5000, interval = 50 } = {}) {
   proc.kill();
 }
 
+// --- the app's own files, by release (Issue #340) -----------------------------
+{
+  const { port, proc } = await startRelay({});
+  const base = `http://127.0.0.1:${port}`;
+  const get = async (route) => {
+    const res = await fetch(`${base}${route}`);
+    return { status: res.status, headers: res.headers, body: await res.text() };
+  };
+  const page = await get('/control.html');
+  const id = /src="b\/([A-Za-z0-9_-]+)\/assets\/js\/control\.js"/.exec(page.body)?.[1];
+  ok(`a page is sent with its assets under the release's address (b/${id}/assets/…)`, !!id && !/(src|href)="assets\//.test(page.body));
+  ok('and the page itself is still asked about every time', page.headers.get('cache-control') === 'no-cache');
+  const current = await get(`/b/${id}/assets/js/util.js`);
+  const plain = await get('/assets/js/util.js');
+  ok('an asset under the current release is kept for good', /immutable/.test(current.headers.get('cache-control') || '') && /max-age=31536000/.test(current.headers.get('cache-control')));
+  ok('and is the same file as under its plain path, which is still no-cache', current.body === plain.body && plain.headers.get('cache-control') === 'no-cache');
+  const old = await get('/b/notthisone1/assets/js/util.js');
+  ok('an older release\'s address gets today\'s file, to be asked about again', old.status === 200 && old.body === plain.body && old.headers.get('cache-control') === 'no-cache');
+  const outside = await get(`/b/${id}/control.html`);
+  ok('only assets are kept for good under a release', outside.headers.get('cache-control') === 'no-cache');
+  const csp = page.headers.get('content-security-policy-report-only') || '';
+  const { createHash } = await import('node:crypto');
+  const inline = [...page.body.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => `'sha256-${createHash('sha256').update(m[1], 'utf8').digest('base64')}'`);
+  ok('the page\'s inline scripts are allowed by the hash of what was sent', inline.every((h) => csp.includes(h)));
+  const etag = page.headers.get('etag') || '';
+  ok('and the page\'s validator names the release', etag.includes(id));
+  proc.kill();
+}
+
 {
   // Nothing listening on this port at all - the same shape of failure as a
   // firewall rule or a proxy that never forwards the WS upgrade.

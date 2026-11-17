@@ -1438,8 +1438,9 @@ await pollUntil(pad, async () => {
   return !!reg?.active;
 }, null, { timeout: 15000 }).catch(() => {});
 const cachedCount = await pad.evaluate(async () => {
-  const cache = await caches.open('podium-shell');
-  return (await cache.keys()).length;
+  // Whatever the worker names its cache (sw.js's CACHE), not a copy of it here.
+  const [name] = await caches.keys();
+  return name ? (await (await caches.open(name)).keys()).length : 0;
 });
 ok(`and an offline shell warmed on the FIRST visit (${cachedCount} files), not the second`, cachedCount > 20);
 
