@@ -38,6 +38,14 @@ and documents at them and puts them on the page (see there for why). When the
 KaTeX version in the bundle changes, copy the new version's `.woff2` files over
 these; the list of names is in `sw.js` and `server/open-paths.js`.
 
+Podium's slide face is vendored in `../assets/vendor/slide-fonts/`: Arimo, which
+has Arial's widths glyph for glyph, as the latin and latin-ext `.woff2` files of
+`@fontsource/arimo` (5.3.0) at 400 and 700, upright and italic, with its licence
+(SIL OFL 1.1). `assets/js/slide-font.js` lays out any slide whose theme starts its
+fonts with Helvetica Neue, Helvetica or Arial in it, so an iPad and a Windows
+projector break every line in the same place (see there for why). The file names
+are in `slide-font.js`, `sw.js` and `server/open-paths.js`.
+
 ## CodeMirror (the deck editor)
 
 `../assets/vendor/codemirror.esm.js` is [CodeMirror 6](https://codemirror.net/) for

@@ -23,6 +23,7 @@ import { loadPdfjs, pdfSource } from './pdfjs.js';
 import { parseStreamSource, streamLabel } from './protocol.js';
 import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
 import { embedMathFonts } from './math-fonts.js';
+import { embedSlideFont } from './slide-font.js';
 import { ASSET_REF } from './deck-source.js';
 import { renderDoc, measureDoc, DOC_WIDTH, DOC_VIEW } from './doc.js';
 import { BLANK_PIXEL } from './assets.js';
@@ -153,9 +154,10 @@ export async function svgToImage(svg, css, width, height) {
   flattenSvgScaling(clone, width, height);
   if (css) {
     const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-    // An SVG image loads nothing from outside itself, so math's fonts come
-    // inside it (math-fonts.js).
-    style.textContent = await embedMathFonts(css, clone.outerHTML);
+    // An SVG image loads nothing from outside itself, so math's fonts and
+    // the slide's own face come inside it (math-fonts.js, slide-font.js).
+    const markup = clone.outerHTML;
+    style.textContent = await embedSlideFont(await embedMathFonts(css, markup), markup);
     clone.insertBefore(style, clone.firstChild);
   }
   const xml = new XMLSerializer().serializeToString(clone);

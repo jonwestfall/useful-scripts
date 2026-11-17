@@ -12,6 +12,7 @@ import { PODIUM_DIRECTIVES, MERMAID_DIRECTIVE, parseDeck, ASSET_REF } from './de
 import { drawDiagrams, DIAGRAM_CSS } from './deck-mermaid.js';
 import { drawQrCodes, QR_CSS } from './deck-qr.js';
 import { MATH_FONT_DIR, installMathFonts } from './math-fonts.js';
+import { sameFontCss, usesSlideFont, installSlideFont } from './slide-font.js';
 
 // What an `asset:` picture this device has not been given is drawn as (Issue
 // #226) - the same blank as assets.js's, rather than an address no browser
@@ -764,7 +765,11 @@ async function parseNow(source, key) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const root = doc.querySelector('.marpit') || doc.body;
   dropUnsafeLinks(root);
-  const combinedCss = `${css}\n${COLUMNS_CSS}\n${MATH_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`;
+  // One typeface on every device (slide-font.js): a theme that starts its
+  // fonts with Helvetica Neue or Arial is laid out in Podium's own Arial-wide
+  // face, so the iPad breaks every line where the projector does.
+  const combinedCss = sameFontCss(`${css}\n${COLUMNS_CSS}\n${MATH_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`);
+  if (usesSlideFont(combinedCss)) installSlideFont();
   // A deck with math puts KaTeX's fonts on the page, where the shadow root
   // it is drawn in can use them (math-fonts.js).
   if (html.includes('class="katex')) installMathFonts(css);
