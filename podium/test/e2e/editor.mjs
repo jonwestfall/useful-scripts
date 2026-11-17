@@ -317,7 +317,8 @@ const slashDrawn = (page, host) => page.waitForFunction((sel) => {
   const glyph = roots.flatMap((r) => [...r.querySelectorAll('.katex span')]).find((s) => s.childElementCount === 0 && s.textContent === '');
   return !!glyph && /KaTeX_Main/.test(getComputedStyle(glyph).fontFamily)
     && [...document.fonts].some((f) => f.family.replace(/['"]/g, '') === 'KaTeX_Main' && f.style === 'normal' && f.weight === '400' && f.status === 'loaded')
-    && (document.querySelector('style[data-podium-math-fonts]')?.textContent || '').includes(`${location.origin}/assets/vendor/katex-fonts/`);
+    && [...(document.querySelector('style[data-podium-math-fonts]')?.textContent || '').matchAll(/url\('([^']+)'\)/g)]
+      .map((m) => m[1]).some((u) => u.startsWith(`${location.origin}/`) && /^\/(?:b\/[\w-]+\/)?assets\/vendor\/katex-fonts\/KaTeX_/.test(new URL(u).pathname));
 }, host, { timeout: 20000 }).then(() => true, () => false);
 await desk.goto(`${base}/deck.html?library=${item.id}`);
 await desk.waitForFunction(() => document.querySelector('#deck-strip')?.shadowRoot?.querySelectorAll('.cell').length === 1, null, { timeout: 20000 });

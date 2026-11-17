@@ -854,8 +854,12 @@ function handleRequest(req, res) {
 
   if (!STATIC) { res.writeHead(404); res.end('not found'); return; }
 
-  const requested = decodedPath(url.pathname);
+  let requested = decodedPath(url.pathname);
   if (requested === null) { badRequest(res); return; }
+  // An asset under a release's own address (see assetVersion): the same
+  // file as without the prefix, and the same gate - only the caching differs.
+  const versioned = VERSIONED_PATH.exec(requested);
+  if (versioned) requested = versioned[2];
   if (!api.gate(req, res, requested, authContext)) return;
   // Themes are two folders merged - the release's and the administrators'
   // own in the data directory (see content.js) - not one on disk.
@@ -870,9 +874,79 @@ function handleRequest(req, res) {
     const file = !err && stat.isDirectory() ? path.join(resolved, 'index.html') : resolved;
     fs.stat(file, (statErr, info) => {
       if (statErr || !info.isFile()) { res.writeHead(404); res.end('not found'); return; }
-      serveStatic(req, res, file, info);
+      // Kept for a year only under the release it was asked for, and only
+      // the app's own assets: a page from an older release asking under its
+      // old address still gets today's file, but is told to ask again.
+      const immutable = !!versioned && versioned[1] === assetVersion() && requested.startsWith('/assets/');
+      serveStatic(req, res, file, info, { immutable });
     });
   });
+}
+
+// --- the app's own files, by release (Issue #340) ----------------------------
+//
+// A page is about sixty ES modules, and every one used to be served no-cache:
+// a deploy has to reach every open page on its next load, and that is how it
+// did. The price was a request per module on every load - a 304 is small, but
+// it is still a round trip, and sixty of them from an iPad on campus Wi-Fi is
+// a noticeable wait as a lecture starts.
+//
+// Now each page is sent with its own references rewritten to an address that
+// names the release: src="assets/js/control.js" goes out as
+// src="b/<id>/assets/js/control.js". Every module imports the next by a
+// relative path, so the whole graph comes from under the same /b/<id>/ - and
+// what is asked for under the current id is the current file, kept by the
+// browser for a year (immutable) and never asked about again. A new release is
+// a new id, so a new set of addresses: the deploy still reaches every page on
+// its next load, which is the only thing no-cache was ever for.
+//
+// The id is a hash of every asset's name, size and time, so ANY change to one -
+// a release, or an edit in a working tree - is a new id. It is worked out at
+// most every couple of seconds, on a page load.
+//
+// Only pages this process serves are rewritten. GitHub Pages and any other
+// static host serve the files as they are, exactly as before.
+const VERSIONED_PATH = /^\/b\/([A-Za-z0-9_-]{1,32})(\/.*)$/;
+const ASSET_VERSION_TTL_MS = 2000;
+let assetVersionMemo = { at: 0, id: '' };
+
+function assetVersion() {
+  if (!STATIC) return '';
+  const now = Date.now();
+  if (assetVersionMemo.id && now - assetVersionMemo.at < ASSET_VERSION_TTL_MS) return assetVersionMemo.id;
+  const hash = crypto.createHash('sha256');
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile()) {
+        const info = fs.statSync(full);
+        hash.update(`${path.relative(STATIC, full)}\0${info.size}\0${Math.floor(info.mtimeMs)}\n`);
+      }
+    }
+  };
+  try { walk(path.join(STATIC, 'assets')); } catch { /* no assets folder: nothing to version */ }
+  assetVersionMemo = { at: now, id: hash.digest('base64url').slice(0, 12) };
+  return assetVersionMemo.id;
+}
+
+/** A page as it is sent: its own asset references under this release's address. */
+function versionedPage(html, id) {
+  return id ? html.replace(/(\s(?:src|href)=")(?:\.\/)?assets\//g, `$1b/${id}/assets/`) : html;
+}
+
+const MAX_PAGES_KEPT = 64;
+const pagesKept = new Map();   // file + etag -> { body, gzipped }
+
+/** The page's bytes as sent, and gzipped, for this release. */
+function pageBody(file, etag, id) {
+  const key = `${file}\n${etag}`;
+  if (pagesKept.has(key)) return pagesKept.get(key);
+  const body = Buffer.from(versionedPage(fs.readFileSync(file, 'utf8'), id), 'utf8');
+  const kept = { body, gzipped: zlib.gzipSync(body, { level: 6 }) };
+  if (pagesKept.size >= MAX_PAGES_KEPT) pagesKept.delete(pagesKept.keys().next().value);
+  pagesKept.set(key, kept);
+  return kept;
 }
 
 // --- the app's own files ----------------------------------------------------------
@@ -937,12 +1011,14 @@ const AUDIENCE_PAGES = new Set(['join.html', 'attend.html', 'view.html']);
 const MAX_HASHED_PAGES = 64;
 const inlineScriptHashes = new Map();   // file + etag -> "'sha256-…' …"
 
-function scriptHashesOf(file, etag) {
+function scriptHashesOf(file, etag, served = null) {
   const id = `${file}\n${etag}`;
   if (inlineScriptHashes.has(id)) return inlineScriptHashes.get(id);
   let hashes = '';
   try {
-    const html = fs.readFileSync(file, 'utf8');
+    // Hashed as sent, which for a page this process rewrites (versionedPage)
+    // is not quite the file on disk.
+    const html = served ?? fs.readFileSync(file, 'utf8');
     hashes = [...html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
       .filter(([, attrs = '']) => !/\ssrc\s*=/i.test(attrs))
       .map(([, , body]) => `'sha256-${crypto.createHash('sha256').update(body, 'utf8').digest('base64')}'`)
@@ -953,10 +1029,10 @@ function scriptHashesOf(file, etag) {
   return hashes;
 }
 
-function contentSecurityPolicy(file, etag, audience) {
+function contentSecurityPolicy(file, etag, audience, served = null) {
   return [
     "default-src 'self'",
-    `script-src 'self'${(() => { const h = scriptHashesOf(file, etag); return h ? ` ${h}` : ''; })()}`,
+    `script-src 'self'${(() => { const h = scriptHashesOf(file, etag, served); return h ? ` ${h}` : ''; })()}`,
     // A slide theme may @import web fonts from anywhere (Bunny, Google).
     "style-src * 'unsafe-inline' data: blob:",
     'img-src * data: blob:',
@@ -974,13 +1050,13 @@ function contentSecurityPolicy(file, etag, audience) {
   ].join('; ');
 }
 
-function securityHeaders(req, file, etag) {
+function securityHeaders(req, file, etag, served = null) {
   const headers = { 'x-content-type-options': 'nosniff' };
   if (api.isSecureRequest(req)) headers['strict-transport-security'] = 'max-age=15552000';
   if (path.extname(file).toLowerCase() === '.html') {
     const audience = AUDIENCE_PAGES.has(path.basename(file));
     if (!audience) headers['x-frame-options'] = 'SAMEORIGIN';
-    headers['content-security-policy-report-only'] = contentSecurityPolicy(file, etag, audience);
+    headers['content-security-policy-report-only'] = contentSecurityPolicy(file, etag, audience, served);
   }
   return headers;
 }
@@ -1008,28 +1084,49 @@ async function handleCspReport(req, res) {
   }
 }
 
-function serveStatic(req, res, file, info) {
-  const etag = `W/"${info.size.toString(36)}-${Math.floor(info.mtimeMs).toString(36)}"`;
+function serveStatic(req, res, file, info, { immutable = false } = {}) {
+  const isPage = path.extname(file).toLowerCase() === '.html';
+  // A page names the release its assets come from, so its validator does too.
+  const release = isPage ? assetVersion() : '';
+  const etag = `W/"${info.size.toString(36)}-${Math.floor(info.mtimeMs).toString(36)}${release ? `-${release}` : ''}"`;
   const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
   const compress = COMPRESSIBLE.test(type) && info.size > 1024;
-  const vary = { ...(compress ? { vary: 'accept-encoding' } : {}), ...securityHeaders(req, file, etag) };
+  const cacheControl = immutable ? 'private, max-age=31536000, immutable' : 'no-cache';
+  let page = null;
+  if (isPage) {
+    try { page = pageBody(file, etag, release); } catch { page = null; }
+  }
+  const vary = {
+    ...(compress ? { vary: 'accept-encoding' } : {}),
+    ...securityHeaders(req, file, etag, page ? page.body.toString('utf8') : null),
+  };
   const asked = String(req.headers['if-none-match'] || '').split(',').map((tag) => tag.trim());
   if (asked.includes(etag) || asked.includes('*')) {
-    res.writeHead(304, { etag, 'cache-control': 'no-cache', ...vary });
+    res.writeHead(304, { etag, 'cache-control': cacheControl, ...vary });
     res.end();
     return;
   }
+  if (page) {
+    const gzip = !req.headers.range && /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+    const body = gzip ? page.gzipped : page.body;
+    res.writeHead(200, {
+      'content-type': type, 'content-length': body.length, 'cache-control': cacheControl, etag,
+      ...(gzip ? { 'content-encoding': 'gzip' } : {}), vary: 'accept-encoding', ...vary,
+    });
+    res.end(req.method === 'HEAD' ? undefined : body);
+    return;
+  }
   if (!compress || req.headers.range || !/\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
-    serve(req, res, file, info.size, { etag, ...vary });
+    serve(req, res, file, info.size, { etag, 'cache-control': cacheControl, ...vary });
     return;
   }
   gzipOf(file, etag).then((body) => {
     res.writeHead(200, {
       'content-type': type, 'content-encoding': 'gzip', 'content-length': body.length,
-      'cache-control': 'no-cache', etag, ...vary,
+      'cache-control': cacheControl, etag, ...vary,
     });
     res.end(req.method === 'HEAD' ? undefined : body);
-  }, () => serve(req, res, file, info.size, { etag, ...vary }));
+  }, () => serve(req, res, file, info.size, { etag, 'cache-control': cacheControl, ...vary }));
 }
 
 /**

@@ -60,11 +60,14 @@ ok('without, they are left out rather than carried for nothing', mathFontFaces(p
 ok('a stylesheet with no faces is as it was', await embedMathFonts('section{color:red}', html) === 'section{color:red}');
 
 console.log('\n-- every place a slide is shown from has them --');
-const sandbox = { self: { addEventListener() {} }, globalThis: {} };
-vm.runInNewContext(`${fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8')}\nglobalThis.__WARM = WARM;`, sandbox);
-const warm = new Set(sandbox.globalThis.__WARM);
-const notWarm = vendored.filter((f) => !warm.has(`assets/vendor/katex-fonts/${f}`));
-ok(`offline: the service worker keeps them all${notWarm.length ? ` - missing ${notWarm.join(', ')}` : ''}`, !notWarm.length);
+// Offline, they are kept as they are used rather than downloaded by every
+// device on its first visit (Issue #342): the worker files any font it
+// fetches, so a deck with math that has been shown once draws offline after.
+const sandbox = { self: { addEventListener() {}, location: { href: 'https://podium.test/sw.js' } }, globalThis: {} };
+vm.runInNewContext(`${fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8')}\nglobalThis.__WARM = WARM; globalThis.__SHELL = SHELL;`, sandbox);
+const unkept = vendored.filter((f) => !sandbox.globalThis.__SHELL.test(`/assets/vendor/katex-fonts/${f}`));
+ok(`offline: the service worker keeps each one once it is used${unkept.length ? ` - not: ${unkept.join(', ')}` : ''}`, !unkept.length);
+ok('without downloading them all on a first visit', !vendored.some((f) => new Set(sandbox.globalThis.__WARM).has(`assets/vendor/katex-fonts/${f}`)));
 const { KIOSK_OPEN_PATHS, VIEW_OPEN_PATHS } = require('../server/open-paths.js');
 const shut = vendored.filter((f) => !KIOSK_OPEN_PATHS.has(`/assets/vendor/katex-fonts/${f}`) || !VIEW_OPEN_PATHS.has(`/assets/vendor/katex-fonts/${f}`));
 ok(`a kiosk and a Guest View viewer may load them all${shut.length ? ` - not: ${shut.join(', ')}` : ''}`, !shut.length);
