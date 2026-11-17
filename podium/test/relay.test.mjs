@@ -7,7 +7,7 @@
 //   node podium/test/relay.test.mjs
 
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:net';
+import { createServer, connect as connectTcp } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -243,6 +243,39 @@ async function until(check, { timeout = 5000, interval = 50 } = {}) {
   ok('a client that does not take gzip gets the file as it is', plain.status === 200 && !plain.headers['content-encoding'] && plain.body.equals(onDisk));
   const part = await ask({ 'accept-encoding': 'gzip', range: 'bytes=0-9' });
   ok('and a range is the file\'s own bytes', part.status === 206 && !part.headers['content-encoding'] && part.body.equals(onDisk.subarray(0, 10)));
+  proc.kill();
+}
+
+// --- a request line nobody could parse: answered, never fatal --------------
+//
+// `GET //` is not a URL at all and `GET /%FF` will not decode. Each used to
+// throw out of the request (or upgrade) handler and end the process, rooms
+// and open polls with it. Sent over a raw socket, because every HTTP client
+// worth the name tidies such a path up before sending it.
+{
+  const { port, proc } = await startRelay({});
+  let exited = false;
+  proc.on('exit', () => { exited = true; });
+  const raw = (lines) => new Promise((resolve) => {
+    const sock = connectTcp(port, '127.0.0.1');
+    let got = '';
+    sock.on('data', (d) => { got += d; });
+    sock.on('close', () => resolve(got));
+    sock.on('error', () => resolve(got));
+    sock.on('connect', () => sock.write(`${lines.join('\r\n')}\r\n\r\n`));
+    setTimeout(() => sock.destroy(), 2000);
+  });
+  const status = (reply) => Number(/^HTTP\/1\.1 (\d{3})/.exec(reply)?.[1] || 0);
+  for (const target of ['//', '/%FF', '/%E0%A4%A', '/media/%FF', '/%FF/x.html']) {
+    const reply = await raw([`GET ${target} HTTP/1.1`, 'Host: x', 'Connection: close']);
+    ok(`GET ${target} is answered (${status(reply) || 'no answer'}), not fatal`, status(reply) >= 400 && status(reply) < 500);
+  }
+  for (const target of ['//', '/%FF?room=x']) {
+    await raw([`GET ${target} HTTP/1.1`, 'Host: x', 'Connection: Upgrade', 'Upgrade: websocket',
+      'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==']);
+  }
+  const health = await raw(['GET /healthz HTTP/1.1', 'Host: x', 'Connection: close']);
+  ok('and the relay is still up after all of them, upgrades included', !exited && status(health) === 200);
   proc.kill();
 }
 
