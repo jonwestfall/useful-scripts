@@ -390,6 +390,40 @@ await display.waitForFunction(() => {
 shown = await onScreen();
 ok(`an uploaded deck reaches the projector over the bus ("${shown.heading}")`, shown.total === 13);
 
+// Safari and Chrome share a table's width out between its columns by their
+// own rules: the iPad gave a label column 20% where the projector gave it
+// 24.5%, the labels wrapped on the iPad only, and ink drawn below the table
+// there landed off on the wall. Podium fixes the columns into the deck.
+const tableColumns = (page, sel) => page.evaluate((s) => {
+  const root = document.querySelector(s)?.shadowRoot;
+  return [...(root?.querySelectorAll('table') || [])].map((t) => ({
+    layout: getComputedStyle(t).tableLayout,
+    shares: [...t.querySelectorAll(':scope > colgroup[data-podium-columns] > col')].map((c) => c.style.width),
+  }));
+}, sel);
+const wallTables = await tableColumns(display, '.layer[data-role="program"] .r-deck');
+const padTables = await tableColumns(control, '#deck-grid');
+ok(`the deck's table is laid out in fixed columns Podium chose (${wallTables[0]?.shares.join(' / ')})`,
+  wallTables.length > 0 && wallTables.every((t) => t.layout === 'fixed' && t.shares.length >= 2));
+ok('the same columns on the controller as on the projector', wallTables.length > 0 && JSON.stringify(padTables) === JSON.stringify(wallTables));
+// And they are the columns Chrome gave it by itself, so the projector shows
+// the table it always did: the same table, columns left to the browser.
+// (Measured in the controller's slide strip, where every slide is drawn.)
+ok('and they are the columns the browser would have chosen itself', await control.evaluate(() => {
+  const root = document.querySelector('#deck-grid').shadowRoot;
+  const tables = [...root.querySelectorAll('table')];
+  return tables.length > 0 && tables.every((table) => {
+    const free = table.cloneNode(true);
+    free.querySelector(':scope > colgroup[data-podium-columns]').remove();
+    free.style.tableLayout = '';
+    table.after(free);
+    const widths = (t) => [...t.rows[0].cells].map((c) => c.getBoundingClientRect().width);
+    const [a, b] = [widths(table), widths(free)];
+    free.remove();
+    return a.length === b.length && a.every((w) => w > 0) && a.every((w, i) => Math.abs(w - b[i]) < 0.5);
+  });
+}));
+
 // A slide with more on it than a 1280x720 box holds used to lose its last
 // bullets off the bottom edge, silently. Slide 9 of this deck is one of those.
 await control.click('.tab[data-tab="slides"]');
