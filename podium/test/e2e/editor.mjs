@@ -956,7 +956,6 @@ ok(`"Download as a PDF" makes one page a slide (${pages} pages for ${slideCount}
 // (1280 wide on a 1920 page, the rest blank) and left the pictures out, so
 // the SVG's own scaling is taken out before it is drawn (flattenSvgScaling).
 const picture = /\/media\/[0-9a-f]{64}\/green\.png/.exec(reopened)?.[0];
-await desk.addScriptTag({ url: '/assets/vendor/pdf.min.js' });
 const filled = await desk.evaluate(async (picture) => {
   const { render } = await import('/assets/js/deck.js');
   const { exportPdf } = await import('/assets/js/deck-export.js');
