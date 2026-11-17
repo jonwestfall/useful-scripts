@@ -18,7 +18,7 @@
 //                        drifted. Never part of `state`: the room's own seek
 //                        is seekTo/seekNonce, and a viewer must not fake one.
 
-import { el, miniMarkdown, fmtTime } from './util.js';
+import { el, miniMarkdown, fmtTime, pdfSource } from './util.js';
 import { parseStreamSource, streamLabel } from './protocol.js';
 import { render as renderDeckSource, applyPolyfill, applyFits, cssForStandaloneSlide, FRAGMENT_CSS } from './deck.js';
 import { embedMathFonts } from './math-fonts.js';
@@ -1013,7 +1013,7 @@ function renderPdf(item) {
       cancelRender();
       releaseDoc();
       docSrc = src;
-      loadingTask = window.pdfjsLib.getDocument(src);
+      loadingTask = window.pdfjsLib.getDocument(pdfSource(src));
     }
     const task = loadingTask;
     // Destroyed, or switched to another file, while this render was waiting:

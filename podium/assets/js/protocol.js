@@ -25,7 +25,7 @@
 import { ZOOM_MAX } from './zoom.js';
 import { normalizeLook } from './poll-look.js';
 
-export const BUILD = 167;
+export const BUILD = 169;
 
 // The release this is, as a person would say it out loud - what goes in a bug
 // report, what an administrator answers when asked what they are running.
@@ -41,7 +41,7 @@ export const BUILD = 167;
 // SERVED_BUILD in podium-server.js) - a second file to hold a version string
 // is a second file to forget to bump.
 export const VERSION = '1.3';
-export const COMMIT = '43e4f4b';
+export const COMMIT = 'cd8b2a6';
 
 export function versionStamp() {
   return `v${VERSION} · build ${BUILD}${COMMIT ? ` · ${COMMIT}` : ''}`;
@@ -677,9 +677,16 @@ function viewerPoll(item) {
     safe.answers = [];
     safe.correct = -1;
   }
-  // Who upvoted a question is not on the screen - only how many did.
+  // A Q&A feed as the projector shows it: the questions not hidden, each
+  // with how many upvoted it - never who, never the asker's device id, and
+  // the asker's name only while the presenter is showing names. Written as
+  // an allow-list for the same reason VIEWER_KEYS is.
   if (Array.isArray(item.qnaFeed)) {
-    safe.qnaFeed = item.qnaFeed.map((q) => ({ ...q, upvotes: Array.from({ length: q.upvotes?.length || 0 }, () => '') }));
+    safe.qnaFeed = item.qnaFeed.filter((q) => q && !q.hidden).map((q) => ({
+      id: q.id, text: q.text, answered: !!q.answered, projected: !!q.projected,
+      upvotes: Array.from({ length: q.upvotes?.length || 0 }, () => ''),
+      ...(item.showNames && q.authorName ? { authorName: q.authorName } : {}),
+    }));
   }
   return safe;
 }

@@ -1117,8 +1117,9 @@ function grid(db, user, code, { from, to, tz = 0, now = Date.now() } = {}) {
   return { course: course.code, courseTitle: course.title || '', sessions: columns, rows };
 }
 
-const csvField = (v) => (/[",\n\r]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? ''));
-const csvLine = (fields) => fields.map(csvField).join(',');
+// Neutralised as well as quoted: names, answers and parking-lot questions
+// here are typed by students (see csv.js).
+const { csvLine } = require('./csv.js');
 
 function cleanPoints(raw, fallback) {
   if (raw === undefined || raw === null || raw === '') return fallback;

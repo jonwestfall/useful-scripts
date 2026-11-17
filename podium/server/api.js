@@ -43,6 +43,8 @@ const zipStaging = require('./zip-staging.js');
 const doctor = require('./doctor.js');
 const backup = require('./backup.js');
 const space = require('./space.js');
+// The audit log's user agents and usernames are whatever a stranger sent.
+const { csvField } = require('./csv.js');
 
 const COOKIE = 'podium_session';
 const KIOSK_COOKIE = 'podium_kiosk';
@@ -1189,7 +1191,7 @@ async function handleApi(req, res, url, ctx) {
           row.ip_address || '',
           row.user_agent || '',
           row.details || ''
-        ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(',') + '\n';
+        ].map(csvField).join(',') + '\n';
       }
       res.writeHead(200, {
         'content-type': 'text/csv; charset=utf-8',

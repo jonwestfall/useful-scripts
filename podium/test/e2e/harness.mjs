@@ -285,6 +285,13 @@ const { chromium, devices } = await loadPlaywright();
 writeFixture();
 writeShortFixture();
 
+// Every relay a group starts is handed process.env, and every one sees the
+// whole suite's classrooms arrive from one address, 127.0.0.1 - not all of
+// whose polls a section ends. The relay's per-address cap on polls opened
+// without an account is about strangers, not this; poll-privacy.test.mjs
+// tests the cap itself.
+process.env.MAX_ANON_POLLS_PER_IP ??= '1000';
+
 const PORT = await freePort();
 const BASE = `http://127.0.0.1:${PORT}`;
 const server = spawn(process.execPath, ['podium-server.js'], {
