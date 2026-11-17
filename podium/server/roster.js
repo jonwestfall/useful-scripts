@@ -151,7 +151,7 @@ function parseCsv(text) {
   }
   row.push(field);
   if (row.some((f) => f.trim())) rows.push(row);
-  return rows;
+  return rows.map((r) => r.map(unguard));
 }
 
 const norm = (h) => String(h || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -300,7 +300,9 @@ function applyImport(db, user, code, text, { replace = false, now = Date.now() }
   return { added: result.add.length, changed: result.change.length, unchanged: result.unchanged, removed: result.remove.length, problems: result.problems };
 }
 
-const csvField = (v) => (/[",\n\r]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+// Neutralised against spreadsheet formulas (csv.js); readRoster takes the
+// guard back off, so an export imports again as it was.
+const { csvField, unguard } = require('./csv.js');
 
 /** The roster as CSV, in the same three columns the import reads. */
 function exportCsv(db, user, code) {

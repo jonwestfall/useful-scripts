@@ -4,7 +4,7 @@
 // what it is talking to and shows one of two things: the library, or an
 // explanation that there is nothing to manage. No half-working middle state.
 
-import { $, el } from './util.js';
+import { $, el, csvCell } from './util.js';
 import { serverInfo, mountSessionBadge } from './server.js';
 import { createZip } from './zip.js';
 import { createPdf, renderSessionPageToJpeg, renderPollPageToJpeg, loadImage } from './pdf-writer.js';
@@ -232,7 +232,7 @@ const download = (name, text, type) => {
 };
 
 const csvText = (rows) =>
-  rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+  rows.map((row) => row.map(csvCell).join(',')).join('\n');
 
 // Deliberately the same columns as the controller's own poll export (see
 // pollResultRows in control.js): a CSV pulled out of here weeks later and one

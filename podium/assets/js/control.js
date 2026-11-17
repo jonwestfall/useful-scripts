@@ -2,7 +2,7 @@
 // connected at once and stay in step, because neither holds any state - they
 // send commands and render whatever the display echoes back.
 
-import { $, $$, el, uid, fmtTime, setText, setAttr, setHidden, guessItemFromUrl, isNotebookLink, NOTEBOOK_ADVICE, throttle, wireDangerButton, wireRevealButtons, servedBuild, createRelayLog, installOfflineShell, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
+import { $, $$, el, uid, fmtTime, setText, setAttr, setHidden, guessItemFromUrl, isNotebookLink, NOTEBOOK_ADVICE, throttle, wireDangerButton, wireRevealButtons, servedBuild, createRelayLog, installOfflineShell, csvCell, pdfSource, onLongPress, miniMarkdown, safeStorageSet, reportStorageFailure } from './util.js';
 import { loadConfig, saveConfig, isConfigured, relayTarget, resetDevice, reloadClean, DEFAULTS, pollJoinUrl, pollBaseUrl } from './config.js';
 import { createBus } from './bus.js';
 import { initialState, applyCommand, timerRemaining, timerById, timerDuration, LAYOUTS, MAX_TIMERS, focusedItem, workingItem, PANEL_COUNT, panelOnScreen, deckStep,
@@ -824,7 +824,7 @@ const thumbnails = createThumbnailer(async (item) => {
     if (!window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'assets/vendor/pdf.worker.min.js';
     }
-    const doc = await window.pdfjsLib.getDocument(item.src).promise;
+    const doc = await window.pdfjsLib.getDocument(pdfSource(item.src)).promise;
     try {
       const page = await doc.getPage(1);
       const base = page.getViewport({ scale: 1 });
@@ -3839,7 +3839,7 @@ function pollResultRows(item) {
 }
 
 function csvText(rows) {
-  return rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+  return rows.map((row) => row.map(csvCell).join(',')).join('\n');
 }
 
 function exportPollCsv() {
