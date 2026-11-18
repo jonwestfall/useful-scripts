@@ -255,7 +255,8 @@ request automatically — subresources, manifests, icons, service-worker fetches
 
 - `POST /api/login` with a username and password sets `podium_session`:
   `HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` whenever the request arrived
-  over https (trusting `X-Forwarded-Proto` from the local proxy).
+  over https (trusting `X-Forwarded-Proto` from the local proxy only; see
+  *Behind a proxy* below).
 - A page request without a valid session **redirects** to
   `login.html?next=…` — a real page, not a browser prompt. `next` is validated
   as a same-origin relative path, or it is ignored.
@@ -932,6 +933,29 @@ server's log says so the first time a page is opened. Use a browser your
 system's AppArmor profiles cover (Google's package, on Ubuntu), allow
 unprivileged user namespaces, or (knowing what it costs) set
 `BROWSER_SANDBOX=off`.
+
+## Behind a proxy
+
+Behind nginx, every connection comes from 127.0.0.1, so the server learns who
+the client really is from the proxy's `X-Forwarded-For` (the address that
+every per-address limit counts: the login throttle, attendance's wrong-code
+limits, the viewer-code throttle, the WebSocket upgrade throttle, the
+anonymous poll cap, and the audit log) and whether it came over https from
+`X-Forwarded-Proto` (the `Secure` cookie, HSTS).
+
+A client that reaches the server directly can send those headers itself, a
+new address on every request. So they are believed only from a trusted
+proxy, set by `TRUST_PROXY` in `podium.env`:
+
+| `TRUST_PROXY` | Believed from |
+| :--- | :--- |
+| unset (default) | loopback only (`127.0.0.0/8`, `::1`): the nginx `install.sh` puts on this box. |
+| `10.0.0.5, 10.1.0.0/16, fd00::/8` | exactly those addresses and ranges (loopback is not added: list it too if a local proxy also connects). |
+| `off` | nobody: every client is its own socket's address. |
+
+From anyone else the socket's own address is the client, and the request is
+https only if it arrived over TLS itself. An entry that is not an address or
+CIDR is ignored, with a line in the log saying so.
 
 ## Installation
 

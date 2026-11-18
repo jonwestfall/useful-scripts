@@ -21,6 +21,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Readable } = require('node:stream');
+const net = require('node:net');
 
 const accounts = require('./accounts.js');
 const courses = require('./courses.js');
@@ -107,11 +108,68 @@ function parseCookies(header) {
   return out;
 }
 
-// X-Forwarded-Proto comes from the reverse proxy on this same box (see the
-// nginx template in deploy/). Trusting it is what lets the cookie be marked
-// Secure in production while still working over plain http on localhost.
+// --- Which peers may say who the client is (Issue #338) ---------------------
+//
+// X-Forwarded-For and X-Forwarded-Proto are only as true as whoever sent them.
+// The reverse proxy on this same box (the nginx template in deploy/) sets them
+// honestly; a client that reaches the server directly - a laptop on classroom
+// Wi-Fi, a deployment without the template - can set them to anything, and a
+// new address on every request undoes every per-address limit there is: the
+// login throttle, attendance's wrong-code limits, the viewer-code throttle,
+// the WebSocket upgrade throttle, the anonymous poll cap, and the address the
+// audit log records. So they are believed only from a trusted proxy: loopback
+// by default, which is where install.sh puts nginx; TRUST_PROXY lists others
+// (addresses or CIDRs, comma-separated), and TRUST_PROXY=off believes nobody.
+
+const LOOPBACK = '127.0.0.0/8, ::1';
+let trustMemo = { spec: null, list: null };
+
+/** A BlockList of the peers TRUST_PROXY names (null for none), and what it could not read. */
+function parseTrustProxy(spec) {
+  const text = String(spec ?? '').trim();
+  if (/^(off|none|false|0)$/i.test(text)) return { list: null, bad: [] };
+  const list = new net.BlockList();
+  const bad = [];
+  for (const raw of (text || LOOPBACK).split(',').map((part) => part.trim()).filter(Boolean)) {
+    const [addr, bits, extra] = raw.split('/');
+    const family = net.isIPv4(addr) ? 'ipv4' : net.isIPv6(addr) ? 'ipv6' : null;
+    const prefix = bits === undefined ? null : Number(bits);
+    const max = family === 'ipv4' ? 32 : 128;
+    if (!family || extra !== undefined || (prefix !== null && !(Number.isInteger(prefix) && prefix >= 0 && prefix <= max))) { bad.push(raw); continue; }
+    if (prefix === null) list.addAddress(addr, family);
+    else list.addSubnet(addr, prefix, family);
+  }
+  return { list, bad };
+}
+
+function trustList() {
+  const spec = process.env.TRUST_PROXY ?? '';
+  if (trustMemo.spec !== spec) {
+    const { list, bad } = parseTrustProxy(spec);
+    if (bad.length) console.warn(`podium: TRUST_PROXY: not an address or CIDR, ignored: ${bad.join(', ')}`);
+    trustMemo = { spec, list };
+  }
+  return trustMemo.list;
+}
+
+/** Whether the peer on this socket is a proxy whose forwarded headers are believed. */
+function fromTrustedProxy(req) {
+  const list = trustList();
+  let addr = String(req?.socket?.remoteAddress || '');
+  if (!list || !addr) return false;
+  // An IPv4 client on a dual-stack socket arrives as ::ffff:a.b.c.d.
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(addr);
+  if (mapped) addr = mapped[1];
+  const family = net.isIPv4(addr) ? 'ipv4' : net.isIPv6(addr) ? 'ipv6' : null;
+  return !!family && list.check(addr, family);
+}
+
+// Over https itself, or through the trusted proxy in front saying the browser
+// used https. It is what lets the cookie be marked Secure (and HSTS be sent)
+// in production while still working over plain http on localhost.
 const isSecureRequest = (req) =>
-  !!req.socket?.encrypted || String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  !!req.socket?.encrypted
+  || (fromTrustedProxy(req) && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https');
 
 const setCookie = (req, value, maxAgeSeconds, name = COOKIE, httpOnly = true) => [
   `${name}=${encodeURIComponent(value)}`,
@@ -1796,7 +1854,8 @@ async function receiveLectureFile(req, url, ctx, user, lectureId) {
 /**
  * Behind nginx every connection comes from 127.0.0.1, so the forwarded header
  * is the only thing that distinguishes one attacker from another for the
- * purposes of throttling.
+ * purposes of throttling. It is believed only from a trusted proxy (see
+ * fromTrustedProxy); from anyone else, the socket's own address is the client.
  *
  * The LAST entry, not the first. `proxy_set_header X-Forwarded-For
  * $proxy_add_x_forwarded_for` APPENDS the address nginx actually saw to
@@ -1811,6 +1870,7 @@ async function receiveLectureFile(req, url, ctx, user, lectureId) {
  * proxy and this wants to count back one more.
  */
 function clientIp(req) {
+  if (!fromTrustedProxy(req)) return req.socket?.remoteAddress || '';
   const chain = String(req.headers['x-forwarded-for'] || '')
     .split(',').map((part) => part.trim()).filter(Boolean);
   return chain.length ? chain[chain.length - 1] : (req.socket?.remoteAddress || '');
@@ -1872,5 +1932,5 @@ function gate(req, res, pathname, ctx) {
 }
 
 module.exports = {
-  handleApi, gate, readJson, json, parseCookies, setCookie, safeNext, cookieToken, kioskCookieToken, clientIp, isSecureRequest, COOKIE, API_VERSION,
+  handleApi, gate, readJson, json, parseCookies, setCookie, safeNext, cookieToken, kioskCookieToken, clientIp, isSecureRequest, parseTrustProxy, COOKIE, API_VERSION,
 };
