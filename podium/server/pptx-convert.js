@@ -70,6 +70,104 @@ class ConversionError extends Error {
   }
 }
 
+// --- How many run at once (Issue #337) -------------------------------------
+//
+// LibreOffice takes hundreds of MB and a CPU core per conversion, and any
+// signed-in account can start one with an upload. Unlimited, one account (or
+// a script holding one session cookie) could start dozens at once and stall
+// the whole server mid-lecture - relay, polls and attendance included. So at
+// most CONVERT_CONCURRENCY run at a time (2), up to CONVERT_QUEUE more wait
+// their turn (6), and one account has at most CONVERT_PER_ACCOUNT under way,
+// running or waiting (2). Past any of those, or after waiting a minute
+// without starting (an upload request does not stay open much longer than
+// that behind the proxy), the answer says to try again shortly.
+
+const envCount = (name, fallback, min) => {
+  const n = Number(process.env[name]);
+  return Number.isInteger(n) && n >= min ? n : fallback;
+};
+const limits = () => ({
+  concurrency: envCount('CONVERT_CONCURRENCY', 2, 1),
+  queue: envCount('CONVERT_QUEUE', 6, 0),
+  perAccount: envCount('CONVERT_PER_ACCOUNT', 2, 1),
+  waitMs: envCount('CONVERT_WAIT_MS', 60000, 0),
+});
+
+let running = 0;
+const waiting = [];        // { start, timer }, oldest first
+const underWay = new Map(); // owner -> conversions running or waiting
+
+const BUSY = 'The server is busy converting other files right now. Try again in a minute.';
+
+/**
+ * Wait for a turn; resolves with the function that gives it back. `patient`
+ * is for work no request is standing open for (a ZIP import's files, one at a
+ * time): it waits however long it takes, past a full queue, rather than
+ * failing an item of an import because someone else was converting.
+ */
+async function takeTurn(owner, patient = false) {
+  const { concurrency, queue, perAccount } = limits();
+  const waitMs = patient ? null : limits().waitMs;
+  const key = owner === undefined || owner === null || owner === '' ? null : String(owner);
+  if (key !== null && (underWay.get(key) || 0) >= perAccount) {
+    throw new ConversionError(
+      `You already have ${perAccount === 1 ? 'a file' : `${perAccount} files`} converting. Wait for ${perAccount === 1 ? 'it' : 'them'} to finish, then try this one.`, 429,
+    );
+  }
+  if (!patient && running >= concurrency && waiting.length >= queue) throw new ConversionError(BUSY, 503);
+  if (key !== null) underWay.set(key, (underWay.get(key) || 0) + 1);
+  const forget = () => {
+    if (key === null) return;
+    const left = (underWay.get(key) || 1) - 1;
+    if (left > 0) underWay.set(key, left); else underWay.delete(key);
+  };
+  let done = false;
+  const giveBack = () => {
+    if (done) return;
+    done = true;
+    forget();
+    const next = waiting.shift();
+    if (next) { clearTimeout(next.timer); next.start(); } else running -= 1;
+  };
+  if (running < concurrency) {
+    running += 1;
+    return giveBack;
+  }
+  await new Promise((resolve, reject) => {
+    const entry = {
+      // A turn handed on keeps `running` as it was: one finished, one starts.
+      start: resolve,
+      timer: waitMs === null ? null : setTimeout(() => {
+        const at = waiting.indexOf(entry);
+        if (at >= 0) waiting.splice(at, 1);
+        forget();
+        reject(new ConversionError(BUSY, 503));
+      }, waitMs),
+    };
+    waiting.push(entry);
+  });
+  return giveBack;
+}
+
+/** How many conversions are running and waiting right now (for tests and the doctor). */
+function convertLoad() {
+  return { running, waiting: waiting.length };
+}
+
+// A private profile for each conversion (see convert) is also where its
+// settings live, so each one starts with active content off: no macros, no
+// embedded OLE objects or DDE links, and no links fetched from outside the
+// document - an uploaded file is someone else's, and converting it should
+// never run it or make the server reach out on its behalf.
+const LOCKED_PROFILE = `<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableActiveContent" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop></item>
+</oor:items>
+`;
+
 /**
  * Turn a PowerPoint file's bytes into a PDF's bytes. Runs synchronously as
  * part of the request that uploaded it - the lightest processing model here,
@@ -81,8 +179,8 @@ class ConversionError extends Error {
  * profile is a documented way to deadlock them both on the same lock file,
  * and `--headless` alone does not prevent that.
  */
-async function convertToPdf(buffer, ext) {
-  return convert(buffer, ext, 'pdf');
+async function convertToPdf(buffer, ext, { owner, patient = false } = {}) {
+  return convert(buffer, ext, 'pdf', owner, patient);
 }
 
 /**
@@ -90,21 +188,30 @@ async function convertToPdf(buffer, ext) {
  * into a markdown document itself: one converter for both, not a second one
  * on the server.
  */
-async function convertToDocx(buffer) {
-  return convert(buffer, '.doc', 'docx');
+async function convertToDocx(buffer, { owner, patient = false } = {}) {
+  return convert(buffer, '.doc', 'docx', owner, patient);
 }
 
-async function convert(buffer, ext, to) {
+/**
+ * `owner` is who asked (an account id, or an address with no accounts), for
+ * the per-account limit; `patient` waits for a turn however long it takes.
+ * See takeTurn.
+ */
+async function convert(buffer, ext, to, owner, patient) {
   const what = WHAT(ext);
   if (!looksLikeOffice(buffer, ext)) {
     throw new ConversionError(
       `That file could not be converted: it is not really a ${what.noun === 'document' ? 'Word or RTF document' : 'PowerPoint presentation'} inside, whatever its name says.`,
     );
   }
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'podium-convert-'));
+  const giveBack = await takeTurn(owner, patient);
+  let dir = null;
   try {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'podium-convert-'));
     const inputPath = path.join(dir, `input${ext}`);
     await fs.writeFile(inputPath, buffer, { mode: 0o600 });
+    await fs.mkdir(path.join(dir, 'profile', 'user'), { recursive: true });
+    await fs.writeFile(path.join(dir, 'profile', 'user', 'registrymodifications.xcu'), LOCKED_PROFILE, { mode: 0o600 });
     await new Promise((resolve, reject) => {
       execFile('soffice', [
         '--headless', '--norestore', `-env:UserInstallation=file://${path.join(dir, 'profile')}`,
@@ -136,7 +243,8 @@ async function convert(buffer, ext, to) {
       );
     }
   } finally {
-    await fs.rm(dir, { recursive: true, force: true });
+    if (dir) await fs.rm(dir, { recursive: true, force: true });
+    giveBack();
   }
 }
 
@@ -154,4 +262,4 @@ function hasLibreOffice() {
   return found;
 }
 
-module.exports = { CONVERTIBLE_EXTS, WORD_EXTS, ConversionError, TIMEOUT_MS, convertToPdf, convertToDocx, hasLibreOffice, looksLikeOffice };
+module.exports = { CONVERTIBLE_EXTS, WORD_EXTS, ConversionError, TIMEOUT_MS, convertToPdf, convertToDocx, convertLoad, hasLibreOffice, looksLikeOffice };

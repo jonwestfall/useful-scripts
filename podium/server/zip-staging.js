@@ -462,7 +462,7 @@ async function commitPlanner({ db, dataDir, user, archive, planned, course, grou
       // everything else streams straight into storeUpload.
       const converts = pptxConvert.CONVERTIBLE_EXTS.has(ext);
       const contentType = converts ? 'application/pdf' : library.uploadKindFor(entryName).type;
-      const uploadStream = converts ? Readable.from(await pptxConvert.convertToPdf(await bufferStream(stream), ext)) : stream;
+      const uploadStream = converts ? Readable.from(await pptxConvert.convertToPdf(await bufferStream(stream), ext, { owner: user?.id, patient: true })) : stream;
       const filename = converts ? `${path.posix.basename(entryName, ext)}.pdf` : path.posix.basename(entryName);
       const { sha256, bytes } = await library.storeUpload(dataDir, uploadStream, { limit: library.MAX_UPLOAD_BYTES });
       const mediaId = library.rememberMedia(db, user, { sha256, bytes, contentType });
