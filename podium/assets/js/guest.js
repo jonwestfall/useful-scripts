@@ -1,9 +1,12 @@
 // Simple Presentation Mode: a substitute's clicker (Issue #77).
 //
-// Same room, same passphrase, the same shared state as the instructor's own
-// control.html - reached over a distinct pairing link/QR (see "Guest (Simple
-// Mode)" in display.js's pairing sheet) so the instructor never touches their
-// own device's settings to hand one out. There is no cueing concept here on
+// Reached over a distinct pairing link/QR (see "Guest (Simple Mode)" in
+// display.js's pairing sheet) so the instructor never touches their own
+// device's settings to hand one out. Since Issue #336 that link opens the
+// display's own guest channel, not the class's room: the display takes from
+// it only Next/Previous, Blank, Play/Pause and the laser, and tells it only
+// what is on the projector, so the link is no more than a clicker however
+// it is edited. There is no cueing concept here on
 // purpose: Next/Previous/Blank all pass `where: 'program'`, which
 // stageTarget/resolveVisualTarget in protocol.js already let a caller use to
 // bypass freeze - so a guest's remote shares a room with a frozen, mid-cue
@@ -16,7 +19,7 @@
 // does join the room, so it needs what joining takes.
 
 import { $, $$, throttle } from './util.js';
-import { loadConfig, isConfigured } from './config.js';
+import { loadGuestConfig, isConfigured } from './config.js';
 import { createBus } from './bus.js';
 import { focusedItem, BLACK, versionStamp, isPlayable } from './protocol.js';
 import { startPageTheme } from './theme.js';
@@ -25,7 +28,10 @@ import { startPageTheme } from './theme.js';
 // A guest has no account here: this device's choice only.
 startPageTheme({ account: false });
 
-const cfg = await loadConfig();
+// The display's guest channel, from the link (Issue #336): never the class's
+// room and passphrase, and kept apart from any controller settings this
+// device has of its own (see loadGuestConfig).
+const cfg = await loadGuestConfig();
 
 // A short, local label map rather than importing renderers.js: that module
 // pulls in the deck/PDF rendering machinery this page has no use for, and

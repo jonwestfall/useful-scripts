@@ -3038,9 +3038,17 @@ ok('the pairing sheet defaults to full control, same as it always has',
   await gDisplay.evaluate(() => document.querySelector('#pair-mode-full').classList.contains('is-on')
     && document.querySelector('#pair-url').textContent.includes('control.html')));
 await gDisplay.click('#pair-mode-guest');
-ok('switching to guest mode swaps the link to guest.html, not control.html',
-  (await gDisplay.textContent('#pair-url')).includes('guest.html'));
+await gDisplay.waitForFunction(() => document.querySelector('#pair-url').textContent.includes('guest.html'), null, { timeout: 5000 });
+const guestLink = await gDisplay.textContent('#pair-url');
+ok('switching to guest mode swaps the link to guest.html, not control.html', guestLink.includes('guest.html'));
 ok('and says what a guest link can actually do', /advance slides, blank the screen/.test(await gDisplay.textContent('#pair-warn')));
+// Issue #336: the link used to carry the class's room and passphrase, so
+// editing guest.html to control.html in it made a full controller.
+const linkParams = new URLSearchParams(new URL(guestLink).hash.slice(1));
+ok(`the guest link names the display's own guest room, not the class's (${linkParams.get('r')})`,
+  /^guest\.[A-Za-z0-9_-]{8,40}$/.test(linkParams.get('r') || ''));
+ok('and carries neither the class\'s room nor its passphrase',
+  !guestLink.includes('guest-room') && !guestLink.includes(encodeURIComponent('hand this to a substitute')) && !guestLink.includes('hand+this+to'));
 await gDisplay.click('#pair-close');
 
 // --- a real deck live, so Next/Previous has somewhere to go --------------
@@ -3052,12 +3060,12 @@ const waitForGuestSlide = (i) => gDisplay.waitForFunction((want) => {
 await gControl.click('.tile:has(.tile-title:text-is("Day 6 — Weighing the Evidence"))');
 await waitForGuestSlide(0);
 
-// --- the guest device itself - reached exactly the way a scanned QR would
-// leave it: this context's localStorage already carries the room, so
-// opening the page is the whole of "pairing". ------------------------------
-const gGuest = await gCtx.newPage();
+// --- the guest device itself: another phone, opening the link the QR
+// carries - which is the whole of "pairing". ------------------------------
+const guestCtx = await browser.newContext();
+const gGuest = await guestCtx.newPage();
 trap(gGuest, 'guest clicker');
-await gGuest.goto(`${BASE}/guest.html`);
+await gGuest.goto(guestLink);
 await gGuest.waitForSelector('#app:not([hidden])');
 await gGuest.waitForFunction(() => document.querySelector('#status')?.dataset.status === 'online', null, { timeout: 10000 });
 await gGuest.waitForFunction(() => !document.querySelector('#display-state')?.textContent.includes('No display connected'),
@@ -3094,6 +3102,44 @@ ok('a laser dot reaches the projector from the guest device', true);
 await gGuest.mouse.up();
 await gDisplay.waitForFunction(() => !document.querySelector('#laser').classList.contains('is-on'), null, { timeout: 3000 });
 
+// --- nothing but a clicker, however it is used (Issue #336) ---------------
+// The guest device's own copy of the link's settings: the guest room, never
+// the class's. Anything sent there that a clicker does not do changes
+// nothing on the projector - shown by sending it, then a Blank, and seeing
+// the Blank arrive with nothing else having changed.
+const guestStored = await gGuest.evaluate(() => JSON.parse(localStorage.getItem('podium.guest.v1') || '{}'));
+ok('the guest device keeps the guest room, never the class\'s', /^guest\./.test(guestStored.room || '') && guestStored.passphrase !== 'hand this to a substitute');
+const programBefore = await gDisplay.evaluate(() => document.querySelector('.layer[data-role="program"] .r-deck') ? 'deck' : 'other');
+await gGuest.evaluate(async (stored) => {
+  const { createBus } = await import('/assets/js/bus.js');
+  const rogue = await createBus({ cfg: stored, role: 'control', onMessage: () => {} });
+  rogue.send({ t: 'cmd', op: 'stage', where: 'program', item: { type: 'text', title: 'Hijacked', text: 'hijacked' } });
+  rogue.send({ t: 'cmd', op: 'freeze', on: true });
+  rogue.send({ t: 'cmd', op: 'layout', layout: 'quad' });
+  rogue.send({ t: 'cmd', op: 'nav', dir: 'next', where: 'preview', item: { type: 'text', text: 'hijacked' } });
+  rogue.send({ t: 'cmd', op: 'blank', on: true });
+}, guestStored);
+await gDisplay.waitForFunction(() => document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
+ok('a stage, a freeze and a layout sent on the guest channel change nothing on the projector',
+  await gDisplay.evaluate(() => !document.body.classList.contains('is-frozen')
+    && !document.querySelector('.layer[data-role="program"] .r-text')
+    && !/Hijacked|hijacked/.test(document.body.textContent))
+  && programBefore === 'deck');
+await waitForGuestSlide(2);
+ok('while a Next is still a Next (on the projector, whatever it asked)', true);
+await gGuest.click('#guest-blank');
+await gDisplay.waitForFunction(() => !document.querySelector('#blank').classList.contains('is-on'), null, { timeout: 5000 });
+// The guest link with control.html in it opens a "controller" of the guest
+// room: no class room, so nothing it does can reach anyone.
+const edited = guestLink.replace('guest.html', 'control.html');
+const editedCtx = await browser.newContext();
+const editedPage = await editedCtx.newPage();
+await editedPage.goto(edited);
+await editedPage.waitForSelector('#app:not([hidden])', { timeout: 10000 }).catch(() => {});
+ok('the link edited to control.html joins the guest room, not the class\'s',
+  await editedPage.evaluate(() => JSON.parse(localStorage.getItem('podium.config.v2') || '{}').room || '').then((room) => /^guest\./.test(room)));
+await editedCtx.close();
+
 // --- graceful degradation: sharing the room with a frozen, mid-cue full
 // controller must not touch what it has staged (Issue #77's last bullet) --
 await gControl.click('#freeze');
@@ -3103,7 +3149,7 @@ await gControl.waitForFunction(() => document.querySelector('#preview-label')?.t
 ok('the instructor cues the Whiteboard while frozen', await gControl.$eval('#preview-stage', (n) => n.innerHTML.includes('r-whiteboard')));
 
 await gGuest.click('#guest-next');
-await waitForGuestSlide(2);
+await waitForGuestSlide(3);
 ok('the guest advancing the deck still goes straight to the projector, freeze or not', true);
 ok('and never touches what the instructor has cued',
   await gControl.$eval('#preview-stage', (n) => n.innerHTML.includes('r-whiteboard'))
@@ -3144,6 +3190,7 @@ ok('the homepage lists Guest alongside the other surfaces',
   await gHome.isVisible('#topbar-nav a[href="guest.html"]'));
 await gHome.close();
 
+await guestCtx.close();
 await gCtx.close();
 }
 

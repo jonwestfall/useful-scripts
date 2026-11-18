@@ -912,6 +912,70 @@ export function viewChannel(cfg) {
 /** True for a room name viewChannel makes - what the relay keys its viewer rules on. */
 export const isViewRoom = (room) => /^view\.[A-Za-z0-9_-]{8,40}$/.test(String(room || ''));
 
+// --- The guest clicker's channel (Issue #336) ---------------------------------
+//
+// A substitute's clicker (guest.html, Issue #77) can advance the slides, blank
+// the screen, play or pause, and point a laser - nothing else. That limit
+// used to live only in guest.html: its link carried the room and the full
+// passphrase, so changing guest.html to control.html in it made a full
+// controller. Now a guest link names this display's own guest room, under a
+// key of its own, exactly as a viewer link names its view room; the display
+// listens there too, and takes from it only what a guest may do. A guest
+// never holds the room's passphrase, so nothing it sends can reach the room.
+
+/** The guest channel's room name and key, from a display's saved config. */
+export function guestChannel(cfg) {
+  if (!cfg?.guestId || !cfg?.guestKey) return null;
+  return { room: `guest.${cfg.guestId}`, passphrase: cfg.guestKey };
+}
+
+/** True for a room name guestChannel makes - what the relay keys its guest rules on. */
+export const isGuestRoom = (room) => /^guest\.[A-Za-z0-9_-]{8,40}$/.test(String(room || ''));
+
+/**
+ * A command from the guest channel, reduced to what a guest may do, or null.
+ * Rebuilt from scratch rather than passed through, so nothing a guest adds to
+ * an allowed command (a `where: 'preview'`, an item) ever reaches applyCommand.
+ */
+export function guestCommand(msg) {
+  if (!msg || msg.t !== 'cmd') return null;
+  if (msg.op === 'nav' && (msg.dir === 'next' || msg.dir === 'prev')) return { op: 'nav', dir: msg.dir, where: 'program' };
+  if (msg.op === 'blank') return typeof msg.on === 'boolean' ? { op: 'blank', on: msg.on } : { op: 'blank' };
+  if (msg.op === 'media' && ['toggle', 'play', 'pause'].includes(msg.action)) return { op: 'media', action: msg.action, where: 'program' };
+  return null;
+}
+
+/** A laser message from the guest channel, reduced to a dot and a colour, or null. */
+export function guestLaser(msg) {
+  if (!msg || msg.t !== 'laser') return null;
+  if (!msg.on) return { t: 'laser', on: false };
+  const x = Number(msg.x);
+  const y = Number(msg.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const clamp = (v) => Math.min(1, Math.max(0, v));
+  return { t: 'laser', on: true, x: clamp(x), y: clamp(y), color: ['red', 'green', 'blue'].includes(msg.color) ? msg.color : 'red' };
+}
+
+/**
+ * What a guest is told: what is on the projector (its kind and title, and
+ * enough of a deck to know whether a video slide is up), whether it is
+ * blanked, and whether something is playing. Nothing else in the room's
+ * state - not the cue, the plan, the notes, the polls or the other panels.
+ */
+export function guestState(state, telemetry = {}) {
+  const item = state?.program || BLACK;
+  const program = { type: item.type, title: item.title || '' };
+  if (item.type === 'deck') {
+    program.slide = item.slide || 0;
+    if (Array.isArray(item.videoSlides)) program.videoSlides = item.videoSlides.slice();
+  }
+  return {
+    t: 'state',
+    state: { program, blank: !!state?.blank, focus: 0, panels: [] },
+    telemetry: { playing: !!telemetry.playing },
+  };
+}
+
 /**
  * What the corner shows when a NEW lecture starts under a course (Issue #157).
  *

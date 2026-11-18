@@ -662,6 +662,7 @@ Any number of controllers can join the same room: your iPad, a TA's phone, a lap
 - Big **Previous / Next**, **Play/Pause** (for whatever video or audio is on screen), **Blank screen**, and a **Laser pointer** pad to drag on.
 - **No freeze, cue or TAKE** to get wrong. Next and Blank always go straight to the projector, so a guest never disturbs anything the instructor has frozen and cued on their own controller in the same room.
 - It needs no account even on a server with accounts. A device that hasn't been paired just says to ask whoever is teaching for the guest code.
+- **A guest link is only ever a clicker.** It opens the display's own guest channel, with a key of its own, never the class's room and passphrase. The display takes Next, Previous, Blank, Play/Pause and the laser from it and nothing else, and tells it only what is on the projector, so a guest link edited into a controller link controls nothing. The guest's phone keeps the link apart from any controller settings of its own. (A guest link from before this change carried the room's passphrase: change the passphrase if one was handed out.)
 
 ---
 

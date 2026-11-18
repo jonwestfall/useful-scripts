@@ -15,13 +15,14 @@ import {
 } from './util.js';
 import {
   loadConfig, saveConfig, isConfigured, pairingUrl, relayTarget, resetDevice, reloadClean, DEFAULTS, pollBaseUrl, pollJoinUrl,
-  viewerConfig, viewerUrl,
+  viewerConfig, viewerUrl, guestUrl,
 } from './config.js';
 import { createBus } from './bus.js';
 import {
   initialState, applyCommand, inkSurfaceKey, inkDigest, LAYOUTS, PANEL_COUNT, timerById, BUILD, VERSION, versionStamp,
   inkTargetKey, isHeldInkKey, heldInkCount, HELD_INK_PREFIX,
   watermarkForNewLecture, viewerState, viewChannel, stripDeckNotes,
+  guestChannel, guestCommand, guestLaser, guestState,
   MUSIC_DUCK, MUSIC_DUCK_MS, MUSIC_PAUSE_MS, SET_TICK_MS, clearStaleMusic, liveInkSurfaces, inkCapturesFor, MEDIA_TYPES,
 } from './protocol.js';
 import { createRenderer, itemTitle, TYPES, blessMediaElements, liveKeyOf } from './renderers.js';
@@ -2176,6 +2177,7 @@ function broadcast() {
   if (VIEWER) return;
   bus?.send({ t: 'state', state: wireState(), telemetry: telemetry() });
   sendViewerState();
+  sendGuestState();
 }
 
 const broadcastSoon = throttle(broadcast, 60);
@@ -2745,6 +2747,19 @@ function setHud(status, detail) {
 let camera = null;
 let mic = null;
 
+/** One command, from the room or (cut down to a guest's) the guest channel. */
+function runCommand(msg) {
+  // Before the command, so a first "load" or one-tap track today is
+  // not added to yesterday's queue (Issue #180).
+  const cleared = clearStaleMusic(state, lastCommandAt, Date.now());
+  lastCommandAt = Date.now();
+  // Ink commands draw on a surface; they never move one away.
+  const before = msg.op === 'ink' ? null : liveInkSurfaces(state);
+  const applied = applyCommand(state, msg);
+  if (applied && before) keepMarkedUpScreens(before);
+  if (applied || cleared) commit();
+}
+
 async function connect() {
   bus = await createBus({
     cfg,
@@ -2883,17 +2898,7 @@ async function connect() {
         }));
         return;
       }
-      if (msg.t === 'cmd') {
-        // Before the command, so a first "load" or one-tap track today is
-        // not added to yesterday's queue (Issue #180).
-        const cleared = clearStaleMusic(state, lastCommandAt, Date.now());
-        lastCommandAt = Date.now();
-        // Ink commands draw on a surface; they never move one away.
-        const before = msg.op === 'ink' ? null : liveInkSurfaces(state);
-        const applied = applyCommand(state, msg);
-        if (applied && before) keepMarkedUpScreens(before);
-        if (applied || cleared) commit();
-      }
+      if (msg.t === 'cmd') runCommand(msg);
     },
   });
 
@@ -2934,6 +2939,9 @@ async function connect() {
   // open from the start, so a viewer who opens the link before class sees
   // "not live yet" rather than a connection that never comes.
   if (viewChannel(cfg)) connectView().catch(() => { /* viewers will retry; the room is unaffected */ });
+  // And its guest channel the same way, so a guest link handed out earlier
+  // (taped to the lectern, say) works from the moment the display is up.
+  if (guestChannel(cfg)) connectGuest().catch(() => { /* the guest will retry; the room is unaffected */ });
   setInterval(broadcast, HEARTBEAT_MS);
   setInterval(() => {
     if (telemetry().playing || state.music?.playing) broadcast();
@@ -3349,16 +3357,59 @@ function wireSetup() {
   });
 }
 
+// --- The guest clicker's channel (Issue #336) --------------------------------
+//
+// A guest link (the pairing sheet's "Guest (Simple Mode)") opens this
+// display's own guest room, under a key of its own (see guestChannel in
+// protocol.js) - never the class's room and passphrase, so a guest link
+// edited to control.html is no controller at all. What arrives here is cut
+// down to what a guest may do (guestCommand, guestLaser) before it goes
+// anywhere near the room's state, and what goes back is only what is on the
+// projector (guestState).
+let guestBus = null;
+
+/** This display's guest channel, made the first time anyone asks for a guest link. */
+function ensureGuestChannel() {
+  if (!cfg.guestId || !cfg.guestKey) {
+    cfg.guestId = uid(16);
+    cfg.guestKey = uid(32);
+    saveConfig(cfg);
+  }
+  return guestChannel(cfg);
+}
+
+async function connectGuest() {
+  const channel = guestChannel(cfg);
+  if (VIEWER || !channel || guestBus) return;
+  guestBus = await createBus({
+    cfg: { ...cfg, room: channel.room, passphrase: channel.passphrase },
+    role: 'display',
+    onMessage: onGuestMessage,
+  });
+  sendGuestState();
+}
+
+function onGuestMessage(msg) {
+  if (msg.t === 'hello' || msg.t === 'sync') { sendGuestState(); return; }
+  const laser = guestLaser(msg);
+  if (laser) { showLaser(laser); forwardPointer(laser); return; }
+  const cmd = guestCommand(msg);
+  if (cmd) runCommand(cmd);
+}
+
+function sendGuestState() {
+  if (!guestBus) return;
+  guestBus.send(guestState(state, telemetry()));
+}
+
 // --- pairing ----------------------------------------------------------------
 
 let pairTimer = null;
 
-// guest.html is the same room, the same passphrase, and none of the cueing
-// concept - a substitute handed this code can advance slides, blank the
-// screen and point a laser, and cannot touch what the instructor's own
-// controller has cued (see Issue #77). Reusing pairingUrl unchanged - it
-// already takes a base URL - is what keeps this one function correct for
-// either link instead of two near-copies to keep in sync.
+// guest.html has none of the cueing concept - a substitute handed this code
+// can advance slides, blank the screen, play or pause and point a laser, and
+// cannot touch what the instructor's own controller has cued (Issue #77). Its
+// link opens this display's guest channel, not the room (Issue #336).
 async function showPairing(mode = 'full') {
   const holder = $('#pair-qr');
   let url;
@@ -3371,7 +3422,13 @@ async function showPairing(mode = 'full') {
     registerViewCode();
     url = viewerUrl(cfg, channel);
   } else {
-    url = mode === 'guest' ? pairingUrl(cfg, new URL('guest.html', location.href)) : pairingUrl(cfg);
+    if (mode === 'guest') {
+      const channel = ensureGuestChannel();
+      await connectGuest();
+      url = guestUrl(cfg, channel);
+    } else {
+      url = pairingUrl(cfg);
+    }
   }
   if (typeof window.qrcode === 'function') {
     const qr = window.qrcode(0, 'M');
