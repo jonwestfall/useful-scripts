@@ -453,8 +453,33 @@ A server with `soffice` on its `PATH` says so in `/api/capabilities`
 as a PDF. Converting Word or RTF to a *document* needs none of this: that
 happens in the browser.
 
-No further configuration; the server finds `soffice` on `PATH`. Confirm it
+No further configuration is needed; the server finds `soffice` on `PATH`. Confirm it
 works with `soffice --headless --convert-to pdf --outdir /tmp yourfile.pptx`.
+
+**How many at once (Issue #337).** A conversion takes hundreds of MB and a
+CPU core, and any signed-in account can start one, so the server limits
+them rather than letting a burst of uploads stall the relay, polls and
+attendance mid-lecture. Optional settings in `podium.env`:
+
+| Setting | Default | |
+| :--- | :--- | :--- |
+| `CONVERT_CONCURRENCY` | `2` | Conversions running at once, across the server. |
+| `CONVERT_QUEUE` | `6` | More that may wait for a turn. Past that, an upload is told the server is busy (503) and to try again in a minute. |
+| `CONVERT_PER_ACCOUNT` | `2` | Conversions one account may have running or waiting (429 past it). |
+| `CONVERT_WAIT_MS` | `60000` | How long an upload waits for a turn before it is told the server is busy: about as long as the proxy keeps a request open. |
+
+A ZIP import's PowerPoint files are converted one at a time and wait their
+turn however long it takes, since no upload is standing open for them; they
+still count toward their account's limit.
+
+**What a conversion may do.** Each one runs in its own LibreOffice profile,
+which starts with macros, embedded OLE objects and DDE links, and links to
+anything outside the document all switched off
+(`DisableMacrosExecution`, `DisableActiveContent`,
+`BlockUntrustedRefererLinks`): an uploaded file is someone else's, and
+converting it should never run it or reach out on its behalf. To go further,
+limit the service's outbound connections with a firewall rule, allowing the
+ones you use (mail for `SMTP_URL`, the live browser's pages).
 
 ### Phase 3 — plans and settings ✅
 

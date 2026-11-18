@@ -805,7 +805,7 @@ async function handleApi(req, res, url, ctx) {
     // Nothing is kept: the bytes go back in the answer.
     if (head === 'convert' && rest[0] === 'docx' && req.method === 'POST') {
       const raw = await readBuffer(req, library.MAX_UPLOAD_BYTES);
-      const docx = await pptxConvert.convertToDocx(raw);
+      const docx = await pptxConvert.convertToDocx(raw, { owner: user?.id ?? clientIp(req) });
       res.writeHead(200, {
         'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'content-length': docx.length,
@@ -1519,7 +1519,7 @@ async function handleApi(req, res, url, ctx) {
           const ext = path.extname(filename).toLowerCase();
           // A Word or RTF file put into PDFs (Issue #258) was chosen as a PDF.
           if (category === 'pdfs' && (pptxConvert.CONVERTIBLE_EXTS.has(ext) || pptxConvert.WORD_EXTS.has(ext))) {
-            buf = await pptxConvert.convertToPdf(buf, ext);
+            buf = await pptxConvert.convertToPdf(buf, ext, { owner: user?.id ?? clientIp(req) });
             filename = `${filename.slice(0, -ext.length)}.pdf`;
           }
           json(res, 200, { saved: content.saveContentFile(ctx, category, filename, buf) });
@@ -1679,7 +1679,7 @@ async function receiveUpload(req, url, ctx, user) {
   let body = req;
   if (converts) {
     const raw = await readBuffer(req, library.MAX_UPLOAD_BYTES);
-    body = Readable.from(await pptxConvert.convertToPdf(raw, ext));
+    body = Readable.from(await pptxConvert.convertToPdf(raw, ext, { owner: user?.id ?? clientIp(req) }));
     filename = `${filename.slice(0, -ext.length)}.pdf`;
   }
 

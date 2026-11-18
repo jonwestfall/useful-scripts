@@ -99,6 +99,12 @@ DATA_DIR=$DATA_DIR
 #SMTP_URL=smtp://user:password@mail.example.edu:587
 #MAIL_FROM="Podium <podium@example.edu>"
 
+# LibreOffice conversions (PowerPoint and Word uploads): at most this many at
+# once, this many more waiting, and this many per account. See docs/vps.md.
+#CONVERT_CONCURRENCY=2
+#CONVERT_QUEUE=6
+#CONVERT_PER_ACCOUNT=2
+
 # The live browser: web pages run in Chromium on this box and are driven from
 # the controller. On whenever Chromium is installed (this script installs it;
 # restart the service after installing one by hand). See docs/vps.md.
