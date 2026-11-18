@@ -192,6 +192,17 @@ async function until(check, { timeout = 5000, interval = 50 } = {}) {
   display.ws.send('sealed-state-snapshot');
   ok('and receives what the display sends there', (await heard) === 'sealed-state-snapshot');
 
+  // A guest clicker's room (Issue #336), on the same terms: a substitute has
+  // no account, and the display takes nothing from it but a clicker's.
+  const earlyGuest = await connect(port, 'guest.RelayTest04');
+  ok('an anonymous guest cannot open a guest room nobody is hosting', !earlyGuest.opened);
+  const guestHost = await connect(port, 'guest.RelayTest04', { cookie });
+  const guest = await connect(port, 'guest.RelayTest04');
+  ok('but may join one a signed-in display is in', guestHost.opened && guest.opened && guest.closeCode === null);
+  const notGuest = await connect(port, 'guest-RelayTest05');
+  ok('and a room merely named like one is not one', !notGuest.opened);
+  for (const p of [earlyGuest, guestHost, guest, notGuest]) p.ws.terminate();
+
   // The viewer pass: the files a live display is showing, and nothing else.
   const base = `http://127.0.0.1:${port}`;
   const pass = async (room) => fetch(`${base}/view-pass`, {

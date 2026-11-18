@@ -55,6 +55,12 @@ export const DEFAULTS = {
   // See the signing section of crypto.js.
   viewSignKey: '',
   viewPub: '',
+  // The guest clicker's channel (Issue #336): this display's own guest room
+  // and key, made the first time someone opens the Guest QR. A guest link
+  // carries these, never the room's passphrase. Like the view channel, they
+  // belong to this one display and no pairing link carries them as such.
+  guestId: '',
+  guestKey: '',
 };
 
 const KEYS = Object.keys(DEFAULTS);
@@ -163,6 +169,37 @@ function clean(obj) {
  */
 export function viewerConfig() {
   return { ...DEFAULTS, ...clean(fromHash()) };
+}
+
+const GUEST_KEY = 'podium.guest.v1';
+
+/**
+ * A guest clicker's whole configuration (Issue #336): what its link carries -
+ * this display's guest room and key, and the transport - kept under a key of
+ * its own, so a reload still works after the link leaves the address bar,
+ * and so a guest link opened on a device that is also someone's controller
+ * never replaces that controller's room. config.json still supplies the
+ * transport's defaults; the server's course settings and this device's
+ * own controller settings are never read.
+ */
+export async function loadGuestConfig() {
+  const file = await fromFile();
+  let stored;
+  try { stored = JSON.parse(localStorage.getItem(GUEST_KEY) || '{}') || {}; } catch { stored = {}; }
+  const link = clean(fromHash());
+  const cfg = { ...DEFAULTS, ...clean(file), ...clean(stored), ...link };
+  if (location.hash) {
+    if (Object.keys(link).length) {
+      try { localStorage.setItem(GUEST_KEY, JSON.stringify(clean(cfg))); } catch { /* private browsing: the link still works until a reload */ }
+    }
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+  return cfg;
+}
+
+/** The link a guest clicker opens: guest.html with this display's guest channel. */
+export function guestUrl(cfg, channel, base = new URL('guest.html', location.href)) {
+  return pairingUrl({ ...cfg, room: channel.room, passphrase: channel.passphrase }, base);
 }
 
 /** The link a viewer opens: view.html with the view channel in its fragment. */

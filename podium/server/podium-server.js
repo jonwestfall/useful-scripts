@@ -60,6 +60,8 @@ const attendance = require('./attendance.js');
 const mail = require('./mail.js');
 const zipStaging = require('./zip-staging.js');
 const { createViewCodes, linkCodeForKey, VIEW_ROOM_RE } = require('./view-codes.js');
+// The same test the client's isGuestRoom makes (assets/js/protocol.js).
+const GUEST_ROOM_RE = /^guest\.[A-Za-z0-9_-]{8,40}$/;
 const { createLiveBrowser, findBrowser } = require('./browser.js');
 const { AUTH_OPEN_PATHS, AUTH_PUBLIC_WITH_ACCOUNTS, KIOSK_OPEN_PATHS } = require('./open-paths.js');
 
@@ -110,9 +112,10 @@ const MAX_ROOMS = Number(process.env.MAX_ROOMS || 200);
 // (credential-free) join page gets a plain 404 rather than a login challenge.
 //
 // guest.html (Issue #77) is the same exception for the same reason: a
-// substitute handed a guest pairing link has the room passphrase and no
-// account, and asking them to sign in first defeats the whole point of a
-// link an instructor can hand to someone cold. Unlike join.html it is a real
+// substitute handed a guest pairing link has the display's guest key (never
+// the room passphrase, since Issue #336) and no account, and asking them to
+// sign in first defeats the whole point of a link an instructor can hand to
+// someone cold. Unlike join.html it is a real
 // controller (it joins the room over the encrypted bus), so it needs more of
 // what control.html needs to run - listed alongside it rather than folded
 // into the plain-file list below, which is index.html's alone.
@@ -1413,15 +1416,10 @@ function handleUpgrade(req, socket, head) {
   // talking to this relay) has no same-origin cookie to send: such an instance
   // wants ORIGIN rather than accounts. See VPS.md.
   //
-  // This is also the edge guest.html (Issue #77) cannot get around: opening
-  // the page needs no account (see AUTH_OPEN_PATHS in open-paths.js), but this socket
-  // still does when accounts are configured, exactly like the instructor's
-  // own control.html on the same deployment. A guest pairing link works
-  // everywhere the existing full-control one already does - GitHub Pages,
-  // Supabase/MQTT transports, a self-hosted relay with no accounts at all -
-  // and needs a signed-in device for the same reason control.html would on
-  // this one combination. Solving that is a different, larger feature
-  // (anonymous room-scoped socket tokens) that #77 did not ask for.
+  // guest.html (Issue #77) needs no account to open (see AUTH_OPEN_PATHS in
+  // open-paths.js), and since Issue #336 its link opens the display's own
+  // guest room rather than the class's - which is let in below on the same
+  // terms as a Guest View room.
   // A provisioned kiosk (Issue #151) carries its own cookie, not a user
   // session - checked here too, or a kiosk assigned the self-hosted ws
   // transport would load display.html fine and then sit on a permanently
@@ -1435,7 +1433,11 @@ function handleUpgrade(req, socket, head) {
   // service for anybody who can type a room name. What a viewer sees is
   // still sealed under the view key; this only decides who may connect.
   const viewRoom = VIEW_ROOM_RE.test(room);
-  const hosted = viewRoom && [...(rooms.get(room) || [])].some((peer) => peer.authed);
+  // A guest clicker's room (Issue #336) is let in on the same terms: it has
+  // no account either, and the display takes nothing from it but a clicker's
+  // commands (see guestCommand in protocol.js).
+  const guestRoom = GUEST_ROOM_RE.test(room);
+  const hosted = (viewRoom || guestRoom) && [...(rooms.get(room) || [])].some((peer) => peer.authed);
   if (!authed && !hosted) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     socket.destroy();
