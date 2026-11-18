@@ -232,7 +232,9 @@ ok('a truncated escape at the end of a value is survived too',
 // front of that is reading a value the attacker picked - and a login throttle
 // keyed on an attacker-chosen value is no throttle at all, because a fresh one
 // can be invented for every attempt.
-const ipOf = (headers, socket = '10.1.1.1') =>
+// (From the proxy on this box - loopback - which is the only peer whose
+// forwarded headers are believed by default; see below.)
+const ipOf = (headers, socket = '127.0.0.1') =>
   api.clientIp({ headers, socket: { remoteAddress: socket } });
 ok(`the real peer is the LAST entry a proxy appended, not the first (${ipOf({ 'x-forwarded-for': '1.2.3.4, 203.0.113.9' })})`,
   ipOf({ 'x-forwarded-for': '1.2.3.4, 203.0.113.9' }) === '203.0.113.9');
@@ -240,9 +242,39 @@ ok('so a spoofed chain cannot mint a new identity per login attempt',
   ipOf({ 'x-forwarded-for': 'fake-1, fake-2, 203.0.113.9' }) === '203.0.113.9');
 ok('one entry means one proxy and that entry is the client',
   ipOf({ 'x-forwarded-for': '203.0.113.9' }) === '203.0.113.9');
-ok('with no proxy in front, the socket is the answer', ipOf({}) === '10.1.1.1');
+ok('with no proxy in front, the socket is the answer', ipOf({}, '10.1.1.1') === '10.1.1.1');
 ok('and an empty header falls back to the socket rather than to nothing',
-  ipOf({ 'x-forwarded-for': '  ,  ' }) === '10.1.1.1');
+  ipOf({ 'x-forwarded-for': '  ,  ' }) === '127.0.0.1');
+
+// Issue #338: a client that reaches the server directly sets these headers
+// itself, and a new address per request would undo every per-address limit
+// (the login throttle among them). Believed only from a trusted proxy.
+console.log('\n-- forwarded headers, only from a trusted proxy (#338) --');
+const savedTrust = process.env.TRUST_PROXY;
+const secure = (headers, socket) => api.isSecureRequest({ headers, socket: { remoteAddress: socket } });
+delete process.env.TRUST_PROXY;
+ok('a forged X-Forwarded-For from a client on the network is ignored: its own address counts',
+  ipOf({ 'x-forwarded-for': '198.51.100.7' }, '10.1.1.1') === '10.1.1.1');
+ok('so every forged address from one laptop is still that laptop',
+  new Set(['a', 'b', 'c'].map((n) => ipOf({ 'x-forwarded-for': `203.0.113.${n.charCodeAt(0)}` }, '10.1.1.1'))).size === 1);
+ok('from the proxy on this box (127.0.0.1) the header is believed', ipOf({ 'x-forwarded-for': '198.51.100.7' }, '127.0.0.1') === '198.51.100.7');
+ok('and from ::1', ipOf({ 'x-forwarded-for': '198.51.100.7' }, '::1') === '198.51.100.7');
+ok('and from 127.0.0.1 on a dual-stack socket (::ffff:127.0.0.1)', ipOf({ 'x-forwarded-for': '198.51.100.7' }, '::ffff:127.0.0.1') === '198.51.100.7');
+ok('X-Forwarded-Proto: https from a client is not https', !secure({ 'x-forwarded-proto': 'https' }, '10.1.1.1'));
+ok('from the proxy it is', secure({ 'x-forwarded-proto': 'https' }, '127.0.0.1'));
+process.env.TRUST_PROXY = '10.0.0.0/8, 192.0.2.5, fd00::/8';
+ok('TRUST_PROXY: a proxy in a listed range is believed', ipOf({ 'x-forwarded-for': '198.51.100.7' }, '10.20.30.40') === '198.51.100.7');
+ok('TRUST_PROXY: a listed address is believed', ipOf({ 'x-forwarded-for': '198.51.100.7' }, '192.0.2.5') === '198.51.100.7');
+ok('TRUST_PROXY: an IPv6 range', ipOf({ 'x-forwarded-for': '198.51.100.7' }, 'fd12::1') === '198.51.100.7');
+ok('TRUST_PROXY: anyone else is not', ipOf({ 'x-forwarded-for': '198.51.100.7' }, '192.0.2.6') === '192.0.2.6');
+ok('TRUST_PROXY replaces loopback rather than adding to it', ipOf({ 'x-forwarded-for': '198.51.100.7' }, '127.0.0.1') === '127.0.0.1');
+process.env.TRUST_PROXY = 'off';
+ok('TRUST_PROXY=off: not even loopback', ipOf({ 'x-forwarded-for': '198.51.100.7' }, '127.0.0.1') === '127.0.0.1'
+  && !secure({ 'x-forwarded-proto': 'https' }, '127.0.0.1'));
+const odd = api.parseTrustProxy('10.0.0.0/8, not-an-ip, 10.0.0.0/40, ::1');
+ok('a TRUST_PROXY entry that is not an address or CIDR is set aside, the rest kept',
+  JSON.stringify(odd.bad) === JSON.stringify(['not-an-ip', '10.0.0.0/40']) && odd.list.check('10.9.9.9', 'ipv4') && odd.list.check('::1', 'ipv6'));
+if (savedTrust === undefined) delete process.env.TRUST_PROXY; else process.env.TRUST_PROXY = savedTrust;
 
 ok('a relative path is a safe place to go after signing in', api.safeNext('/control.html') === '/control.html');
 ok('a protocol-relative one is not', api.safeNext('//evil.example/x') === '');

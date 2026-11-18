@@ -77,6 +77,11 @@ DATA_DIR=$DATA_DIR
 # Lock the relay to your own site once you know the hostname:
 #ORIGIN=https://podium.example.com
 
+# Who may say who the client is (X-Forwarded-For / -Proto). Loopback by
+# default, which is the nginx in front of this box; list a proxy elsewhere as
+# addresses or CIDRs, or "off" to believe nobody. See docs/vps.md.
+#TRUST_PROXY=127.0.0.0/8, ::1
+
 # Only consulted when there are NO accounts. Creating the first account with
 # podium-admin turns the cookie gate on and this off.
 #AUTH_PASSWORD=
