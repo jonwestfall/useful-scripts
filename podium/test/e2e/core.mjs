@@ -368,16 +368,31 @@ ok('and so does the controller', await mathFonts(control));
 // a line there landed on empty space on the wall. Both now lay the slide out
 // in Podium's own Arial-wide face (slide-font.js), from Podium itself.
 const slideFont = (page, deck) => page.waitForFunction((sel) => {
-  const faces = document.querySelector('style[data-podium-slide-font]')?.textContent || '';
-  const urls = [...faces.matchAll(/url\('([^']+)'\)/g)].map((m) => m[1]);
+  // Loaded by hand as FontFace objects (see installSlideFont), so they are
+  // there for the hidden copy a deck is measured in, not only once shown.
+  const faces = [...document.fonts].filter((f) => f.family.replace(/['"]/g, '') === 'Podium Sans');
+  const files = performance.getEntriesByType('resource').map((e) => e.name).filter((u) => /\/slide-fonts\/arimo-/.test(u));
   const sec = document.querySelector(sel)?.shadowRoot?.querySelector('svg[data-marpit-svg] section');
-  return urls.length === 8 && urls.every((u) => u.startsWith(`${location.origin}/`)
-    && /^\/(?:b\/[\w-]+\/)?assets\/vendor\/slide-fonts\/arimo-/.test(new URL(u).pathname))
-    && !!sec && /^['"]?Podium Sans['"]?\s*,/.test(getComputedStyle(sec).fontFamily)
-    && [...document.fonts].some((f) => f.family.replace(/['"]/g, '') === 'Podium Sans' && f.status === 'loaded');
+  return faces.length === 8 && faces.filter((f) => f.status === 'loaded').length >= 4
+    && files.length > 0 && files.every((u) => u.startsWith(`${location.origin}/`)
+      && /^\/(?:b\/[\w-]+\/)?assets\/vendor\/slide-fonts\/arimo-/.test(new URL(u).pathname))
+    && !!sec && /^['"]?Podium Sans['"]?\s*,/.test(getComputedStyle(sec).fontFamily);
 }, deck, { timeout: 15000 }).then(() => true, () => false);
 ok('the projector lays the theme\'s slides out in Podium\'s own face', await slideFont(display, '.layer[data-role="program"] .r-deck'));
 ok('and so does the controller, so both break every line in the same place', await slideFont(control, '#deck-grid'));
+// Safari applies none of a stylesheet's rules until its @imports have loaded,
+// and Gaia (which the course theme builds on) imports its webfonts from
+// another site: on a slow network the iPad measured unstyled slides, which
+// always "fit", and showed over-full ones cut off. The imports are on the
+// page instead, and a slide's own stylesheet has none.
+const noImports = (page, sel) => page.evaluate((s) => {
+  const sheets = [...(document.querySelector(s)?.shadowRoot?.querySelectorAll('style') || [])];
+  return sheets.length > 0 && sheets.every((st) => !/@import/.test(st.textContent));
+}, sel);
+ok('a slide\'s stylesheet carries no @import, on the projector or the controller',
+  await noImports(display, '.layer[data-role="program"] .r-deck') && await noImports(control, '#deck-grid'));
+ok('the theme\'s imported stylesheet is on the page instead',
+  await display.evaluate(() => [...document.querySelectorAll('link[data-podium-deck-import]')].some((l) => /fonts\.bunny\.net/.test(l.href))));
 
 // Upload: the markdown only exists on the controller and has to cross the bus.
 await control.click('.tab[data-tab="library"]');

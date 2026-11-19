@@ -12,7 +12,7 @@ import { PODIUM_DIRECTIVES, MERMAID_DIRECTIVE, parseDeck, ASSET_REF } from './de
 import { drawDiagrams, DIAGRAM_CSS } from './deck-mermaid.js';
 import { drawQrCodes, QR_CSS } from './deck-qr.js';
 import { MATH_FONT_DIR, installMathFonts } from './math-fonts.js';
-import { sameFontCss, usesSlideFont, installSlideFont } from './slide-font.js';
+import { sameFontCss, usesSlideFont, installSlideFont, slideFontReady } from './slide-font.js';
 
 // What an `asset:` picture this device has not been given is drawn as (Issue
 // #226) - the same blank as assets.js's, rather than an address no browser
@@ -258,6 +258,57 @@ async function createMarp() {
   return marp;
 }
 
+// --- A deck's @imports, on the page (Safari) ---------------------------------
+//
+// A theme can @import a stylesheet from elsewhere: Marp's Gaia, which the
+// course theme builds on, imports its webfonts from fonts.bunny.net. Inside
+// a slide's own <style> that holds the whole slide hostage in Safari, which
+// applies none of a sheet's rules until every @import in it has loaded - so
+// for as long as that request takes, a slide is unstyled: no 1280x720 box,
+// no padding, body text at the browser's default size. Podium measures each
+// slide shortly after a deck loads to shrink an over-full one to fit (see
+// measureFits), and a slide measured unstyled always "fits": on an iPad on a
+// slow network or a VPN, over-full slides were shown at full size with their
+// last lines cut off, while the projector (Chrome applies the rest of a sheet
+// while an @import loads) shrank them.
+//
+// So the @imports come out of the slide's stylesheet and go on the page
+// itself, as <link>s, once each. The slide's own rules then apply at once,
+// everywhere; the fonts they bring are declared on the page, where every
+// shadow root can use them (as KaTeX's are, math-fonts.js) - which Chromium
+// needs anyway, since it ignores @font-face inside a shadow root.
+
+const IMPORT_RULE = /@import\s+(?:url\(\s*)?(["']?)([^"')\s;]+)\1\s*\)?([^;{}]*);/gi;
+
+/** A stylesheet without its @import rules, and what they imported (href and media). */
+export function hoistImports(css) {
+  const imports = [];
+  const rest = String(css || '').replace(IMPORT_RULE, (rule, quote, href, media) => {
+    imports.push({ href, media: media.trim() });
+    return '';
+  });
+  return { css: rest, imports };
+}
+
+const installedImports = new Set();
+
+/** Each imported stylesheet as a <link> on the page, once. */
+function installImports(imports) {
+  if (!imports?.length || typeof document === 'undefined' || !document.head) return;
+  for (const { href, media } of imports) {
+    let url;
+    try { url = new URL(href, location.href).href; } catch { continue; }
+    if (!/^https?:/.test(url) || installedImports.has(url)) continue;
+    installedImports.add(url);
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = url;
+    if (media && !/^(layer|supports)\b/i.test(media)) link.media = media;
+    link.dataset.podiumDeckImport = '';
+    document.head.append(link);
+  }
+}
+
 /**
  * A deck's CSS, re-pointed for a slide that has been lifted out on its own.
  *
@@ -450,8 +501,6 @@ export async function deckId(source) {
 
 const FIT_MIN = 0.55;      // never shrink type past this - unreadable is not "fits"
 const FIT_SLACK = 1;       // px: sub-pixel overflow is not overflow
-const FIT_STEPS = 5;       // shrink passes before giving up
-const FIT_REFINE = 4;      // halvings used to give size back afterwards
 const FIT_WAIT_MS = 1200;  // cap on waiting for webfonts/images before measuring
 
 /** The slide's authored box, remembered so a re-fit is not measured against a fit. */
@@ -569,32 +618,30 @@ function overflowOf(section) {
 /** Largest scale at which this slide's content fits its box. */
 function fitOne(svg, section) {
   setSlideScale(svg, 1);
-  let over = overflowOf(section);
+  const over = overflowOf(section);
   if (over === null) return null;
   if (over <= FIT_SLACK) return 1;
 
-  // Growing the box also widens every line, so the first guess - grow it by
-  // exactly the fraction the content overflows by - usually overshoots and
-  // leaves the slide fitting with room to spare. Hence the refinement after.
-  let scale = 1;
-  let fails = 1;
-  for (let i = 0; i < FIT_STEPS && over > FIT_SLACK && scale > FIT_MIN; i++) {
-    const room = section.clientHeight;
-    fails = scale;
-    scale = Math.max(FIT_MIN, scale * room / (room + over));
-    setSlideScale(svg, scale);
-    over = overflowOf(section);
+  // The largest whole percentage at which the slide fits, by halving. Whole
+  // percentages, so every device lands on the same one: the controller and
+  // the projector each measure the slide for themselves, and a search that
+  // stops anywhere inside its last bracket (as this once did) left the iPad
+  // at 82.6% where the projector chose 81.5% - the same slide at two sizes,
+  // which is ink drawn on one landing off on the other.
+  const fitsAt = (pct) => {
+    setSlideScale(svg, pct / 100);
+    const left = overflowOf(section);
+    return left === null || left <= FIT_SLACK;
+  };
+  let lo = Math.round(FIT_MIN * 100);
+  if (!fitsAt(lo)) return lo / 100;  // as small as Podium is willing to go
+  let hi = 100;                       // known not to fit
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (fitsAt(mid)) lo = mid; else hi = mid;
   }
-  if (over > FIT_SLACK) return scale;  // as small as Podium is willing to go
-
-  let fits = scale;
-  for (let i = 0; i < FIT_REFINE && fails - fits > 0.005; i++) {
-    const mid = (fits + fails) / 2;
-    setSlideScale(svg, mid);
-    if (overflowOf(section) <= FIT_SLACK) fits = mid; else fails = mid;
-  }
-  setSlideScale(svg, fits);
-  return fits;
+  setSlideScale(svg, lo / 100);
+  return lo / 100;
 }
 
 /**
@@ -606,6 +653,9 @@ function fitOne(svg, section) {
 async function contentSettled(root) {
   const waits = [];
   if (document.fonts?.ready) waits.push(document.fonts.ready);
+  // Podium's own slide face, loaded by hand (see installSlideFont): what is
+  // measured has to be what is shown, in the same face on every device.
+  waits.push(slideFontReady());
   const sized = (img) => img.complete || img.naturalWidth > 0;
   const pending = Array.from(root.querySelectorAll('img')).filter((img) => !sized(img));
   if (pending.length) {
@@ -988,7 +1038,12 @@ async function parseNow(source, key) {
   // One typeface on every device (slide-font.js): a theme that starts its
   // fonts with Helvetica Neue or Arial is laid out in Podium's own Arial-wide
   // face, so the iPad breaks every line where the projector does.
-  const combinedCss = sameFontCss(`${css}\n${COLUMNS_CSS}\n${MATH_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`);
+  // A stylesheet's @imports (Gaia's webfonts, a theme's own) go on the page
+  // instead (see hoistImports): Safari holds back every rule of a sheet until
+  // its @imports have loaded.
+  const hoisted = hoistImports(sameFontCss(`${css}\n${COLUMNS_CSS}\n${MATH_CSS}\n${DIAGRAM_CSS}\n${QR_CSS}`));
+  installImports(hoisted.imports);
+  const combinedCss = hoisted.css;
   if (usesSlideFont(combinedCss)) installSlideFont();
   // A deck with math puts KaTeX's fonts on the page, where the shadow root
   // it is drawn in can use them (math-fonts.js).
