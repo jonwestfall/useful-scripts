@@ -74,23 +74,46 @@ export function usesSlideFont(css) {
 }
 
 let installed = null;
+let ready = Promise.resolve();
 
 /**
- * Put Podium's faces on the page, once, and start the common ones loading, so
- * a slide measured or shown a moment from now is measured in them.
+ * Put Podium's faces on the page, once, and load the common ones (latin, in
+ * all four styles) now, so a slide measured or shown a moment from now is
+ * measured in them. Returns a promise for that load (see slideFontReady).
+ *
+ * As FontFace objects added to the page's font set, then loaded by hand,
+ * rather than @font-face rules: Safari registers a rule's faces only once the
+ * page's styles are next worked out, so asking it to load them straight
+ * after adding the rule loaded nothing - and it does not load a face for
+ * text it is not showing, which is all the hidden copy a deck is measured
+ * in ever has (see measureFits in deck.js). Every slide was measured in the
+ * iPad's own Helvetica Neue and shown in Podium's face, and fitted to a
+ * different size from the projector's.
  */
 export function installSlideFont() {
-  if (installed || typeof document === 'undefined' || !document.head) return;
-  const style = document.createElement('style');
-  style.dataset.podiumSlideFont = '';
-  style.textContent = SLIDE_FONT_FACES.map((f) => face(f, `${SLIDE_FONT_DIR}${f[0]}`)).join('\n');
-  document.head.append(style);
-  installed = style;
-  if (document.fonts?.load) {
-    for (const spec of ['16px', 'bold 16px', 'italic 16px', 'italic bold 16px']) {
-      document.fonts.load(`${spec} '${SLIDE_FONT}'`).catch(() => {});
-    }
+  if (installed || typeof document === 'undefined' || !document.head) return ready;
+  if (typeof FontFace === 'function' && document.fonts?.add) {
+    installed = SLIDE_FONT_FACES.map(([file, weight, style, subset]) => {
+      const font = new FontFace(SLIDE_FONT, `url('${SLIDE_FONT_DIR}${file}') format('woff2')`, {
+        weight: String(weight), style, unicodeRange: RANGES[subset], display: 'block',
+      });
+      document.fonts.add(font);
+      return { font, subset };
+    });
+    ready = Promise.all(installed.filter((f) => f.subset === 'latin').map((f) => f.font.load().catch(() => null))).then(() => {});
+  } else {
+    const style = document.createElement('style');
+    style.dataset.podiumSlideFont = '';
+    style.textContent = SLIDE_FONT_FACES.map((f) => face(f, `${SLIDE_FONT_DIR}${f[0]}`)).join('\n');
+    document.head.append(style);
+    installed = style;
   }
+  return ready;
+}
+
+/** Settles once Podium's common faces have loaded (or failed to): measureFits waits on it. */
+export function slideFontReady() {
+  return ready;
 }
 
 const dataUrls = new Map();
